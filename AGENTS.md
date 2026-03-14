@@ -106,3 +106,12 @@ Guidance:
 - Keep new behavior covered by focused unit tests.
 - Use `go generate ./...` or `task generate` to refresh JSON Schema output after schema changes.
 - Keep placeholder packages lightweight until their implementation phase begins.
+
+# CI/CD
+
+GitHub Actions runs on PRs and pushes to `main`/`development`:
+
+- **lint**, **format-check**, **vet**, **test**, **build** on all branches
+- **security** (govulncheck + gosec) on `main` only
+
+Run all checks locally with `task ci` before pushing.
