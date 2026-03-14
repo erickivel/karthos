@@ -63,9 +63,9 @@ tasks:
       - go mod tidy
 
   lint:
-    desc: Run golangci-lint
+    desc: Run golangci-lint (long timeout for CI package loading)
     cmds:
-      - golangci-lint run ./...
+      - golangci-lint run --timeout=5m ./...
 
   security:
     desc: Run security scanning (govulncheck + gosec)
