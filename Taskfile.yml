@@ -1,0 +1,51 @@
+version: "3"
+
+tasks:
+  default:
+    cmds:
+      - task: test
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - gofmt -w ./cmd ./pkg
+
+  generate:
+    desc: Generate JSON schemas
+    cmds:
+      - go generate ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./...
+
+  build:
+    desc: Build all binaries
+    deps:
+      - fmt
+    cmds:
+      - mkdir -p bin
+      - go build -o ./bin/backend ./cmd/backend
+      - go build -o ./bin/controller ./cmd/controller
+      - go build -o ./bin/discovery-job ./cmd/discovery-job
+
+  tidy:
+    desc: Tidy Go module dependencies
+    cmds:
+      - go mod tidy
+
+  lint:
+    desc: Run golangci-lint if installed
+    cmds:
+      - sh -c 'command -v golangci-lint >/dev/null 2>&1 && golangci-lint run ./... || echo "golangci-lint is not installed"'
+
+  clean:
+    desc: Remove generated artifacts
+    cmds:
+      - rm -rf bin coverage.out schemas
