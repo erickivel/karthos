@@ -130,10 +130,6 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	}
 }
 
-func realDependencies() dependencies {
-	return realDependenciesWithKubeconfig("", defaultClusterName, otel.DefaultNamespace, "")
-}
-
 func realDependenciesWithKubeconfig(kubeconfig, clusterName, namespace, targetNamespace string) dependencies {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {

@@ -9,6 +9,7 @@ on:
 env:
   GO_VERSION: "1.23.4"
   TASK_VERSION: "3.40.1"
+  GOLANGCI_LINT_VERSION: "v1.61.0"
 
 jobs:
   lint:
@@ -28,7 +29,7 @@ jobs:
           version: ${{ env.TASK_VERSION }}
 
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
 
       - name: Run lint
         run: task lint

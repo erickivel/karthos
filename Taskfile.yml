@@ -40,7 +40,7 @@ tasks:
       - go test -race -coverprofile=coverage.out ./...
 
   build:
-    desc: Build all binaries
+    desc: Build all binaries into bin/ (never write binaries to repo root)
     deps:
       - fmt
     cmds:
@@ -83,6 +83,7 @@ tasks:
       - task: build:check
 
   clean:
-    desc: Remove generated artifacts
+    desc: Remove generated artifacts and any binaries accidentally built in repo root
     cmds:
       - rm -rf bin coverage.out schemas
+      - rm -f discovery-job backend controller

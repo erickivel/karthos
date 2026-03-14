@@ -3,7 +3,8 @@
 set -euo pipefail
 
 VARIANT="${1:-base}"
-REGISTRY="${KIND_REGISTRY:-localhost:5001}"
+REGISTRY_PORT="${KIND_REGISTRY_PORT:-5001}"
+REGISTRY="localhost:${REGISTRY_PORT}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VARIANT_DIR="${SCRIPT_DIR}/${VARIANT}"
 

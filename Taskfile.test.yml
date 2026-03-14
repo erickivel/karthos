@@ -3,12 +3,14 @@ version: "3"
 vars:
   KIND_CLUSTER_NAME: oksg-test
   KIND_REGISTRY_NAME: oksg-kind-registry
+  KIND_REGISTRY_PORT: "5001"
   KIND_NAMESPACE: oksg-system
   TARGET_NAMESPACE: oksg-demo
   VARIANT: base
   E2E_OUTPUT_DIR: ./bin/e2e
   PROFILE_PATH: ./bin/e2e/profile.json
   MANIFESTS_PATH: ./bin/e2e/otel-manifests.yaml
+  DISCOVERY_JOB_BIN: ./bin/discovery-job
   KUBECONFIG:
     sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
 
@@ -27,19 +29,27 @@ tasks:
   e2e:deploy:
     desc: Build and deploy test apps to cluster (use VARIANT=base or VARIANT=with-prometheus)
     cmds:
-      - ./test/e2e/apps/deploy.sh {{.VARIANT}}
+      - KIND_REGISTRY_PORT={{.KIND_REGISTRY_PORT}} ./test/e2e/apps/deploy.sh {{.VARIANT}}
+
+  e2e:ensure-build:
+    desc: Build discovery-job into bin/ so e2e never creates binaries in repo root
+    cmds:
+      - mkdir -p bin
+      - go build -o ./bin/discovery-job ./cmd/discovery-job
 
   e2e:discover:
     desc: Run Kubernetes discovery against the cluster
+    deps: [e2e:ensure-build]
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - go run ./cmd/discovery-job --mode=discover --kubeconfig={{.KUBECONFIG}} --cluster-name={{.KIND_CLUSTER_NAME}} --output={{.PROFILE_PATH}} --namespace={{.KIND_NAMESPACE}} --target-namespace={{.TARGET_NAMESPACE}}
+      - "{{.DISCOVERY_JOB_BIN}} --mode=discover --kubeconfig={{.KUBECONFIG}} --cluster-name={{.KIND_CLUSTER_NAME}} --output={{.PROFILE_PATH}} --namespace={{.KIND_NAMESPACE}} --target-namespace={{.TARGET_NAMESPACE}}"
 
   e2e:plan:
     desc: Generate OTel collector manifests from discovery output
+    deps: [e2e:ensure-build]
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - go run ./cmd/discovery-job --mode=plan --profile={{.PROFILE_PATH}} --output={{.MANIFESTS_PATH}} --namespace={{.KIND_NAMESPACE}}
+      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --profile={{.PROFILE_PATH}} --output={{.MANIFESTS_PATH}} --namespace={{.KIND_NAMESPACE}}"
 
   e2e:apply-otel:
     desc: Apply generated OTel collector manifests
