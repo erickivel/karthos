@@ -28,7 +28,7 @@ if [[ "${running_registry}" != "true" ]]; then
   docker run -d --restart=always -p "127.0.0.1:${REGISTRY_PORT}:5000" --name "${REGISTRY_NAME}" registry:2
 fi
 
-if ! kind get clusters | rg -x "${CLUSTER_NAME}" >/dev/null 2>&1; then
+if ! kind get clusters 2>/dev/null | grep -qx "${CLUSTER_NAME}"; then
   kind create cluster --name "${CLUSTER_NAME}" --config "${CONFIG_FILE}"
 fi
 

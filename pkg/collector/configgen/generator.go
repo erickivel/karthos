@@ -53,29 +53,40 @@ func (g *Generator) Generate(plan otel.Plan) ([]byte, error) {
 	}
 
 	var documents []string
-	documents = append(documents, render(g.namespaceTemplate, templateData{Namespace: plan.Namespace}))
-	documents = append(documents, render(g.configMapTemplate, configMapData{
-		Name:      "otel-collector-agent-config",
-		Namespace: plan.Namespace,
-		Config:    string(agentConfig),
-	}))
-	documents = append(documents, render(g.configMapTemplate, configMapData{
-		Name:      "otel-collector-gateway-config",
-		Namespace: plan.Namespace,
-		Config:    string(gatewayConfig),
-	}))
-	documents = append(documents, render(g.agentDaemonSetTemplate, templateData{Namespace: plan.Namespace}))
-	documents = append(documents, render(g.gatewayDeploymentTmpl, templateData{Namespace: plan.Namespace}))
+	for _, item := range []struct {
+		tmpl *template.Template
+		data any
+	}{
+		{g.namespaceTemplate, templateData{Namespace: plan.Namespace}},
+		{g.configMapTemplate, configMapData{
+			Name:      "otel-collector-agent-config",
+			Namespace: plan.Namespace,
+			Config:    string(agentConfig),
+		}},
+		{g.configMapTemplate, configMapData{
+			Name:      "otel-collector-gateway-config",
+			Namespace: plan.Namespace,
+			Config:    string(gatewayConfig),
+		}},
+		{g.agentDaemonSetTemplate, templateData{Namespace: plan.Namespace}},
+		{g.gatewayDeploymentTmpl, templateData{Namespace: plan.Namespace}},
+	} {
+		s, err := render(item.tmpl, item.data)
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, s)
+	}
 
 	return []byte(strings.Join(documents, "\n---\n")), nil
 }
 
-func render(tmpl *template.Template, data any) string {
+func render(tmpl *template.Template, data any) (string, error) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		panic(err)
+		return "", fmt.Errorf("execute template: %w", err)
 	}
-	return strings.TrimSpace(buf.String())
+	return strings.TrimSpace(buf.String()), nil
 }
 
 func indent(input string, spaces int) string {
