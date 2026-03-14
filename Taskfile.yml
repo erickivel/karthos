@@ -10,6 +10,11 @@ tasks:
     cmds:
       - gofmt -w ./cmd ./pkg
 
+  fmt:check:
+    desc: Check Go code formatting (CI)
+    cmds:
+      - test -z "$(gofmt -l ./cmd ./pkg)"
+
   generate:
     desc: Generate JSON schemas
     cmds:
@@ -25,10 +30,23 @@ tasks:
     cmds:
       - go test ./...
 
+  test:race:
+    desc: Run unit tests with race detection and coverage
+    cmds:
+      - go test -race -coverprofile=coverage.out ./...
+
   build:
     desc: Build all binaries
     deps:
       - fmt
+    cmds:
+      - mkdir -p bin
+      - go build -o ./bin/backend ./cmd/backend
+      - go build -o ./bin/controller ./cmd/controller
+      - go build -o ./bin/discovery-job ./cmd/discovery-job
+
+  build:check:
+    desc: Build all binaries without formatting (CI)
     cmds:
       - mkdir -p bin
       - go build -o ./bin/backend ./cmd/backend
@@ -41,9 +59,24 @@ tasks:
       - go mod tidy
 
   lint:
-    desc: Run golangci-lint if installed
+    desc: Run golangci-lint
     cmds:
-      - sh -c 'command -v golangci-lint >/dev/null 2>&1 && golangci-lint run ./... || echo "golangci-lint is not installed"'
+      - golangci-lint run ./...
+
+  security:
+    desc: Run security scanning (govulncheck + gosec)
+    cmds:
+      - govulncheck ./... || true
+      - gosec -quiet ./...
+
+  ci:
+    desc: Run all CI checks locally
+    cmds:
+      - task: fmt:check
+      - task: vet
+      - task: lint
+      - task: test:race
+      - task: build:check
 
   clean:
     desc: Remove generated artifacts
