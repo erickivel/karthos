@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultCatalogIncludesRequiredTCCMetrics(t *testing.T) {
+func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	required := map[string]struct{}{
 		"cpu_usage_millicores":         {},
 		"memory_usage_bytes":           {},

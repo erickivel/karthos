@@ -1,5 +1,9 @@
 version: "3"
 
+includes:
+  test:
+    taskfile: ./Taskfile.test.yml
+
 tasks:
   default:
     cmds:
@@ -36,7 +40,7 @@ tasks:
       - go test -race -coverprofile=coverage.out ./...
 
   build:
-    desc: Build all binaries
+    desc: Build all binaries into bin/ (never write binaries to repo root)
     deps:
       - fmt
     cmds:
@@ -59,9 +63,9 @@ tasks:
       - go mod tidy
 
   lint:
-    desc: Run golangci-lint
+    desc: Run golangci-lint (long timeout for CI package loading)
     cmds:
-      - golangci-lint run ./...
+      - golangci-lint run --timeout=5m ./...
 
   security:
     desc: Run security scanning (govulncheck + gosec)
@@ -79,6 +83,7 @@ tasks:
       - task: build:check
 
   clean:
-    desc: Remove generated artifacts
+    desc: Remove generated artifacts and any binaries accidentally built in repo root
     cmds:
       - rm -rf bin coverage.out schemas
+      - rm -f discovery-job backend controller

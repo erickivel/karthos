@@ -7,3 +7,16 @@ bin/
 dist/
 coverage.out
 schemas/
+
+# Binaries that would appear in repo root if someone runs "go build ./cmd/..." without -o
+/discovery-job
+/backend
+/controller
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# Worktrees
+.worktrees/

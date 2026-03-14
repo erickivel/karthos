@@ -1,8 +1,8 @@
 # Project Overview
 
-This repository contains the Phase 1 foundation of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
+This repository contains the Phase 1 foundation plus the first Phase 2 implementation slice of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
 
-For the TCC scope, the system is organized around stable architectural boundaries between:
+The system is organized around stable architectural boundaries between:
 
 - cluster-specific telemetry integration
 - collection and routing
@@ -11,15 +11,16 @@ For the TCC scope, the system is organized around stable architectural boundarie
 - persistence
 - control and query APIs
 
-Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers.
+Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers. Phase 2 currently focuses on discovery-driven OpenTelemetry collector assembly for Prometheus-or-fallback scenarios.
 
 # Tech Stack (Main App)
 
-Keep the main application minimal in Phase 1:
+Keep the main application minimal:
 
 - Go
-- Kubernetes Go client in later implementation phases when discovery starts
-- Prometheus packages only when a concrete Prometheus adapter or parser is needed
+- Kubernetes Go client for discovery and cluster-side deployment workflows
+- `sigs.k8s.io/yaml` for collector manifest rendering
+- Prometheus packages only when a concrete Prometheus adapter, parser, or test application needs them
 - OTLP packages only when an OTLP adapter or receiver is added
 - `github.com/google/uuid` for event identifiers
 - `github.com/invopop/jsonschema` for generated schema documentation
@@ -76,17 +77,58 @@ deploy/
   helm/             Helm packaging placeholder
   manifests/        Raw manifest placeholder
   examples/         Example deployment placeholder
+
+test/
+  e2e/
+    kind/           kind cluster setup scripts and config
+    apps/           example microservices for base and Prometheus scenarios
+    scenarios/      end-to-end validation scripts and expected outputs
 ```
 
 # Architecture Principles
 
 - Keep the design minimal and easy to change.
 - Prefer explicit contracts between layers before implementation details.
+- Use discovery results to decide which OTel receivers should be enabled.
 - Separate technology-specific adapters from platform-generic domain logic.
 - Preserve modularity so Prometheus, Istio, OTLP, and future inputs can evolve independently.
 - Keep the core model DRY by defining canonical entities, metrics, and graph relations once.
 - Optimize for testability with small interfaces, deterministic IDs, and validation helpers.
 - Treat prediction as a future consumer of the canonical stores, not as an early architectural shortcut.
+
+# Configuration Guidelines
+
+**Never hardcode configuration values.** All configurable settings must be externalized:
+
+- **CLI flags**: Use command-line flags for runtime configuration (e.g., `--cluster-name`, `--namespace`)
+- **Environment variables**: Use env vars for deployment-specific settings, with sensible defaults
+- **Taskfile variables**: Define all configurable values in the `vars:` section, never inline
+- **Constants**: Define named constants in code for default values, never use magic strings
+
+**Examples of what NOT to do:**
+
+```go
+// BAD: Hardcoded cluster name
+adapter := NewDiscoveryAdapter(client, "kind-test", probe)
+
+// GOOD: Configurable via flag/parameter
+adapter := NewDiscoveryAdapter(client, clusterName, probe)
+```
+
+```yaml
+# BAD: Hardcoded registry name in task
+docker inspect oksg-kind-registry
+
+# GOOD: Use variable reference
+docker inspect {{.KIND_REGISTRY_NAME}}
+```
+
+**When adding new configuration:**
+
+1. Add a CLI flag with a sensible default
+2. Add corresponding Taskfile variable if used in e2e tests
+3. Update `.env.example` if it's an environment-based setting
+4. Document the configuration option in relevant docs
 
 # Build & Test
 
@@ -99,10 +141,15 @@ Primary commands:
 - `task generate`
 - `task vet`
 - `task lint`
+- `task test:e2e:setup`
+- `task test:e2e:discover`
+- `task test:e2e:scenario:prometheus`
+- `task test:e2e:scenario:fallback`
 
 Guidance:
 
 - Prefer `task test` before and after meaningful changes.
+- Prefer `task test:e2e:scenario:fallback` and `task test:e2e:scenario:prometheus` when changing discovery-driven collection behavior.
 - Keep new behavior covered by focused unit tests.
 - Use `go generate ./...` or `task generate` to refresh JSON Schema output after schema changes.
 - Keep placeholder packages lightweight until their implementation phase begins.
@@ -115,3 +162,23 @@ GitHub Actions runs on PRs and pushes to `main`/`development`:
 - **security** (govulncheck + gosec) on `main` only
 
 Run all checks locally with `task ci` before pushing.
+
+# Documentation
+
+The `docs/` folder contains detailed documentation that must be kept up to date:
+
+| Document | Description |
+|----------|-------------|
+| `docs/architecture.md` | System layers, component responsibilities, design principles |
+| `docs/discovery-flow.md` | Sequence diagrams and pipeline documentation |
+| `docs/testing.md` | Unit tests, e2e testing with kind, test scenarios |
+| `docs/development.md` | Project structure and contribution guidelines |
+
+**Documentation Update Requirements:**
+
+- When adding or modifying adapters, update `docs/architecture.md` with new components
+- When changing the discovery pipeline, update the sequence diagram in `docs/discovery-flow.md`
+- When adding new test scenarios or changing test infrastructure, update `docs/testing.md`
+- When adding new packages or changing project structure, update `docs/development.md`
+- Keep diagrams (ASCII and Mermaid) synchronized with actual implementation
+- Update example outputs in `docs/discovery-flow.md` when ClusterProfile structure changes

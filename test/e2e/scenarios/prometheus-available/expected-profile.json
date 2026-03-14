@@ -1,0 +1,10 @@
+{
+  "recommended_receivers": [
+    "kubeletstats",
+    "prometheus"
+  ],
+  "source_expectations": {
+    "type": "prometheus",
+    "present": true
+  }
+}
