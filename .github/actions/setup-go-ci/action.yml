@@ -1,0 +1,91 @@
+name: Setup Go CI
+description: Shared Go, cache, and CLI tool setup for CI jobs
+
+inputs:
+  go-version:
+    description: Go version to install
+    required: true
+  task-version:
+    description: Task version to install
+    required: true
+  golangci-lint-version:
+    description: golangci-lint version to install
+    required: true
+  govulncheck-version:
+    description: govulncheck version to install
+    required: true
+  gosec-version:
+    description: gosec version to install
+    required: true
+  install-golangci-lint:
+    description: Whether to install golangci-lint
+    required: false
+    default: "false"
+  install-security-tools:
+    description: Whether to install govulncheck and gosec
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true
+
+    - name: Prepare workspace bin
+      shell: bash
+      run: |
+        mkdir -p "${{ github.workspace }}/bin"
+        echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
+        echo "GOBIN=${{ github.workspace }}/bin" >> "$GITHUB_ENV"
+
+    - name: Resolve Go cache paths
+      id: go-cache-paths
+      shell: bash
+      run: |
+        echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Go and tool directories
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ steps.go-cache-paths.outputs.gomodcache }}
+          ${{ steps.go-cache-paths.outputs.gocache }}
+          ${{ github.workspace }}/bin
+        key: ${{ runner.os }}-go-${{ inputs.go-version }}-tools-${{ inputs.task-version }}-${{ inputs.golangci-lint-version }}-${{ inputs.govulncheck-version }}-${{ inputs.gosec-version }}-${{ hashFiles('go.sum', '.github/workflows/ci.yml', '.github/actions/setup-go-ci/action.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ inputs.go-version }}-tools-${{ inputs.task-version }}-${{ inputs.golangci-lint-version }}-${{ inputs.govulncheck-version }}-${{ inputs.gosec-version }}-
+          ${{ runner.os }}-go-${{ inputs.go-version }}-
+
+    - name: Install Task
+      shell: bash
+      run: |
+        if [ ! -x "${{ github.workspace }}/bin/task" ]; then
+          curl -fsSL "https://github.com/go-task/task/releases/download/v${{ inputs.task-version }}/task_linux_amd64.tar.gz" -o /tmp/task.tar.gz
+          tar -xzf /tmp/task.tar.gz -C /tmp task
+          mv /tmp/task "${{ github.workspace }}/bin/task"
+          chmod +x "${{ github.workspace }}/bin/task"
+        fi
+
+    - name: Install golangci-lint
+      if: inputs.install-golangci-lint == 'true'
+      shell: bash
+      run: |
+        if [ ! -x "${{ github.workspace }}/bin/golangci-lint" ]; then
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@${{ inputs.golangci-lint-version }}
+        fi
+
+    - name: Install security tools
+      if: inputs.install-security-tools == 'true'
+      shell: bash
+      run: |
+        if [ ! -x "${{ github.workspace }}/bin/govulncheck" ]; then
+          go install golang.org/x/vuln/cmd/govulncheck@${{ inputs.govulncheck-version }}
+        fi
+        if [ ! -x "${{ github.workspace }}/bin/gosec" ]; then
+          go install github.com/securego/gosec/v2/cmd/gosec@${{ inputs.gosec-version }}
+        fi
