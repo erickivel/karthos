@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-b-node
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: service-b-node
+  template:
+    metadata:
+      labels:
+        app: service-b-node
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8082"
+    spec:
+      containers:
+        - name: service-b-node
+          image: localhost:5001/service-b-node:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-b-node
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8082"
+spec:
+  selector:
+    app: service-b-node
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082

@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-go
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-go
+  template:
+    metadata:
+      labels:
+        app: gateway-go
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: gateway-go
+          image: localhost:5001/gateway-go:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SERVICE_A_URL
+              value: http://service-a-python:8081/process
+            - name: SERVICE_B_URL
+              value: http://service-b-node:8082/compute
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-go
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8080"
+spec:
+  type: NodePort
+  selector:
+    app: gateway-go
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080

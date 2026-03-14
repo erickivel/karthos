@@ -1,5 +1,9 @@
 version: "3"
 
+includes:
+  test:
+    taskfile: ./Taskfile.test.yml
+
 tasks:
   default:
     cmds:

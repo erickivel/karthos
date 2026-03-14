@@ -1,0 +1,112 @@
+version: "3"
+
+vars:
+  KIND_CLUSTER_NAME: oksg-test
+  KIND_NAMESPACE: oksg-system
+  TARGET_NAMESPACE: oksg-demo
+  VARIANT: base
+  E2E_OUTPUT_DIR: ./bin/e2e
+  PROFILE_PATH: ./bin/e2e/profile.json
+  MANIFESTS_PATH: ./bin/e2e/otel-manifests.yaml
+  KUBECONFIG:
+    sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
+
+tasks:
+  e2e:setup:
+    desc: Create kind cluster with local registry
+    cmds:
+      - mkdir -p {{.E2E_OUTPUT_DIR}}
+      - ./test/e2e/kind/setup.sh {{.KIND_CLUSTER_NAME}}
+
+  e2e:teardown:
+    desc: Destroy kind cluster and registry
+    cmds:
+      - ./test/e2e/kind/teardown.sh {{.KIND_CLUSTER_NAME}}
+
+  e2e:deploy:
+    desc: Build and deploy test apps to cluster (use VARIANT=base or VARIANT=with-prometheus)
+    cmds:
+      - ./test/e2e/apps/deploy.sh {{.VARIANT}}
+
+  e2e:discover:
+    desc: Run Kubernetes discovery against the cluster
+    cmds:
+      - mkdir -p {{.E2E_OUTPUT_DIR}}
+      - go run ./cmd/discovery-job --mode=discover --kubeconfig={{.KUBECONFIG}} --output={{.PROFILE_PATH}} --namespace={{.KIND_NAMESPACE}} --target-namespace={{.TARGET_NAMESPACE}}
+
+  e2e:plan:
+    desc: Generate OTel collector manifests from discovery output
+    cmds:
+      - mkdir -p {{.E2E_OUTPUT_DIR}}
+      - go run ./cmd/discovery-job --mode=plan --profile={{.PROFILE_PATH}} --output={{.MANIFESTS_PATH}} --namespace={{.KIND_NAMESPACE}}
+
+  e2e:apply-otel:
+    desc: Apply generated OTel collector manifests
+    cmds:
+      - kubectl apply -f {{.MANIFESTS_PATH}}
+
+  e2e:verify:
+    desc: Verify generated collectors are deployed
+    cmds:
+      - kubectl get pods -n {{.KIND_NAMESPACE}}
+      - echo "Waiting for pods to be ready..."
+      - kubectl wait --for=condition=Ready pods --all -n {{.KIND_NAMESPACE}} --timeout=120s
+      - kubectl logs -n {{.KIND_NAMESPACE}} -l app=otel-collector-agent --tail=30
+      - kubectl logs -n {{.KIND_NAMESPACE}} -l app=otel-collector-gateway --tail=30
+
+  e2e:reset:
+    desc: Remove deployed OTel collector manifests
+    cmds:
+      - if [ -f {{.MANIFESTS_PATH}} ]; then kubectl delete -f {{.MANIFESTS_PATH}} --ignore-not-found; fi
+
+  e2e:reset-apps:
+    desc: Remove deployed demo microservices
+    cmds:
+      - kubectl delete namespace oksg-demo --ignore-not-found
+
+  e2e:reset-all:
+    desc: Remove both OTel collectors and demo microservices
+    cmds:
+      - task: e2e:reset
+      - task: e2e:reset-apps
+
+  e2e:ensure-cluster:
+    desc: Ensure kind cluster and registry are running
+    cmds:
+      - |
+        if ! kind get clusters 2>/dev/null | grep -qx "{{.KIND_CLUSTER_NAME}}"; then
+          echo "Cluster not found. Run 'task test:e2e:setup' first."
+          exit 1
+        fi
+      - |
+        if ! docker inspect -f '{{`{{.State.Running}}`}}' oksg-kind-registry 2>/dev/null | grep -q true; then
+          echo "Registry not running. Run 'task test:e2e:setup' first."
+          exit 1
+        fi
+    silent: true
+
+  e2e:scenario:prometheus:
+    desc: Run Prometheus discovery scenario (full pipeline)
+    deps: [e2e:ensure-cluster]
+    vars:
+      VARIANT: with-prometheus
+    cmds:
+      - task: e2e:deploy
+        vars: { VARIANT: "with-prometheus" }
+      - task: e2e:discover
+      - task: e2e:plan
+      - task: e2e:apply-otel
+      - task: e2e:verify
+
+  e2e:scenario:fallback:
+    desc: Run no-telemetry fallback scenario (full pipeline)
+    deps: [e2e:ensure-cluster]
+    vars:
+      VARIANT: base
+    cmds:
+      - task: e2e:deploy
+        vars: { VARIANT: "base" }
+      - task: e2e:discover
+      - task: e2e:plan
+      - task: e2e:apply-otel
+      - task: e2e:verify
