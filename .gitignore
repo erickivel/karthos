@@ -12,3 +12,6 @@ schemas/
 .env
 .env.local
 .env.*.local
+
+# Worktrees
+.worktrees/

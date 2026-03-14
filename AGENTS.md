@@ -2,7 +2,7 @@
 
 This repository contains the Phase 1 foundation plus the first Phase 2 implementation slice of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
 
-For the TCC scope, the system is organized around stable architectural boundaries between:
+The system is organized around stable architectural boundaries between:
 
 - cluster-specific telemetry integration
 - collection and routing
@@ -95,6 +95,40 @@ test/
 - Keep the core model DRY by defining canonical entities, metrics, and graph relations once.
 - Optimize for testability with small interfaces, deterministic IDs, and validation helpers.
 - Treat prediction as a future consumer of the canonical stores, not as an early architectural shortcut.
+
+# Configuration Guidelines
+
+**Never hardcode configuration values.** All configurable settings must be externalized:
+
+- **CLI flags**: Use command-line flags for runtime configuration (e.g., `--cluster-name`, `--namespace`)
+- **Environment variables**: Use env vars for deployment-specific settings, with sensible defaults
+- **Taskfile variables**: Define all configurable values in the `vars:` section, never inline
+- **Constants**: Define named constants in code for default values, never use magic strings
+
+**Examples of what NOT to do:**
+
+```go
+// BAD: Hardcoded cluster name
+adapter := NewDiscoveryAdapter(client, "kind-test", probe)
+
+// GOOD: Configurable via flag/parameter
+adapter := NewDiscoveryAdapter(client, clusterName, probe)
+```
+
+```yaml
+# BAD: Hardcoded registry name in task
+docker inspect oksg-kind-registry
+
+# GOOD: Use variable reference
+docker inspect {{.KIND_REGISTRY_NAME}}
+```
+
+**When adding new configuration:**
+
+1. Add a CLI flag with a sensible default
+2. Add corresponding Taskfile variable if used in e2e tests
+3. Update `.env.example` if it's an environment-based setting
+4. Document the configuration option in relevant docs
 
 # Build & Test
 

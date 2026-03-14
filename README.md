@@ -69,7 +69,7 @@ Planned roadmap:
 4. Semantic Processing and Canonicalization
 5. Topology and Graph Reconstruction
 6. Visualizer and Query APIs
-7. Post-TCC evolution toward prediction and simulation
+7. Future evolution toward prediction and simulation
 
 ## Prerequisites
 

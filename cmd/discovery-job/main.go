@@ -51,10 +51,13 @@ func main() {
 	}
 }
 
+const defaultClusterName = "default-cluster"
+
 func run(ctx context.Context, args []string, deps dependencies) error {
 	fs := flag.NewFlagSet("discovery-job", flag.ContinueOnError)
 	mode := fs.String("mode", "discover", "mode to run: discover, plan, deploy")
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig")
+	clusterName := fs.String("cluster-name", defaultClusterName, "name of the cluster being discovered")
 	profilePath := fs.String("profile", "", "path to discovery profile JSON")
 	outputPath := fs.String("output", "", "output file path")
 	namespace := fs.String("namespace", otel.DefaultNamespace, "namespace for generated collector resources")
@@ -66,7 +69,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	switch *mode {
 	case "discover":
 		if deps.discover == nil {
-			deps.discover = realDependenciesWithKubeconfig(*kubeconfig, *namespace, *targetNamespace).discover
+			deps.discover = realDependenciesWithKubeconfig(*kubeconfig, *clusterName, *namespace, *targetNamespace).discover
 		}
 		clusterProfile, err := deps.discover(ctx)
 		if err != nil {
@@ -128,10 +131,10 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 }
 
 func realDependencies() dependencies {
-	return realDependenciesWithKubeconfig("", otel.DefaultNamespace, "")
+	return realDependenciesWithKubeconfig("", defaultClusterName, otel.DefaultNamespace, "")
 }
 
-func realDependenciesWithKubeconfig(kubeconfig, namespace, targetNamespace string) dependencies {
+func realDependenciesWithKubeconfig(kubeconfig, clusterName, namespace, targetNamespace string) dependencies {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return dependencies{
@@ -155,7 +158,7 @@ func realDependenciesWithKubeconfig(kubeconfig, namespace, targetNamespace strin
 		opts = append(opts, k8sadapter.WithTargetNamespaces(targetNamespace))
 	}
 
-	adapter := k8sadapter.NewDiscoveryAdapter(clientset, "kind-test", httpProbe, opts...)
+	adapter := k8sadapter.NewDiscoveryAdapter(clientset, clusterName, httpProbe, opts...)
 	return dependencies{
 		discover:  adapter.Discover,
 		planner:   otel.NewSourcePlanner(namespace),
