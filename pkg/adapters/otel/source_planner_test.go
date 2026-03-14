@@ -60,6 +60,21 @@ func TestPlanFallsBackToClusterIDWhenClusterNameEmpty(t *testing.T) {
 	require.Contains(t, plan.AgentConfig.Extensions, "health_check")
 }
 
+func TestPlanFallsBackToDefaultClusterNameWhenBothEmpty(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		Sources: []profile.ObservabilitySource{
+			{
+				Type:    "prometheus",
+				Present: false,
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, DefaultClusterName, plan.ClusterName)
+}
+
 func TestPlanFallsBackToKubeletstatsOnlyWhenNoPrometheusSourcesExist(t *testing.T) {
 	planner := NewSourcePlanner("oksg-system")
 

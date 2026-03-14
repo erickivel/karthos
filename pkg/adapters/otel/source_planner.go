@@ -11,6 +11,7 @@ const (
 	DefaultNamespace       = "oksg-system"
 	DefaultGatewayEndpoint = "otel-collector-gateway:4317"
 	DefaultHealthEndpoint  = "0.0.0.0:13133"
+	DefaultClusterName     = "default-cluster"
 )
 
 type SourcePlanner interface {
@@ -151,6 +152,9 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 	clusterLabel := clusterProfile.ClusterName
 	if clusterLabel == "" {
 		clusterLabel = string(clusterProfile.ClusterID)
+	}
+	if clusterLabel == "" {
+		clusterLabel = DefaultClusterName
 	}
 
 	return &Plan{
