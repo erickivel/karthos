@@ -8,12 +8,16 @@ import (
 	"github.com/erickivel/oksg/pkg/adapters/otel"
 )
 
-func TestGenerateIncludesCollectorCoreResources(t *testing.T) {
+func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 	renderer := NewGenerator()
 
-	manifests, err := renderer.Generate(otel.Plan{
-		Namespace: "oksg-system",
+	values, err := renderer.Generate(otel.Plan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
 		AgentConfig: otel.CollectorConfig{
+			Extensions: map[string]any{
+				"health_check": map[string]any{"endpoint": "0.0.0.0:13133"},
+			},
 			Receivers: map[string]any{
 				"kubeletstats": map[string]any{"collection_interval": "30s"},
 				"prometheus":   map[string]any{"config": map[string]any{"scrape_configs": []any{}}},
@@ -21,6 +25,7 @@ func TestGenerateIncludesCollectorCoreResources(t *testing.T) {
 			Processors: map[string]any{"batch": map[string]any{}},
 			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
 			Service: otel.ServiceConfig{
+				Extensions: []string{"health_check"},
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {
 						Receivers:  []string{"kubeletstats", "prometheus"},
@@ -31,10 +36,14 @@ func TestGenerateIncludesCollectorCoreResources(t *testing.T) {
 			},
 		},
 		GatewayConfig: otel.CollectorConfig{
+			Extensions: map[string]any{
+				"health_check": map[string]any{"endpoint": "0.0.0.0:13133"},
+			},
 			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
 			Processors: map[string]any{"batch": map[string]any{}},
 			Exporters:  map[string]any{"debug": map[string]any{}},
 			Service: otel.ServiceConfig{
+				Extensions: []string{"health_check"},
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {
 						Receivers:  []string{"otlp"},
@@ -46,9 +55,10 @@ func TestGenerateIncludesCollectorCoreResources(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Contains(t, string(manifests), "kind: ConfigMap")
-	require.Contains(t, string(manifests), "kind: DaemonSet")
-	require.Contains(t, string(manifests), "kind: Deployment")
-	require.Contains(t, string(manifests), "prometheus:")
-	require.Contains(t, string(manifests), "kubeletstats:")
+	require.Contains(t, string(values), "clusterName: kind-test")
+	require.Contains(t, string(values), "collectorConfig: |")
+	require.Contains(t, string(values), "health_check:")
+	require.Contains(t, string(values), "prometheus:")
+	require.Contains(t, string(values), "format: json")
+	require.Contains(t, string(values), "releaseName: oksg-otel")
 }

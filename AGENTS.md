@@ -74,7 +74,7 @@ pkg/
     simulation/     Reserved simulation boundary
 
 deploy/
-  helm/             Helm packaging placeholder
+  helm/             Helm charts and release packaging
   manifests/        Raw manifest placeholder
   examples/         Example deployment placeholder
 
@@ -143,6 +143,8 @@ Primary commands:
 - `task lint`
 - `task test:e2e:setup`
 - `task test:e2e:discover`
+- `task test:e2e:plan`
+- `task test:e2e:apply-otel`
 - `task test:e2e:scenario:prometheus`
 - `task test:e2e:scenario:fallback`
 
@@ -176,9 +178,16 @@ The `docs/` folder contains detailed documentation that must be kept up to date:
 
 **Documentation Update Requirements:**
 
+- Treat `docs/` as the primary implementation documentation surface. Prefer keeping `docs/` current over adding broad code-level documentation.
+- Keep documentation aligned with the actual implementation and current Taskfile commands, not aspirational or outdated flows.
 - When adding or modifying adapters, update `docs/architecture.md` with new components
-- When changing the discovery pipeline, update the sequence diagram in `docs/discovery-flow.md`
-- When adding new test scenarios or changing test infrastructure, update `docs/testing.md`
+- When changing the discovery or deployment pipeline, update the sequence diagram and operational steps in `docs/discovery-flow.md`
+- When changing test infrastructure, Helm install flow, or task names, update `docs/testing.md`
 - When adding new packages or changing project structure, update `docs/development.md`
+- When changing Helm values, ConfigMaps, Secrets, or runtime toggles, update the relevant docs to describe the configuration model
+- Keep logging documentation focused on operational behavior in `docs/`:
+  structured JSON logs to stdout only
+  `kubectl logs` as the debugging path
 - Keep diagrams (ASCII and Mermaid) synchronized with actual implementation
 - Update example outputs in `docs/discovery-flow.md` when ClusterProfile structure changes
+- Remove or rewrite obsolete docs, dead instructions, and stale references in the same change that makes them outdated

@@ -1,44 +1,39 @@
 # OKSG Documentation
 
-Welcome to the OKSG (Observability-Driven Kubernetes System Graph) documentation.
+This folder documents the currently implemented OKSG slice: Kubernetes discovery, source planning, Helm values generation, and Helm-managed deployment of OpenTelemetry collector agent/gateway resources.
 
 ## Contents
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](architecture.md) | System layers, component responsibilities, and design principles |
-| [Discovery Flow](discovery-flow.md) | Sequence diagram and detailed pipeline documentation |
-| [Testing](testing.md) | Unit tests, e2e testing with kind, and test scenarios |
-| [Development](development.md) | Setup, project structure, and contribution guidelines |
+| [Architecture](architecture.md) | Current layers, implemented boundaries, Helm deployment model, logging policy |
+| [Discovery Flow](discovery-flow.md) | Discovery to release-values flow and Helm render/install sequence |
+| [Testing](testing.md) | Unit tests, kind-based e2e tasks, and scenario validation |
+| [Development](development.md) | Project structure, common workflows, chart layout, and maintenance rules |
 
 ## Quick Links
 
-- **Getting Started**: See the main [README](../README.md)
-- **Agent Guidelines**: See [AGENTS.md](../AGENTS.md)
-- **E2E Test Apps**: See [test/e2e/apps/](../test/e2e/apps/)
-- **Test Scenarios**: See [test/e2e/scenarios/](../test/e2e/scenarios/)
+- [README](../README.md)
+- [AGENTS.md](../AGENTS.md)
+- [test/e2e/apps](../test/e2e/apps/)
+- [test/e2e/scenarios](../test/e2e/scenarios/)
 
-## Project Status
+## Current Status
 
-- **Phase 1** (Completed): Foundation and contracts
-- **Phase 2** (Current): Discovery-driven OTel collection
+- Phase 2 currently implements discovery-driven collector planning.
+- The only implemented OKSG runtime binary today is `cmd/discovery-job`.
+- `cmd/backend` and `cmd/controller` remain placeholders.
+- OTel resources are now packaged through the Helm chart in `deploy/helm/oksg-otel`.
 
-## Architecture at a Glance
+## Flow At A Glance
 
-```
+```text
 Kubernetes Cluster
-       │
-       ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Discovery   │────▶│    Source    │────▶│    Config    │────▶ K8s Manifests
-│   Adapter    │     │   Planner    │     │  Generator   │
-└──────────────┘     └──────────────┘     └──────────────┘
-       │
-       ▼
- ClusterProfile
- (nodes, services,
-  prometheus targets,
-  recommended receivers)
+       |
+       v
+Discovery Adapter -> ClusterProfile -> Source Planner -> Helm Values -> Helm Release
 ```
 
-The system discovers cluster resources, detects telemetry capabilities (currently Prometheus endpoints), and dynamically generates OpenTelemetry Collector configurations.
+## Documentation Rule
+
+Keep these docs aligned with the real implementation. When code changes make text, commands, diagrams, or examples stale, update or remove the stale docs in the same change.

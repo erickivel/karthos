@@ -45,6 +45,7 @@ func TestDiscoverBuildsClusterProfileWithPrometheusTargets(t *testing.T) {
 
 	profile, err := adapter.Discover(context.Background())
 	require.NoError(t, err)
+	require.Equal(t, "kind-test", profile.ClusterName)
 	require.Len(t, profile.Nodes, 1)
 	require.Len(t, profile.Namespaces, 1)
 	require.Len(t, profile.Workloads, 1)

@@ -1,13 +1,29 @@
 package deployer
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"time"
 )
 
-type Runner func(ctx context.Context, name string, args []string, stdin string) error
+const (
+	DefaultReleaseName = "oksg-otel"
+	DefaultChartPath   = "./deploy/helm/oksg-otel"
+	DefaultTimeout     = 5 * time.Minute
+)
+
+type Runner func(ctx context.Context, name string, args []string) error
+
+type Options struct {
+	ReleaseName  string
+	ChartPath    string
+	Namespace    string
+	Timeout      time.Duration
+	DryRun       bool
+	RenderedPath string
+}
 
 type Deployer struct {
 	runner Runner
@@ -21,17 +37,107 @@ func New(runner Runner) *Deployer {
 	return &Deployer{runner: runner}
 }
 
-func (d *Deployer) Apply(ctx context.Context, manifests []byte) error {
-	if len(manifests) == 0 {
-		return fmt.Errorf("manifests are required")
+func (d *Deployer) Apply(ctx context.Context, values []byte, options Options) error {
+	if len(values) == 0 {
+		return fmt.Errorf("helm values are required")
 	}
 
-	return d.runner(ctx, "kubectl", []string{"apply", "-f", "-"}, string(manifests))
+	options = withDefaults(options)
+
+	valuesFile, err := writeTempFile("oksg-values-*.yaml", values)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(valuesFile)
+
+	if err := d.lint(ctx, valuesFile, options); err != nil {
+		return err
+	}
+
+	if options.RenderedPath != "" {
+		if err := d.template(ctx, valuesFile, options); err != nil {
+			return err
+		}
+	}
+
+	args := []string{
+		"upgrade", "--install", options.ReleaseName, options.ChartPath,
+		"--namespace", options.Namespace,
+		"--create-namespace",
+		"-f", valuesFile,
+		"--timeout", options.Timeout.String(),
+	}
+	if options.DryRun {
+		args = append(args, "--dry-run")
+	}
+
+	return d.runner(ctx, "helm", args)
 }
 
-func defaultRunner(ctx context.Context, name string, args []string, stdin string) error {
+func (d *Deployer) Template(ctx context.Context, values []byte, options Options) error {
+	if len(values) == 0 {
+		return fmt.Errorf("helm values are required")
+	}
+	if options.RenderedPath == "" {
+		return fmt.Errorf("rendered output path is required")
+	}
+
+	options = withDefaults(options)
+
+	valuesFile, err := writeTempFile("oksg-values-*.yaml", values)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(valuesFile)
+
+	if err := d.lint(ctx, valuesFile, options); err != nil {
+		return err
+	}
+
+	return d.template(ctx, valuesFile, options)
+}
+
+func withDefaults(options Options) Options {
+	if options.ReleaseName == "" {
+		options.ReleaseName = DefaultReleaseName
+	}
+	if options.ChartPath == "" {
+		options.ChartPath = DefaultChartPath
+	}
+	if options.Timeout == 0 {
+		options.Timeout = DefaultTimeout
+	}
+	return options
+}
+
+func writeTempFile(pattern string, payload []byte) (string, error) {
+	file, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	defer file.Close()
+
+	if _, err := file.Write(payload); err != nil {
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	return file.Name(), nil
+}
+
+func (d *Deployer) lint(ctx context.Context, valuesFile string, options Options) error {
+	return d.runner(ctx, "helm", []string{"lint", options.ChartPath, "-f", valuesFile})
+}
+
+func (d *Deployer) template(ctx context.Context, valuesFile string, options Options) error {
+	return d.runner(ctx, "helm", []string{
+		"template", options.ReleaseName, options.ChartPath,
+		"--namespace", options.Namespace,
+		"-f", valuesFile,
+		"--output-dir", options.RenderedPath,
+	})
+}
+
+func defaultRunner(ctx context.Context, name string, args []string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdin = bytes.NewBufferString(stdin)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %v failed: %w: %s", name, args, err, string(output))

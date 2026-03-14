@@ -5,11 +5,14 @@ vars:
   KIND_REGISTRY_NAME: oksg-kind-registry
   KIND_REGISTRY_PORT: "5001"
   KIND_NAMESPACE: oksg-system
+  HELM_RELEASE_NAME: oksg-otel
+  HELM_CHART_PATH: ./deploy/helm/oksg-otel
   TARGET_NAMESPACE: oksg-demo
   VARIANT: base
   E2E_OUTPUT_DIR: ./bin/e2e
   PROFILE_PATH: ./bin/e2e/profile.json
-  MANIFESTS_PATH: ./bin/e2e/otel-manifests.yaml
+  VALUES_PATH: ./bin/e2e/otel-values.yaml
+  RENDERED_PATH: ./bin/e2e/rendered
   DISCOVERY_JOB_BIN: ./bin/discovery-job
   KUBECONFIG:
     sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
@@ -45,30 +48,31 @@ tasks:
       - "{{.DISCOVERY_JOB_BIN}} --mode=discover --kubeconfig={{.KUBECONFIG}} --cluster-name={{.KIND_CLUSTER_NAME}} --output={{.PROFILE_PATH}} --namespace={{.KIND_NAMESPACE}} --target-namespace={{.TARGET_NAMESPACE}}"
 
   e2e:plan:
-    desc: Generate OTel collector manifests from discovery output
+    desc: Generate Helm values from discovery output
     deps: [e2e:ensure-build]
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --profile={{.PROFILE_PATH}} --output={{.MANIFESTS_PATH}} --namespace={{.KIND_NAMESPACE}}"
+      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}}"
 
   e2e:apply-otel:
-    desc: Apply generated OTel collector manifests
+    desc: Install or upgrade the OTel Helm release with generated values
     cmds:
-      - kubectl apply -f {{.MANIFESTS_PATH}}
+      - helm upgrade --install {{.HELM_RELEASE_NAME}} {{.HELM_CHART_PATH}} --namespace {{.KIND_NAMESPACE}} --create-namespace -f {{.VALUES_PATH}}
 
   e2e:verify:
     desc: Verify generated collectors are deployed
     cmds:
+      - helm status {{.HELM_RELEASE_NAME}} -n {{.KIND_NAMESPACE}}
       - kubectl get pods -n {{.KIND_NAMESPACE}}
       - echo "Waiting for pods to be ready..."
       - kubectl wait --for=condition=Ready pods --all -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl logs -n {{.KIND_NAMESPACE}} -l app=otel-collector-agent --tail=30
-      - kubectl logs -n {{.KIND_NAMESPACE}} -l app=otel-collector-gateway --tail=30
+      - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=agent --tail=30
+      - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=gateway --tail=30
 
   e2e:reset:
-    desc: Remove deployed OTel collector manifests
+    desc: Remove deployed OTel Helm release
     cmds:
-      - if [ -f {{.MANIFESTS_PATH}} ]; then kubectl delete -f {{.MANIFESTS_PATH}} --ignore-not-found; fi
+      - helm uninstall {{.HELM_RELEASE_NAME}} --namespace {{.KIND_NAMESPACE}} || true
 
   e2e:reset-apps:
     desc: Remove deployed demo microservices

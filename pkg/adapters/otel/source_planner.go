@@ -10,6 +10,7 @@ import (
 const (
 	DefaultNamespace       = "oksg-system"
 	DefaultGatewayEndpoint = "otel-collector-gateway:4317"
+	DefaultHealthEndpoint  = "0.0.0.0:13133"
 )
 
 type SourcePlanner interface {
@@ -17,12 +18,14 @@ type SourcePlanner interface {
 }
 
 type Plan struct {
+	ClusterName   string
 	Namespace     string
 	AgentConfig   CollectorConfig
 	GatewayConfig CollectorConfig
 }
 
 type CollectorConfig struct {
+	Extensions map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`
 	Receivers  map[string]any `json:"receivers" yaml:"receivers"`
 	Processors map[string]any `json:"processors" yaml:"processors"`
 	Exporters  map[string]any `json:"exporters" yaml:"exporters"`
@@ -30,7 +33,8 @@ type CollectorConfig struct {
 }
 
 type ServiceConfig struct {
-	Pipelines map[string]PipelineConfig `json:"pipelines" yaml:"pipelines"`
+	Extensions []string                  `json:"extensions,omitempty" yaml:"extensions,omitempty"`
+	Pipelines  map[string]PipelineConfig `json:"pipelines" yaml:"pipelines"`
 }
 
 type PipelineConfig struct {
@@ -78,6 +82,11 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 	}
 
 	agentConfig := CollectorConfig{
+		Extensions: map[string]any{
+			"health_check": map[string]any{
+				"endpoint": DefaultHealthEndpoint,
+			},
+		},
 		Receivers: agentReceivers,
 		Processors: map[string]any{
 			"k8sattributes": map[string]any{
@@ -95,6 +104,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			},
 		},
 		Service: ServiceConfig{
+			Extensions: []string{"health_check"},
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
 					Receivers:  pipelineReceivers,
@@ -106,6 +116,11 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 	}
 
 	gatewayConfig := CollectorConfig{
+		Extensions: map[string]any{
+			"health_check": map[string]any{
+				"endpoint": DefaultHealthEndpoint,
+			},
+		},
 		Receivers: map[string]any{
 			"otlp": map[string]any{
 				"protocols": map[string]any{
@@ -122,6 +137,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			"debug": map[string]any{},
 		},
 		Service: ServiceConfig{
+			Extensions: []string{"health_check"},
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
 					Receivers:  []string{"otlp"},
@@ -132,7 +148,13 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		},
 	}
 
+	clusterLabel := clusterProfile.ClusterName
+	if clusterLabel == "" {
+		clusterLabel = string(clusterProfile.ClusterID)
+	}
+
 	return &Plan{
+		ClusterName:   clusterLabel,
 		Namespace:     p.namespace,
 		AgentConfig:   agentConfig,
 		GatewayConfig: gatewayConfig,

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: oksg-otel
+description: Discovery-driven OpenTelemetry collector deployment for OKSG
+type: application
+version: 0.1.0
+appVersion: "0.111.0"
