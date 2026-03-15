@@ -2,6 +2,8 @@ package configgen
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 
 	"sigs.k8s.io/yaml"
 
@@ -9,22 +11,39 @@ import (
 )
 
 const (
-	DefaultReleaseName = "oksg-otel"
-	DefaultChartPath   = "./deploy/helm/oksg-otel"
-	DefaultLogLevel    = "info"
-	DefaultLogFormat   = "json"
+	DefaultReleaseName         = "oksg-otel"
+	DefaultChartPath           = "./deploy/helm/oksg-otel"
+	DefaultLogLevel            = "info"
+	DefaultLogFormat           = "json"
+	DefaultCollectorRepository = "otel/opentelemetry-collector-contrib"
+	DefaultCollectorTag        = "0.111.0"
+	DefaultCollectorPullPolicy = "IfNotPresent"
+	DefaultBackendRepository   = "oksg-backend"
+	DefaultBackendTag          = "latest"
+	DefaultBackendPullPolicy   = "IfNotPresent"
+	DefaultBackendHealthPort   = 13133
 )
 
-type Generator struct{}
+type Generator struct {
+	options GeneratorOptions
+}
+
+type GeneratorOptions struct {
+	CollectorImage ImageValues
+	BackendImage   ImageValues
+	ReleaseName    string
+	ChartPath      string
+}
 
 type Values struct {
-	Global    GlobalValues  `json:"global" yaml:"global"`
-	Agent     AgentValues   `json:"agent" yaml:"agent"`
-	Gateway   GatewayValues `json:"gateway" yaml:"gateway"`
-	Backend   BackendValues `json:"backend" yaml:"backend"`
-	Secrets   SecretsValues `json:"secrets" yaml:"secrets"`
-	Rollout   RolloutValues `json:"rollout" yaml:"rollout"`
-	Namespace NamespaceSpec `json:"namespace" yaml:"namespace"`
+	Global         GlobalValues  `json:"global" yaml:"global"`
+	EnabledSignals []string      `json:"enabledSignals,omitempty" yaml:"enabledSignals,omitempty"`
+	Agent          AgentValues   `json:"agent" yaml:"agent"`
+	Gateway        GatewayValues `json:"gateway" yaml:"gateway"`
+	Backend        BackendValues `json:"backend" yaml:"backend"`
+	Secrets        SecretsValues `json:"secrets" yaml:"secrets"`
+	Rollout        RolloutValues `json:"rollout" yaml:"rollout"`
+	Namespace      NamespaceSpec `json:"namespace" yaml:"namespace"`
 }
 
 type GlobalValues struct {
@@ -55,6 +74,7 @@ type NamespaceSpec struct {
 type ComponentValues struct {
 	Enabled       bool              `json:"enabled" yaml:"enabled"`
 	Logging       LoggingSpec       `json:"logging" yaml:"logging"`
+	FeatureGates  []string          `json:"featureGates,omitempty" yaml:"featureGates,omitempty"`
 	RuntimeEnv    map[string]string `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
 	CollectorYAML string            `json:"collectorConfig" yaml:"collectorConfig"`
 }
@@ -74,12 +94,25 @@ type GatewayValues struct {
 }
 
 type ServiceValues struct {
-	Type string `json:"type" yaml:"type"`
-	Port int    `json:"port" yaml:"port"`
+	Type     string `json:"type" yaml:"type"`
+	Port     int    `json:"port" yaml:"port"`
+	HTTPPort int    `json:"httpPort" yaml:"httpPort"`
 }
 
 type BackendValues struct {
-	Enabled bool `json:"enabled" yaml:"enabled"`
+	Enabled      bool              `json:"enabled" yaml:"enabled"`
+	GRPCEndpoint string            `json:"grpcEndpoint,omitempty" yaml:"grpcEndpoint,omitempty"`
+	HTTPEndpoint string            `json:"httpEndpoint,omitempty" yaml:"httpEndpoint,omitempty"`
+	Image        ImageValues       `json:"image" yaml:"image"`
+	Service      BackendService    `json:"service" yaml:"service"`
+	RuntimeEnv   map[string]string `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
+	Resources    map[string]any    `json:"resources,omitempty" yaml:"resources,omitempty"`
+}
+
+type BackendService struct {
+	GRPCPort   int `json:"grpcPort" yaml:"grpcPort"`
+	HTTPPort   int `json:"httpPort" yaml:"httpPort"`
+	HealthPort int `json:"healthPort" yaml:"healthPort"`
 }
 
 type SecretsValues struct {
@@ -91,7 +124,15 @@ type RolloutValues struct {
 }
 
 func NewGenerator() *Generator {
-	return &Generator{}
+	return &Generator{
+		options: defaultGeneratorOptions(),
+	}
+}
+
+func NewGeneratorWithOptions(options GeneratorOptions) *Generator {
+	return &Generator{
+		options: withDefaultGeneratorOptions(options),
+	}
 }
 
 func (g *Generator) Generate(plan otel.Plan) ([]byte, error) {
@@ -127,15 +168,12 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 		Global: GlobalValues{
 			ClusterName: plan.ClusterName,
 			Namespace:   plan.Namespace,
-			ReleaseName: DefaultReleaseName,
-			ChartPath:   DefaultChartPath,
-			Image: ImageValues{
-				Repository: "otel/opentelemetry-collector-contrib",
-				Tag:        "0.111.0",
-				PullPolicy: "IfNotPresent",
-			},
-			Logging: logging,
+			ReleaseName: g.options.ReleaseName,
+			ChartPath:   g.options.ChartPath,
+			Image:       g.options.CollectorImage,
+			Logging:     logging,
 		},
+		EnabledSignals: plan.EnabledSignals,
 		Namespace: NamespaceSpec{
 			Create: true,
 			Name:   plan.Namespace,
@@ -144,6 +182,7 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 			ComponentValues: ComponentValues{
 				Enabled:       true,
 				Logging:       logging,
+				FeatureGates:  []string{"receiver.kubeletstats.enableCPUUsageMetrics"},
 				CollectorYAML: string(agentConfig),
 			},
 		},
@@ -151,20 +190,88 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 			ComponentValues: ComponentValues{
 				Enabled:       true,
 				Logging:       logging,
+				FeatureGates:  []string{},
 				CollectorYAML: string(gatewayConfig),
 			},
 			Replicas: 1,
 			Service: ServiceValues{
-				Type: "ClusterIP",
-				Port: 4317,
+				Type:     "ClusterIP",
+				Port:     4317,
+				HTTPPort: 4318,
 			},
 		},
 		Backend: BackendValues{
-			Enabled: false,
+			Enabled:      plan.Backend.Enabled,
+			GRPCEndpoint: plan.Backend.GRPCEndpoint,
+			HTTPEndpoint: plan.Backend.HTTPEndpoint,
+			Image:        g.options.BackendImage,
+			Service: BackendService{
+				GRPCPort:   endpointPort(plan.Backend.GRPCEndpoint, 4317),
+				HTTPPort:   endpointPort(plan.Backend.HTTPEndpoint, 4318),
+				HealthPort: DefaultBackendHealthPort,
+			},
 		},
 		Secrets: SecretsValues{},
 		Rollout: RolloutValues{
 			UseConfigChecksum: true,
 		},
 	}, nil
+}
+
+func defaultGeneratorOptions() GeneratorOptions {
+	return GeneratorOptions{
+		CollectorImage: ImageValues{
+			Repository: DefaultCollectorRepository,
+			Tag:        DefaultCollectorTag,
+			PullPolicy: DefaultCollectorPullPolicy,
+		},
+		BackendImage: ImageValues{
+			Repository: DefaultBackendRepository,
+			Tag:        DefaultBackendTag,
+			PullPolicy: DefaultBackendPullPolicy,
+		},
+		ReleaseName: DefaultReleaseName,
+		ChartPath:   DefaultChartPath,
+	}
+}
+
+func withDefaultGeneratorOptions(options GeneratorOptions) GeneratorOptions {
+	defaults := defaultGeneratorOptions()
+	if options.CollectorImage.Repository == "" {
+		options.CollectorImage.Repository = defaults.CollectorImage.Repository
+	}
+	if options.CollectorImage.Tag == "" {
+		options.CollectorImage.Tag = defaults.CollectorImage.Tag
+	}
+	if options.CollectorImage.PullPolicy == "" {
+		options.CollectorImage.PullPolicy = defaults.CollectorImage.PullPolicy
+	}
+	if options.BackendImage.Repository == "" {
+		options.BackendImage.Repository = defaults.BackendImage.Repository
+	}
+	if options.BackendImage.Tag == "" {
+		options.BackendImage.Tag = defaults.BackendImage.Tag
+	}
+	if options.BackendImage.PullPolicy == "" {
+		options.BackendImage.PullPolicy = defaults.BackendImage.PullPolicy
+	}
+	if options.ReleaseName == "" {
+		options.ReleaseName = defaults.ReleaseName
+	}
+	if options.ChartPath == "" {
+		options.ChartPath = defaults.ChartPath
+	}
+	return options
+}
+
+func endpointPort(endpoint string, fallback int) int {
+	_, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fallback
+	}
+	value, err := strconv.Atoi(port)
+	if err != nil {
+		return fallback
+	}
+	return value
 }

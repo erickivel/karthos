@@ -26,7 +26,11 @@ spec:
         - name: otel-collector-agent
           image: {{ include "oksg-otel.image" . }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
-          args: ["--config=/conf/config.yaml"]
+          args:
+            - --config=/conf/config.yaml
+            {{- if .Values.agent.featureGates }}
+            - --feature-gates={{ join "," .Values.agent.featureGates }}
+            {{- end }}
           env:
             - name: K8S_NODE_NAME
               valueFrom:

@@ -62,11 +62,22 @@ func callDownstream(serviceName, url string) downstreamResponse {
 	if err != nil {
 		return downstreamResponse{Service: serviceName, Error: err.Error()}
 	}
-	defer resp.Body.Close()
 
 	var payload map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return downstreamResponse{Service: serviceName, Status: resp.StatusCode, Error: err.Error()}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
+	closeErr := resp.Body.Close()
+	if decodeErr != nil {
+		if closeErr != nil {
+			return downstreamResponse{
+				Service: serviceName,
+				Status:  resp.StatusCode,
+				Error:   decodeErr.Error() + "; close body: " + closeErr.Error(),
+			}
+		}
+		return downstreamResponse{Service: serviceName, Status: resp.StatusCode, Error: decodeErr.Error()}
+	}
+	if closeErr != nil {
+		return downstreamResponse{Service: serviceName, Status: resp.StatusCode, Error: closeErr.Error()}
 	}
 
 	body, _ := json.Marshal(payload)

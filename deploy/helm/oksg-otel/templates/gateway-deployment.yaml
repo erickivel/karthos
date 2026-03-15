@@ -27,7 +27,11 @@ spec:
         - name: otel-collector-gateway
           image: {{ include "oksg-otel.image" . }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
-          args: ["--config=/conf/config.yaml"]
+          args:
+            - --config=/conf/config.yaml
+            {{- if .Values.gateway.featureGates }}
+            - --feature-gates={{ join "," .Values.gateway.featureGates }}
+            {{- end }}
           env:
             - name: OTEL_LOG_LEVEL
               value: {{ .Values.gateway.logging.level | quote }}
@@ -38,6 +42,8 @@ spec:
           ports:
             - containerPort: {{ .Values.gateway.service.port }}
               name: otlp-grpc
+            - containerPort: {{ .Values.gateway.service.httpPort }}
+              name: otlp-http
             - containerPort: 13133
               name: health
           readinessProbe:

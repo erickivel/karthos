@@ -12,6 +12,7 @@ sequenceDiagram
     participant K8s as Kubernetes API
     participant SP as SourcePlanner
     participant RV as ReleaseValuesBuilder
+    participant B as backend
     participant H as Helm runner
     participant Cluster as K8s Cluster
 
@@ -49,6 +50,8 @@ sequenceDiagram
     CLI->>H: helm upgrade --install
     H->>Cluster: Create or update release resources
     Cluster-->>H: Release applied
+    Cluster->>B: Gateway forwards OTLP metrics/traces
+    B-->>Cluster: Backend logs accepted raw envelopes
 ```
 
 ## Pipeline Stages
@@ -74,8 +77,16 @@ The source planner turns the profile into collector intent:
 
 - agent always includes `kubeletstats`
 - agent adds `prometheus` only when targets were discovered
-- gateway receives OTLP from agents
+- agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
+- gateway receives OTLP from agents and OTLP-native emitters
+- gateway exports to the backend OTLP ingest service instead of the debug exporter
 - collector telemetry logging is configured for JSON stdout logging with env-controlled level
+- traces are enabled only when OTLP-capable sources advertise trace support
+
+Important current limitation:
+
+- the Kubernetes discovery adapter still only produces Prometheus-or-fallback profiles
+- OTLP-capable sources are supported by the profile and planner contracts, but they are not auto-detected by the current discovery adapter yet
 
 ### 3. Release Values Generation
 
@@ -84,7 +95,9 @@ The values builder converts the plan into typed Helm values instead of final Kub
 Those values contain:
 
 - global release and image settings
+- enabled signal classes
 - agent and gateway collector configs
+- backend image, service ports, and OTLP endpoint settings
 - per-component logging levels
 - rollout settings such as config checksum enablement
 
@@ -102,6 +115,7 @@ The Helm chart is responsible for:
 - ServiceAccounts and RBAC
 - agent DaemonSet
 - gateway Service and Deployment
+- backend Service and Deployment
 - restart-on-config-change annotations
 
 ## Example Output
@@ -137,10 +151,39 @@ The Helm chart is responsible for:
     }
   ],
   "collection_paths": [
-    {"receiver_type": "kubeletstats", "enabled": true},
-    {"receiver_type": "prometheus", "enabled": true, "targets": ["oksg-demo/gateway-go:8080/metrics"]}
+    {"receiver_type": "kubeletstats", "enabled": true, "signal_types": ["metric"]},
+    {"receiver_type": "prometheus", "enabled": true, "targets": ["oksg-demo/gateway-go:8080/metrics"], "signal_types": ["metric"]}
   ],
   "recommended_receivers": ["kubeletstats", "prometheus"]
+}
+```
+
+### ClusterProfile (Planner-Only OTLP Example)
+
+This example shows a profile shape the planner understands today, but which the current Kubernetes discovery adapter does not auto-produce yet:
+
+```json
+{
+  "cluster_id": "cluster:kind-test",
+  "discovered_at": "2026-03-13T10:00:00Z",
+  "sources": [
+    {
+      "name": "application-otlp",
+      "type": "otlp",
+      "present": true,
+      "otlp": {
+        "metrics_enabled": true,
+        "traces_enabled": true,
+        "grpc_endpoint": "0.0.0.0:4317",
+        "http_endpoint": "0.0.0.0:4318"
+      }
+    }
+  ],
+  "collection_paths": [
+    {"receiver_type": "kubeletstats", "enabled": true, "signal_types": ["metric"]},
+    {"receiver_type": "otlp", "enabled": true, "signal_types": ["metric", "trace"]}
+  ],
+  "recommended_receivers": ["kubeletstats", "otlp"]
 }
 ```
 
@@ -159,7 +202,7 @@ The Helm chart is responsible for:
     }
   ],
   "collection_paths": [
-    {"receiver_type": "kubeletstats", "enabled": true}
+    {"receiver_type": "kubeletstats", "enabled": true, "signal_types": ["metric"]}
   ],
   "recommended_receivers": ["kubeletstats"]
 }
@@ -172,11 +215,11 @@ The Helm chart is responsible for:
 ./discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --output=profile.json
 
 # Generate Helm values from profile
-./discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml
+./discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 
 # Render chart output for inspection
-./discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered
+./discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend
 
-# Deploy collectors through Helm
-./discovery-job --mode=deploy --profile=profile.json --namespace=oksg-system --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel
+# Deploy the collection plane through Helm
+./discovery-job --mode=deploy --profile=profile.json --namespace=oksg-system --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --backend-image-repository=localhost:5001/oksg-backend
 ```

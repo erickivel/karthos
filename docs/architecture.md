@@ -1,28 +1,30 @@
 # Architecture Overview
 
-OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice focuses on discovery-driven OpenTelemetry collector deployment for Kubernetes clusters.
+OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice now includes a discovery-driven OpenTelemetry collection plane plus the first backend OTLP ingest service.
 
 ## Current Implemented Boundary
 
 The implemented control flow is:
 
 ```text
-Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Helm Release
+Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Agent/Gateway/Backend Helm Release
 ```
 
 What is real today:
 
 - `pkg/adapters/kubernetes` discovers cluster resources and Prometheus annotation-based targets
 - `pkg/adapters/otel` plans collector behavior from the discovery profile
+- `pkg/adapters/otlp` exposes OTLP gRPC and HTTP ingest for the backend runtime
 - `pkg/collector/configgen` converts the plan into typed Helm values
 - `pkg/collector/deployer` runs Helm lint/template/upgrade-install
+- `pkg/backend/ingest` converts OTLP telemetry into raw envelopes and routes them by signal type
+- `cmd/backend` runs the first backend OTLP ingest service
 - `cmd/discovery-job` orchestrates discover, plan, and deploy modes
 
 What is not implemented yet:
 
-- `cmd/backend` is still a placeholder
 - `cmd/controller` is still a placeholder
-- persistence, query APIs, and graph assembly remain contract-first packages rather than active runtime services
+- persistence, query APIs, graph assembly, and canonical normalization still remain the next major runtime layers
 
 ## Layer View
 
@@ -33,6 +35,11 @@ Cluster Integration
 Collection Planning
   Source planner
   Collector config assembly
+
+Collection Runtime
+  Agent collector
+  Gateway collector
+  Backend OTLP ingest service
 
 Deployment Packaging
   Helm values builder
@@ -58,6 +65,8 @@ The Helm chart in `deploy/helm/oksg-otel` owns the Kubernetes resource shape:
 - gateway ServiceAccount
 - gateway Service
 - gateway Deployment
+- backend Service
+- backend Deployment
 
 The planner no longer renders Kubernetes objects directly. It produces collector configuration that is embedded into release values, and Helm renders the final resources.
 
@@ -66,7 +75,7 @@ The planner no longer renders Kubernetes objects directly. It produces collector
 Configuration is split intentionally:
 
 - Helm values:
-  operator-facing deployment settings such as release name, image, namespace, and log levels
+  operator-facing deployment settings such as release name, image settings, namespace, enabled signal classes, OTLP endpoints, and log levels
 - ConfigMaps:
   structured collector configuration for agent and gateway
 - Secrets:
@@ -83,6 +92,8 @@ OKSG-owned runtime components use structured JSON logs to stdout only.
 - debugging path: `kubectl logs`
 
 OTel collector workloads are also configured for stdout-based logging, with per-component log level controlled through Helm values.
+
+The backend OTLP ingest runtime logs one structured line per accepted envelope so end-to-end verification can use `kubectl logs` before persistence exists.
 
 ## Design Principles Still In Force
 

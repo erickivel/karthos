@@ -8,6 +8,9 @@ vars:
   HELM_RELEASE_NAME: oksg-otel
   HELM_CHART_PATH: ./deploy/helm/oksg-otel
   TARGET_NAMESPACE: oksg-demo
+  BACKEND_IMAGE_REPOSITORY: localhost:{{.KIND_REGISTRY_PORT}}/oksg-backend
+  BACKEND_IMAGE_TAG: latest
+  BACKEND_IMAGE_PULL_POLICY: Always
   VARIANT: base
   E2E_OUTPUT_DIR: ./bin/e2e
   PROFILE_PATH: ./bin/e2e/profile.json
@@ -52,7 +55,7 @@ tasks:
     deps: [e2e:ensure-build]
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}}"
+      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}}"
 
   e2e:apply-otel:
     desc: Install or upgrade the OTel Helm release with generated values
@@ -68,6 +71,7 @@ tasks:
       - kubectl wait --for=condition=Ready pods --all -n {{.KIND_NAMESPACE}} --timeout=120s
       - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=agent --tail=30
       - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=gateway --tail=30
+      - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=backend --tail=30
 
   e2e:reset:
     desc: Remove deployed OTel Helm release

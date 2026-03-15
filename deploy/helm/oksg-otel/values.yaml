@@ -11,6 +11,9 @@ global:
     format: json
     level: info
 
+enabledSignals:
+  - metric
+
 namespace:
   create: true
   name: oksg-system
@@ -20,12 +23,27 @@ agent:
   logging:
     format: json
     level: info
+  featureGates:
+    - receiver.kubeletstats.enableCPUUsageMetrics
   runtimeEnv: {}
   collectorConfig: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
     receivers:
       kubeletstats:
         collection_interval: 30s
+        auth_type: serviceAccount
+        endpoint: https://${env:K8S_NODE_NAME}:10250
+        insecure_skip_verify: true
+        metric_groups:
+          - node
+          - pod
+          - container
     processors:
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
       batch: {}
     exporters:
       otlp:
@@ -33,14 +51,12 @@ agent:
         tls:
           insecure: true
     service:
-      telemetry:
-        logs:
-          level: ${env:OTEL_LOG_LEVEL}
-          encoding: json
+      extensions:
+        - health_check
       pipelines:
         metrics:
           receivers: [kubeletstats]
-          processors: [batch]
+          processors: [k8sattributes, batch]
           exporters: [otlp]
   resources: {}
   tolerations: []
@@ -51,35 +67,63 @@ gateway:
   logging:
     format: json
     level: info
+  featureGates: []
   runtimeEnv: {}
   collectorConfig: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
     receivers:
       otlp:
         protocols:
           grpc:
             endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
     processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 15
       batch: {}
     exporters:
-      debug: {}
+      otlp:
+        endpoint: oksg-backend:4317
+        tls:
+          insecure: true
+        sending_queue:
+          enabled: true
+        retry_on_failure:
+          enabled: true
     service:
-      telemetry:
-        logs:
-          level: ${env:OTEL_LOG_LEVEL}
-          encoding: json
+      extensions:
+        - health_check
       pipelines:
         metrics:
           receivers: [otlp]
-          processors: [batch]
-          exporters: [debug]
+          processors: [memory_limiter, batch]
+          exporters: [otlp]
   replicas: 1
   service:
     type: ClusterIP
     port: 4317
+    httpPort: 4318
   resources: {}
 
 backend:
-  enabled: false
+  enabled: true
+  grpcEndpoint: oksg-backend:4317
+  httpEndpoint: 0.0.0.0:4318
+  image:
+    repository: oksg-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    grpcPort: 4317
+    httpPort: 4318
+    healthPort: 13133
+  runtimeEnv: {}
+  resources: {}
 
 secrets:
   existingSecretName: ""
