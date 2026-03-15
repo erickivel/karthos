@@ -42,20 +42,10 @@ runs:
         echo "${{ github.workspace }}/bin" >> "$GITHUB_PATH"
         echo "GOBIN=${{ github.workspace }}/bin" >> "$GITHUB_ENV"
 
-    - name: Resolve Go cache paths
-      id: go-cache-paths
-      shell: bash
-      run: |
-        echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-        echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-
-    - name: Cache Go and tool directories
-      uses: actions/cache@v4
+    - name: Cache workspace tools
+      uses: actions/cache@v5
       with:
-        path: |
-          ${{ steps.go-cache-paths.outputs.gomodcache }}
-          ${{ steps.go-cache-paths.outputs.gocache }}
-          ${{ github.workspace }}/bin
+        path: ${{ github.workspace }}/bin
         key: ${{ runner.os }}-go-${{ inputs.go-version }}-tools-${{ inputs.task-version }}-${{ inputs.golangci-lint-version }}-${{ inputs.govulncheck-version }}-${{ inputs.gosec-version }}-${{ hashFiles('go.sum', '.github/workflows/ci.yml', '.github/actions/setup-go-ci/action.yml') }}
         restore-keys: |
           ${{ runner.os }}-go-${{ inputs.go-version }}-tools-${{ inputs.task-version }}-${{ inputs.golangci-lint-version }}-${{ inputs.govulncheck-version }}-${{ inputs.gosec-version }}-
