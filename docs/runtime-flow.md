@@ -35,6 +35,111 @@ sequenceDiagram
     end
 ```
 
+## Backend Ingest Sequence
+
+The following diagram shows how the backend process wires and runs its components, and how a single OTLP request flows through them.
+
+```mermaid
+sequenceDiagram
+    participant Gateway as Gateway Collector
+    participant Main as cmd/backend/main.go
+    participant Server as pkg/adapters/otlp/server.go
+    participant Builder as EnvelopeBuilder
+    participant Router as SignalRouter
+    participant Ingestor as LogIngestor
+    participant Logger as pkg/core/logging
+
+    Note over Main: Process startup
+    Main->>Logger: logging.New("backend", logLevel)
+    Logger-->>Main: *Logger
+    Main->>Builder: ingest.NewEnvelopeBuilder(now)
+    Builder-->>Main: *EnvelopeBuilder
+    Main->>Ingestor: ingest.NewLogIngestor(logger)
+    Ingestor-->>Main: *LogIngestor (metrics)
+    Main->>Ingestor: ingest.NewLogIngestor(logger)
+    Ingestor-->>Main: *LogIngestor (traces)
+    Main->>Router: ingest.NewSignalRouter(metricsIngestor, tracesIngestor)
+    Router-->>Main: *SignalRouter
+    Main->>Server: otlp.NewServer(config, builder, router, logger)
+    Server-->>Main: *Server
+    Main->>Server: server.Run(ctx)
+    Note over Server: Listening on :4317 (gRPC), :4318 (HTTP), :13133 (health)
+
+    Note over Gateway,Server: Runtime: OTLP Export Request
+    Gateway->>Server: OTLP gRPC Export (metrics)
+    activate Server
+    Server->>Server: Check enabled["metric"]
+    Server->>Builder: BuildMetricEnvelopes("otlp/grpc", request)
+    activate Builder
+    Builder->>Builder: For each ResourceMetrics: extract resource attributes, marshal payload to JSON
+    Builder->>Builder: schema.NewRawEnvelope(source, SignalMetric, attrs, payload, now)
+    Builder-->>Server: []schema.RawEnvelope
+    deactivate Builder
+
+    loop For each envelope
+        Server->>Router: Route(ctx, envelope)
+        activate Router
+        Router->>Router: Switch on envelope.SignalType
+        Router->>Ingestor: metrics.Ingest(ctx, envelope)
+        activate Ingestor
+        Ingestor->>Logger: logger.Info("envelope received", ...)
+        Logger-->>Ingestor: (logged)
+        Ingestor-->>Router: nil (success)
+        deactivate Ingestor
+        Router-->>Server: nil (success)
+        deactivate Router
+    end
+
+    Server-->>Gateway: ExportMetricsServiceResponse{}
+    deactivate Server
+```
+
+## Component Responsibilities
+
+| File | Type | Role |
+|------|------|------|
+| `cmd/backend/main.go` | Binary entrypoint | Parses config, wires dependencies, starts server |
+| `pkg/adapters/otlp/server.go` | `Server` | OTLP gRPC/HTTP listener, delegates to builder + router |
+| `pkg/backend/ingest/otlp.go` | `EnvelopeBuilder` | Converts OTLP protos → `[]schema.RawEnvelope` |
+| `pkg/backend/ingest/otlp.go` | `SignalRouter` | Routes envelopes by signal type to the right `Ingestor` |
+| `pkg/backend/ingest/otlp.go` | `LogIngestor` | Implements `Ingestor`, logs envelope metadata |
+| `pkg/backend/ingest/ingest.go` | `Ingestor` interface | Contract: `Ingest(ctx, envelope) error` |
+| `pkg/core/schema` | `RawEnvelope` | Canonical telemetry envelope struct |
+
+## Data Flow Summary
+
+```
+Gateway
+   │
+   │ OTLP gRPC/HTTP
+   ▼
+┌──────────────────────────────────────────────────────────────┐
+│  pkg/adapters/otlp/server.go                                 │
+│  (metricsService.Export / handleMetricsHTTP)                 │
+│                                                              │
+│  1. Check signal enabled                                     │
+│  2. builder.BuildMetricEnvelopes("otlp/grpc", request)       │
+│  3. for each envelope: router.Route(ctx, envelope)           │
+└──────────────────────────────────────────────────────────────┘
+         │                              │
+         │ BuildMetricEnvelopes         │ Route
+         ▼                              ▼
+┌─────────────────────────┐   ┌─────────────────────────┐
+│ EnvelopeBuilder         │   │ SignalRouter            │
+│ (pkg/backend/ingest)    │   │ (pkg/backend/ingest)    │
+│                         │   │                         │
+│ → []schema.RawEnvelope   │   │ → metrics.Ingest(...)   │
+└─────────────────────────┘   └─────────────────────────┘
+                                        │
+                                        ▼
+                              ┌─────────────────────────┐
+                              │ LogIngestor             │
+                              │ (pkg/backend/ingest)    │
+                              │                         │
+                              │ → logger.Info(...)      │
+                              └─────────────────────────┘
+```
+
 ## Runtime Stages
 
 ### 1. Agent Collection
