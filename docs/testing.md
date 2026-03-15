@@ -15,6 +15,8 @@ Key coverage areas:
 - Kubernetes discovery adapter behavior
 - source planner receiver selection
 - Helm values generation
+- backend OTLP envelope conversion and routing
+- OTLP gRPC and HTTP ingest integration
 - Helm deploy command assembly
 - structured JSON logger behavior
 - `discovery-job` mode orchestration
@@ -55,9 +57,10 @@ What each stage now does:
 - `test:e2e:plan`
   writes `bin/e2e/otel-values.yaml` and optional rendered chart output under `bin/e2e/rendered`
 - `test:e2e:apply-otel`
-  runs `helm upgrade --install`
+  runs `helm upgrade --install` for agent, gateway, and backend
 - `test:e2e:verify`
-  checks Helm status, pod readiness, and recent agent/gateway logs
+  checks Helm status, pod readiness, and recent agent/gateway/backend logs
+- generated values can also carry collector `featureGates`; the default agent e2e flow enables `receiver.kubeletstats.enableCPUUsageMetrics` to reduce known kubeletstats deprecation noise
 
 ## Scenario Expectations
 
@@ -69,7 +72,8 @@ Expected:
 
 - Prometheus-annotated services are detected
 - generated Helm values include Prometheus receiver config
-- agent DaemonSet and gateway Deployment become ready
+- agent DaemonSet, gateway Deployment, and backend Deployment become ready
+- backend logs show accepted metric envelopes after the gateway forwards traffic
 
 ### No Telemetry Fallback
 
@@ -79,7 +83,8 @@ Expected:
 
 - no Prometheus targets are present
 - generated Helm values keep only `kubeletstats`
-- agent and gateway still deploy successfully
+- agent, gateway, and backend still deploy successfully
+- backend logs still show infrastructure-oriented envelopes received through the fallback path
 
 ## Logs and Failure Inspection
 
@@ -88,6 +93,7 @@ OKSG uses structured JSON logs to stdout only. For operational debugging:
 ```bash
 kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=agent --tail=30
 kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=gateway --tail=30
+kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=backend --tail=30
 helm status oksg-otel -n oksg-system
 ```
 

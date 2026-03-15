@@ -13,7 +13,7 @@ import (
 )
 
 func TestDiscoverBuildsClusterProfileWithPrometheusTargets(t *testing.T) {
-	client := fake.NewSimpleClientset(
+	client := fake.NewClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "kind-control-plane"}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "oksg-demo"}},
 		&appsv1.Deployment{
@@ -59,7 +59,7 @@ func TestDiscoverBuildsClusterProfileWithPrometheusTargets(t *testing.T) {
 }
 
 func TestDiscoverFallsBackToKubeletstatsWhenPrometheusAbsent(t *testing.T) {
-	client := fake.NewSimpleClientset(
+	client := fake.NewClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "oksg-demo"}},
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: "service-a-python", Namespace: "oksg-demo"},

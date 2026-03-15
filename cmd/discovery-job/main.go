@@ -78,6 +78,12 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	helmDryRun := fs.Bool("helm-dry-run", false, "run helm upgrade with --dry-run")
 	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultLogLevel), "structured log level: debug, info, warn, error")
 	targetNamespace := fs.String("target-namespace", "", "filter Prometheus discovery to this namespace (empty = all namespaces)")
+	collectorImageRepository := fs.String("collector-image-repository", envOrDefault("OKSG_COLLECTOR_IMAGE_REPOSITORY", configgen.DefaultCollectorRepository), "collector image repository")
+	collectorImageTag := fs.String("collector-image-tag", envOrDefault("OKSG_COLLECTOR_IMAGE_TAG", configgen.DefaultCollectorTag), "collector image tag")
+	collectorImagePullPolicy := fs.String("collector-image-pull-policy", envOrDefault("OKSG_COLLECTOR_IMAGE_PULL_POLICY", configgen.DefaultCollectorPullPolicy), "collector image pull policy")
+	backendImageRepository := fs.String("backend-image-repository", envOrDefault("OKSG_BACKEND_IMAGE_REPOSITORY", configgen.DefaultBackendRepository), "backend image repository")
+	backendImageTag := fs.String("backend-image-tag", envOrDefault("OKSG_BACKEND_IMAGE_TAG", configgen.DefaultBackendTag), "backend image tag")
+	backendImagePullPolicy := fs.String("backend-image-pull-policy", envOrDefault("OKSG_BACKEND_IMAGE_PULL_POLICY", configgen.DefaultBackendPullPolicy), "backend image pull policy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -100,6 +106,18 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 		Timeout:      *helmTimeout,
 		DryRun:       *helmDryRun,
 		RenderedPath: *renderedOutputPath,
+	}
+	generatorOptions := configgen.GeneratorOptions{
+		CollectorImage: configgen.ImageValues{
+			Repository: *collectorImageRepository,
+			Tag:        *collectorImageTag,
+			PullPolicy: *collectorImagePullPolicy,
+		},
+		BackendImage: configgen.ImageValues{
+			Repository: *backendImageRepository,
+			Tag:        *backendImageTag,
+			PullPolicy: *backendImagePullPolicy,
+		},
 	}
 
 	logger.Info("starting command",
@@ -137,7 +155,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			deps.planner = otel.NewSourcePlanner(activeNamespace)
 		}
 		if deps.generator == nil {
-			deps.generator = defaultGenerator()
+			deps.generator = defaultGenerator(generatorOptions)
 		}
 		plan, err := deps.planner.Plan(ctx, clusterProfile)
 		if err != nil {
@@ -178,7 +196,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			deps.planner = otel.NewSourcePlanner(activeNamespace)
 		}
 		if deps.generator == nil {
-			deps.generator = defaultGenerator()
+			deps.generator = defaultGenerator(generatorOptions)
 		}
 		if deps.deployer == nil {
 			deps.deployer = deployer.New(nil)
@@ -247,13 +265,13 @@ func realDependenciesWithKubeconfig(kubeconfig, clusterName, namespace, targetNa
 	return dependencies{
 		discover:  adapter.Discover,
 		planner:   otel.NewSourcePlanner(namespace),
-		generator: defaultGenerator(),
+		generator: defaultGenerator(configgen.GeneratorOptions{}),
 		deployer:  deployer.New(nil),
 	}
 }
 
-func defaultGenerator() generator {
-	return configgen.NewGenerator()
+func defaultGenerator(options configgen.GeneratorOptions) generator {
+	return configgen.NewGeneratorWithOptions(options)
 }
 
 func httpProbe(ctx context.Context, url string) bool {

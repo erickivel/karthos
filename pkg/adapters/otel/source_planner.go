@@ -8,10 +8,13 @@ import (
 )
 
 const (
-	DefaultNamespace       = "oksg-system"
-	DefaultGatewayEndpoint = "otel-collector-gateway:4317"
-	DefaultHealthEndpoint  = "0.0.0.0:13133"
-	DefaultClusterName     = "default-cluster"
+	DefaultNamespace           = "oksg-system"
+	DefaultGatewayGRPCEndpoint = "otel-collector-gateway:4317"
+	DefaultGatewayHTTPEndpoint = "0.0.0.0:4318"
+	DefaultBackendGRPCEndpoint = "oksg-backend:4317"
+	DefaultBackendHTTPEndpoint = "0.0.0.0:4318"
+	DefaultHealthEndpoint      = "0.0.0.0:13133"
+	DefaultClusterName         = "default-cluster"
 )
 
 type SourcePlanner interface {
@@ -19,10 +22,18 @@ type SourcePlanner interface {
 }
 
 type Plan struct {
-	ClusterName   string
-	Namespace     string
-	AgentConfig   CollectorConfig
-	GatewayConfig CollectorConfig
+	ClusterName    string
+	Namespace      string
+	EnabledSignals []string
+	Backend        BackendConfig
+	AgentConfig    CollectorConfig
+	GatewayConfig  CollectorConfig
+}
+
+type BackendConfig struct {
+	Enabled      bool
+	GRPCEndpoint string
+	HTTPEndpoint string
 }
 
 type CollectorConfig struct {
@@ -61,6 +72,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		return nil, fmt.Errorf("cluster profile is required")
 	}
 
+	enabledSignals := []string{"metric"}
 	agentReceivers := map[string]any{
 		"kubeletstats": map[string]any{
 			"collection_interval":  "30s",
@@ -81,6 +93,25 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		}
 		pipelineReceivers = append(pipelineReceivers, "prometheus")
 	}
+	otlpSignals := otlpSignals(clusterProfile.Sources)
+	if otlpSignals.metrics || otlpSignals.traces {
+		agentReceivers["otlp"] = map[string]any{
+			"protocols": map[string]any{
+				"grpc": map[string]any{
+					"endpoint": "0.0.0.0:4317",
+				},
+				"http": map[string]any{
+					"endpoint": DefaultGatewayHTTPEndpoint,
+				},
+			},
+		}
+	}
+	if otlpSignals.metrics {
+		pipelineReceivers = append(pipelineReceivers, "otlp")
+	}
+	if otlpSignals.traces {
+		enabledSignals = append(enabledSignals, "trace")
+	}
 
 	agentConfig := CollectorConfig{
 		Extensions: map[string]any{
@@ -98,7 +129,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		},
 		Exporters: map[string]any{
 			"otlp": map[string]any{
-				"endpoint": DefaultGatewayEndpoint,
+				"endpoint": DefaultGatewayGRPCEndpoint,
 				"tls": map[string]any{
 					"insecure": true,
 				},
@@ -115,6 +146,13 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			},
 		},
 	}
+	if otlpSignals.traces {
+		agentConfig.Service.Pipelines["traces"] = PipelineConfig{
+			Receivers:  []string{"otlp"},
+			Processors: []string{"k8sattributes", "batch"},
+			Exporters:  []string{"otlp"},
+		}
+	}
 
 	gatewayConfig := CollectorConfig{
 		Extensions: map[string]any{
@@ -128,25 +166,51 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 					"grpc": map[string]any{
 						"endpoint": "0.0.0.0:4317",
 					},
+					"http": map[string]any{
+						"endpoint": DefaultGatewayHTTPEndpoint,
+					},
 				},
 			},
 		},
 		Processors: map[string]any{
+			"memory_limiter": map[string]any{
+				"check_interval":         "1s",
+				"limit_percentage":       75,
+				"spike_limit_percentage": 15,
+			},
 			"batch": map[string]any{},
 		},
 		Exporters: map[string]any{
-			"debug": map[string]any{},
+			"otlp": map[string]any{
+				"endpoint": DefaultBackendGRPCEndpoint,
+				"tls": map[string]any{
+					"insecure": true,
+				},
+				"sending_queue": map[string]any{
+					"enabled": true,
+				},
+				"retry_on_failure": map[string]any{
+					"enabled": true,
+				},
+			},
 		},
 		Service: ServiceConfig{
 			Extensions: []string{"health_check"},
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
 					Receivers:  []string{"otlp"},
-					Processors: []string{"batch"},
-					Exporters:  []string{"debug"},
+					Processors: []string{"memory_limiter", "batch"},
+					Exporters:  []string{"otlp"},
 				},
 			},
 		},
+	}
+	if otlpSignals.traces {
+		gatewayConfig.Service.Pipelines["traces"] = PipelineConfig{
+			Receivers:  []string{"otlp"},
+			Processors: []string{"memory_limiter", "batch"},
+			Exporters:  []string{"otlp"},
+		}
 	}
 
 	clusterLabel := clusterProfile.ClusterName
@@ -158,11 +222,22 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 	}
 
 	return &Plan{
-		ClusterName:   clusterLabel,
-		Namespace:     p.namespace,
+		ClusterName:    clusterLabel,
+		Namespace:      p.namespace,
+		EnabledSignals: enabledSignals,
+		Backend: BackendConfig{
+			Enabled:      true,
+			GRPCEndpoint: DefaultBackendGRPCEndpoint,
+			HTTPEndpoint: DefaultBackendHTTPEndpoint,
+		},
 		AgentConfig:   agentConfig,
 		GatewayConfig: gatewayConfig,
 	}, nil
+}
+
+type sourceSignals struct {
+	metrics bool
+	traces  bool
 }
 
 func prometheusTargets(sources []profile.ObservabilitySource) []profile.PrometheusTarget {
@@ -196,4 +271,16 @@ func buildPrometheusScrapeConfigs(targets []profile.PrometheusTarget) []map[stri
 		})
 	}
 	return scrapeConfigs
+}
+
+func otlpSignals(sources []profile.ObservabilitySource) sourceSignals {
+	var signals sourceSignals
+	for _, source := range sources {
+		if source.Type != "otlp" || !source.Present || source.OTLP == nil {
+			continue
+		}
+		signals.metrics = signals.metrics || source.OTLP.MetricsEnabled
+		signals.traces = signals.traces || source.OTLP.TracesEnabled
+	}
+	return signals
 }

@@ -1,0 +1,58 @@
+{{- if .Values.backend.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oksg-backend
+  namespace: {{ include "oksg-otel.namespace" . }}
+  labels:
+    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
+        app.kubernetes.io/component: backend
+    spec:
+      containers:
+        - name: oksg-backend
+          image: {{ include "oksg-otel.backendImage" . }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          args:
+            - --grpc-listen-address=0.0.0.0:{{ .Values.backend.service.grpcPort }}
+            - --http-listen-address=0.0.0.0:{{ .Values.backend.service.httpPort }}
+            - --health-listen-address=0.0.0.0:{{ .Values.backend.service.healthPort }}
+            - --enabled-signals={{ join "," .Values.enabledSignals }}
+          env:
+            - name: OKSG_LOG_LEVEL
+              value: {{ .Values.global.logging.level | quote }}
+          {{- range $key, $value := .Values.backend.runtimeEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+          {{- end }}
+          ports:
+            - containerPort: {{ .Values.backend.service.grpcPort }}
+              name: otlp-grpc
+            - containerPort: {{ .Values.backend.service.httpPort }}
+              name: otlp-http
+            - containerPort: {{ .Values.backend.service.healthPort }}
+              name: health
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+{{ toYaml .Values.backend.resources | indent 12 }}
+{{- end }}

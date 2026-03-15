@@ -1,6 +1,6 @@
 # Project Overview
 
-This repository contains the Phase 1 foundation plus the first Phase 2 implementation slice of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
+This repository contains the Phase 1 foundation, the Phase 2 discovery/planning slice, and the first Phase 3 implementation slice of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
 
 The system is organized around stable architectural boundaries between:
 
@@ -11,7 +11,7 @@ The system is organized around stable architectural boundaries between:
 - persistence
 - control and query APIs
 
-Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers. Phase 2 currently focuses on discovery-driven OpenTelemetry collector assembly for Prometheus-or-fallback scenarios.
+Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers. The current implemented slice now includes discovery-driven OpenTelemetry collector assembly plus the first deployed collection-plane runtime with backend OTLP ingest.
 
 # Tech Stack (Main App)
 
@@ -19,7 +19,7 @@ Keep the main application minimal:
 
 - Go
 - Kubernetes Go client for discovery and cluster-side deployment workflows
-- `sigs.k8s.io/yaml` for collector manifest rendering
+- `sigs.k8s.io/yaml` for collector config and Helm values rendering
 - Prometheus packages only when a concrete Prometheus adapter, parser, or test application needs them
 - OTLP packages only when an OTLP adapter or receiver is added
 - `github.com/google/uuid` for event identifiers
@@ -34,7 +34,7 @@ Do not add large framework dependencies before there is a concrete need for them
 cmd/
   backend/         Main backend binary entrypoint
   controller/      Future controller/operator entrypoint
-  discovery-job/   Future batch discovery entrypoint
+  discovery-job/   Discovery, planning, and deploy entrypoint
   schema-gen/      Helper for JSON Schema generation
 
 pkg/
@@ -55,7 +55,7 @@ pkg/
     autoinstrumentation/ Reserved auto-instrumentation boundary
 
   collector/
-    configgen/      Future collector config generation
+    configgen/      Collector config and Helm values generation
     pipelines/      Collection plane pipeline contracts
     exporters/      Future collector exporters
 
@@ -150,7 +150,7 @@ Primary commands:
 
 Guidance:
 
-- Prefer `task test` before and after meaningful changes.
+- Prefer `task ci` before and after meaningful changes.
 - Prefer `task test:e2e:scenario:fallback` and `task test:e2e:scenario:prometheus` when changing discovery-driven collection behavior.
 - Keep new behavior covered by focused unit tests.
 - Use `go generate ./...` or `task generate` to refresh JSON Schema output after schema changes.
@@ -167,21 +167,25 @@ Run all checks locally with `task ci` before pushing.
 
 # Documentation
 
-The `docs/` folder contains detailed documentation that must be kept up to date:
+The root [`README.md`](README.md) and the `docs/` folder contain detailed documentation that must be kept up to date:
 
 | Document | Description |
 |----------|-------------|
 | `docs/architecture.md` | System layers, component responsibilities, design principles |
 | `docs/discovery-flow.md` | Sequence diagrams and pipeline documentation |
+| `docs/runtime-flow.md` | Post-deploy telemetry flow from collectors into backend ingest |
 | `docs/testing.md` | Unit tests, e2e testing with kind, test scenarios |
 | `docs/development.md` | Project structure and contribution guidelines |
 
 **Documentation Update Requirements:**
 
+- Treat the root [`README.md`](README.md) as the top-level implementation and onboarding summary, and keep it aligned with the current project phase and runtime behavior.
 - Treat `docs/` as the primary implementation documentation surface. Prefer keeping `docs/` current over adding broad code-level documentation.
 - Keep documentation aligned with the actual implementation and current Taskfile commands, not aspirational or outdated flows.
+- When the current project phase, implemented runtime surface, or repository entrypoints change, update the root [`README.md`](README.md)
 - When adding or modifying adapters, update `docs/architecture.md` with new components
 - When changing the discovery or deployment pipeline, update the sequence diagram and operational steps in `docs/discovery-flow.md`
+- When changing the deployed runtime telemetry path after Helm apply, update `docs/runtime-flow.md`
 - When changing test infrastructure, Helm install flow, or task names, update `docs/testing.md`
 - When adding new packages or changing project structure, update `docs/development.md`
 - When changing Helm values, ConfigMaps, Secrets, or runtime toggles, update the relevant docs to describe the configuration model
