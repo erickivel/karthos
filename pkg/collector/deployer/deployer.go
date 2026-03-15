@@ -2,6 +2,7 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,7 +38,7 @@ func New(runner Runner) *Deployer {
 	return &Deployer{runner: runner}
 }
 
-func (d *Deployer) Apply(ctx context.Context, values []byte, options Options) error {
+func (d *Deployer) Apply(ctx context.Context, values []byte, options Options) (err error) {
 	if len(values) == 0 {
 		return fmt.Errorf("helm values are required")
 	}
@@ -48,7 +49,11 @@ func (d *Deployer) Apply(ctx context.Context, values []byte, options Options) er
 	if err != nil {
 		return err
 	}
-	defer os.Remove(valuesFile)
+	defer func() {
+		if removeErr := os.Remove(valuesFile); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove temp values file: %w", removeErr))
+		}
+	}()
 
 	if err := d.lint(ctx, valuesFile, options); err != nil {
 		return err
@@ -74,7 +79,7 @@ func (d *Deployer) Apply(ctx context.Context, values []byte, options Options) er
 	return d.runner(ctx, "helm", args)
 }
 
-func (d *Deployer) Template(ctx context.Context, values []byte, options Options) error {
+func (d *Deployer) Template(ctx context.Context, values []byte, options Options) (err error) {
 	if len(values) == 0 {
 		return fmt.Errorf("helm values are required")
 	}
@@ -88,7 +93,11 @@ func (d *Deployer) Template(ctx context.Context, values []byte, options Options)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(valuesFile)
+	defer func() {
+		if removeErr := os.Remove(valuesFile); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove temp values file: %w", removeErr))
+		}
+	}()
 
 	if err := d.lint(ctx, valuesFile, options); err != nil {
 		return err
@@ -115,10 +124,15 @@ func writeTempFile(pattern string, payload []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
 	}
-	defer file.Close()
 
 	if _, err := file.Write(payload); err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			return "", errors.Join(fmt.Errorf("write temp file: %w", err), fmt.Errorf("close temp file: %w", closeErr))
+		}
 		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("close temp file: %w", err)
 	}
 	return file.Name(), nil
 }

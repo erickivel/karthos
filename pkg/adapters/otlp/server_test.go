@@ -53,7 +53,9 @@ func TestServerAcceptsMetricsOverGRPC(t *testing.T) {
 
 	conn, err := grpc.NewClient(server.GRPCAddress(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
 
 	client := colmetricpb.NewMetricsServiceClient(conn)
 	_, err = client.Export(context.Background(), &colmetricpb.ExportMetricsServiceRequest{
@@ -103,7 +105,9 @@ func TestServerAcceptsGzipCompressedMetricsOverGRPC(t *testing.T) {
 		grpc.WithDefaultCallOptions(grpc.UseCompressor(gzip.Name)),
 	)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
 
 	client := colmetricpb.NewMetricsServiceClient(conn)
 	_, err = client.Export(context.Background(), &colmetricpb.ExportMetricsServiceRequest{
@@ -162,7 +166,9 @@ func TestServerAcceptsTracesOverHTTP(t *testing.T) {
 
 	response, err := http.Post("http://"+server.HTTPAddress()+"/v1/traces", "application/x-protobuf", bytes.NewReader(payload))
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() {
+		require.NoError(t, response.Body.Close())
+	}()
 
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Eventually(t, func() bool { return len(tracesSink.envelopes) == 1 }, 2*time.Second, 50*time.Millisecond)

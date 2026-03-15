@@ -287,9 +287,13 @@ func httpProbe(ctx context.Context, url string) bool {
 	if err != nil {
 		return false
 	}
-	defer response.Body.Close()
 
-	return response.StatusCode >= 200 && response.StatusCode < 400
+	healthy := response.StatusCode >= 200 && response.StatusCode < 400
+	if err := response.Body.Close(); err != nil {
+		return false
+	}
+
+	return healthy
 }
 
 func readProfile(path string) (*profile.ClusterProfile, error) {
