@@ -83,6 +83,40 @@ func TestRunDeployUsesGeneratedManifests(t *testing.T) {
 	require.NotContains(t, applied, "prometheus:")
 }
 
+func TestRunDeployUsesHelmNamespaceForBothPlannerAndDeployer(t *testing.T) {
+	tempDir := t.TempDir()
+	profilePath := filepath.Join(tempDir, "profile.json")
+
+	err := os.WriteFile(profilePath, []byte(`{
+  "sources": [{
+    "name": "application-prometheus",
+    "type": "prometheus",
+    "present": false
+  }]
+}`), 0o644)
+	require.NoError(t, err)
+
+	var applied string
+	var appliedOptions deployer.Options
+	err = run(context.Background(), []string{
+		"--mode=deploy",
+		"--profile=" + profilePath,
+		"--namespace=default-ns",
+		"--helm-namespace=override-ns",
+	}, dependencies{
+		generator: defaultGenerator(),
+		deployer: deployFunc(func(_ context.Context, values []byte, options deployer.Options) error {
+			applied = string(values)
+			appliedOptions = options
+			return nil
+		}),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "override-ns", appliedOptions.Namespace)
+	require.Contains(t, applied, "namespace: override-ns")
+	require.NotContains(t, applied, "namespace: default-ns")
+}
+
 func TestRunDiscoverWritesProfile(t *testing.T) {
 	tempDir := t.TempDir()
 	outputPath := filepath.Join(tempDir, "profile.json")

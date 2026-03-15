@@ -134,7 +134,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = otel.NewSourcePlanner(*namespace)
+			deps.planner = otel.NewSourcePlanner(activeNamespace)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator()
@@ -175,7 +175,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = otel.NewSourcePlanner(*namespace)
+			deps.planner = otel.NewSourcePlanner(activeNamespace)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator()
