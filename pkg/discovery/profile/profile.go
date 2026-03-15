@@ -8,6 +8,7 @@ import (
 
 type ClusterProfile struct {
 	ClusterID            entities.EntityID     `json:"cluster_id"`
+	ClusterName          string                `json:"cluster_name"`
 	DiscoveredAt         time.Time             `json:"discovered_at"`
 	Nodes                []entities.Node       `json:"nodes,omitempty"`
 	Namespaces           []entities.Namespace  `json:"namespaces,omitempty"`

@@ -1,6 +1,6 @@
 # Discovery Flow
 
-This document describes the discovery-driven OTel collection pipeline implemented in Phase 2.
+This document describes the currently implemented discovery-driven collector flow.
 
 ## Sequence Diagram
 
@@ -11,118 +11,98 @@ sequenceDiagram
     participant DA as DiscoveryAdapter
     participant K8s as Kubernetes API
     participant SP as SourcePlanner
-    participant CG as ConfigGenerator
-    participant D as Deployer
+    participant RV as ReleaseValuesBuilder
+    participant H as Helm runner
     participant Cluster as K8s Cluster
 
     User->>CLI: discovery-job --mode=discover
     CLI->>DA: Discover(ctx)
-    DA->>K8s: List Nodes
-    K8s-->>DA: []Node
-    DA->>K8s: List Namespaces
-    K8s-->>DA: []Namespace
-    DA->>K8s: List Deployments
-    K8s-->>DA: []Deployment
-    DA->>K8s: List Services
-    K8s-->>DA: []Service
-    
-    loop For each Service
-        DA->>DA: Check prometheus.io/scrape annotation
-        alt Has annotation
-            DA->>DA: Extract port, path from annotations
-            DA->>DA: HTTP probe /metrics endpoint
-            DA->>DA: Add to PrometheusTargets
-        end
-    end
-    
+    DA->>K8s: List Nodes, Namespaces, Deployments, Services
+    DA->>DA: Detect prometheus annotations and optional reachability
     DA-->>CLI: ClusterProfile
     CLI->>CLI: Write profile.json
 
     User->>CLI: discovery-job --mode=plan --profile=profile.json
-    CLI->>CLI: Read profile.json
     CLI->>SP: Plan(ctx, ClusterProfile)
-    
-    SP->>SP: Add kubeletstats receiver (always)
-    
-    alt PrometheusTargets found
-        SP->>SP: Add prometheus receiver with scrape configs
+    SP->>SP: Always add kubeletstats
+    alt Prometheus targets found
+        SP->>SP: Add prometheus receiver and scrape configs
     end
-    
-    SP-->>CLI: Plan (AgentConfig + GatewayConfig)
-    CLI->>CG: Generate(Plan)
-    CG->>CG: Marshal configs to YAML
-    CG->>CG: Render ConfigMap templates
-    CG->>CG: Render DaemonSet template
-    CG->>CG: Render Deployment template
-    CG-->>CLI: Combined YAML manifests
-    CLI->>CLI: Write manifests.yaml
+    SP-->>CLI: Plan
+    CLI->>RV: Build(plan)
+    RV-->>CLI: Helm values YAML
+    CLI->>CLI: Write otel-values.yaml
+    opt Render preview
+        CLI->>H: helm lint
+        CLI->>H: helm template
+    end
 
     User->>CLI: discovery-job --mode=deploy --profile=profile.json
     CLI->>SP: Plan(ctx, ClusterProfile)
     SP-->>CLI: Plan
-    CLI->>CG: Generate(Plan)
-    CG-->>CLI: manifests
-    CLI->>D: Apply(ctx, manifests)
-    D->>Cluster: kubectl apply -f -
-    Cluster-->>D: Applied
-    D-->>CLI: Success
+    CLI->>RV: Build(plan)
+    RV-->>CLI: Helm values YAML
+    CLI->>H: helm lint
+    opt Render artifacts
+        CLI->>H: helm template
+    end
+    CLI->>H: helm upgrade --install
+    H->>Cluster: Create or update release resources
+    Cluster-->>H: Release applied
 ```
 
 ## Pipeline Stages
 
-### 1. Discovery (`--mode=discover`)
+### 1. Discovery
 
-The discovery adapter queries the Kubernetes API and produces a `ClusterProfile`:
+The discovery adapter queries Kubernetes and produces a `ClusterProfile` with:
 
-```go
-type ClusterProfile struct {
-    ClusterID            entities.EntityID
-    DiscoveredAt         time.Time
-    Nodes                []entities.Node
-    Namespaces           []entities.Namespace
-    Workloads            []entities.Workload
-    Services             []entities.Service
-    Sources              []ObservabilitySource
-    CollectionPaths      []OTelCollectionPath
-    RecommendedReceivers []string
-}
-```
+- cluster ID
+- discovered nodes, namespaces, workloads, and services
+- detected observability sources
+- recommended collection paths and receivers
 
-**Prometheus Detection Logic:**
+Prometheus detection is currently based on service annotations:
 
-1. Iterate through all services in the cluster
-2. Check for `prometheus.io/scrape: "true"` annotation
-3. Extract metrics path from `prometheus.io/path` (default: `/metrics`)
-4. Extract port from `prometheus.io/port` (default: first service port)
-5. Optionally probe the endpoint to verify reachability
+- `prometheus.io/scrape`
+- `prometheus.io/path`
+- `prometheus.io/port`
 
-### 2. Planning (`--mode=plan`)
+### 2. Source Planning
 
-The source planner reads the `ClusterProfile` and generates OTel Collector configurations:
+The source planner turns the profile into collector intent:
 
-**Agent Configuration (always includes):**
-- `kubeletstats` receiver for node/pod/container metrics
+- agent always includes `kubeletstats`
+- agent adds `prometheus` only when targets were discovered
+- gateway receives OTLP from agents
+- collector telemetry logging is configured for JSON stdout logging with env-controlled level
 
-**Agent Configuration (conditional):**
-- `prometheus` receiver with scrape configs for each discovered target
+### 3. Release Values Generation
 
-**Gateway Configuration:**
-- `otlp` receiver (gRPC) for agent data
-- `batch` processor
-- `debug` exporter (for testing)
+The values builder converts the plan into typed Helm values instead of final Kubernetes manifests.
 
-### 3. Config Generation
+Those values contain:
 
-The generator renders Kubernetes manifests from the plan:
+- global release and image settings
+- agent and gateway collector configs
+- per-component logging levels
+- rollout settings such as config checksum enablement
 
-1. **ConfigMap** for agent collector config
-2. **ConfigMap** for gateway collector config
-3. **DaemonSet** for agent collectors
-4. **Deployment** for gateway collector
+### 4. Helm Deployment
 
-### 4. Deployment (`--mode=deploy`)
+The deployer now performs:
 
-The deployer applies the generated manifests using `kubectl apply -f -`.
+1. `helm lint`
+2. optional `helm template`
+3. `helm upgrade --install`
+
+The Helm chart is responsible for:
+
+- ConfigMaps
+- ServiceAccounts and RBAC
+- agent DaemonSet
+- gateway Service and Deployment
+- restart-on-config-change annotations
 
 ## Example Output
 
@@ -191,9 +171,12 @@ The deployer applies the generated manifests using `kubectl apply -f -`.
 # Run discovery and save profile
 ./discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --output=profile.json
 
-# Generate manifests from profile
-./discovery-job --mode=plan --profile=profile.json --output=manifests.yaml
+# Generate Helm values from profile
+./discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml
 
-# Deploy collectors (plan + apply in one step)
-./discovery-job --mode=deploy --profile=profile.json --namespace=oksg-system
+# Render chart output for inspection
+./discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered
+
+# Deploy collectors through Helm
+./discovery-job --mode=deploy --profile=profile.json --namespace=oksg-system --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel
 ```

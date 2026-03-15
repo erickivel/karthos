@@ -1,0 +1,88 @@
+global:
+  clusterName: default-cluster
+  namespace: oksg-system
+  releaseName: oksg-otel
+  chartPath: ./deploy/helm/oksg-otel
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: 0.111.0
+    pullPolicy: IfNotPresent
+  logging:
+    format: json
+    level: info
+
+namespace:
+  create: true
+  name: oksg-system
+
+agent:
+  enabled: true
+  logging:
+    format: json
+    level: info
+  runtimeEnv: {}
+  collectorConfig: |
+    receivers:
+      kubeletstats:
+        collection_interval: 30s
+    processors:
+      batch: {}
+    exporters:
+      otlp:
+        endpoint: otel-collector-gateway:4317
+        tls:
+          insecure: true
+    service:
+      telemetry:
+        logs:
+          level: ${env:OTEL_LOG_LEVEL}
+          encoding: json
+      pipelines:
+        metrics:
+          receivers: [kubeletstats]
+          processors: [batch]
+          exporters: [otlp]
+  resources: {}
+  tolerations: []
+  nodeSelector: {}
+
+gateway:
+  enabled: true
+  logging:
+    format: json
+    level: info
+  runtimeEnv: {}
+  collectorConfig: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      batch: {}
+    exporters:
+      debug: {}
+    service:
+      telemetry:
+        logs:
+          level: ${env:OTEL_LOG_LEVEL}
+          encoding: json
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 4317
+  resources: {}
+
+backend:
+  enabled: false
+
+secrets:
+  existingSecretName: ""
+
+rollout:
+  useConfigChecksum: true

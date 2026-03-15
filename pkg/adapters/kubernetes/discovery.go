@@ -92,6 +92,7 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 
 	profileResult := &profile.ClusterProfile{
 		ClusterID:    entities.NewCluster(d.clusterName, nil).ID(),
+		ClusterName:  d.clusterName,
 		DiscoveredAt: d.now().UTC(),
 		Nodes:        make([]entities.Node, 0, len(nodes.Items)),
 		Namespaces:   make([]entities.Namespace, 0, len(namespaces.Items)),

@@ -1,106 +1,93 @@
 # Architecture Overview
 
-OKSG (Observability-Driven Kubernetes System Graph) transforms heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior.
+OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice focuses on discovery-driven OpenTelemetry collector deployment for Kubernetes clusters.
 
-## System Layers
+## Current Implemented Boundary
 
-The platform is organized into six architectural layers:
+The implemented control flow is:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    6. Control and API Layer                     │
-│              (Query APIs, Graph Exploration, Reports)           │
-├─────────────────────────────────────────────────────────────────┤
-│                 5. Modeling and Prediction Layer                │
-│           (Scenarios, Predictors, Simulation) [Future]          │
-├─────────────────────────────────────────────────────────────────┤
-│                    4. Persistence Layer                         │
-│          (Metrics Store, Topology Store, Metadata Store)        │
-├─────────────────────────────────────────────────────────────────┤
-│                3. Semantic Processing Layer                     │
-│        (Normalization, Canonicalization, Graph Assembly)        │
-├─────────────────────────────────────────────────────────────────┤
-│                    2. Collection Plane                          │
-│         (OTel Agents, Gateway, Pipelines, Exporters)            │
-├─────────────────────────────────────────────────────────────────┤
-│               1. Cluster Integration Layer                      │
-│    (Kubernetes, Prometheus, Istio, OTLP, OBI Adapters)          │
-└─────────────────────────────────────────────────────────────────┘
+```text
+Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Helm Release
 ```
 
-## Current Implementation (Phase 2)
+What is real today:
 
-Phase 2 focuses on **Discovery-Driven OTel Collection**, implementing:
+- `pkg/adapters/kubernetes` discovers cluster resources and Prometheus annotation-based targets
+- `pkg/adapters/otel` plans collector behavior from the discovery profile
+- `pkg/collector/configgen` converts the plan into typed Helm values
+- `pkg/collector/deployer` runs Helm lint/template/upgrade-install
+- `cmd/discovery-job` orchestrates discover, plan, and deploy modes
 
-- **Kubernetes Discovery Adapter**: Queries cluster API for nodes, namespaces, deployments, and services
-- **Prometheus Endpoint Detection**: Identifies services with `prometheus.io/scrape` annotations
-- **OTel Source Planner**: Generates collector configurations based on discovered telemetry sources
-- **Config Generator**: Renders Kubernetes manifests from OTel plans
-- **Deployer**: Applies generated manifests to the cluster
+What is not implemented yet:
 
-## Data Flow
+- `cmd/backend` is still a placeholder
+- `cmd/controller` is still a placeholder
+- persistence, query APIs, and graph assembly remain contract-first packages rather than active runtime services
 
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Kubernetes  │────▶│   Discovery  │────▶│    Source    │────▶│    Config    │
-│   Cluster    │     │   Adapter    │     │   Planner    │     │  Generator   │
-└──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
-                            │                    │                    │
-                            ▼                    ▼                    ▼
-                     ClusterProfile         OTel Plan           K8s Manifests
-                                                                     │
-                                                                     ▼
-                                                              ┌──────────────┐
-                                                              │   Deployer   │
-                                                              │  (kubectl)   │
-                                                              └──────────────┘
-```
+## Layer View
 
-## Key Design Principles
+```text
+Cluster Integration
+  Kubernetes discovery adapter
 
-1. **Minimal Dependencies**: Add packages only when concretely needed
-2. **Explicit Contracts**: Define interfaces before implementations
-3. **Discovery-Driven**: Let cluster state determine collector configuration
-4. **Modular Adapters**: Keep technology-specific code isolated
-5. **DRY Core Model**: Define canonical entities, metrics, and relations once
-6. **Testability First**: Small interfaces, deterministic IDs, validation helpers
-7. **Deferred Prediction**: Treat prediction as a future consumer, not an early shortcut
+Collection Planning
+  Source planner
+  Collector config assembly
 
-## Component Responsibilities
+Deployment Packaging
+  Helm values builder
+  Helm chart
+  Helm release installer
 
-| Component | Package | Responsibility |
-|-----------|---------|----------------|
-| Discovery Adapter | `pkg/adapters/kubernetes` | Query K8s API, detect Prometheus endpoints |
-| Source Planner | `pkg/adapters/otel` | Generate OTel Collector configs from profile |
-| Config Generator | `pkg/collector/configgen` | Render K8s manifests from OTel plans |
-| Deployer | `pkg/collector/deployer` | Apply manifests via kubectl |
-| Discovery Job | `cmd/discovery-job` | CLI orchestrating the pipeline |
-
-## OTel Collector Architecture
-
-The generated OTel Collector setup consists of:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Kubernetes Cluster                        │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                     oksg-system namespace                    ││
-│  │                                                              ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       ││
-│  │  │ Agent (Node1)│  │ Agent (Node2)│  │ Agent (NodeN)│       ││
-│  │  │  DaemonSet   │  │  DaemonSet   │  │  DaemonSet   │       ││
-│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘       ││
-│  │         │                 │                 │                ││
-│  │         └─────────────────┼─────────────────┘                ││
-│  │                           │ OTLP                             ││
-│  │                           ▼                                  ││
-│  │                    ┌──────────────┐                          ││
-│  │                    │   Gateway    │                          ││
-│  │                    │  Deployment  │                          ││
-│  │                    └──────────────┘                          ││
-│  └─────────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────────┘
+Future Layers
+  semantic processing
+  persistence
+  query and control APIs
+  modeling and prediction
 ```
 
-- **Agents (DaemonSet)**: Run on each node, collect kubeletstats and scrape Prometheus endpoints
-- **Gateway (Deployment)**: Receives OTLP from agents, processes and exports metrics
+## Deployment Model
+
+The Helm chart in `deploy/helm/oksg-otel` owns the Kubernetes resource shape:
+
+- namespace creation
+- agent ConfigMap
+- gateway ConfigMap
+- agent ServiceAccount and RBAC
+- agent DaemonSet
+- gateway ServiceAccount
+- gateway Service
+- gateway Deployment
+
+The planner no longer renders Kubernetes objects directly. It produces collector configuration that is embedded into release values, and Helm renders the final resources.
+
+## Configuration Model
+
+Configuration is split intentionally:
+
+- Helm values:
+  operator-facing deployment settings such as release name, image, namespace, and log levels
+- ConfigMaps:
+  structured collector configuration for agent and gateway
+- Secrets:
+  reserved for credentials and sensitive settings
+- Env vars:
+  runtime toggles and pod or node metadata only
+
+## Logging Policy
+
+OKSG-owned runtime components use structured JSON logs to stdout only.
+
+- required fields: `ts`, `level`, `component`, `msg`
+- common context when available: `cluster`, `namespace`, `mode`, `error`
+- debugging path: `kubectl logs`
+
+OTel collector workloads are also configured for stdout-based logging, with per-component log level controlled through Helm values.
+
+## Design Principles Still In Force
+
+1. Keep the design minimal and easy to change.
+2. Preserve explicit contracts between discovery, planning, deployment, and future graph layers.
+3. Let discovery decide what to collect, not how Kubernetes YAML is shaped.
+4. Keep technology-specific adapters isolated from domain packages.
+5. Remove stale deployment paths and outdated docs when replacing them.

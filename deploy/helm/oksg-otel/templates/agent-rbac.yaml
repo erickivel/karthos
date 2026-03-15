@@ -1,0 +1,41 @@
+{{- if .Values.agent.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector-agent
+  namespace: {{ include "oksg-otel.namespace" . }}
+  labels:
+    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-agent" (include "oksg-otel.name" .) }}
+  labels:
+    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "nodes/stats", "pods", "namespaces", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "deployments", "daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-agent" (include "oksg-otel.name" .) }}
+  labels:
+    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-agent" (include "oksg-otel.name" .) }}
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector-agent
+    namespace: {{ include "oksg-otel.namespace" . }}
+{{- end }}

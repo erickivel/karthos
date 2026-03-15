@@ -16,6 +16,7 @@ import (
 	"github.com/erickivel/oksg/pkg/adapters/otel"
 	"github.com/erickivel/oksg/pkg/collector/configgen"
 	"github.com/erickivel/oksg/pkg/collector/deployer"
+	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
@@ -28,13 +29,18 @@ type generator interface {
 }
 
 type deployerInterface interface {
-	Apply(ctx context.Context, manifests []byte) error
+	Apply(ctx context.Context, values []byte, options deployer.Options) error
+	Template(ctx context.Context, values []byte, options deployer.Options) error
 }
 
-type deployFunc func(ctx context.Context, manifests []byte) error
+type deployFunc func(ctx context.Context, values []byte, options deployer.Options) error
 
-func (f deployFunc) Apply(ctx context.Context, manifests []byte) error {
-	return f(ctx, manifests)
+func (f deployFunc) Apply(ctx context.Context, values []byte, options deployer.Options) error {
+	return f(ctx, values, options)
+}
+
+func (f deployFunc) Template(_ context.Context, _ []byte, _ deployer.Options) error {
+	return fmt.Errorf("template not implemented")
 }
 
 type dependencies struct {
@@ -52,6 +58,8 @@ func main() {
 }
 
 const defaultClusterName = "default-cluster"
+const defaultReleaseName = "oksg-otel"
+const defaultLogLevel = "info"
 
 func run(ctx context.Context, args []string, deps dependencies) error {
 	fs := flag.NewFlagSet("discovery-job", flag.ContinueOnError)
@@ -60,11 +68,45 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	clusterName := fs.String("cluster-name", defaultClusterName, "name of the cluster being discovered")
 	profilePath := fs.String("profile", "", "path to discovery profile JSON")
 	outputPath := fs.String("output", "", "output file path")
+	valuesOutputPath := fs.String("values-output", "", "output file path for generated Helm values")
+	renderedOutputPath := fs.String("rendered-output", "", "directory for helm template output")
 	namespace := fs.String("namespace", otel.DefaultNamespace, "namespace for generated collector resources")
+	helmNamespace := fs.String("helm-namespace", "", "namespace for Helm release resources (defaults to --namespace)")
+	releaseName := fs.String("release-name", defaultReleaseName, "helm release name")
+	chartPath := fs.String("chart-path", configgen.DefaultChartPath, "path to the Helm chart")
+	helmTimeout := fs.Duration("helm-timeout", deployer.DefaultTimeout, "timeout for helm operations")
+	helmDryRun := fs.Bool("helm-dry-run", false, "run helm upgrade with --dry-run")
+	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultLogLevel), "structured log level: debug, info, warn, error")
 	targetNamespace := fs.String("target-namespace", "", "filter Prometheus discovery to this namespace (empty = all namespaces)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
+	logger, err := logging.New("discovery-job", *logLevel)
+	if err != nil {
+		return err
+	}
+
+	activeNamespace := *namespace
+	if *helmNamespace != "" {
+		activeNamespace = *helmNamespace
+	}
+
+	valuesPath := coalesce(*valuesOutputPath, *outputPath)
+	deployOptions := deployer.Options{
+		ReleaseName:  *releaseName,
+		ChartPath:    *chartPath,
+		Namespace:    activeNamespace,
+		Timeout:      *helmTimeout,
+		DryRun:       *helmDryRun,
+		RenderedPath: *renderedOutputPath,
+	}
+
+	logger.Info("starting command",
+		logging.String("mode", *mode),
+		logging.String("namespace", activeNamespace),
+		logging.String("release_name", *releaseName),
+	)
 
 	switch *mode {
 	case "discover":
@@ -73,36 +115,67 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 		}
 		clusterProfile, err := deps.discover(ctx)
 		if err != nil {
+			logger.Error("discovery failed", logging.Error(err), logging.String("cluster", *clusterName))
 			return err
 		}
-		return writeJSON(*outputPath, clusterProfile)
+		if err := writeJSON(*outputPath, clusterProfile); err != nil {
+			logger.Error("write profile failed", logging.Error(err))
+			return err
+		}
+		logger.Info("profile written",
+			logging.String("cluster", *clusterName),
+			logging.String("output_path", coalesce(*outputPath, "stdout")),
+		)
+		return nil
 	case "plan":
 		clusterProfile, err := readProfile(*profilePath)
 		if err != nil {
+			logger.Error("read profile failed", logging.Error(err), logging.String("profile_path", *profilePath))
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = otel.NewSourcePlanner(*namespace)
+			deps.planner = otel.NewSourcePlanner(activeNamespace)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator()
 		}
 		plan, err := deps.planner.Plan(ctx, clusterProfile)
 		if err != nil {
+			logger.Error("planning failed", logging.Error(err))
 			return err
 		}
-		manifests, err := deps.generator.Generate(*plan)
+		values, err := deps.generator.Generate(*plan)
 		if err != nil {
+			logger.Error("generate helm values failed", logging.Error(err))
 			return err
 		}
-		return writeOutput(*outputPath, manifests)
+		if err := writeOutput(valuesPath, values); err != nil {
+			logger.Error("write helm values failed", logging.Error(err))
+			return err
+		}
+		if *renderedOutputPath != "" {
+			if deps.deployer == nil {
+				deps.deployer = deployer.New(nil)
+			}
+			if err := deps.deployer.Template(ctx, values, deployOptions); err != nil {
+				logger.Error("helm template failed", logging.Error(err))
+				return err
+			}
+		}
+		logger.Info("helm values generated",
+			logging.String("profile_path", *profilePath),
+			logging.String("output_path", coalesce(valuesPath, "stdout")),
+			logging.String("cluster", string(clusterProfile.ClusterID)),
+		)
+		return nil
 	case "deploy":
 		clusterProfile, err := readProfile(*profilePath)
 		if err != nil {
+			logger.Error("read profile failed", logging.Error(err), logging.String("profile_path", *profilePath))
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = otel.NewSourcePlanner(*namespace)
+			deps.planner = otel.NewSourcePlanner(activeNamespace)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator()
@@ -112,18 +185,34 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 		}
 		plan, err := deps.planner.Plan(ctx, clusterProfile)
 		if err != nil {
+			logger.Error("planning failed", logging.Error(err))
 			return err
 		}
-		manifests, err := deps.generator.Generate(*plan)
+		values, err := deps.generator.Generate(*plan)
 		if err != nil {
+			logger.Error("generate helm values failed", logging.Error(err))
 			return err
 		}
-		if err := deps.deployer.Apply(ctx, manifests); err != nil {
+		if valuesPath != "" {
+			if err := writeOutput(valuesPath, values); err != nil {
+				logger.Error("write helm values failed", logging.Error(err))
+				return err
+			}
+		}
+		logger.Info("deploying helm release",
+			logging.String("release_name", *releaseName),
+			logging.String("chart_path", *chartPath),
+			logging.String("namespace", activeNamespace),
+			logging.String("cluster", string(clusterProfile.ClusterID)),
+		)
+		if err := deps.deployer.Apply(ctx, values, deployOptions); err != nil {
+			logger.Error("helm deploy failed", logging.Error(err))
 			return err
 		}
-		if *outputPath != "" {
-			return writeOutput(*outputPath, manifests)
-		}
+		logger.Info("helm release deployed",
+			logging.String("release_name", *releaseName),
+			logging.String("namespace", activeNamespace),
+		)
 		return nil
 	default:
 		return fmt.Errorf("unsupported mode: %s", *mode)
@@ -215,4 +304,20 @@ func writeOutput(path string, payload []byte) error {
 	}
 
 	return os.WriteFile(path, append(payload, '\n'), 0o644)
+}
+
+func coalesce(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func envOrDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }
