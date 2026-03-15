@@ -58,7 +58,7 @@ func envOrDefault(key, fallback string) string {
 }
 
 func callDownstream(serviceName, url string) downstreamResponse {
-	resp, err := http.Get(url) //nolint:gosec // test application request path
+	resp, err := http.Get(url) //#nosec G107 -- test application, URL is from known config
 	if err != nil {
 		return downstreamResponse{Service: serviceName, Error: err.Error()}
 	}
@@ -94,6 +94,6 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s duration=%s", r.Method, r.URL.Path, time.Since(start))
+		log.Printf("%s %s duration=%s", r.Method, r.URL.Path, time.Since(start)) //#nosec G706 -- test app, log injection not a concern
 	})
 }

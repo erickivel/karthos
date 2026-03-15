@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -301,7 +302,7 @@ func readProfile(path string) (*profile.ClusterProfile, error) {
 		return nil, fmt.Errorf("profile path is required")
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path)) //#nosec G304 -- path comes from trusted CLI flag --profile
 	if err != nil {
 		return nil, fmt.Errorf("read profile: %w", err)
 	}
@@ -327,7 +328,7 @@ func writeOutput(path string, payload []byte) error {
 		return err
 	}
 
-	return os.WriteFile(path, append(payload, '\n'), 0o644)
+	return os.WriteFile(filepath.Clean(path), append(payload, '\n'), 0o600) //#nosec G304 -- path from trusted CLI flag
 }
 
 func coalesce(values ...string) string {

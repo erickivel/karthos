@@ -12,7 +12,7 @@ import (
 
 func GenerateSchemas(root string) error {
 	schemasDir := filepath.Join(root, "schemas")
-	if err := os.MkdirAll(schemasDir, 0o755); err != nil {
+	if err := os.MkdirAll(schemasDir, 0o750); err != nil {
 		return err
 	}
 
@@ -24,5 +24,5 @@ func GenerateSchemas(root string) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(schemasDir, "raw-envelope.schema.json"), data, 0o644)
+	return os.WriteFile(filepath.Join(schemasDir, "raw-envelope.schema.json"), data, 0o600)
 }

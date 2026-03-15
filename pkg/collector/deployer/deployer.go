@@ -151,7 +151,7 @@ func (d *Deployer) template(ctx context.Context, valuesFile string, options Opti
 }
 
 func defaultRunner(ctx context.Context, name string, args []string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) //#nosec G204 -- name is always "helm" or "kubectl", callers are internal
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %v failed: %w: %s", name, args, err, string(output))

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	backendingest "github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/core/logging"
@@ -93,14 +94,14 @@ func NewServer(config Config, builder *backendingest.EnvelopeBuilder, router *ba
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/metrics", server.handleMetricsHTTP)
 	mux.HandleFunc("/v1/traces", server.handleTracesHTTP)
-	server.httpServer = &http.Server{Handler: mux}
+	server.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	healthMux := http.NewServeMux()
 	healthMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	server.healthServer = &http.Server{Handler: healthMux}
+	server.healthServer = &http.Server{Handler: healthMux, ReadHeaderTimeout: 10 * time.Second}
 
 	return server, nil
 }
