@@ -23,6 +23,10 @@ app.kubernetes.io/component: {{ .component }}
 {{ printf "%s:%s" .Values.global.image.repository .Values.global.image.tag }}
 {{- end -}}
 
+{{- define "oksg-otel.backendImage" -}}
+{{ printf "%s:%s" .Values.backend.image.repository .Values.backend.image.tag }}
+{{- end -}}
+
 {{- define "oksg-otel.agentChecksum" -}}
 {{- .Values.agent.collectorConfig | sha256sum -}}
 {{- end -}}

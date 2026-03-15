@@ -15,4 +15,7 @@ spec:
     - name: otlp-grpc
       port: {{ .Values.gateway.service.port }}
       targetPort: otlp-grpc
+    - name: otlp-http
+      port: {{ .Values.gateway.service.httpPort }}
+      targetPort: otlp-http
 {{- end }}

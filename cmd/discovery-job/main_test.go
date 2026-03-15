@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
+	"github.com/erickivel/oksg/pkg/collector/configgen"
 	"github.com/erickivel/oksg/pkg/collector/deployer"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
@@ -40,7 +41,7 @@ func TestRunPlanWritesRenderedCollectorManifests(t *testing.T) {
 		"--output=" + outputPath,
 	}, dependencies{
 		planner:   otel.NewSourcePlanner("oksg-system"),
-		generator: defaultGenerator(),
+		generator: defaultGenerator(configgen.GeneratorOptions{}),
 	})
 	require.NoError(t, err)
 
@@ -70,7 +71,7 @@ func TestRunDeployUsesGeneratedManifests(t *testing.T) {
 		"--profile=" + profilePath,
 	}, dependencies{
 		planner:   otel.NewSourcePlanner("oksg-system"),
-		generator: defaultGenerator(),
+		generator: defaultGenerator(configgen.GeneratorOptions{}),
 		deployer: deployFunc(func(_ context.Context, values []byte, options deployer.Options) error {
 			applied = string(values)
 			appliedOptions = options
@@ -104,7 +105,7 @@ func TestRunDeployUsesHelmNamespaceForBothPlannerAndDeployer(t *testing.T) {
 		"--namespace=default-ns",
 		"--helm-namespace=override-ns",
 	}, dependencies{
-		generator: defaultGenerator(),
+		generator: defaultGenerator(configgen.GeneratorOptions{}),
 		deployer: deployFunc(func(_ context.Context, values []byte, options deployer.Options) error {
 			applied = string(values)
 			appliedOptions = options

@@ -13,7 +13,7 @@ The project is designed to:
 - reconstruct a time-aware topology graph with metrics attached to nodes and edges
 - preserve a modular boundary for later prediction, simulation, and reporting features
 
-Phase 1 established the contracts and schemas. Phase 2 adds discovery-driven collection planning and a kind-based test architecture.
+Phase 1 established the contracts and schemas. Phase 2 added discovery-driven collection planning, and Phase 3 now implements the first end-to-end OpenTelemetry collection plane with a real backend OTLP ingest runtime.
 
 ## Architecture Overview
 
@@ -26,16 +26,17 @@ The long-term architecture is organized into six layers:
 5. Modeling and Prediction Layer
 6. Control and API Layer
 
-This repository currently implements the Phase 1 foundation and the first Phase 2 slice:
+This repository currently implements the Phase 1 foundation, the Phase 2 discovery/planning slice, and the first Phase 3 collection-plane runtime:
 
 - canonical entities, metrics, raw telemetry envelopes, and topology contracts
 - discovery profile contracts extended with Prometheus target detection and recommended OTel receivers
 - Kubernetes discovery and OTel collector planning entrypoints
-- manifest rendering and deployment helpers for collector agent/gateway test flows
+- Helm values generation and Helm-managed deployment for agent, gateway, and backend
+- OTLP gRPC/HTTP ingest in the backend with raw-envelope conversion and signal routing
 
 ## Project Status
 
-Current phase: `Phase 2 — Discovery-Driven OTel Collection`
+Current phase: `Phase 3 — OpenTelemetry Collection Plane Implementation`
 
 <details>
 <summary>Phase 1 — Foundation and Contracts (Completed)</summary>
@@ -50,14 +51,25 @@ Current phase: `Phase 2 — Discovery-Driven OTel Collection`
 </details>
 
 <details>
-<summary>Phase 2 — Discovery-Driven OTel Collection (Current Slice)</summary>
+<summary>Phase 2 — Discovery-Driven OTel Collection (Completed Slice)</summary>
 
 - kind-based test cluster setup with a local registry
 - Example microservice variants for `base` and `with-prometheus`
 - `k8s-discovery-adapter` for cluster structure and Prometheus endpoint detection
 - `otel-source-planner` for collector config generation
-- Config rendering plus deploy helpers for OTel agent and gateway manifests
+- Typed Helm values generation for the collector release
 - Scenario coverage for Prometheus discovery and no-telemetry fallback
+
+</details>
+
+<details>
+<summary>Phase 3 — OpenTelemetry Collection Plane Implementation (Current Slice)</summary>
+
+- Helm-managed deployment of agent, gateway, and backend
+- Backend OTLP ingest over gRPC and HTTP
+- Raw-envelope conversion and signal routing in `pkg/backend/ingest`
+- End-to-end telemetry verification through structured backend logs
+- Runtime flow documentation for the deployed collection plane
 
 </details>
 
@@ -73,7 +85,7 @@ Planned roadmap:
 
 ## Prerequisites
 
-- Go `1.23+`
+- Go `1.26+`
 - [Task](https://taskfile.dev/)
 
 Optional tooling:
@@ -134,13 +146,13 @@ task test:e2e:deploy VARIANT=with-prometheus # services with /metrics endpoints
 # 2. Run discovery against the cluster
 task test:e2e:discover
 
-# 3. Generate OTel collector manifests from discovery
+# 3. Generate OTel Helm values from discovery
 task test:e2e:plan
 
-# 4. Apply the generated collectors to the cluster
+# 4. Apply the generated Helm release to the cluster
 task test:e2e:apply-otel
 
-# 5. Verify collectors are running
+# 5. Verify agent, gateway, and backend are running
 task test:e2e:verify
 ```
 
@@ -168,6 +180,7 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 
 - [Architecture](docs/architecture.md) — System layers, components, and design principles
 - [Discovery Flow](docs/discovery-flow.md) — Sequence diagrams and pipeline details
+- [Runtime Flow](docs/runtime-flow.md) — Post-deploy telemetry flow through agent, gateway, and backend ingest
 - [Testing](docs/testing.md) — Unit tests and e2e testing with kind
 - [Development](docs/development.md) — Project structure and contribution guide
 
@@ -175,9 +188,9 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 
 ```text
 cmd/
-  backend/         Backend API/service entrypoint
+  backend/         Backend OTLP ingest runtime entrypoint
   controller/      Future controller/operator entrypoint
-  discovery-job/   Future discovery job entrypoint
+  discovery-job/   Discovery, planning, and deploy entrypoint
   schema-gen/      JSON Schema generation helper
 
 pkg/
@@ -189,13 +202,14 @@ pkg/
   modeling/        Deferred prediction and simulation contracts
 
 deploy/
-  helm/            Helm packaging placeholder
+  helm/            Helm chart and release packaging
   manifests/       Raw manifest placeholder
   examples/        Example deployment placeholder
 
 docs/
   architecture.md  System architecture overview
   discovery-flow.md Pipeline sequence diagrams
+  runtime-flow.md  Post-deploy runtime telemetry flow
   testing.md       Testing guide
   development.md   Development guide
 
