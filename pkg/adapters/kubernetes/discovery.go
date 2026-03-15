@@ -171,8 +171,8 @@ func (d *DiscoveryAdapter) prometheusTarget(ctx context.Context, service corev1.
 
 	port := firstServicePort(service)
 	if rawPort := service.Annotations[prometheusAnnotationPort]; rawPort != "" {
-		if parsed, err := strconv.Atoi(rawPort); err == nil {
-			port = int32(parsed)
+		if parsed, err := strconv.Atoi(rawPort); err == nil && parsed >= 1 && parsed <= 65535 {
+			port = int32(parsed) //#nosec G115 G109 -- range validated: 1-65535 fits safely in int32
 		}
 	}
 
