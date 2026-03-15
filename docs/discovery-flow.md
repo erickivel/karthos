@@ -77,11 +77,16 @@ The source planner turns the profile into collector intent:
 
 - agent always includes `kubeletstats`
 - agent adds `prometheus` only when targets were discovered
-- agent enables OTLP receiver paths when OTLP-capable sources are present
+- agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
 - gateway receives OTLP from agents and OTLP-native emitters
 - gateway exports to the backend OTLP ingest service instead of the debug exporter
 - collector telemetry logging is configured for JSON stdout logging with env-controlled level
 - traces are enabled only when OTLP-capable sources advertise trace support
+
+Important current limitation:
+
+- the Kubernetes discovery adapter still only produces Prometheus-or-fallback profiles
+- OTLP-capable sources are supported by the profile and planner contracts, but they are not auto-detected by the current discovery adapter yet
 
 ### 3. Release Values Generation
 
@@ -143,7 +148,25 @@ The Helm chart is responsible for:
           "reachable": true
         }
       ]
-    },
+    }
+  ],
+  "collection_paths": [
+    {"receiver_type": "kubeletstats", "enabled": true, "signal_types": ["metric"]},
+    {"receiver_type": "prometheus", "enabled": true, "targets": ["oksg-demo/gateway-go:8080/metrics"], "signal_types": ["metric"]}
+  ],
+  "recommended_receivers": ["kubeletstats", "prometheus"]
+}
+```
+
+### ClusterProfile (Planner-Only OTLP Example)
+
+This example shows a profile shape the planner understands today, but which the current Kubernetes discovery adapter does not auto-produce yet:
+
+```json
+{
+  "cluster_id": "cluster:kind-test",
+  "discovered_at": "2026-03-13T10:00:00Z",
+  "sources": [
     {
       "name": "application-otlp",
       "type": "otlp",
@@ -158,10 +181,9 @@ The Helm chart is responsible for:
   ],
   "collection_paths": [
     {"receiver_type": "kubeletstats", "enabled": true, "signal_types": ["metric"]},
-    {"receiver_type": "prometheus", "enabled": true, "targets": ["oksg-demo/gateway-go:8080/metrics"], "signal_types": ["metric"]},
     {"receiver_type": "otlp", "enabled": true, "signal_types": ["metric", "trace"]}
   ],
-  "recommended_receivers": ["kubeletstats", "prometheus", "otlp"]
+  "recommended_receivers": ["kubeletstats", "otlp"]
 }
 ```
 

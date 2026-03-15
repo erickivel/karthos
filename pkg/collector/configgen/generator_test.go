@@ -128,3 +128,45 @@ func TestGenerateUsesConfiguredBackendImageOverrides(t *testing.T) {
 	require.Contains(t, string(values), "repository: localhost:5001/oksg-backend")
 	require.Contains(t, string(values), "tag: phase3")
 }
+
+func TestGenerateUsesConfiguredReleaseMetadataOverrides(t *testing.T) {
+	renderer := NewGeneratorWithOptions(GeneratorOptions{
+		ReleaseName: "custom-otel",
+		ChartPath:   "./deploy/helm/custom-otel",
+	})
+
+	values, err := renderer.Generate(otel.Plan{
+		ClusterName:    "kind-test",
+		Namespace:      "oksg-system",
+		EnabledSignals: []string{"metric"},
+		Backend: otel.BackendConfig{
+			Enabled:      true,
+			GRPCEndpoint: "oksg-backend:4317",
+			HTTPEndpoint: "0.0.0.0:4318",
+		},
+		AgentConfig: otel.CollectorConfig{
+			Receivers:  map[string]any{"kubeletstats": map[string]any{}},
+			Processors: map[string]any{"batch": map[string]any{}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
+			Service: otel.ServiceConfig{
+				Pipelines: map[string]otel.PipelineConfig{
+					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
+				},
+			},
+		},
+		GatewayConfig: otel.CollectorConfig{
+			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
+			Processors: map[string]any{"batch": map[string]any{}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
+			Service: otel.ServiceConfig{
+				Pipelines: map[string]otel.PipelineConfig{
+					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(values), "releaseName: custom-otel")
+	require.Contains(t, string(values), "chartPath: ./deploy/helm/custom-otel")
+	require.NotContains(t, string(values), "releaseName: oksg-otel")
+}

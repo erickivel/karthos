@@ -11,7 +11,7 @@ The system is organized around stable architectural boundaries between:
 - persistence
 - control and query APIs
 
-Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers. The current implemented slice now includes discovery-driven OpenTelemetry collector assembly plus the first deployed collection-plane runtime with backend OTLP ingest.
+Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers. The current implemented slice now includes discovery-driven OpenTelemetry collector assembly plus the first deployed collection-plane runtime with backend OTLP ingest. The real Kubernetes discovery adapter still auto-detects Prometheus-or-fallback profiles only; OTLP-capable sources are supported by the profile/planner contracts but are not auto-detected yet.
 
 # Tech Stack (Main App)
 
@@ -185,6 +185,7 @@ The root [`README.md`](README.md) and the `docs/` folder contain detailed docume
 - When the current project phase, implemented runtime surface, or repository entrypoints change, update the root [`README.md`](README.md)
 - When adding or modifying adapters, update `docs/architecture.md` with new components
 - When changing the discovery or deployment pipeline, update the sequence diagram and operational steps in `docs/discovery-flow.md`
+- Keep `docs/discovery-flow.md` explicit about what the real discovery adapter auto-detects today versus what the planner can accept from externally supplied profiles
 - When changing the deployed runtime telemetry path after Helm apply, update `docs/runtime-flow.md`
 - When changing test infrastructure, Helm install flow, or task names, update `docs/testing.md`
 - When adding new packages or changing project structure, update `docs/development.md`

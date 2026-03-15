@@ -31,6 +31,8 @@ type Generator struct {
 type GeneratorOptions struct {
 	CollectorImage ImageValues
 	BackendImage   ImageValues
+	ReleaseName    string
+	ChartPath      string
 }
 
 type Values struct {
@@ -166,8 +168,8 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 		Global: GlobalValues{
 			ClusterName: plan.ClusterName,
 			Namespace:   plan.Namespace,
-			ReleaseName: DefaultReleaseName,
-			ChartPath:   DefaultChartPath,
+			ReleaseName: g.options.ReleaseName,
+			ChartPath:   g.options.ChartPath,
 			Image:       g.options.CollectorImage,
 			Logging:     logging,
 		},
@@ -228,6 +230,8 @@ func defaultGeneratorOptions() GeneratorOptions {
 			Tag:        DefaultBackendTag,
 			PullPolicy: DefaultBackendPullPolicy,
 		},
+		ReleaseName: DefaultReleaseName,
+		ChartPath:   DefaultChartPath,
 	}
 }
 
@@ -250,6 +254,12 @@ func withDefaultGeneratorOptions(options GeneratorOptions) GeneratorOptions {
 	}
 	if options.BackendImage.PullPolicy == "" {
 		options.BackendImage.PullPolicy = defaults.BackendImage.PullPolicy
+	}
+	if options.ReleaseName == "" {
+		options.ReleaseName = defaults.ReleaseName
+	}
+	if options.ChartPath == "" {
+		options.ChartPath = defaults.ChartPath
 	}
 	return options
 }

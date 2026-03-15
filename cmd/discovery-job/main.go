@@ -118,6 +118,8 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			Tag:        *backendImageTag,
 			PullPolicy: *backendImagePullPolicy,
 		},
+		ReleaseName: *releaseName,
+		ChartPath:   *chartPath,
 	}
 
 	logger.Info("starting command",
