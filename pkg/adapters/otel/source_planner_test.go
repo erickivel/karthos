@@ -141,3 +141,100 @@ func TestPlanRoutesGatewayToBackendInFallbackMode(t *testing.T) {
 	require.Equal(t, DefaultBackendGRPCEndpoint, plan.Backend.GRPCEndpoint)
 	require.Equal(t, []string{"metric"}, plan.EnabledSignals)
 }
+
+// TestPlanBaselineAlwaysIncludesHostmetricsAndKubeletstatsVolume verifies that
+// hostmetrics is always present in the agent receivers, kubeletstats always
+// includes "volume" in metric_groups, and k8s_cluster is always in the gateway.
+func TestPlanBaselineAlwaysIncludesHostmetricsAndKubeletstatsVolume(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	// hostmetrics always in agent receivers.
+	require.Contains(t, plan.AgentConfig.Receivers, "hostmetrics")
+
+	// kubeletstats metric_groups must include "volume".
+	kubeletstats, ok := plan.AgentConfig.Receivers["kubeletstats"].(map[string]any)
+	require.True(t, ok, "kubeletstats receiver must be map[string]any")
+	groups, ok := kubeletstats["metric_groups"].([]string)
+	require.True(t, ok, "metric_groups must be []string")
+	require.Contains(t, groups, "volume")
+
+	// hostmetrics must be in the agent metrics pipeline receivers.
+	agentMetricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
+	require.Contains(t, agentMetricsPipeline.Receivers, "hostmetrics")
+
+	// k8s_cluster always in gateway receivers.
+	require.Contains(t, plan.GatewayConfig.Receivers, "k8s_cluster")
+
+	// k8s_cluster must be in the gateway metrics pipeline receivers.
+	gatewayMetricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
+	require.Contains(t, gatewayMetricsPipeline.Receivers, "k8s_cluster")
+}
+
+// TestPlanSpanmetricsAndServicegraphConnectorsWhenOTLPTracesEnabled verifies
+// that spanmetrics and servicegraph connectors are added when OTLP traces are
+// enabled, and that the pipeline wiring follows the OTel connector pattern.
+func TestPlanSpanmetricsAndServicegraphConnectorsWhenOTLPTracesEnabled(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Name:    "application-otlp",
+				Type:    "otlp",
+				Present: true,
+				OTLP: &profile.OTLPSource{
+					MetricsEnabled: false,
+					TracesEnabled:  true,
+					GRPCEndpoint:   "0.0.0.0:4317",
+					HTTPEndpoint:   "0.0.0.0:4318",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Connectors must be present.
+	require.NotNil(t, plan.AgentConfig.Connectors)
+	require.Contains(t, plan.AgentConfig.Connectors, "spanmetrics")
+	require.Contains(t, plan.AgentConfig.Connectors, "servicegraph")
+
+	// Traces pipeline exporters must include the connectors.
+	tracesPipeline := plan.AgentConfig.Service.Pipelines["traces"]
+	require.Contains(t, tracesPipeline.Exporters, "spanmetrics")
+	require.Contains(t, tracesPipeline.Exporters, "servicegraph")
+	require.Contains(t, tracesPipeline.Exporters, "otlp")
+
+	// Metrics pipeline receivers must include connector outputs.
+	metricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
+	require.Contains(t, metricsPipeline.Receivers, "spanmetrics")
+	require.Contains(t, metricsPipeline.Receivers, "servicegraph")
+}
+
+// TestPlanNoConnectorsWhenTracesNotEnabled verifies that connectors are absent
+// when OTLP traces are not enabled, and the metrics pipeline does not include
+// connector names.
+func TestPlanNoConnectorsWhenTracesNotEnabled(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	require.Nil(t, plan.AgentConfig.Connectors)
+
+	metricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
+	require.NotContains(t, metricsPipeline.Receivers, "spanmetrics")
+	require.NotContains(t, metricsPipeline.Receivers, "servicegraph")
+}

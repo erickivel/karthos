@@ -19,6 +19,15 @@ var defaultCatalog = []CanonicalMetric{
 	{Name: "edge_latency_nanoseconds", Unit: UnitNanoseconds, Category: CategoryLatency, Description: "Observed request latency between graph edges."},
 	{Name: "error_rate_per_second", Unit: UnitPerSecond, Category: CategoryError, Description: "Observed error rate for a service or edge."},
 	{Name: "error_ratio", Unit: UnitRatio, Category: CategoryError, Description: "Observed error ratio for a service or edge."},
+	{Name: "cpu_request_millicores", Unit: UnitMillicores, Category: CategoryCapacity, Description: "Requested CPU for a container."},
+	{Name: "cpu_limit_millicores", Unit: UnitMillicores, Category: CategoryCapacity, Description: "CPU limit for a container."},
+	{Name: "memory_request_bytes", Unit: UnitBytes, Category: CategoryCapacity, Description: "Requested memory for a container."},
+	{Name: "memory_limit_bytes", Unit: UnitBytes, Category: CategoryCapacity, Description: "Memory limit for a container."},
+	{Name: "replica_count", Unit: UnitCount, Category: CategoryCapacity, Description: "Desired replica count for a workload."},
+	{Name: "disk_read_bps", Unit: UnitBytesPerSecond, Category: CategoryResource, Description: "Disk read throughput per entity."},
+	{Name: "disk_write_bps", Unit: UnitBytesPerSecond, Category: CategoryResource, Description: "Disk write throughput per entity."},
+	{Name: "net_rx_bps", Unit: UnitBytesPerSecond, Category: CategoryResource, Description: "Network receive throughput per entity."},
+	{Name: "net_tx_bps", Unit: UnitBytesPerSecond, Category: CategoryResource, Description: "Network transmit throughput per entity."},
 }
 
 func DefaultCatalog() []CanonicalMetric {

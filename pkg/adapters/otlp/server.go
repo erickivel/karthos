@@ -2,6 +2,7 @@ package otlp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	backendingest "github.com/erickivel/oksg/pkg/backend/ingest"
+	"github.com/erickivel/oksg/pkg/backend/persistence"
+	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/logging"
 	colmetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -26,6 +29,7 @@ type Config struct {
 	HTTPListenAddress   string
 	HealthListenAddress string
 	EnabledSignals      []string
+	MetricStore         persistence.MetricStore // optional; enables /debug/metrics when set
 }
 
 type Server struct {
@@ -101,6 +105,18 @@ func NewServer(config Config, builder *backendingest.EnvelopeBuilder, router *ba
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	if config.MetricStore != nil {
+		ms := config.MetricStore
+		healthMux.HandleFunc("/debug/metrics", func(w http.ResponseWriter, r *http.Request) {
+			samples, err := ms.Query(r.Context(), query.MetricQuery{})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(samples)
+		})
+	}
 	server.healthServer = &http.Server{Handler: healthMux, ReadHeaderTimeout: 10 * time.Second}
 
 	return server, nil

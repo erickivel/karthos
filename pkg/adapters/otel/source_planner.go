@@ -40,6 +40,7 @@ type CollectorConfig struct {
 	Extensions map[string]any `json:"extensions,omitempty" yaml:"extensions,omitempty"`
 	Receivers  map[string]any `json:"receivers" yaml:"receivers"`
 	Processors map[string]any `json:"processors" yaml:"processors"`
+	Connectors map[string]any `json:"connectors,omitempty" yaml:"connectors,omitempty"`
 	Exporters  map[string]any `json:"exporters" yaml:"exporters"`
 	Service    ServiceConfig  `json:"service" yaml:"service"`
 }
@@ -79,11 +80,24 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			"auth_type":            "serviceAccount",
 			"endpoint":             "https://${env:K8S_NODE_NAME}:10250",
 			"insecure_skip_verify": true,
-			"metric_groups":        []string{"node", "pod", "container"},
+			"metric_groups":        []string{"node", "pod", "container", "volume"},
+		},
+		"hostmetrics": map[string]any{
+			"collection_interval": "30s",
+			"root_path":           "/hostfs",
+			"scrapers": map[string]any{
+				"cpu":        map[string]any{},
+				"memory":     map[string]any{},
+				"disk":       map[string]any{},
+				"filesystem": map[string]any{},
+				"network":    map[string]any{},
+				"load":       map[string]any{},
+				"paging":     map[string]any{},
+			},
 		},
 	}
 
-	pipelineReceivers := []string{"kubeletstats"}
+	pipelineReceivers := []string{"kubeletstats", "hostmetrics"}
 	prometheusTargets := prometheusTargets(clusterProfile.Sources)
 	if len(prometheusTargets) > 0 {
 		agentReceivers["prometheus"] = map[string]any{
@@ -113,6 +127,35 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		enabledSignals = append(enabledSignals, "trace")
 	}
 
+	// Build connectors when traces are enabled (spanmetrics and servicegraph).
+	var agentConnectors map[string]any
+	if otlpSignals.traces {
+		agentConnectors = map[string]any{
+			"spanmetrics": map[string]any{
+				"histogram": map[string]any{
+					"explicit": map[string]any{
+						"buckets": []string{"100ms", "250ms", "500ms", "1s", "2s", "5s"},
+					},
+				},
+				"dimensions": []map[string]any{
+					{"name": "http.method", "default": "GET"},
+					{"name": "http.status_code"},
+				},
+				"exemplars": map[string]any{"enabled": true},
+			},
+			"servicegraph": map[string]any{
+				"latency_histogram_buckets": []string{"100ms", "250ms", "500ms", "1s", "5s"},
+				"dimensions":                []string{"http.method"},
+				"store": map[string]any{
+					"ttl":       "2s",
+					"max_items": 1000,
+				},
+			},
+		}
+		// Connectors act as receivers in the metrics pipeline.
+		pipelineReceivers = append(pipelineReceivers, "spanmetrics", "servicegraph")
+	}
+
 	agentConfig := CollectorConfig{
 		Extensions: map[string]any{
 			"health_check": map[string]any{
@@ -121,12 +164,22 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		},
 		Receivers: agentReceivers,
 		Processors: map[string]any{
+			"resource": map[string]any{
+				"attributes": []map[string]any{
+					{
+						"key":    "k8s.node.name",
+						"value":  "${env:K8S_NODE_NAME}",
+						"action": "insert",
+					},
+				},
+			},
 			"k8sattributes": map[string]any{
 				"auth_type":   "serviceAccount",
 				"passthrough": false,
 			},
 			"batch": map[string]any{},
 		},
+		Connectors: agentConnectors,
 		Exporters: map[string]any{
 			"otlp": map[string]any{
 				"endpoint": DefaultGatewayGRPCEndpoint,
@@ -140,18 +193,38 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
 					Receivers:  pipelineReceivers,
-					Processors: []string{"k8sattributes", "batch"},
+					Processors: []string{"resource", "k8sattributes", "batch"},
 					Exporters:  []string{"otlp"},
 				},
 			},
 		},
 	}
 	if otlpSignals.traces {
+		// Connectors are both exporters (from traces) and receivers (for metrics).
 		agentConfig.Service.Pipelines["traces"] = PipelineConfig{
 			Receivers:  []string{"otlp"},
-			Processors: []string{"k8sattributes", "batch"},
-			Exporters:  []string{"otlp"},
+			Processors: []string{"resource", "k8sattributes", "batch"},
+			Exporters:  []string{"otlp", "spanmetrics", "servicegraph"},
 		}
+	}
+
+	// Gateway receivers: always include otlp and k8s_cluster.
+	gatewayReceivers := map[string]any{
+		"otlp": map[string]any{
+			"protocols": map[string]any{
+				"grpc": map[string]any{
+					"endpoint": "0.0.0.0:4317",
+				},
+				"http": map[string]any{
+					"endpoint": DefaultGatewayHTTPEndpoint,
+				},
+			},
+		},
+		"k8s_cluster": map[string]any{
+			"collection_interval":         "30s",
+			"node_conditions_to_report":   []string{"Ready", "MemoryPressure", "DiskPressure"},
+			"allocatable_types_to_report": []string{"cpu", "memory", "ephemeral-storage"},
+		},
 	}
 
 	gatewayConfig := CollectorConfig{
@@ -160,18 +233,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 				"endpoint": DefaultHealthEndpoint,
 			},
 		},
-		Receivers: map[string]any{
-			"otlp": map[string]any{
-				"protocols": map[string]any{
-					"grpc": map[string]any{
-						"endpoint": "0.0.0.0:4317",
-					},
-					"http": map[string]any{
-						"endpoint": DefaultGatewayHTTPEndpoint,
-					},
-				},
-			},
-		},
+		Receivers: gatewayReceivers,
 		Processors: map[string]any{
 			"memory_limiter": map[string]any{
 				"check_interval":         "1s",
@@ -198,7 +260,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			Extensions: []string{"health_check"},
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
-					Receivers:  []string{"otlp"},
+					Receivers:  []string{"otlp", "k8s_cluster"},
 					Processors: []string{"memory_limiter", "batch"},
 					Exporters:  []string{"otlp"},
 				},
