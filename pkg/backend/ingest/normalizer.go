@@ -57,7 +57,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					continue
 				}
 
-				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC()
+				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 				value := rawValue * mapping.ConversionFactor
 
 				canonicalName := resolveDirectionalName(metric.Name, mapping.CanonicalName, dp.Attributes)

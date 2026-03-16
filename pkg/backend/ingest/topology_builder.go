@@ -65,12 +65,12 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 
 			var firstSeen, lastSeen time.Time
 			if span.StartTimeUnixNano != 0 {
-				firstSeen = time.Unix(0, int64(span.StartTimeUnixNano)).UTC()
+				firstSeen = time.Unix(0, int64(span.StartTimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 			} else {
 				firstSeen = envelope.Timestamp
 			}
 			if span.EndTimeUnixNano != 0 {
-				lastSeen = time.Unix(0, int64(span.EndTimeUnixNano)).UTC()
+				lastSeen = time.Unix(0, int64(span.EndTimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 			} else {
 				lastSeen = envelope.Timestamp
 			}
