@@ -16,15 +16,20 @@ This guide focuses on the current implementation shape rather than future-only l
 ```text
 cmd/
   discovery-job/   implemented discovery/plan/deploy CLI
-  backend/         OTLP ingest runtime for raw-envelope handoff
+  backend/         OTLP ingest and semantic normalization runtime
   controller/      placeholder
   schema-gen/      schema helper
 
 pkg/
-  adapters/kubernetes/   discovery adapter
-  adapters/otel/         source planner
+  adapters/kubernetes/   discovery adapter (Prometheus + OTLP workload detection)
+  adapters/otel/         source planner (hostmetrics, k8s_cluster, spanmetrics, servicegraph)
   adapters/otlp/         OTLP gRPC and HTTP server adapter
-  backend/ingest/        raw-envelope conversion and signal routing
+  backend/ingest/        raw-envelope conversion, signal routing, entity resolution,
+                         OTLP normalization, and topology building
+                         (entity_resolver.go, normalizer.go, topology_builder.go,
+                          normalizing_ingestor.go, plus existing otlp.go and ingest.go)
+  backend/persistence/   in-memory MetricStore and GraphStore implementations
+                         (memory.go)
   collector/configgen/   Helm values builder
   collector/deployer/    Helm runner
   core/logging/          shared JSON stdout logger
@@ -54,7 +59,7 @@ task ci
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
 ./bin/discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 ./bin/discovery-job --mode=deploy --profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --enabled-signals=metric,trace
+./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --enabled-signals=metric,trace --cluster-name=oksg-test
 ```
 
 Notes:
@@ -101,3 +106,39 @@ kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.i
 kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=gateway --tail=30
 kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=backend --tail=30
 ```
+
+## Inspecting the Backend Store
+
+The backend exposes a `/debug/metrics` endpoint on its health port (13133) that returns all metric samples currently held in the in-memory store as JSON.
+
+Use the task shortcuts:
+
+```bash
+# Dump all stored metric samples (port-forwards, curls, then cleans up)
+task test:e2e:debug:metrics
+
+# Filter backend logs for write confirmations and skipped-entity warnings
+task test:e2e:debug:logs
+```
+
+Or run the steps manually:
+
+```bash
+kubectl port-forward -n oksg-system deployment/oksg-backend 13133:13133 &
+curl -s http://localhost:13133/debug/metrics | jq '.[0:10]'
+kill %1
+```
+
+### Reading the output
+
+A successful write line in backend logs looks like:
+```json
+{"level":"info","msg":"wrote metric samples","source":"otlp/grpc","count":3}
+```
+
+A skipped envelope (expected for k8s_cluster workload-object metrics and raw host metrics without node context) looks like:
+```json
+{"level":"warn","msg":"skipping envelope: unresolvable entity","source":"otlp/grpc","resource":{"k8s.deployment.name":"..."}}
+```
+
+Skips for `k8s.namespace`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset` resources are expected — these entity kinds are not yet part of the canonical model. Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet).

@@ -17,7 +17,10 @@ sequenceDiagram
     participant Backend as OKSG Backend
     participant Builder as EnvelopeBuilder
     participant Router as SignalRouter
-    participant Sink as Current Ingest Sink
+    participant NI as NormalizingIngestor
+    participant TI as TopologyIngestor
+    participant MS as InMemoryMetricStore
+    participant GS as InMemoryGraphStore
 
     loop Running cluster telemetry
         Workload->>Agent: Prometheus scrape targets and kubelet stats
@@ -29,9 +32,20 @@ sequenceDiagram
         Backend->>Builder: Build raw envelopes from OTLP payloads
         Builder-->>Backend: schema.RawEnvelope per signal/resource batch
         Backend->>Router: Route envelope by signal type
-        Router->>Sink: Ingest metric or trace envelope
-        Sink-->>Backend: Success
-        Backend-->>Backend: Log structured "envelope received"
+        alt metric envelope
+            Router->>NI: NormalizingIngestor.Ingest(ctx, envelope)
+            NI->>NI: OTLPNormalizer.Normalize → []MetricSample
+            NI->>MS: MetricStore.Write(ctx, samples)
+            MS-->>NI: nil
+            NI-->>Router: nil
+        else trace envelope
+            Router->>TI: TopologyIngestor.Ingest(ctx, envelope)
+            TI->>TI: TraceTopologyBuilder.Build → []Edge
+            TI->>GS: GraphStore.PutSnapshot(ctx, snapshot)
+            GS-->>TI: nil
+            TI-->>Router: nil
+        end
+        Router-->>Backend: nil
     end
 ```
 
@@ -46,22 +60,21 @@ sequenceDiagram
     participant Server as pkg/adapters/otlp/server.go
     participant Builder as EnvelopeBuilder
     participant Router as SignalRouter
-    participant Ingestor as LogIngestor
-    participant Logger as pkg/core/logging
+    participant NI as NormalizingIngestor
+    participant Norm as OTLPNormalizer
+    participant MS as InMemoryMetricStore
 
     Note over Main: Process startup
-    Main->>Logger: logging.New("backend", logLevel)
-    Logger-->>Main: *Logger
+    Main->>Main: NewOTLPEntityResolver(clusterName)
+    Main->>Main: NewOTLPNormalizer(resolver)
+    Main->>Main: NewTraceTopologyBuilder(resolver)
+    Main->>Main: NewInMemoryMetricStore()
+    Main->>Main: NewInMemoryGraphStore()
+    Main->>NI: NewNormalizingIngestor(normalizer, metricStore)
+    Main->>Main: NewTopologyIngestor(topoBuilder, graphStore)
+    Main->>Router: NewSignalRouter(normalizingIngestor, topologyIngestor)
     Main->>Builder: ingest.NewEnvelopeBuilder(now)
-    Builder-->>Main: *EnvelopeBuilder
-    Main->>Ingestor: ingest.NewLogIngestor(logger)
-    Ingestor-->>Main: *LogIngestor (metrics)
-    Main->>Ingestor: ingest.NewLogIngestor(logger)
-    Ingestor-->>Main: *LogIngestor (traces)
-    Main->>Router: ingest.NewSignalRouter(metricsIngestor, tracesIngestor)
-    Router-->>Main: *SignalRouter
     Main->>Server: otlp.NewServer(config, builder, router, logger)
-    Server-->>Main: *Server
     Main->>Server: server.Run(ctx)
     Note over Server: Listening on :4317 (gRPC), :4318 (HTTP), :13133 (health)
 
@@ -80,12 +93,15 @@ sequenceDiagram
         Server->>Router: Route(ctx, envelope)
         activate Router
         Router->>Router: Switch on envelope.SignalType
-        Router->>Ingestor: metrics.Ingest(ctx, envelope)
-        activate Ingestor
-        Ingestor->>Logger: logger.Info("envelope received", ...)
-        Logger-->>Ingestor: (logged)
-        Ingestor-->>Router: nil (success)
-        deactivate Ingestor
+        Router->>NI: metrics.Ingest(ctx, envelope)
+        activate NI
+        NI->>Norm: Normalize(ctx, envelope)
+        Norm->>Norm: Unmarshal ResourceMetrics, resolve entity, map metrics
+        Norm-->>NI: []MetricSample
+        NI->>MS: Write(ctx, samples)
+        MS-->>NI: nil
+        NI-->>Router: nil (success)
+        deactivate NI
         Router-->>Server: nil (success)
         deactivate Router
     end
@@ -98,11 +114,17 @@ sequenceDiagram
 
 | File | Type | Role |
 |------|------|------|
-| `cmd/backend/main.go` | Binary entrypoint | Parses config, wires dependencies, starts server |
+| `cmd/backend/main.go` | Binary entrypoint | Parses config (including `--cluster-name`), wires normalization pipeline, starts server |
 | `pkg/adapters/otlp/server.go` | `Server` | OTLP gRPC/HTTP listener, delegates to builder + router |
 | `pkg/backend/ingest/otlp.go` | `EnvelopeBuilder` | Converts OTLP protos → `[]schema.RawEnvelope` |
 | `pkg/backend/ingest/otlp.go` | `SignalRouter` | Routes envelopes by signal type to the right `Ingestor` |
-| `pkg/backend/ingest/otlp.go` | `LogIngestor` | Implements `Ingestor`, logs envelope metadata |
+| `pkg/backend/ingest/entity_resolver.go` | `OTLPEntityResolver` | Maps OTLP resource attributes to canonical `EntityID` (deterministic SHA-256) |
+| `pkg/backend/ingest/normalizer.go` | `OTLPNormalizer` | Maps OTLP metric payloads to canonical `MetricSample` values with unit conversion |
+| `pkg/backend/ingest/topology_builder.go` | `TraceTopologyBuilder` | Extracts service-to-service `topology.Edge` values from OTLP trace envelopes |
+| `pkg/backend/ingest/normalizing_ingestor.go` | `NormalizingIngestor` | Implements `Ingestor`; routes metric envelopes through normalizer → `MetricStore` |
+| `pkg/backend/ingest/normalizing_ingestor.go` | `TopologyIngestor` | Implements `Ingestor`; routes trace envelopes through topology builder → `GraphStore` |
+| `pkg/backend/persistence/memory.go` | `InMemoryMetricStore` | Thread-safe in-memory `MetricStore`; supports write and time-range queries |
+| `pkg/backend/persistence/memory.go` | `InMemoryGraphStore` | Thread-safe in-memory `GraphStore`; accumulates edges, updates `LastSeen` on re-observation |
 | `pkg/backend/ingest/ingest.go` | `Ingestor` interface | Contract: `Ingest(ctx, envelope) error` |
 | `pkg/core/schema` | `RawEnvelope` | Canonical telemetry envelope struct |
 
@@ -124,20 +146,30 @@ Gateway
          │                              │
          │ BuildMetricEnvelopes         │ Route
          ▼                              ▼
-┌─────────────────────────┐   ┌─────────────────────────┐
-│ EnvelopeBuilder         │   │ SignalRouter            │
-│ (pkg/backend/ingest)    │   │ (pkg/backend/ingest)    │
-│                         │   │                         │
-│ → []schema.RawEnvelope   │   │ → metrics.Ingest(...)   │
-└─────────────────────────┘   └─────────────────────────┘
-                                        │
-                                        ▼
-                              ┌─────────────────────────┐
-                              │ LogIngestor             │
-                              │ (pkg/backend/ingest)    │
-                              │                         │
-                              │ → logger.Info(...)      │
-                              └─────────────────────────┘
+┌─────────────────────────┐   ┌─────────────────────────────────────────────────┐
+│ EnvelopeBuilder         │   │ SignalRouter                                    │
+│ (pkg/backend/ingest)    │   │ (pkg/backend/ingest)                            │
+│                         │   │                                                 │
+│ → []schema.RawEnvelope  │   │ metric → NormalizingIngestor                   │
+└─────────────────────────┘   │ trace  → TopologyIngestor                      │
+                               └─────────────────────────────────────────────────┘
+                                        │                          │
+                              ┌─────────▼──────────┐   ┌──────────▼─────────┐
+                              │ NormalizingIngestor │   │ TopologyIngestor   │
+                              │                    │   │                    │
+                              │ OTLPNormalizer      │   │ TraceTopology-     │
+                              │  → []MetricSample  │   │  Builder           │
+                              │ MetricStore.Write  │   │  → []Edge          │
+                              └────────────────────┘   │ GraphStore.Put-    │
+                                        │               │  Snapshot          │
+                                        ▼               └────────────────────┘
+                              ┌─────────────────────┐             │
+                              │ InMemoryMetricStore │             ▼
+                              │ (pkg/backend/       │   ┌─────────────────────┐
+                              │  persistence)       │   │ InMemoryGraphStore  │
+                              └─────────────────────┘   │ (pkg/backend/       │
+                                                         │  persistence)       │
+                                                         └─────────────────────┘
 ```
 
 ## Runtime Stages
@@ -181,7 +213,7 @@ Operational notes:
 
 ### 3. Backend OTLP Ingest
 
-The OKSG backend is the first OKSG-owned runtime that accepts forwarded telemetry.
+The OKSG backend is the OKSG-owned runtime that accepts forwarded telemetry and drives the normalization pipeline.
 
 What it does today:
 
@@ -190,12 +222,14 @@ What it does today:
 - serves health checks on port `13133`
 - accepts enabled signal classes from the deployed plan
 - parses incoming OTLP metrics and traces
-- hands accepted payloads to backend ingest components
+- hands accepted payloads to the normalization pipeline
+
+The `--cluster-name` flag (or `OKSG_CLUSTER_NAME` env var) controls the cluster name used for entity ID computation. It defaults to `default`.
 
 Operational notes:
 
 - logs are structured JSON to stdout
-- the backend currently acts as an ingest boundary, not as a persistence or query layer
+- the backend now normalizes and persists telemetry in memory; persistence survives only for the process lifetime
 
 ### 4. Raw Envelope Build
 
@@ -213,20 +247,28 @@ This is the current canonical handoff from collection into future semantic proce
 
 ### 5. Signal Routing
 
-The backend then routes each `schema.RawEnvelope` by signal type.
+The backend routes each `schema.RawEnvelope` by signal type.
 
 What is implemented today:
 
-- metric envelopes can be ingested
-- trace envelopes can be ingested when the signal is enabled
+- metric envelopes are routed to `NormalizingIngestor`
+- trace envelopes are routed to `TopologyIngestor` when the signal is enabled
 - routing happens through explicit ingest interfaces in `pkg/backend/ingest`
 
-What the sink does today:
+### 6. Semantic Normalization and Persistence
 
-- accepts the routed envelope
-- emits structured logs confirming acceptance
+After routing, envelopes are normalized into canonical domain objects.
 
-This is intentionally minimal so Phase 4 can add normalization and persistence without redesigning the ingest boundary.
+Metric path:
+
+- `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > service. Entity resolution errors fail the envelope.
+- `OTLPNormalizer` maps each recognized OTLP metric name to a canonical `MetricSample` using the registered `OTLPToCanonicalMappings`. Applies unit conversion. Resolves directional names for disk and network metrics from the `direction` attribute. Unrecognized metric names are silently skipped.
+- `InMemoryMetricStore` stores the resulting samples in memory. Supports time-range and entity-filtered queries.
+
+Trace path:
+
+- `TraceTopologyBuilder` scans each span for a `peer.service` attribute. When found, it resolves both caller and callee to `EntityID` values and emits a `topology.Edge` with `RelCalls` relation. Edges are deduplicated within the batch by edge ID. `FirstSeen`/`LastSeen` are taken from span timestamps.
+- `InMemoryGraphStore` accumulates edges across snapshots. Re-observed edges have their `LastSeen` updated.
 
 ## Current Observable Behavior
 
@@ -236,20 +278,18 @@ Expected operator-visible behavior:
 
 - agent logs show receiver startup and scrape discovery
 - gateway logs show OTLP receiver startup and successful forwarding behavior
-- backend logs show one structured line per accepted raw envelope
+- backend logs show startup confirmation of the normalization pipeline configuration
+- metric envelopes are normalized to canonical `MetricSample` values and written to the in-memory store
+- trace envelopes are processed by `TraceTopologyBuilder`; detected service edges are written to the in-memory graph store
 
-Example backend log shape:
+Example backend startup log:
 
 ```json
 {
   "component": "backend",
   "level": "info",
-  "msg": "envelope received",
-  "signal_type": "metric",
-  "source": "otlp/grpc",
-  "resource": {
-    "service.name": "oksg-demo-gateway-go"
-  }
+  "msg": "normalization pipeline configured",
+  "cluster_name": "kind-test"
 }
 ```
 
@@ -257,21 +297,24 @@ Example backend log shape:
 
 Implemented in the current slice:
 
-- agent collection from `kubeletstats`
+- agent collection from `kubeletstats`, `hostmetrics`, and `k8scluster`
 - conditional Prometheus scraping
 - conditional OTLP receive paths
+- `spanmetrics` and `servicegraph` connectors when OTLP traces are present
 - gateway OTLP fan-in and export
 - backend OTLP ingest over gRPC and HTTP
 - raw envelope construction
 - signal-type routing
-- stdout-based verification through structured backend logs
+- `OTLPEntityResolver`: deterministic entity ID computation from OTLP resource attributes
+- `OTLPNormalizer`: canonical metric mapping with unit conversion
+- `TraceTopologyBuilder`: service-to-service edge extraction from trace spans
+- `NormalizingIngestor` and `TopologyIngestor`: full normalization pipeline
+- `InMemoryMetricStore` and `InMemoryGraphStore`: thread-safe in-memory persistence
 
 Not implemented yet:
 
-- semantic normalization of raw telemetry into canonical entities or metrics
-- topology reconstruction and graph assembly
-- durable persistence of telemetry or graph state
-- query APIs over stored telemetry or topology
+- durable persistence (metrics and topology survive only for the process lifetime)
+- query APIs over stored metrics or topology
 - controller-driven runtime management
 - prediction, simulation, or model-ready feature generation
 
@@ -282,9 +325,13 @@ Workloads / Kubelet
         |
         v
 Agent Collector
-  - kubeletstats
+  - kubeletstats (pod, container, volume)
+  - hostmetrics (CPU, memory, disk, network, load)
+  - k8scluster (replica counts, pod phases, node conditions)
   - prometheus (when discovered)
   - otlp (when discovered)
+  - spanmetrics connector (when OTLP traces present)
+  - servicegraph connector (when OTLP traces present)
         |
         v
 Gateway Collector
@@ -297,7 +344,10 @@ OKSG Backend
   - OTLP gRPC/HTTP ingest
   - Raw envelope build
   - Signal routing
-  - Structured acceptance logs
+    ├── metric → NormalizingIngestor
+    │     OTLPNormalizer → InMemoryMetricStore
+    └── trace → TopologyIngestor
+          TraceTopologyBuilder → InMemoryGraphStore
 ```
 
 ## Debugging Commands

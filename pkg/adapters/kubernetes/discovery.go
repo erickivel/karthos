@@ -24,6 +24,9 @@ const (
 	prometheusAnnotationPath   = "prometheus.io/path"
 	prometheusAnnotationPort   = "prometheus.io/port"
 	defaultPrometheusPath      = "/metrics"
+	otlpAnnotationTraces       = "oksg.io/otlp-traces"
+	otlpGRPCPort               = int32(4317)
+	otlpHTTPPort               = int32(4318)
 )
 
 type HTTPProbe func(ctx context.Context, url string) bool
@@ -117,6 +120,7 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 	}
 
 	var prometheusTargets []profile.PrometheusTarget
+	var otlpSources []profile.ObservabilitySource
 	for _, service := range sortServices(services.Items) {
 		profileResult.Services = append(
 			profileResult.Services,
@@ -126,6 +130,10 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		target, ok := d.prometheusTarget(ctx, service)
 		if ok {
 			prometheusTargets = append(prometheusTargets, target)
+		}
+
+		if src, ok := otlpSource(service); ok {
+			otlpSources = append(otlpSources, src)
 		}
 	}
 
@@ -137,6 +145,7 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 			PrometheusTargets: prometheusTargets,
 		},
 	}
+	profileResult.Sources = append(profileResult.Sources, otlpSources...)
 
 	profileResult.CollectionPaths = []profile.OTelCollectionPath{
 		{ReceiverType: "kubeletstats", Enabled: true},
@@ -193,6 +202,34 @@ func (d *DiscoveryAdapter) prometheusTarget(ctx context.Context, service corev1.
 	}
 
 	return target, true
+}
+
+func otlpSource(service corev1.Service) (profile.ObservabilitySource, bool) {
+	hasAnnotation := strings.EqualFold(service.Annotations[otlpAnnotationTraces], "true")
+
+	hasOTLPPort := false
+	for _, p := range service.Spec.Ports {
+		if p.Port == otlpGRPCPort || p.Port == otlpHTTPPort {
+			hasOTLPPort = true
+			break
+		}
+	}
+
+	if !hasAnnotation && !hasOTLPPort {
+		return profile.ObservabilitySource{}, false
+	}
+
+	return profile.ObservabilitySource{
+		Name:    fmt.Sprintf("%s/%s-otlp", service.Namespace, service.Name),
+		Type:    "otlp",
+		Present: true,
+		OTLP: &profile.OTLPSource{
+			MetricsEnabled: false,
+			TracesEnabled:  true,
+			GRPCEndpoint:   fmt.Sprintf("%s.%s.svc.cluster.local:4317", service.Name, service.Namespace),
+			HTTPEndpoint:   fmt.Sprintf("%s.%s.svc.cluster.local:4318", service.Name, service.Namespace),
+		},
+	}, true
 }
 
 func firstServicePort(service corev1.Service) int32 {
