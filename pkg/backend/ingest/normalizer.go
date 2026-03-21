@@ -92,13 +92,13 @@ func collectDataPoints(metric *metricspb.Metric) []*metricspb.NumberDataPoint {
 func resolveDirectionalName(metricName, defaultName string, attrs []*commonpb.KeyValue) string {
 	switch metricName {
 	case "system.disk.io":
-		dir := datapointAttributeValue(attrs, "direction")
+		dir := kvString(attrs, "direction")
 		if dir == "write" {
 			return "disk_write_bps"
 		}
 		return "disk_read_bps"
 	case "system.network.io":
-		dir := datapointAttributeValue(attrs, "direction")
+		dir := kvString(attrs, "direction")
 		if dir == "transmit" || dir == "tx" {
 			return "net_tx_bps"
 		}
@@ -107,9 +107,8 @@ func resolveDirectionalName(metricName, defaultName string, attrs []*commonpb.Ke
 	return defaultName
 }
 
-// datapointAttributeValue returns the string value for the given key from a KeyValue slice,
-// or an empty string if the key is not found.
-func datapointAttributeValue(attrs []*commonpb.KeyValue, key string) string {
+// kvString returns the string value for key from a []*commonpb.KeyValue slice, or "".
+func kvString(attrs []*commonpb.KeyValue, key string) string {
 	for _, kv := range attrs {
 		if kv.Key == key && kv.Value != nil {
 			if sv, ok := kv.Value.Value.(*commonpb.AnyValue_StringValue); ok {

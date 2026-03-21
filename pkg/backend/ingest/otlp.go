@@ -12,7 +12,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/core/schema"
 )
 
@@ -96,25 +95,6 @@ func (r *SignalRouter) Route(ctx context.Context, envelope schema.RawEnvelope) e
 	default:
 		return fmt.Errorf("unsupported signal type: %s", envelope.SignalType)
 	}
-}
-
-type LogIngestor struct {
-	logger *logging.Logger
-}
-
-func NewLogIngestor(logger *logging.Logger) *LogIngestor {
-	return &LogIngestor{logger: logger}
-}
-
-func (l *LogIngestor) Ingest(_ context.Context, envelope schema.RawEnvelope) error {
-	if l.logger != nil {
-		l.logger.Info("envelope received",
-			logging.String("signal_type", string(envelope.SignalType)),
-			logging.String("source", envelope.Source),
-			logging.Any("resource", envelope.Resource),
-		)
-	}
-	return nil
 }
 
 func marshalPayload(message proto.Message) ([]byte, error) {

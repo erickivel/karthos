@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -46,7 +45,7 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 
 	for _, ss := range rs.ScopeSpans {
 		for _, span := range ss.Spans {
-			calleeServiceName := spanAttribute(span, "peer.service")
+			calleeServiceName := kvString(span.Attributes, "peer.service")
 			if calleeServiceName == "" {
 				continue
 			}
@@ -100,17 +99,4 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 		edges = append(edges, edge)
 	}
 	return edges, nil
-}
-
-// spanAttribute returns the string value for the given key from a span's attributes,
-// or an empty string if the key is not found.
-func spanAttribute(span *tracepb.Span, key string) string {
-	for _, kv := range span.Attributes {
-		if kv.Key == key && kv.Value != nil {
-			if sv, ok := kv.Value.Value.(*commonpb.AnyValue_StringValue); ok {
-				return sv.StringValue
-			}
-		}
-	}
-	return ""
 }
