@@ -219,6 +219,61 @@ func TestPlanSpanmetricsAndServicegraphConnectorsWhenOTLPTracesEnabled(t *testin
 	require.Contains(t, metricsPipeline.Receivers, "servicegraph")
 }
 
+// TestPlanPrometheusAndTracesProfile verifies that when both prometheus and OTLP
+// traces sources are present, the plan enables prometheus scraping, hostmetrics,
+// spanmetrics/servicegraph connectors, and includes trace signal in EnabledSignals.
+func TestPlanPrometheusAndTracesProfile(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Type:    "prometheus",
+				Present: true,
+				PrometheusTargets: []profile.PrometheusTarget{
+					{ServiceName: "gateway-go", Namespace: "oksg-demo", Port: 8080, Path: "/metrics", Reachable: true},
+				},
+			},
+			{
+				Name:    "gateway-go-otlp",
+				Type:    "otlp",
+				Present: true,
+				OTLP: &profile.OTLPSource{
+					TracesEnabled: true,
+					GRPCEndpoint:  "0.0.0.0:4317",
+					HTTPEndpoint:  "0.0.0.0:4318",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Both signals enabled.
+	require.Equal(t, []string{"metric", "trace"}, plan.EnabledSignals)
+
+	// Prometheus scraping enabled.
+	require.Contains(t, plan.AgentConfig.Receivers, "prometheus")
+
+	// Connectors present for trace-derived metrics.
+	require.Contains(t, plan.AgentConfig.Connectors, "spanmetrics")
+	require.Contains(t, plan.AgentConfig.Connectors, "servicegraph")
+
+	// Traces pipeline exports to both backend and connectors.
+	tracesPipeline := plan.AgentConfig.Service.Pipelines["traces"]
+	require.Contains(t, tracesPipeline.Exporters, "spanmetrics")
+	require.Contains(t, tracesPipeline.Exporters, "servicegraph")
+	require.Contains(t, tracesPipeline.Exporters, "otlp")
+
+	// Metrics pipeline receives from connectors alongside prometheus and kubeletstats.
+	metricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
+	require.Contains(t, metricsPipeline.Receivers, "spanmetrics")
+	require.Contains(t, metricsPipeline.Receivers, "servicegraph")
+	require.Contains(t, metricsPipeline.Receivers, "prometheus")
+	require.Contains(t, metricsPipeline.Receivers, "kubeletstats")
+}
+
 // TestPlanNoConnectorsWhenTracesNotEnabled verifies that connectors are absent
 // when OTLP traces are not enabled, and the metrics pipeline does not include
 // connector names.
