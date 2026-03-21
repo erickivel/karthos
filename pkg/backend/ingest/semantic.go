@@ -20,3 +20,10 @@ type EntityResolver interface {
 type TopologyBuilder interface {
 	Build(ctx context.Context, envelope schema.RawEnvelope) ([]topology.Edge, error)
 }
+
+// NodeBuilder is an optional extension of TopologyBuilder. Implementations that
+// know the EntityKind for each entity they reference can additionally implement
+// BuildNodes so the TopologyIngestor can populate Graph.Nodes in the snapshot.
+type NodeBuilder interface {
+	BuildNodes(ctx context.Context, envelope schema.RawEnvelope) []topology.Node
+}
