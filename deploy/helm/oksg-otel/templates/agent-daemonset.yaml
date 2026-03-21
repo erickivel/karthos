@@ -60,12 +60,19 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /conf
+            - name: hostfs
+              mountPath: /hostfs
+              readOnly: true
+              mountPropagation: HostToContainer
           resources:
 {{ toYaml .Values.agent.resources | indent 12 }}
       volumes:
         - name: config
           configMap:
             name: otel-collector-agent-config
+        - name: hostfs
+          hostPath:
+            path: /
       {{- with .Values.agent.nodeSelector }}
       nodeSelector:
 {{ toYaml . | indent 8 }}

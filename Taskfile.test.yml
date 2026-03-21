@@ -17,6 +17,7 @@ vars:
   VALUES_PATH: ./bin/e2e/otel-values.yaml
   RENDERED_PATH: ./bin/e2e/rendered
   DISCOVERY_JOB_BIN: ./bin/discovery-job
+  BACKEND_HEALTH_PORT: "13133"
   KUBECONFIG:
     sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
 
@@ -67,8 +68,10 @@ tasks:
     cmds:
       - helm status {{.HELM_RELEASE_NAME}} -n {{.KIND_NAMESPACE}}
       - kubectl get pods -n {{.KIND_NAMESPACE}}
-      - echo "Waiting for pods to be ready..."
-      - kubectl wait --for=condition=Ready pods --all -n {{.KIND_NAMESPACE}} --timeout=120s
+      - echo "Waiting for rollouts to complete..."
+      - kubectl rollout status deployment/oksg-backend -n {{.KIND_NAMESPACE}} --timeout=120s
+      - kubectl rollout status deployment/otel-collector-gateway -n {{.KIND_NAMESPACE}} --timeout=120s
+      - kubectl rollout status daemonset/otel-collector-agent -n {{.KIND_NAMESPACE}} --timeout=120s
       - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=agent --tail=30
       - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=gateway --tail=30
       - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=backend --tail=30
@@ -129,3 +132,19 @@ tasks:
       - task: e2e:plan
       - task: e2e:apply-otel
       - task: e2e:verify
+
+  e2e:debug:metrics:
+    desc: Dump all metric samples stored in the backend InMemoryStore (port-forwards health port, curls /debug/metrics, then cleans up)
+    cmds:
+      - |
+        lsof -ti :{{.BACKEND_HEALTH_PORT}} | xargs kill 2>/dev/null || true
+        kubectl port-forward -n {{.KIND_NAMESPACE}} deployment/oksg-backend {{.BACKEND_HEALTH_PORT}}:{{.BACKEND_HEALTH_PORT}} &
+        PF_PID=$!
+        sleep 2
+        curl -sf http://localhost:{{.BACKEND_HEALTH_PORT}}/debug/metrics
+        kill $PF_PID 2>/dev/null || true
+
+  e2e:debug:logs:
+    desc: Tail backend logs and filter for write confirmations and skipped-entity warnings
+    cmds:
+      - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/component=backend --tail=200 | grep -E '(wrote metric samples|skipping envelope|error)'

@@ -10,6 +10,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/adapters/otlp"
 	"github.com/erickivel/oksg/pkg/backend/ingest"
+	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/logging"
 )
 
@@ -26,6 +27,7 @@ type config struct {
 	HealthListenAddress string
 	LogLevel            string
 	EnabledSignals      []string
+	ClusterName         string
 }
 
 func main() {
@@ -46,12 +48,28 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 
+	resolver := ingest.NewOTLPEntityResolver(cfg.ClusterName)
+	normalizer := ingest.NewOTLPNormalizer(resolver)
+	topoBuilder := ingest.NewTraceTopologyBuilder(resolver)
+	metricStore := persistence.NewInMemoryMetricStore()
+	graphStore := persistence.NewInMemoryGraphStore()
+
+	router := ingest.NewSignalRouter(
+		ingest.NewNormalizingIngestor(normalizer, metricStore, logger),
+		ingest.NewTopologyIngestor(topoBuilder, graphStore),
+	)
+
+	logger.Info("normalization pipeline configured",
+		logging.String("cluster_name", cfg.ClusterName),
+	)
+
 	server, err := otlp.NewServer(otlp.Config{
 		GRPCListenAddress:   cfg.GRPCListenAddress,
 		HTTPListenAddress:   cfg.HTTPListenAddress,
 		HealthListenAddress: cfg.HealthListenAddress,
 		EnabledSignals:      cfg.EnabledSignals,
-	}, ingest.NewEnvelopeBuilder(contextNow()), ingest.NewSignalRouter(ingest.NewLogIngestor(logger), ingest.NewLogIngestor(logger)), logger)
+		MetricStore:         metricStore,
+	}, ingest.NewEnvelopeBuilder(contextNow()), router, logger)
 	if err != nil {
 		return err
 	}
@@ -73,6 +91,7 @@ func parseConfig(args []string) (config, error) {
 	healthListenAddress := fs.String("health-listen-address", envOrDefault("OKSG_BACKEND_HEALTH_LISTEN_ADDRESS", defaultBackendHealthListenAddr), "health listen address")
 	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultBackendLogLevel), "structured log level")
 	enabledSignals := fs.String("enabled-signals", envOrDefault("OKSG_BACKEND_ENABLED_SIGNALS", "metric,trace"), "comma-separated enabled signals")
+	clusterName := fs.String("cluster-name", envOrDefault("OKSG_CLUSTER_NAME", "default"), "cluster name for entity resolution")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -88,6 +107,7 @@ func parseConfig(args []string) (config, error) {
 		HealthListenAddress: *healthListenAddress,
 		LogLevel:            *logLevel,
 		EnabledSignals:      signals,
+		ClusterName:         *clusterName,
 	}, nil
 }
 

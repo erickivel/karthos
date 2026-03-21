@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice now includes a discovery-driven OpenTelemetry collection plane plus the first backend OTLP ingest service.
+OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, and Layer 3 semantic normalization with in-memory persistence.
 
 ## Current Implemented Boundary
 
@@ -12,19 +12,22 @@ Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Agent/Gatewa
 
 What is real today:
 
-- `pkg/adapters/kubernetes` discovers cluster resources and Prometheus annotation-based targets
-- `pkg/adapters/otel` plans collector behavior from the discovery profile
+- `pkg/adapters/kubernetes` discovers cluster resources, Prometheus annotation-based targets, and OTLP-capable workloads
+- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics, k8scluster, spanmetrics, and servicegraph
 - `pkg/adapters/otlp` exposes OTLP gRPC and HTTP ingest for the backend runtime
 - `pkg/collector/configgen` converts the plan into typed Helm values
 - `pkg/collector/deployer` runs Helm lint/template/upgrade-install
-- `pkg/backend/ingest` converts OTLP telemetry into raw envelopes and routes them by signal type
-- `cmd/backend` runs the first backend OTLP ingest service
+- `pkg/backend/ingest` converts OTLP telemetry into raw envelopes, routes them by signal type, and normalizes them into canonical entities and metrics
+- `pkg/backend/persistence` stores canonical metrics and topology in thread-safe in-memory stores
+- `cmd/backend` runs the backend OTLP ingest and normalization service
 - `cmd/discovery-job` orchestrates discover, plan, and deploy modes
 
 What is not implemented yet:
 
 - `cmd/controller` is still a placeholder
-- persistence, query APIs, graph assembly, and canonical normalization still remain the next major runtime layers
+- query APIs over stored metrics and topology
+- durable persistence beyond in-memory stores
+- modeling and prediction
 
 ## Layer View
 
@@ -37,7 +40,7 @@ Collection Planning
   Collector config assembly
 
 Collection Runtime
-  Agent collector
+  Agent collector (Layer 3a expanded receivers)
   Gateway collector
   Backend OTLP ingest service
 
@@ -46,12 +49,48 @@ Deployment Packaging
   Helm chart
   Helm release installer
 
+Semantic Normalization (Layer 3)
+  Entity resolver
+  OTLP metric normalizer
+  Trace topology builder
+  In-memory metric and graph stores
+
 Future Layers
-  semantic processing
-  persistence
   query and control APIs
+  durable persistence
   modeling and prediction
 ```
+
+## Layer 3: Semantic Normalization
+
+### 3a: Collection Plane Expansion
+
+The source planner now configures expanded receivers beyond the baseline `kubeletstats`:
+
+- `hostmetrics` receiver: always active; collects host-level CPU, memory, disk I/O, network I/O, and load metrics from each node
+- `k8scluster` receiver: always active; collects Kubernetes state metrics including replica counts, pod phases, and node conditions
+- `kubeletstats` expanded: now includes volume metrics in addition to pod and container stats
+- `spanmetrics` connector: enabled when OTLP traces are present; derives request rate and latency distributions from span data
+- `servicegraph` connector: enabled when OTLP traces are present; derives service-to-service call edges from spans
+
+The Kubernetes discovery adapter now auto-detects OTLP-capable workloads via:
+
+- annotation `oksg.io/otlp-traces: "true"` on services
+- ports 4317 (gRPC) or 4318 (HTTP) present in service specs
+
+### 3b: Semantic Normalization Runtime
+
+The backend normalization pipeline introduced in this layer consists of:
+
+- `OTLPEntityResolver`: maps OTLP semantic convention resource attributes (`k8s.container.name`, `k8s.pod.name`, `k8s.namespace.name`, `k8s.node.name`, `service.name`) to canonical `EntityID` values. Resolution priority is container > pod > node > service. Entity IDs are deterministic, computed via SHA-256 of entity kind, cluster name, and available Kubernetes attributes.
+- `OTLPNormalizer`: maps raw OTLP metric payloads to canonical `MetricSample` values using the `OTLPToCanonicalMappings` registry. Applies unit conversion factors and resolves directional variants for disk and network metrics. Metrics with no registered mapping are silently skipped.
+- `TraceTopologyBuilder`: extracts service-to-service topology edges from OTLP trace envelopes. Edges are identified by the `peer.service` span attribute. Deduplicates edges within a batch by edge ID; propagates `FirstSeen`/`LastSeen` from span timestamps.
+- `NormalizingIngestor`: implements the `Ingestor` interface for metric envelopes; routes them through `OTLPNormalizer` and writes resulting `MetricSample` values to `MetricStore`.
+- `TopologyIngestor`: implements the `Ingestor` interface for trace envelopes; routes them through `TraceTopologyBuilder` and writes resulting `topology.Snapshot` values to `GraphStore`.
+- `InMemoryMetricStore`: thread-safe in-memory `MetricStore` implementation. Supports write and range queries filtered by entity IDs, metric name, and time window.
+- `InMemoryGraphStore`: thread-safe in-memory `GraphStore` implementation. Accumulates edges across snapshots; updates `LastSeen` on re-observed edges. Supports edge queries filtered by source or target entity ID.
+
+The `--cluster-name` flag on `cmd/backend` controls the cluster name used for entity ID computation and defaults to `default` (overridable via `OKSG_CLUSTER_NAME`).
 
 ## Deployment Model
 
@@ -93,7 +132,7 @@ OKSG-owned runtime components use structured JSON logs to stdout only.
 
 OTel collector workloads are also configured for stdout-based logging, with per-component log level controlled through Helm values.
 
-The backend OTLP ingest runtime logs one structured line per accepted envelope so end-to-end verification can use `kubectl logs` before persistence exists.
+The backend OTLP ingest runtime logs structured lines for pipeline startup and per-request events; end-to-end verification uses `kubectl logs`.
 
 ## Design Principles Still In Force
 

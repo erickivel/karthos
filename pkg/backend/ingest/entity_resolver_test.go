@@ -1,0 +1,181 @@
+package ingest
+
+import (
+	"context"
+	"testing"
+
+	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const testCluster = "test-cluster"
+
+func TestOTLPEntityResolver_Container(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.container.name": "my-container",
+		"k8s.pod.name":       "my-pod",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindContainer, testCluster, "my-namespace", "my-pod", "my-container")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_Container_Deterministic(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.container.name": "my-container",
+		"k8s.pod.name":       "my-pod",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	id1, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	id2, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	assert.Equal(t, id1, id2)
+}
+
+func TestOTLPEntityResolver_Pod(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.pod.name":       "my-pod",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindPod, testCluster, "my-namespace", "my-pod")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_Pod_Deterministic(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.pod.name":       "my-pod",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	id1, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	id2, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	assert.Equal(t, id1, id2)
+}
+
+func TestOTLPEntityResolver_Node(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.node.name": "my-node",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindNode, testCluster, "my-node")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_Node_Deterministic(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.node.name": "my-node",
+	}
+
+	id1, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	id2, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	assert.Equal(t, id1, id2)
+}
+
+func TestOTLPEntityResolver_ServiceWithNamespace(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"service.name":       "my-service",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindService, testCluster, "my-namespace", "my-service")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_ServiceWithNamespace_Deterministic(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"service.name":       "my-service",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	id1, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	id2, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	assert.Equal(t, id1, id2)
+}
+
+func TestOTLPEntityResolver_ServiceBestEffort(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"service.name": "my-service",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindService, testCluster, "my-service")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_ServiceBestEffort_Deterministic(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"service.name": "my-service",
+	}
+
+	id1, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	id2, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	assert.Equal(t, id1, id2)
+}
+
+func TestOTLPEntityResolver_EmptyResource(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{}
+
+	_, err := resolver.Resolve(context.Background(), resource)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot resolve entity")
+}
+
+func TestOTLPEntityResolver_UnrecognizedResource(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"some.unknown.key":    "value",
+		"another.unknown.key": "other-value",
+	}
+
+	_, err := resolver.Resolve(context.Background(), resource)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot resolve entity")
+}

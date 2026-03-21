@@ -26,6 +26,15 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"edge_latency_nanoseconds":     {},
 		"error_rate_per_second":        {},
 		"error_ratio":                  {},
+		"cpu_request_millicores":       {},
+		"cpu_limit_millicores":         {},
+		"memory_request_bytes":         {},
+		"memory_limit_bytes":           {},
+		"replica_count":                {},
+		"disk_read_bps":                {},
+		"disk_write_bps":               {},
+		"net_rx_bps":                   {},
+		"net_tx_bps":                   {},
 	}
 
 	for _, metric := range DefaultCatalog() {

@@ -20,14 +20,18 @@ sequenceDiagram
     CLI->>DA: Discover(ctx)
     DA->>K8s: List Nodes, Namespaces, Deployments, Services
     DA->>DA: Detect prometheus annotations and optional reachability
+    DA->>DA: Detect OTLP-capable services (oksg.io/otlp-traces annotation or ports 4317/4318)
     DA-->>CLI: ClusterProfile
     CLI->>CLI: Write profile.json
 
     User->>CLI: discovery-job --mode=plan --profile=profile.json
     CLI->>SP: Plan(ctx, ClusterProfile)
-    SP->>SP: Always add kubeletstats
+    SP->>SP: Always add kubeletstats, hostmetrics, k8scluster
     alt Prometheus targets found
         SP->>SP: Add prometheus receiver and scrape configs
+    end
+    alt OTLP sources found
+        SP->>SP: Add otlp receiver and spanmetrics/servicegraph connectors
     end
     SP-->>CLI: Plan
     CLI->>RV: Build(plan)
@@ -65,28 +69,36 @@ The discovery adapter queries Kubernetes and produces a `ClusterProfile` with:
 - detected observability sources
 - recommended collection paths and receivers
 
-Prometheus detection is currently based on service annotations:
+Prometheus detection is based on service annotations:
 
 - `prometheus.io/scrape`
 - `prometheus.io/path`
 - `prometheus.io/port`
 
+OTLP detection is based on:
+
+- annotation `oksg.io/otlp-traces: "true"` on a service
+- ports 4317 (gRPC) or 4318 (HTTP) present in the service spec
+
+Either condition is sufficient for a service to be included as an OTLP source in the profile.
+
 ### 2. Source Planning
 
 The source planner turns the profile into collector intent:
 
-- agent always includes `kubeletstats`
+- agent always includes `kubeletstats` (expanded to include volume metrics), `hostmetrics`, and `k8scluster`
 - agent adds `prometheus` only when targets were discovered
 - agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
+- agent enables `spanmetrics` and `servicegraph` connectors when OTLP traces are enabled
 - gateway receives OTLP from agents and OTLP-native emitters
 - gateway exports to the backend OTLP ingest service instead of the debug exporter
 - collector telemetry logging is configured for JSON stdout logging with env-controlled level
 - traces are enabled only when OTLP-capable sources advertise trace support
 
-Important current limitation:
+Baseline vs enriched plans:
 
-- the Kubernetes discovery adapter still only produces Prometheus-or-fallback profiles
-- OTLP-capable sources are supported by the profile and planner contracts, but they are not auto-detected by the current discovery adapter yet
+- a **baseline** plan (no Prometheus targets, no OTLP sources) enables only `kubeletstats`, `hostmetrics`, and `k8scluster`
+- an **enriched** plan adds `prometheus`, `otlp`, `spanmetrics`, and/or `servicegraph` based on what was discovered
 
 ### 3. Release Values Generation
 
@@ -158,9 +170,9 @@ The Helm chart is responsible for:
 }
 ```
 
-### ClusterProfile (Planner-Only OTLP Example)
+### ClusterProfile (OTLP Detected)
 
-This example shows a profile shape the planner understands today, but which the current Kubernetes discovery adapter does not auto-produce yet:
+This example shows the profile produced when the discovery adapter finds an OTLP-capable service (via `oksg.io/otlp-traces: "true"` annotation or ports 4317/4318):
 
 ```json
 {

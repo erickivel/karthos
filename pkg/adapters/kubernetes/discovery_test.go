@@ -90,6 +90,121 @@ func TestDiscoverFallsBackToKubeletstatsWhenPrometheusAbsent(t *testing.T) {
 	require.Empty(t, profile.Sources[0].PrometheusTargets)
 }
 
+func TestDiscoverDetectsOTLPSourceFromAnnotation(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "order-service",
+				Namespace: "oksg-demo",
+				Annotations: map[string]string{
+					"oksg.io/otlp-traces": "true",
+				},
+			},
+			Spec: corev1.ServiceSpec{
+				Ports: []corev1.ServicePort{
+					{Port: 8080},
+				},
+			},
+		},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	// prometheus source + one otlp source
+	require.Len(t, profile.Sources, 2)
+	otlp := profile.Sources[1]
+	require.Equal(t, "oksg-demo/order-service-otlp", otlp.Name)
+	require.Equal(t, "otlp", otlp.Type)
+	require.True(t, otlp.Present)
+	require.NotNil(t, otlp.OTLP)
+	require.True(t, otlp.OTLP.TracesEnabled)
+	require.False(t, otlp.OTLP.MetricsEnabled)
+	require.Equal(t, "order-service.oksg-demo.svc.cluster.local:4317", otlp.OTLP.GRPCEndpoint)
+	require.Equal(t, "order-service.oksg-demo.svc.cluster.local:4318", otlp.OTLP.HTTPEndpoint)
+}
+
+func TestDiscoverDetectsOTLPSourceFromGRPCPort(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "trace-collector",
+				Namespace: "oksg-demo",
+			},
+			Spec: corev1.ServiceSpec{
+				Ports: []corev1.ServicePort{
+					{Port: 4317},
+				},
+			},
+		},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	otlp := profile.Sources[1]
+	require.Equal(t, "oksg-demo/trace-collector-otlp", otlp.Name)
+	require.Equal(t, "otlp", otlp.Type)
+	require.True(t, otlp.Present)
+	require.NotNil(t, otlp.OTLP)
+	require.True(t, otlp.OTLP.TracesEnabled)
+}
+
+func TestDiscoverDetectsOTLPSourceFromHTTPPort(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "trace-collector-http",
+				Namespace: "oksg-demo",
+			},
+			Spec: corev1.ServiceSpec{
+				Ports: []corev1.ServicePort{
+					{Port: 4318},
+				},
+			},
+		},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	otlp := profile.Sources[1]
+	require.Equal(t, "oksg-demo/trace-collector-http-otlp", otlp.Name)
+	require.Equal(t, "otlp", otlp.Type)
+	require.True(t, otlp.Present)
+	require.NotNil(t, otlp.OTLP)
+	require.True(t, otlp.OTLP.TracesEnabled)
+}
+
+func TestDiscoverNoOTLPSourceWhenNoAnnotationOrPort(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "plain-service",
+				Namespace: "oksg-demo",
+			},
+			Spec: corev1.ServiceSpec{
+				Ports: []corev1.ServicePort{
+					{Port: 8080},
+				},
+			},
+		},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	// only the prometheus source, no otlp source
+	require.Len(t, profile.Sources, 1)
+	require.Equal(t, "prometheus", profile.Sources[0].Type)
+}
+
 func int32Ptr(value int32) *int32 {
 	return &value
 }
