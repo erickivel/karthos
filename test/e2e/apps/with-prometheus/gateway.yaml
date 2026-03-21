@@ -27,6 +27,14 @@ spec:
               value: http://service-a-python:8081/process
             - name: SERVICE_B_URL
               value: http://service-b-node:8082/compute
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://$(HOST_IP):4318
+            - name: OTEL_SERVICE_NAME
+              value: gateway-go
 ---
 apiVersion: v1
 kind: Service
@@ -36,6 +44,7 @@ metadata:
     prometheus.io/scrape: "true"
     prometheus.io/path: /metrics
     prometheus.io/port: "8080"
+    oksg.io/otlp-traces: "true"
 spec:
   type: NodePort
   selector:
