@@ -50,13 +50,17 @@ func run(ctx context.Context, args []string) error {
 
 	resolver := ingest.NewOTLPEntityResolver(cfg.ClusterName)
 	normalizer := ingest.NewOTLPNormalizer(resolver)
-	topoBuilder := ingest.NewTraceTopologyBuilder(resolver)
+	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
+	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
 	metricStore := persistence.NewInMemoryMetricStore()
 	graphStore := persistence.NewInMemoryGraphStore()
 
 	router := ingest.NewSignalRouter(
-		ingest.NewNormalizingIngestor(normalizer, metricStore, logger),
-		ingest.NewTopologyIngestor(topoBuilder, graphStore),
+		ingest.NewMultiIngestor(
+			ingest.NewNormalizingIngestor(normalizer, metricStore, logger),
+			ingest.NewTopologyIngestor(metricTopoBuilder, graphStore),
+		),
+		ingest.NewTopologyIngestor(traceTopoBuilder, graphStore),
 	)
 
 	logger.Info("normalization pipeline configured",
@@ -69,6 +73,7 @@ func run(ctx context.Context, args []string) error {
 		HealthListenAddress: cfg.HealthListenAddress,
 		EnabledSignals:      cfg.EnabledSignals,
 		MetricStore:         metricStore,
+		GraphStore:          graphStore,
 	}, ingest.NewEnvelopeBuilder(contextNow()), router, logger)
 	if err != nil {
 		return err
