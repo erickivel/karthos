@@ -144,6 +144,17 @@ tasks:
         curl -sf http://localhost:{{.BACKEND_HEALTH_PORT}}/debug/metrics
         kill $PF_PID 2>/dev/null || true
 
+  e2e:debug:graph:
+    desc: Dump the current topology graph snapshot from the backend /debug/graph endpoint
+    cmds:
+      - |
+        lsof -ti :{{.BACKEND_HEALTH_PORT}} | xargs kill 2>/dev/null || true
+        kubectl port-forward -n {{.KIND_NAMESPACE}} deployment/oksg-backend {{.BACKEND_HEALTH_PORT}}:{{.BACKEND_HEALTH_PORT}} &
+        PF_PID=$!
+        sleep 2
+        curl -sf http://localhost:{{.BACKEND_HEALTH_PORT}}/debug/graph
+        kill $PF_PID 2>/dev/null || true
+
   e2e:debug:logs:
     desc: Tail backend logs and filter for write confirmations and skipped-entity warnings
     cmds:
