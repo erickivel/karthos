@@ -13,10 +13,14 @@ task test
 Key coverage areas:
 
 - Kubernetes discovery adapter behavior
-- source planner receiver selection
+- source planner receiver selection (including prometheus+traces combined profile)
 - Helm values generation
 - backend OTLP envelope conversion and routing
 - OTLP gRPC and HTTP ingest integration
+- `MetricTopologyBuilder`: structural edge and node extraction from resource attributes
+- `MultiIngestor`: fan-out behavior and error aggregation
+- `InMemoryGraphStore`: node accumulation and deduplication across snapshots
+- `/debug/graph` endpoint correctness
 - Helm deploy command assembly
 - structured JSON logger behavior
 - `discovery-job` mode orchestration
@@ -71,9 +75,19 @@ What each stage now does:
 Expected:
 
 - Prometheus-annotated services are detected
-- generated Helm values include Prometheus receiver config
+- gateway-go emits OTLP traces (instrumented with OTel Go SDK, `peer.service` attributes set)
+- generated Helm values include Prometheus receiver config and spanmetrics/servicegraph connectors
 - agent DaemonSet, gateway Deployment, and backend Deployment become ready
 - backend logs show accepted metric envelopes after the gateway forwards traffic
+- after ~60s, `/debug/metrics` returns at least one metric sample
+- `/debug/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
+
+Use the debug tasks to inspect backend state after a scenario run:
+
+```bash
+task test:e2e:debug:metrics  # dump all stored metric samples
+task test:e2e:debug:graph    # dump full topology graph snapshot
+```
 
 ### No Telemetry Fallback
 

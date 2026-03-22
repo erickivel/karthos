@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, and Layer 3 semantic normalization with in-memory persistence.
+OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization with in-memory persistence, and initial Layer 4 topology reconstruction.
 
 ## Current Implemented Boundary
 
@@ -17,8 +17,8 @@ What is real today:
 - `pkg/adapters/otlp` exposes OTLP gRPC and HTTP ingest for the backend runtime
 - `pkg/collector/configgen` converts the plan into typed Helm values
 - `pkg/collector/deployer` runs Helm lint/template/upgrade-install
-- `pkg/backend/ingest` converts OTLP telemetry into raw envelopes, routes them by signal type, and normalizes them into canonical entities and metrics
-- `pkg/backend/persistence` stores canonical metrics and topology in thread-safe in-memory stores
+- `pkg/backend/ingest` converts OTLP telemetry into raw envelopes, routes them by signal type, normalizes them into canonical entities and metrics, and extracts structural topology edges from metric resource attributes
+- `pkg/backend/persistence` stores canonical metrics and topology nodes and edges in thread-safe in-memory stores
 - `cmd/backend` runs the backend OTLP ingest and normalization service
 - `cmd/discovery-job` orchestrates discover, plan, and deploy modes
 
@@ -54,6 +54,11 @@ Semantic Normalization (Layer 3)
   OTLP metric normalizer
   Trace topology builder
   In-memory metric and graph stores
+
+Topology Reconstruction (Layer 4)
+  Metric topology builder (structural edges from resource attributes)
+  Multi-ingestor fan-out for metric signal path
+  Graph node accumulation in InMemoryGraphStore
 
 Future Layers
   query and control APIs
@@ -91,6 +96,38 @@ The backend normalization pipeline introduced in this layer consists of:
 - `InMemoryGraphStore`: thread-safe in-memory `GraphStore` implementation. Accumulates edges across snapshots; updates `LastSeen` on re-observed edges. Supports edge queries filtered by source or target entity ID.
 
 The `--cluster-name` flag on `cmd/backend` controls the cluster name used for entity ID computation and defaults to `default` (overridable via `OKSG_CLUSTER_NAME`).
+
+## Layer 4: Topology Reconstruction
+
+Layer 4 merges discovered structure with runtime interaction evidence to build temporal graph nodes and edges.
+
+### Structural Edges from Metric Resource Attributes
+
+`MetricTopologyBuilder` extracts structural edges from OTLP metric envelope resource attributes without parsing the metric payload itself. It derives:
+
+- `runs_on`: pod → node (from `k8s.pod.name` + `k8s.node.name` + `k8s.namespace.name`)
+- `contains` (namespace → pod): from `k8s.namespace.name` + `k8s.pod.name`
+- `contains` (pod → container): from `k8s.pod.name` + `k8s.container.name`
+
+It also implements the optional `NodeBuilder` interface, returning `topology.Node` values for each entity kind it resolves (namespace, node, pod, container).
+
+### MultiIngestor Fan-out
+
+`MultiIngestor` implements the `Ingestor` interface and fans metric envelopes out to multiple downstream ingestors in order. All ingestors receive every envelope; the first error is returned. In `cmd/backend`, the metric signal path uses:
+
+```
+MultiIngestor
+  ├── NormalizingIngestor  → InMemoryMetricStore
+  └── TopologyIngestor(MetricTopologyBuilder) → InMemoryGraphStore
+```
+
+### Graph Node Accumulation
+
+`InMemoryGraphStore` now accumulates `topology.Node` values by entity ID alongside edges. Nodes are merged from each `PutSnapshot` call; `GetLatest` returns accumulated nodes and edges together. This allows the graph to reflect the full entity population across multiple telemetry batches.
+
+### Runtime Inspection
+
+The backend exposes a `/debug/graph` endpoint on the health port (13133) that returns the current topology snapshot as JSON, including both `nodes` and `edges`. Use `task test:e2e:debug:graph` to inspect it.
 
 ## Deployment Model
 
