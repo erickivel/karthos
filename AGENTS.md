@@ -1,6 +1,6 @@
 # Project Overview
 
-This repository contains the Phase 1 foundation, the Phase 2 discovery/planning slice, and the first Phase 3 implementation slice of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
+This repository contains the Phase 1 foundation, the Phase 2 discovery/planning slice, the Phase 3 collection-plane runtime, and the initial Phase 4 topology reconstruction of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
 
 The system is organized around stable architectural boundaries between:
 

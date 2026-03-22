@@ -13,7 +13,7 @@ The project is designed to:
 - reconstruct a time-aware topology graph with metrics attached to nodes and edges
 - preserve a modular boundary for later prediction, simulation, and reporting features
 
-Phase 1 established the contracts and schemas. Phase 2 added discovery-driven collection planning, and Phase 3 now implements the first end-to-end OpenTelemetry collection plane with a real backend OTLP ingest runtime.
+Phase 1 established the contracts and schemas. Phase 2 added discovery-driven collection planning, Phase 3 implements the end-to-end OpenTelemetry collection plane with a real backend OTLP ingest runtime, and Phase 4 adds topology reconstruction from runtime telemetry with debug endpoints for graph and metrics inspection.
 
 ## Architecture Overview
 
@@ -26,17 +26,22 @@ The long-term architecture is organized into six layers:
 5. Modeling and Prediction Layer
 6. Control and API Layer
 
-This repository currently implements the Phase 1 foundation, the Phase 2 discovery/planning slice, and the first Phase 3 collection-plane runtime:
+This repository currently implements Phase 1 foundation, Phase 2 discovery/planning, Phase 3 collection-plane runtime, and the initial Phase 4 topology reconstruction:
 
 - canonical entities, metrics, raw telemetry envelopes, and topology contracts
 - discovery profile contracts extended with Prometheus target detection and recommended OTel receivers
 - Kubernetes discovery and OTel collector planning entrypoints
 - Helm values generation and Helm-managed deployment for agent, gateway, and backend
 - OTLP gRPC/HTTP ingest in the backend with raw-envelope conversion and signal routing
+- semantic normalization with entity resolution and canonical metric mapping
+- structural topology extraction from kubeletstats resource attributes (`runs_on`, `contains` edges)
+- OTLP trace-based topology extraction (`calls` edges from `peer.service` span attributes)
+- `/debug/graph` and `/debug/metrics` endpoints for runtime topology and metric inspection
+- traffic generation tasks for exercising the demo app and observing graph construction
 
 ## Project Status
 
-Current phase: `Phase 3 — OpenTelemetry Collection Plane Implementation`
+Current phase: `Phase 4 — Topology Reconstruction`
 
 <details>
 <summary>Phase 1 — Foundation and Contracts (Completed)</summary>
@@ -63,13 +68,27 @@ Current phase: `Phase 3 — OpenTelemetry Collection Plane Implementation`
 </details>
 
 <details>
-<summary>Phase 3 — OpenTelemetry Collection Plane Implementation (Current Slice)</summary>
+<summary>Phase 3 — OpenTelemetry Collection Plane Implementation (Completed)</summary>
 
 - Helm-managed deployment of agent, gateway, and backend
 - Backend OTLP ingest over gRPC and HTTP
 - Raw-envelope conversion and signal routing in `pkg/backend/ingest`
 - End-to-end telemetry verification through structured backend logs
 - Runtime flow documentation for the deployed collection plane
+
+</details>
+
+<details>
+<summary>Phase 4 — Topology Reconstruction (Current Slice)</summary>
+
+- Semantic normalization with `OTLPEntityResolver` and `MetricNormalizer`
+- `MetricTopologyBuilder` derives `runs_on` and `contains` edges from kubeletstats resource attributes
+- `TraceTopologyBuilder` derives `calls` edges from OTLP trace spans with `peer.service`
+- `MultiIngestor` fans envelopes through normalization and topology extraction in parallel
+- `InMemoryGraphStore` accumulates nodes and edges across telemetry batches
+- `/debug/graph` and `/debug/metrics` HTTP endpoints for runtime inspection
+- OTLP trace instrumentation in `gateway-go` demo app
+- Traffic generation and debug tasks (`task test:e2e:traffic`, `task test:e2e:debug:graph`)
 
 </details>
 
@@ -154,6 +173,21 @@ task test:e2e:apply-otel
 
 # 5. Verify agent, gateway, and backend are running
 task test:e2e:verify
+```
+
+#### Traffic Generation and Debug
+
+After deploying, generate traffic and inspect the resulting topology graph:
+
+```bash
+# Send requests to gateway-go to generate observable traffic
+task test:e2e:traffic
+
+# Inspect the topology graph built from runtime telemetry
+task test:e2e:debug:graph
+
+# Inspect metric samples stored in the backend
+task test:e2e:debug:metrics
 ```
 
 #### Cleanup

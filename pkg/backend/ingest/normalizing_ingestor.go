@@ -72,13 +72,14 @@ func (i *TopologyIngestor) Ingest(ctx context.Context, envelope schema.RawEnvelo
 	if err != nil {
 		return fmt.Errorf("build topology: %w", err)
 	}
-	if len(edges) == 0 {
-		return nil
-	}
 
 	var nodes []topology.Node
 	if nb, ok := i.builder.(NodeBuilder); ok {
 		nodes = nb.BuildNodes(ctx, envelope)
+	}
+
+	if len(edges) == 0 && len(nodes) == 0 {
+		return nil
 	}
 
 	snapshot := buildSnapshot(edges, nodes, envelope)
