@@ -61,6 +61,11 @@ tasks:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
       - "{{.DISCOVERY_JOB_BIN}} --mode=plan --profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}}"
 
+  e2e:apply-profile:
+    desc: Create or update a ConfigMap from the discovery profile for backend structural topology
+    cmds:
+      - kubectl create configmap oksg-discovery-profile --from-file=profile.json={{.PROFILE_PATH}} -n {{.KIND_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+
   e2e:apply-otel:
     desc: Install or upgrade the OTel Helm release with generated values
     cmds:
@@ -121,6 +126,7 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
+      - task: e2e:apply-profile
       - task: e2e:verify
 
   e2e:scenario:fallback:
@@ -134,6 +140,7 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
+      - task: e2e:apply-profile
       - task: e2e:verify
 
   e2e:debug:metrics:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
 const (
@@ -28,6 +30,7 @@ type config struct {
 	LogLevel            string
 	EnabledSignals      []string
 	ClusterName         string
+	DiscoveryProfile    string
 }
 
 func main() {
@@ -54,6 +57,12 @@ func run(ctx context.Context, args []string) error {
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
 	metricStore := persistence.NewInMemoryMetricStore()
 	graphStore := persistence.NewInMemoryGraphStore()
+
+	if cfg.DiscoveryProfile != "" {
+		if err := ingestDiscoveryProfile(ctx, cfg, graphStore, logger); err != nil {
+			return err
+		}
+	}
 
 	router := ingest.NewSignalRouter(
 		ingest.NewMultiIngestor(
@@ -97,6 +106,7 @@ func parseConfig(args []string) (config, error) {
 	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultBackendLogLevel), "structured log level")
 	enabledSignals := fs.String("enabled-signals", envOrDefault("OKSG_BACKEND_ENABLED_SIGNALS", "metric,trace"), "comma-separated enabled signals")
 	clusterName := fs.String("cluster-name", envOrDefault("OKSG_CLUSTER_NAME", "default"), "cluster name for entity resolution")
+	discoveryProfile := fs.String("discovery-profile", envOrDefault("OKSG_DISCOVERY_PROFILE", ""), "path to ClusterProfile JSON for structural topology")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -113,6 +123,7 @@ func parseConfig(args []string) (config, error) {
 		LogLevel:            *logLevel,
 		EnabledSignals:      signals,
 		ClusterName:         *clusterName,
+		DiscoveryProfile:    *discoveryProfile,
 	}, nil
 }
 
@@ -148,4 +159,27 @@ func envOrDefault(key, fallback string) string {
 
 func contextNow() time.Time {
 	return time.Now().UTC()
+}
+
+func ingestDiscoveryProfile(ctx context.Context, cfg config, graphStore *persistence.InMemoryGraphStore, logger *logging.Logger) error {
+	data, err := os.ReadFile(cfg.DiscoveryProfile)
+	if err != nil {
+		return fmt.Errorf("read discovery profile: %w", err)
+	}
+	var prof profile.ClusterProfile
+	if err := json.Unmarshal(data, &prof); err != nil {
+		return fmt.Errorf("unmarshal discovery profile: %w", err)
+	}
+
+	builder := ingest.NewK8sStructuralTopologyBuilder(cfg.ClusterName)
+	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore)
+	if err := ingestor.IngestProfile(ctx, &prof); err != nil {
+		return fmt.Errorf("ingest structural topology: %w", err)
+	}
+
+	logger.Info("structural topology ingested from discovery profile",
+		logging.String("profile_path", cfg.DiscoveryProfile),
+		logging.String("cluster_name", prof.ClusterName),
+	)
+	return nil
 }

@@ -14,6 +14,7 @@ type ClusterProfile struct {
 	Namespaces           []entities.Namespace  `json:"namespaces,omitempty"`
 	Workloads            []entities.Workload   `json:"workloads,omitempty"`
 	Services             []entities.Service    `json:"services,omitempty"`
+	Ingresses            []entities.Ingress    `json:"ingresses,omitempty"`
 	Sources              []ObservabilitySource `json:"sources,omitempty"`
 	CollectionPaths      []OTelCollectionPath  `json:"collection_paths,omitempty"`
 	RecommendedReceivers []string              `json:"recommended_receivers,omitempty"`

@@ -55,6 +55,24 @@ if graph:
     if edges:
         relations = sorted({e.get("relation") for e in edges})
         print(f"  Edge relations: {relations}")
+
+    # Validate runtime edges from OTLP telemetry.
+    runtime_relations = {"calls", "runs_on", "contains"}
+    found_runtime = {e["relation"] for e in edges} & runtime_relations
+    for rel in found_runtime:
+        count = sum(1 for e in edges if e["relation"] == rel)
+        print(f"  ✓ Found {count} '{rel}' edge(s)")
+
+    # Validate structural edges from K8s API.
+    structural_relations = {"exposes", "routes_to", "uses"}
+    found_structural = {e["relation"] for e in edges} & structural_relations
+    for rel in found_structural:
+        count = sum(1 for e in edges if e["relation"] == rel)
+        print(f"  ✓ Found {count} '{rel}' edge(s)")
+
+    # Validate node kinds include structural entities.
+    node_kinds = {n.get("kind") for n in nodes}
+    print(f"  Node kinds: {sorted(node_kinds)}")
 else:
     print("⚠ No graph snapshot yet (traces may not have flowed)")
 PY

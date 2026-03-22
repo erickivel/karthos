@@ -12,6 +12,9 @@ const (
 	KindService   EntityKind = "service"
 	KindIngress   EntityKind = "ingress"
 	KindEndpoint  EntityKind = "endpoint"
+	KindConfigMap EntityKind = "configmap"
+	KindSecret    EntityKind = "secret"
+	KindPVC       EntityKind = "pvc"
 )
 
 type EntityID string

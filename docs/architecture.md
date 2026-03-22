@@ -57,6 +57,8 @@ Semantic Normalization (Layer 3)
 
 Topology Reconstruction (Layer 4)
   Metric topology builder (structural edges from resource attributes)
+  Trace topology builder (service-to-service call edges from spans)
+  K8s structural topology builder (exposes, routes_to, uses, mounts from discovery profile)
   Multi-ingestor fan-out for metric signal path
   Graph node accumulation in InMemoryGraphStore
 
@@ -124,6 +126,40 @@ MultiIngestor
 ### Graph Node Accumulation
 
 `InMemoryGraphStore` now accumulates `topology.Node` values by entity ID alongside edges. Nodes are merged from each `PutSnapshot` call; `GetLatest` returns accumulated nodes and edges together. This allows the graph to reflect the full entity population across multiple telemetry batches.
+
+### K8s Structural Topology from Discovery Profile
+
+`K8sStructuralTopologyBuilder` derives topology edges from Kubernetes structural data in a `ClusterProfile`, complementing the runtime edges from metrics and traces. It produces:
+
+- `exposes`: service → workload (matched via service selector against workload pod template labels)
+- `routes_to`: ingress → service (from ingress rule backend references)
+- `uses`: workload → configmap/secret (from pod spec volumes, envFrom, and env valueFrom)
+- `mounts`: workload → PVC (from pod spec PVC volume claims)
+
+All edges carry provenance `"k8s-api"` and confidence 1.0. The builder is invoked at backend startup via the `--discovery-profile` flag, which loads a ClusterProfile JSON file and seeds the graph store with structural edges.
+
+The discovery adapter has been extended to capture:
+
+- Ingress resources with backend service references
+- Deployment pod template labels (for accurate service selector matching)
+- ConfigMap, Secret, and PVC references from deployment pod specs
+
+New entity kinds: `configmap`, `secret`, `pvc`. New relation types: `exposes`, `uses`, `mounts` (plus the previously reserved `routes_to`).
+
+### Standard Tier Graph Model
+
+The graph model follows the "Standard" tier from the architecture spec:
+
+| Source | Relation | Target | Data Source |
+|--------|----------|--------|-------------|
+| pod | runs_on | node | kubeletstats resource attributes |
+| namespace | contains | pod | kubeletstats resource attributes |
+| pod | contains | container | kubeletstats resource attributes |
+| service | calls | service | OTLP trace spans (peer.service) |
+| service | exposes | workload | K8s API (service selector matching) |
+| ingress | routes_to | service | K8s API (ingress rules) |
+| workload | uses | configmap/secret | K8s API (pod spec references) |
+| workload | mounts | pvc | K8s API (pod spec volumes) |
 
 ### Runtime Inspection
 

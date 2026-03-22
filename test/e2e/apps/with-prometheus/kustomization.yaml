@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: oksg-demo
 resources:
   - namespace.yaml
+  - gateway-config.yaml
   - gateway.yaml
   - service-a.yaml
   - service-b.yaml

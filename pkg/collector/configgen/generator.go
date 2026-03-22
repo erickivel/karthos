@@ -100,13 +100,19 @@ type ServiceValues struct {
 }
 
 type BackendValues struct {
-	Enabled      bool              `json:"enabled" yaml:"enabled"`
-	GRPCEndpoint string            `json:"grpcEndpoint,omitempty" yaml:"grpcEndpoint,omitempty"`
-	HTTPEndpoint string            `json:"httpEndpoint,omitempty" yaml:"httpEndpoint,omitempty"`
-	Image        ImageValues       `json:"image" yaml:"image"`
-	Service      BackendService    `json:"service" yaml:"service"`
-	RuntimeEnv   map[string]string `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
-	Resources    map[string]any    `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Enabled          bool                    `json:"enabled" yaml:"enabled"`
+	GRPCEndpoint     string                  `json:"grpcEndpoint,omitempty" yaml:"grpcEndpoint,omitempty"`
+	HTTPEndpoint     string                  `json:"httpEndpoint,omitempty" yaml:"httpEndpoint,omitempty"`
+	Image            ImageValues             `json:"image" yaml:"image"`
+	Service          BackendService          `json:"service" yaml:"service"`
+	RuntimeEnv       map[string]string       `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
+	DiscoveryProfile DiscoveryProfileValues  `json:"discoveryProfile,omitempty" yaml:"discoveryProfile,omitempty"`
+	Resources        map[string]any          `json:"resources,omitempty" yaml:"resources,omitempty"`
+}
+
+type DiscoveryProfileValues struct {
+	Enabled       bool   `json:"enabled" yaml:"enabled"`
+	ConfigMapName string `json:"configMapName,omitempty" yaml:"configMapName,omitempty"`
 }
 
 type BackendService struct {
@@ -209,6 +215,10 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 				GRPCPort:   endpointPort(plan.Backend.GRPCEndpoint, 4317),
 				HTTPPort:   endpointPort(plan.Backend.HTTPEndpoint, 4318),
 				HealthPort: DefaultBackendHealthPort,
+			},
+			DiscoveryProfile: DiscoveryProfileValues{
+				Enabled:       true,
+				ConfigMapName: "oksg-discovery-profile",
 			},
 		},
 		Secrets: SecretsValues{},

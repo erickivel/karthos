@@ -135,6 +135,8 @@ sequenceDiagram
 | `pkg/backend/ingest/normalizing_ingestor.go` | `TopologyIngestor` | Implements `Ingestor`; routes envelopes through a topology builder → `GraphStore` |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `MultiIngestor` | Implements `Ingestor`; fans envelopes to multiple downstream ingestors in order |
 | `pkg/backend/ingest/metric_topology_builder.go` | `MetricTopologyBuilder` | Extracts structural `runs_on`/`contains` edges and nodes from metric resource attributes |
+| `pkg/backend/ingest/structural_topology_builder.go` | `K8sStructuralTopologyBuilder` | Derives `exposes`/`routes_to`/`uses`/`mounts` edges from ClusterProfile |
+| `pkg/backend/ingest/structural_topology_ingestor.go` | `StructuralTopologyIngestor` | Ingests K8s structural topology from ClusterProfile into GraphStore |
 | `pkg/backend/persistence/memory.go` | `InMemoryMetricStore` | Thread-safe in-memory `MetricStore`; supports write and time-range queries |
 | `pkg/backend/persistence/memory.go` | `InMemoryGraphStore` | Thread-safe in-memory `GraphStore`; accumulates edges and nodes, updates `LastSeen` on re-observation |
 | `pkg/backend/ingest/ingest.go` | `Ingestor` interface | Contract: `Ingest(ctx, envelope) error` |
@@ -332,6 +334,8 @@ Implemented in the current slice:
 - `NormalizingIngestor` and `TopologyIngestor`: full normalization pipeline
 - `MultiIngestor`: fan-out for metric signal path (normalization + structural topology extraction)
 - `MetricTopologyBuilder`: structural edges (`runs_on`, `contains`) and nodes from metric resource attributes
+- `K8sStructuralTopologyBuilder`: structural edges (`exposes`, `routes_to`, `uses`, `mounts`) from discovery profile
+- `StructuralTopologyIngestor`: ingests K8s structural topology from ClusterProfile into GraphStore at startup
 - `InMemoryMetricStore` and `InMemoryGraphStore`: thread-safe in-memory persistence with node accumulation
 
 Not implemented yet:
@@ -374,6 +378,11 @@ OKSG Backend
     │           nodes: namespace, node, pod, container
     └── trace → TopologyIngestor(TraceTopologyBuilder) → InMemoryGraphStore
           edges: calls (service→service via peer.service attribute)
+  - Structural topology (at startup, if --discovery-profile provided)
+    └── StructuralTopologyIngestor(K8sStructuralTopologyBuilder) → InMemoryGraphStore
+          edges: exposes (service→workload), routes_to (ingress→service),
+                 uses (workload→configmap/secret), mounts (workload→pvc)
+          nodes: workload, service, ingress, configmap, secret, pvc
 ```
 
 ## Debugging Commands

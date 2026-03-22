@@ -22,11 +22,12 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: gateway-config
+            - secretRef:
+                name: gateway-secret
           env:
-            - name: SERVICE_A_URL
-              value: http://service-a-python:8081/process
-            - name: SERVICE_B_URL
-              value: http://service-b-node:8082/compute
             - name: HOST_IP
               valueFrom:
                 fieldRef:

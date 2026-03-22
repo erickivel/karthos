@@ -7,4 +7,7 @@ const (
 	RelRunsOn   RelationType = "runs_on"
 	RelContains RelationType = "contains"
 	RelRoutesTo RelationType = "routes_to"
+	RelExposes  RelationType = "exposes"
+	RelUses     RelationType = "uses"
+	RelMounts   RelationType = "mounts"
 )
