@@ -132,6 +132,32 @@ func TestMetricTopologyBuilder_NoStructuralAttributes_ReturnsNil(t *testing.T) {
 	assert.Empty(t, edges)
 }
 
+func TestMetricTopologyBuilder_ZeroTimestamp_UsesCurrentTime(t *testing.T) {
+	b := NewMetricTopologyBuilder(testCluster)
+	// Construct envelope directly to bypass validation that rejects zero timestamps.
+	env := schema.RawEnvelope{
+		Source:     "kubeletstats",
+		SignalType: schema.SignalMetric,
+		Resource: map[string]string{
+			"k8s.pod.name":       "my-pod",
+			"k8s.namespace.name": "default",
+			"k8s.node.name":      "my-node",
+		},
+	}
+
+	before := time.Now().UTC()
+	edges, err := b.Build(context.Background(), env)
+	after := time.Now().UTC()
+
+	require.NoError(t, err)
+	require.NotEmpty(t, edges)
+	for _, e := range edges {
+		assert.False(t, e.LastSeen.IsZero(), "edge timestamp should not be zero")
+		assert.True(t, !e.LastSeen.Before(before) && !e.LastSeen.After(after),
+			"edge timestamp should be between before and after Build() call")
+	}
+}
+
 func TestMetricTopologyBuilder_EmptyEnvelope_ReturnsNil(t *testing.T) {
 	b := NewMetricTopologyBuilder(testCluster)
 	env := makeMetricEnvelope("kubeletstats", nil)
