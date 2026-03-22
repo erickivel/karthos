@@ -82,7 +82,43 @@ Expected:
 - after ~60s, `/debug/metrics` returns at least one metric sample
 - `/debug/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
 
-Use the debug tasks to inspect backend state after a scenario run:
+## Generating Traffic
+
+To produce observable telemetry after a scenario is running, use the traffic tasks. They port-forward to `gateway-go` and send HTTP requests through the full call chain (`gateway-go → service-a-python → service-b-node`).
+
+Send a fixed number of requests (default 20, 0.5 s apart):
+
+```bash
+task test:e2e:traffic
+# override defaults:
+task test:e2e:traffic TRAFFIC_REQUESTS=50 TRAFFIC_INTERVAL=0.2
+```
+
+Stream requests continuously until Ctrl-C:
+
+```bash
+task test:e2e:traffic:watch
+task test:e2e:traffic:watch TRAFFIC_INTERVAL=1
+```
+
+Typical sequence after a scenario run:
+
+```bash
+task test:e2e:scenario:prometheus   # deploy and wire up telemetry
+task test:e2e:traffic TRAFFIC_REQUESTS=30  # generate traffic
+task test:e2e:debug:metrics         # inspect stored metric samples
+task test:e2e:debug:graph           # inspect topology graph snapshot
+```
+
+Configurable variables (all override-able on the command line):
+
+| Variable | Default | Description |
+|---|---|---|
+| `GATEWAY_LOCAL_PORT` | `18080` | Local port used for the gateway port-forward |
+| `TRAFFIC_REQUESTS` | `20` | Number of requests sent by `e2e:traffic` |
+| `TRAFFIC_INTERVAL` | `0.5` | Seconds between requests |
+
+Use the debug tasks to inspect backend state after traffic has flowed:
 
 ```bash
 task test:e2e:debug:metrics  # dump all stored metric samples

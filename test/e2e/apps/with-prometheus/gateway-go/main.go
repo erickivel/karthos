@@ -53,8 +53,7 @@ func initTracer(ctx context.Context) (func(context.Context) error, error) {
 	endpoint := envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 
 	exporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint(endpoint),
-		otlptracehttp.WithInsecure(),
+		otlptracehttp.WithEndpointURL(endpoint),
 	)
 	if err != nil {
 		return nil, err

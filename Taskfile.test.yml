@@ -18,6 +18,9 @@ vars:
   RENDERED_PATH: ./bin/e2e/rendered
   DISCOVERY_JOB_BIN: ./bin/discovery-job
   BACKEND_HEALTH_PORT: "13133"
+  GATEWAY_LOCAL_PORT: "18080"
+  TRAFFIC_REQUESTS: "20"
+  TRAFFIC_INTERVAL: "0.5"
   KUBECONFIG:
     sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
 
@@ -159,3 +162,39 @@ tasks:
     desc: Tail backend logs and filter for write confirmations and skipped-entity warnings
     cmds:
       - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/component=backend --tail=200 | grep -E '(wrote metric samples|skipping envelope|error)'
+
+  e2e:traffic:
+    desc: Send TRAFFIC_REQUESTS requests to gateway-go via port-forward to generate observable traffic (default 20 requests, 0.5s apart)
+    cmds:
+      - |
+        lsof -ti :{{.GATEWAY_LOCAL_PORT}} | xargs kill 2>/dev/null || true
+        kubectl port-forward -n {{.TARGET_NAMESPACE}} svc/gateway-go {{.GATEWAY_LOCAL_PORT}}:8080 &
+        PF_PID=$!
+        trap "kill $PF_PID 2>/dev/null || true" EXIT
+        sleep 2
+        echo "Sending {{.TRAFFIC_REQUESTS}} requests to gateway (triggers service-a + service-b calls)..."
+        for i in $(seq 1 {{.TRAFFIC_REQUESTS}}); do
+          echo -n "  [$i/{{.TRAFFIC_REQUESTS}}] "
+          curl -sf http://localhost:{{.GATEWAY_LOCAL_PORT}}/ | jq -c '{gateway: .service, results: [.results[] | {s: .service, status: .status}]}' 2>/dev/null || echo "(request failed)"
+          sleep {{.TRAFFIC_INTERVAL}}
+        done
+        echo "Done. Run 'task test:e2e:debug:metrics' or 'task test:e2e:debug:graph' to inspect results."
+        kill $PF_PID 2>/dev/null || true
+
+  e2e:traffic:watch:
+    desc: Continuously send requests to gateway-go every TRAFFIC_INTERVAL seconds (Ctrl-C to stop)
+    cmds:
+      - |
+        lsof -ti :{{.GATEWAY_LOCAL_PORT}} | xargs kill 2>/dev/null || true
+        kubectl port-forward -n {{.TARGET_NAMESPACE}} svc/gateway-go {{.GATEWAY_LOCAL_PORT}}:8080 &
+        PF_PID=$!
+        trap "kill $PF_PID 2>/dev/null || true" EXIT
+        sleep 2
+        echo "Streaming requests to gateway (Ctrl-C to stop)..."
+        i=0
+        while true; do
+          i=$((i+1))
+          echo -n "  [$i] "
+          curl -sf http://localhost:{{.GATEWAY_LOCAL_PORT}}/ | jq -c '{gateway: .service, results: [.results[] | {s: .service, status: .status}]}' 2>/dev/null || echo "(request failed)"
+          sleep {{.TRAFFIC_INTERVAL}}
+        done
