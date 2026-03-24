@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/erickivel/oksg/pkg/adapters/otlp"
+	"github.com/erickivel/oksg/pkg/adapters/storage"
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/logging"
@@ -21,6 +22,7 @@ const (
 	defaultBackendHTTPListenAddr   = "0.0.0.0:4318"
 	defaultBackendHealthListenAddr = "0.0.0.0:13133"
 	defaultBackendLogLevel         = "info"
+	defaultStorageBackend          = "memory"
 )
 
 type config struct {
@@ -31,6 +33,10 @@ type config struct {
 	EnabledSignals      []string
 	ClusterName         string
 	DiscoveryProfile    string
+	StorageBackend      string
+	PostgresDSN         string
+	VMURL               string
+	RawStoreEnabled     bool
 }
 
 func main() {
@@ -51,25 +57,43 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 
-	resolver := ingest.NewOTLPEntityResolver(cfg.ClusterName)
+	stores, err := storage.NewStores(ctx, storage.StorageConfig{
+		Backend:     storage.StorageBackend(cfg.StorageBackend),
+		PostgresDSN: cfg.PostgresDSN,
+		VMURL:       cfg.VMURL,
+		RawEnabled:  cfg.RawStoreEnabled,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize stores: %w", err)
+	}
+	defer func() {
+		if cerr := stores.Close(); cerr != nil {
+			logger.Error("failed to close stores", logging.String("error", cerr.Error()))
+		}
+	}()
+
+	logger.Info("storage initialized",
+		logging.String("backend", cfg.StorageBackend),
+	)
+
+	resolver := ingest.NewOTLPEntityResolverWithRegistry(cfg.ClusterName, stores.EntityRegistry)
 	normalizer := ingest.NewOTLPNormalizer(resolver)
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
-	metricStore := persistence.NewInMemoryMetricStore()
-	graphStore := persistence.NewInMemoryGraphStore()
 
 	if cfg.DiscoveryProfile != "" {
-		if err := ingestDiscoveryProfile(ctx, cfg, graphStore, logger); err != nil {
+		if err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, logger); err != nil {
 			return err
 		}
 	}
 
 	router := ingest.NewSignalRouter(
 		ingest.NewMultiIngestor(
-			ingest.NewNormalizingIngestor(normalizer, metricStore, logger),
-			ingest.NewTopologyIngestor(metricTopoBuilder, graphStore),
+			ingest.NewNormalizingIngestor(normalizer, stores.MetricStore, logger),
+			ingest.NewTopologyIngestor(metricTopoBuilder, stores.GraphStore),
 		),
-		ingest.NewTopologyIngestor(traceTopoBuilder, graphStore),
+		ingest.NewTopologyIngestor(traceTopoBuilder, stores.GraphStore),
+		stores.RawStore,
 	)
 
 	logger.Info("normalization pipeline configured",
@@ -81,8 +105,8 @@ func run(ctx context.Context, args []string) error {
 		HTTPListenAddress:   cfg.HTTPListenAddress,
 		HealthListenAddress: cfg.HealthListenAddress,
 		EnabledSignals:      cfg.EnabledSignals,
-		MetricStore:         metricStore,
-		GraphStore:          graphStore,
+		MetricStore:         stores.MetricStore,
+		GraphStore:          stores.GraphStore,
 	}, ingest.NewEnvelopeBuilder(contextNow()), router, logger)
 	if err != nil {
 		return err
@@ -107,6 +131,10 @@ func parseConfig(args []string) (config, error) {
 	enabledSignals := fs.String("enabled-signals", envOrDefault("OKSG_BACKEND_ENABLED_SIGNALS", "metric,trace"), "comma-separated enabled signals")
 	clusterName := fs.String("cluster-name", envOrDefault("OKSG_CLUSTER_NAME", "default"), "cluster name for entity resolution")
 	discoveryProfile := fs.String("discovery-profile", envOrDefault("OKSG_DISCOVERY_PROFILE", ""), "path to ClusterProfile JSON for structural topology")
+	storageBackend := fs.String("storage-backend", envOrDefault("OKSG_STORAGE_BACKEND", defaultStorageBackend), "storage backend: memory or external")
+	postgresDSN := fs.String("postgres-dsn", envOrDefault("OKSG_POSTGRES_DSN", ""), "PostgreSQL connection string")
+	vmURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
+	rawStoreEnabled := fs.Bool("raw-store-enabled", envOrDefault("OKSG_RAW_STORE_ENABLED", "false") == "true", "enable raw envelope persistence")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -124,6 +152,10 @@ func parseConfig(args []string) (config, error) {
 		EnabledSignals:      signals,
 		ClusterName:         *clusterName,
 		DiscoveryProfile:    *discoveryProfile,
+		StorageBackend:      *storageBackend,
+		PostgresDSN:         *postgresDSN,
+		VMURL:               *vmURL,
+		RawStoreEnabled:     *rawStoreEnabled,
 	}, nil
 }
 
@@ -161,7 +193,7 @@ func contextNow() time.Time {
 	return time.Now().UTC()
 }
 
-func ingestDiscoveryProfile(ctx context.Context, cfg config, graphStore *persistence.InMemoryGraphStore, logger *logging.Logger) error {
+func ingestDiscoveryProfile(ctx context.Context, cfg config, graphStore persistence.GraphStore, metadataStore persistence.MetadataStore, logger *logging.Logger) error {
 	data, err := os.ReadFile(cfg.DiscoveryProfile)
 	if err != nil {
 		return fmt.Errorf("read discovery profile: %w", err)
@@ -169,6 +201,10 @@ func ingestDiscoveryProfile(ctx context.Context, cfg config, graphStore *persist
 	var prof profile.ClusterProfile
 	if err := json.Unmarshal(data, &prof); err != nil {
 		return fmt.Errorf("unmarshal discovery profile: %w", err)
+	}
+
+	if err := metadataStore.PutDiscovery(ctx, prof); err != nil {
+		return fmt.Errorf("persist discovery profile: %w", err)
 	}
 
 	builder := ingest.NewK8sStructuralTopologyBuilder(cfg.ClusterName)

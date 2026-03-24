@@ -29,8 +29,12 @@ pkg/
                          (entity_resolver.go, normalizer.go, topology_builder.go,
                           metric_topology_builder.go, normalizing_ingestor.go,
                           plus existing otlp.go, ingest.go, semantic.go)
-  backend/persistence/   in-memory MetricStore and GraphStore implementations
-                         (memory.go)
+  backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
+                         RawStore, EntityRegistry) and in-memory implementations
+  backend/query/         graph and metrics query contracts
+  adapters/storage/      storage factory and config (memory or external backends)
+  adapters/storage/postgresql/     PostgreSQL implementations (pgx/v5)
+  adapters/storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
   collector/configgen/   Helm values builder
   collector/deployer/    Helm runner
   core/logging/          shared JSON stdout logger
@@ -61,6 +65,8 @@ task ci
 ./bin/discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 ./bin/discovery-job --mode=deploy --profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 ./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --enabled-signals=metric,trace --cluster-name=oksg-test
+# With external storage:
+./bin/backend --storage-backend=external --postgres-dsn="postgres://oksg:pass@localhost:5432/oksg" --victoriametrics-url="http://localhost:8428" --raw-store-enabled=true --enabled-signals=metric,trace --cluster-name=oksg-test
 ```
 
 Notes:

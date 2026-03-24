@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization with in-memory persistence, and initial Layer 4 topology reconstruction.
+OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization, Layer 4 topology reconstruction, and Layer 5 durable persistence with PostgreSQL and VictoriaMetrics.
 
 ## Current Implemented Boundary
 
@@ -18,15 +18,17 @@ What is real today:
 - `pkg/collector/configgen` converts the plan into typed Helm values
 - `pkg/collector/deployer` runs Helm lint/template/upgrade-install
 - `pkg/backend/ingest` converts OTLP telemetry into raw envelopes, routes them by signal type, normalizes them into canonical entities and metrics, and extracts structural topology edges from metric resource attributes
-- `pkg/backend/persistence` stores canonical metrics and topology nodes and edges in thread-safe in-memory stores
-- `cmd/backend` runs the backend OTLP ingest and normalization service
+- `pkg/backend/persistence` defines store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) with in-memory implementations for tests
+- `pkg/adapters/storage` provides a factory that wires either in-memory or external (PostgreSQL + VictoriaMetrics) backends based on config
+- `pkg/adapters/storage/postgresql` implements `GraphStore`, `MetadataStore`, `RawStore`, and `EntityRegistry` using `pgx/v5`
+- `pkg/adapters/storage/victoriametrics` implements `MetricStore` using VictoriaMetrics' Prometheus-compatible HTTP API
+- `cmd/backend` runs the backend OTLP ingest and normalization service with configurable storage backend
 - `cmd/discovery-job` orchestrates discover, plan, and deploy modes
 
 What is not implemented yet:
 
 - `cmd/controller` is still a placeholder
 - query APIs over stored metrics and topology
-- durable persistence beyond in-memory stores
 - modeling and prediction
 
 ## Layer View
@@ -60,11 +62,17 @@ Topology Reconstruction (Layer 4)
   Trace topology builder (service-to-service call edges from spans)
   K8s structural topology builder (exposes, routes_to, uses, mounts from discovery profile)
   Multi-ingestor fan-out for metric signal path
-  Graph node accumulation in InMemoryGraphStore
+  Graph node accumulation in GraphStore
+
+Persistence (Layer 5)
+  Generic store interfaces (MetricStore, GraphStore, MetadataStore, RawStore, EntityRegistry)
+  Storage factory with memory and external backends
+  PostgreSQL adapter (graph, entities, metadata, raw envelopes) via pgx/v5
+  VictoriaMetrics adapter (time-series metrics) via Prometheus HTTP API
+  Helm chart storage configuration (backend, DSN secret, VM URL)
 
 Future Layers
   query and control APIs
-  durable persistence
   modeling and prediction
 ```
 
@@ -164,6 +172,97 @@ The graph model follows the "Standard" tier from the architecture spec:
 ### Runtime Inspection
 
 The backend exposes a `/debug/graph` endpoint on the health port (13133) that returns the current topology snapshot as JSON, including both `nodes` and `edges`. Use `task test:e2e:debug:graph` to inspect it.
+
+## Layer 5: Persistence
+
+Layer 5 makes telemetry and topology data durable by replacing in-memory stores with external backends while keeping technology-specific code behind generic interfaces.
+
+### Interface-First Design
+
+All persistence logic flows through technology-agnostic interfaces in `pkg/backend/persistence/`:
+
+| Interface | Responsibility |
+|-----------|---------------|
+| `MetricStore` | Write and query canonical time-series metric samples |
+| `GraphStore` | Store topology snapshots (nodes per snapshot, accumulated edges) |
+| `MetadataStore` | Store and retrieve cluster discovery profiles |
+| `RawStore` | Write and query raw telemetry envelopes (optional) |
+| `EntityRegistry` | Upsert and query canonical entity records |
+
+Each interface has an in-memory implementation for unit tests and an external implementation for production.
+
+### Storage Factory
+
+`pkg/adapters/storage/factory.go` provides a `NewStores()` factory that creates the appropriate implementations based on `StorageConfig.Backend`:
+
+- `memory` (default): all in-memory implementations, no external dependencies
+- `external`: PostgreSQL for graph/entities/metadata/raw, VictoriaMetrics for metrics
+
+The factory validates required config (DSN, VM URL), creates connection pools, runs schema migrations, and registers closers for cleanup.
+
+### PostgreSQL Adapter
+
+`pkg/adapters/storage/postgresql/` implements four store interfaces using `pgx/v5`:
+
+- **GraphStore**: topology snapshots in `topology_snapshots` + `topology_nodes` tables; accumulated edges in `topology_edges` with `ON CONFLICT DO UPDATE SET last_seen = GREATEST(...)` to mirror in-memory merge semantics
+- **MetadataStore**: cluster profiles stored as JSONB in `cluster_profiles`, latest retrieved by `created_at DESC`
+- **RawStore**: raw envelopes batch-inserted with `ON CONFLICT DO NOTHING`
+- **EntityRegistry**: entities upserted with label and last_seen updates on conflict
+
+Schema migrations run on startup via `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`.
+
+### VictoriaMetrics Adapter
+
+`pkg/adapters/storage/victoriametrics/` implements `MetricStore` using VictoriaMetrics' Prometheus-compatible HTTP API:
+
+- **Write**: converts `[]MetricSample` to Prometheus text format, POSTs to `/api/v1/import/prometheus`
+- **Query**: builds PromQL from `MetricQuery`, GETs `/api/v1/query_range`, parses JSON response
+
+Uses only `net/http` — no snappy/protobuf dependencies.
+
+### Backend Configuration
+
+The backend (`cmd/backend`) supports storage config via CLI flags:
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--storage-backend` | `OKSG_STORAGE_BACKEND` | `memory` | Storage backend to use |
+| `--postgres-dsn` | `OKSG_POSTGRES_DSN` | `""` | PostgreSQL connection string |
+| `--victoriametrics-url` | `OKSG_VICTORIAMETRICS_URL` | `""` | VictoriaMetrics base URL |
+| `--raw-store-enabled` | `OKSG_RAW_STORE_ENABLED` | `false` | Enable raw envelope storage |
+
+### Helm Storage Configuration
+
+The Helm chart includes PostgreSQL (Bitnami) and VictoriaMetrics (single-node) as optional subchart dependencies, gated by condition flags. When enabled, the subcharts deploy and manage the databases; the DSN and VM URL are auto-derived from the subchart service names.
+
+```yaml
+storage:
+  backend: memory           # "memory" or "external"
+  rawStoreEnabled: false
+  postgresql:
+    enabled: false           # deploy Bitnami PostgreSQL subchart
+    dsn: ""                  # override: use explicit DSN instead of subchart
+  victoriametrics:
+    enabled: false           # deploy VictoriaMetrics subchart
+    url: ""                  # override: use explicit URL instead of subchart
+
+# Subchart value overrides
+postgresql:
+  auth:
+    database: oksg
+    username: oksg
+    password: oksg
+
+victoria-metrics-single:
+  server:
+    persistentVolume:
+      size: 5Gi
+    retentionPeriod: 30d
+```
+
+When `storage.backend=external`, the chart creates a `storage-secret` with the PostgreSQL DSN and passes all storage env vars to the backend deployment. The DSN and VM URL are auto-derived from subchart service names unless explicitly overridden via `storage.postgresql.dsn` or `storage.victoriametrics.url`.
+
+After modifying `Chart.yaml` dependencies, run `helm dependency build deploy/helm/oksg-otel/` to download the subchart tarballs.
 
 ## Deployment Model
 

@@ -1,6 +1,6 @@
 # Project Overview
 
-This repository contains the Phase 1 foundation, the Phase 2 discovery/planning slice, the Phase 3 collection-plane runtime, and the initial Phase 4 topology reconstruction of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
+This repository contains the Phase 1 foundation, the Phase 2 discovery/planning slice, the Phase 3 collection-plane runtime, Phase 4 topology reconstruction, and Phase 5 durable persistence of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
 
 The system is organized around stable architectural boundaries between:
 
@@ -8,7 +8,7 @@ The system is organized around stable architectural boundaries between:
 - collection and routing
 - semantic normalization
 - topology reconstruction
-- persistence
+- persistence (PostgreSQL + VictoriaMetrics behind generic interfaces)
 - control and query APIs
 
 Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers. The current implemented slice covers Phase 3 (semantic normalization and collection plane expansion) and the initial Phase 4 (topology reconstruction). The backend now includes structural topology extraction: `MetricTopologyBuilder` derives `runs_on` and `contains` edges from kubeletstats resource attributes, `MultiIngestor` fans metric envelopes through both normalization and topology extraction in parallel, and `InMemoryGraphStore` accumulates topology nodes alongside edges. The real Kubernetes discovery adapter auto-detects Prometheus-annotated services and OTLP-capable workloads via `oksg.io/otlp-traces: "true"` annotations or well-known OTLP ports.
@@ -24,6 +24,7 @@ Keep the main application minimal:
 - OTLP packages only when an OTLP adapter or receiver is added
 - `github.com/google/uuid` for event identifiers
 - `github.com/invopop/jsonschema` for generated schema documentation
+- `github.com/jackc/pgx/v5` for PostgreSQL persistence (pure Go, zero CGO)
 - `github.com/stretchr/testify` for tests
 
 Do not add large framework dependencies before there is a concrete need for them.
@@ -53,6 +54,9 @@ pkg/
     otlp/                OTLP integration boundary
     obi/                 Reserved eBPF/OBI boundary
     autoinstrumentation/ Reserved auto-instrumentation boundary
+    storage/             Storage factory, config, and backend wiring
+    storage/postgresql/  PostgreSQL store implementations (pgx/v5)
+    storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
 
   collector/
     configgen/      Collector config and Helm values generation
