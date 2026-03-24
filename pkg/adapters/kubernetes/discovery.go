@@ -10,6 +10,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -93,6 +94,11 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		return nil, fmt.Errorf("list services: %w", err)
 	}
 
+	ingresses, err := d.client.NetworkingV1().Ingresses("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list ingresses: %w", err)
+	}
+
 	profileResult := &profile.ClusterProfile{
 		ClusterID:    entities.NewCluster(d.clusterName, nil).ID(),
 		ClusterName:  d.clusterName,
@@ -116,7 +122,15 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		if deployment.Spec.Replicas != nil {
 			workload.Replicas = *deployment.Spec.Replicas
 		}
+		workload.PodTemplateLabels = cloneStringMap(deployment.Spec.Template.Labels)
+		extractWorkloadRefs(&workload, deployment.Spec.Template.Spec)
 		profileResult.Workloads = append(profileResult.Workloads, workload)
+	}
+
+	for _, ing := range sortIngresses(ingresses.Items) {
+		ingress := entities.NewIngress(d.clusterName, ing.Namespace, ing.Name, "", ing.Labels)
+		ingress.BackendServices = extractIngressBackends(ing)
+		profileResult.Ingresses = append(profileResult.Ingresses, ingress)
 	}
 
 	var prometheusTargets []profile.PrometheusTarget
@@ -280,4 +294,121 @@ func (d *DiscoveryAdapter) isTargetNamespace(ns string) bool {
 		}
 	}
 	return false
+}
+
+func extractWorkloadRefs(w *entities.Workload, podSpec corev1.PodSpec) {
+	cmSet := make(map[string]struct{})
+	secretSet := make(map[string]struct{})
+	pvcSet := make(map[string]struct{})
+
+	for _, vol := range podSpec.Volumes {
+		if vol.ConfigMap != nil {
+			cmSet[vol.ConfigMap.Name] = struct{}{}
+		}
+		if vol.Secret != nil {
+			secretSet[vol.Secret.SecretName] = struct{}{}
+		}
+		if vol.PersistentVolumeClaim != nil {
+			pvcSet[vol.PersistentVolumeClaim.ClaimName] = struct{}{}
+		}
+	}
+
+	for _, c := range podSpec.Containers {
+		for _, ef := range c.EnvFrom {
+			if ef.ConfigMapRef != nil {
+				cmSet[ef.ConfigMapRef.Name] = struct{}{}
+			}
+			if ef.SecretRef != nil {
+				secretSet[ef.SecretRef.Name] = struct{}{}
+			}
+		}
+		for _, e := range c.Env {
+			if e.ValueFrom == nil {
+				continue
+			}
+			if e.ValueFrom.ConfigMapKeyRef != nil {
+				cmSet[e.ValueFrom.ConfigMapKeyRef.Name] = struct{}{}
+			}
+			if e.ValueFrom.SecretKeyRef != nil {
+				secretSet[e.ValueFrom.SecretKeyRef.Name] = struct{}{}
+			}
+		}
+	}
+
+	w.ConfigMapRefs = sortedKeys(cmSet)
+	w.SecretRefs = sortedKeys(secretSet)
+	w.PVCRefs = sortedKeys(pvcSet)
+}
+
+func extractIngressBackends(ing networkingv1.Ingress) []entities.IngressBackend {
+	var backends []entities.IngressBackend
+	seen := make(map[string]struct{})
+
+	if ing.Spec.DefaultBackend != nil && ing.Spec.DefaultBackend.Service != nil {
+		svc := ing.Spec.DefaultBackend.Service
+		key := fmt.Sprintf("%s:%d", svc.Name, svc.Port.Number)
+		if _, ok := seen[key]; !ok {
+			seen[key] = struct{}{}
+			backends = append(backends, entities.IngressBackend{
+				ServiceName: svc.Name,
+				ServicePort: svc.Port.Number,
+			})
+		}
+	}
+
+	for _, rule := range ing.Spec.Rules {
+		if rule.HTTP == nil {
+			continue
+		}
+		for _, path := range rule.HTTP.Paths {
+			if path.Backend.Service == nil {
+				continue
+			}
+			svc := path.Backend.Service
+			key := fmt.Sprintf("%s:%d", svc.Name, svc.Port.Number)
+			if _, ok := seen[key]; !ok {
+				seen[key] = struct{}{}
+				backends = append(backends, entities.IngressBackend{
+					ServiceName: svc.Name,
+					ServicePort: svc.Port.Number,
+				})
+			}
+		}
+	}
+
+	return backends
+}
+
+func sortIngresses(items []networkingv1.Ingress) []networkingv1.Ingress {
+	sorted := append([]networkingv1.Ingress(nil), items...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Namespace == sorted[j].Namespace {
+			return sorted[i].Name < sorted[j].Name
+		}
+		return sorted[i].Namespace < sorted[j].Namespace
+	})
+	return sorted
+}
+
+func sortedKeys(m map[string]struct{}) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func cloneStringMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(m))
+	for k, v := range m {
+		clone[k] = v
+	}
+	return clone
 }

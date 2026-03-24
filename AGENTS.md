@@ -1,6 +1,6 @@
 # Project Overview
 
-This repository contains the Phase 1 foundation, the Phase 2 discovery/planning slice, and the first Phase 3 implementation slice of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
+This repository contains the Phase 1 foundation, the Phase 2 discovery/planning slice, the Phase 3 collection-plane runtime, and the initial Phase 4 topology reconstruction of a modular observability-driven platform for Kubernetes microservice systems. The goal is to transform heterogeneous runtime observability signals into a canonical, time-aware system graph that combines structure and behavior and can later feed prediction and simulation modules.
 
 The system is organized around stable architectural boundaries between:
 
@@ -11,7 +11,7 @@ The system is organized around stable architectural boundaries between:
 - persistence
 - control and query APIs
 
-Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers. The current implemented slice now includes discovery-driven OpenTelemetry collector assembly plus the first deployed collection-plane runtime with backend OTLP ingest. The real Kubernetes discovery adapter still auto-detects Prometheus-or-fallback profiles only; OTLP-capable sources are supported by the profile/planner contracts but are not auto-detected yet.
+Prediction is intentionally deferred as a future consumer of the graph and metrics foundation, not as a concern mixed into the early layers. The current implemented slice covers Phase 3 (semantic normalization and collection plane expansion) and the initial Phase 4 (topology reconstruction). The backend now includes structural topology extraction: `MetricTopologyBuilder` derives `runs_on` and `contains` edges from kubeletstats resource attributes, `MultiIngestor` fans metric envelopes through both normalization and topology extraction in parallel, and `InMemoryGraphStore` accumulates topology nodes alongside edges. The real Kubernetes discovery adapter auto-detects Prometheus-annotated services and OTLP-capable workloads via `oksg.io/otlp-traces: "true"` annotations or well-known OTLP ports.
 
 # Tech Stack (Main App)
 
@@ -147,6 +147,8 @@ Primary commands:
 - `task test:e2e:apply-otel`
 - `task test:e2e:scenario:prometheus`
 - `task test:e2e:scenario:fallback`
+- `task test:e2e:debug:metrics`
+- `task test:e2e:debug:graph`
 
 Guidance:
 

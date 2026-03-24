@@ -17,7 +17,7 @@ import (
 	"github.com/erickivel/oksg/pkg/core/schema"
 )
 
-const testClusterName = "test-cluster"
+const testCluster = "test-cluster"
 
 func marshalPayload(rm *metricspb.ResourceMetrics) json.RawMessage {
 	b, _ := protojson.Marshal(rm)
@@ -125,7 +125,7 @@ func makeSumRMInt(metricName string, value int64, tsNano uint64) *metricspb.Reso
 }
 
 func newNormalizer() *ingest.OTLPNormalizer {
-	resolver := ingest.NewOTLPEntityResolver(testClusterName)
+	resolver := ingest.NewOTLPEntityResolver(testCluster)
 	return ingest.NewOTLPNormalizer(resolver)
 }
 

@@ -69,18 +69,20 @@ type InMemoryGraphStore struct {
 	mu       sync.RWMutex
 	snapshot *topology.Snapshot
 	edges    map[string]topology.Edge // keyed by edge ID
+	nodes    map[string]topology.Node // keyed by entity ID string
 }
 
 // NewInMemoryGraphStore returns a new empty InMemoryGraphStore.
 func NewInMemoryGraphStore() *InMemoryGraphStore {
 	return &InMemoryGraphStore{
 		edges: make(map[string]topology.Edge),
+		nodes: make(map[string]topology.Node),
 	}
 }
 
-// PutSnapshot replaces the current snapshot and merges its edges into the edge map.
-// For edges already present, LastSeen is updated if the incoming edge's LastSeen is later.
-// New edges are added to the map.
+// PutSnapshot replaces the current snapshot and merges its edges and nodes into
+// the accumulated maps. For edges already present, LastSeen is updated if the
+// incoming edge's LastSeen is later. New edges and nodes are added to their maps.
 func (s *InMemoryGraphStore) PutSnapshot(_ context.Context, snapshot topology.Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -98,10 +100,15 @@ func (s *InMemoryGraphStore) PutSnapshot(_ context.Context, snapshot topology.Sn
 			s.edges[e.ID] = existing
 		}
 	}
+
+	for _, n := range snapshot.Graph.Nodes {
+		s.nodes[string(n.ID)] = n
+	}
+
 	return nil
 }
 
-// GetLatest returns the latest snapshot with the current accumulated edges.
+// GetLatest returns the latest snapshot with the current accumulated edges and nodes.
 // Returns nil, nil if no snapshot has been put.
 func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, error) {
 	s.mu.RLock()
@@ -111,15 +118,19 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 		return nil, nil
 	}
 
-	// Build the accumulated edge slice.
 	edges := make([]topology.Edge, 0, len(s.edges))
 	for _, e := range s.edges {
 		edges = append(edges, e)
 	}
 
-	// Return a copy of the snapshot with the accumulated edges.
+	nodes := make([]topology.Node, 0, len(s.nodes))
+	for _, n := range s.nodes {
+		nodes = append(nodes, n)
+	}
+
 	result := *s.snapshot
 	result.Graph.Edges = edges
+	result.Graph.Nodes = nodes
 	return &result, nil
 }
 

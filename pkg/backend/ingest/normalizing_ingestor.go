@@ -72,16 +72,23 @@ func (i *TopologyIngestor) Ingest(ctx context.Context, envelope schema.RawEnvelo
 	if err != nil {
 		return fmt.Errorf("build topology: %w", err)
 	}
-	if len(edges) == 0 {
+
+	var nodes []topology.Node
+	if nb, ok := i.builder.(NodeBuilder); ok {
+		nodes = nb.BuildNodes(ctx, envelope)
+	}
+
+	if len(edges) == 0 && len(nodes) == 0 {
 		return nil
 	}
-	snapshot := buildSnapshotFromEdges(edges, envelope)
+
+	snapshot := buildSnapshot(edges, nodes, envelope)
 	return i.store.PutSnapshot(ctx, snapshot)
 }
 
-// buildSnapshotFromEdges creates a topology.Snapshot from a slice of edges,
+// buildSnapshot creates a topology.Snapshot from edges and optional nodes,
 // using the min FirstSeen and max LastSeen across edges for the time window.
-func buildSnapshotFromEdges(edges []topology.Edge, envelope schema.RawEnvelope) topology.Snapshot {
+func buildSnapshot(edges []topology.Edge, nodes []topology.Node, envelope schema.RawEnvelope) topology.Snapshot {
 	from := envelope.Timestamp
 	to := envelope.Timestamp
 
@@ -97,6 +104,7 @@ func buildSnapshotFromEdges(edges []topology.Edge, envelope schema.RawEnvelope) 
 	return topology.Snapshot{
 		Version: schema.CurrentVersion,
 		Graph: topology.Graph{
+			Nodes:     nodes,
 			Edges:     edges,
 			Timestamp: to,
 		},
@@ -104,4 +112,26 @@ func buildSnapshotFromEdges(edges []topology.Edge, envelope schema.RawEnvelope) 
 		To:        to,
 		CreatedAt: time.Now().UTC(),
 	}
+}
+
+// MultiIngestor fans out an envelope to multiple Ingestor implementations.
+// All ingestors are called even when earlier ones return errors; the first
+// non-nil error encountered is returned after all ingestors have run.
+type MultiIngestor struct {
+	ingestors []Ingestor
+}
+
+// NewMultiIngestor wraps the provided ingestors into a single fan-out Ingestor.
+func NewMultiIngestor(ingestors ...Ingestor) *MultiIngestor {
+	return &MultiIngestor{ingestors: ingestors}
+}
+
+func (m *MultiIngestor) Ingest(ctx context.Context, envelope schema.RawEnvelope) error {
+	var firstErr error
+	for _, ing := range m.ingestors {
+		if err := ing.Ingest(ctx, envelope); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

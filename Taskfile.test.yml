@@ -18,6 +18,9 @@ vars:
   RENDERED_PATH: ./bin/e2e/rendered
   DISCOVERY_JOB_BIN: ./bin/discovery-job
   BACKEND_HEALTH_PORT: "13133"
+  GATEWAY_LOCAL_PORT: "18080"
+  TRAFFIC_REQUESTS: "20"
+  TRAFFIC_INTERVAL: "0.5"
   KUBECONFIG:
     sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
 
@@ -57,6 +60,11 @@ tasks:
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
       - "{{.DISCOVERY_JOB_BIN}} --mode=plan --profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}}"
+
+  e2e:apply-profile:
+    desc: Create or update a ConfigMap from the discovery profile for backend structural topology
+    cmds:
+      - kubectl create configmap oksg-discovery-profile --from-file=profile.json={{.PROFILE_PATH}} -n {{.KIND_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
 
   e2e:apply-otel:
     desc: Install or upgrade the OTel Helm release with generated values
@@ -118,6 +126,7 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
+      - task: e2e:apply-profile
       - task: e2e:verify
 
   e2e:scenario:fallback:
@@ -131,6 +140,7 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
+      - task: e2e:apply-profile
       - task: e2e:verify
 
   e2e:debug:metrics:
@@ -144,7 +154,54 @@ tasks:
         curl -sf http://localhost:{{.BACKEND_HEALTH_PORT}}/debug/metrics
         kill $PF_PID 2>/dev/null || true
 
+  e2e:debug:graph:
+    desc: Dump the current topology graph snapshot from the backend /debug/graph endpoint
+    cmds:
+      - |
+        lsof -ti :{{.BACKEND_HEALTH_PORT}} | xargs kill 2>/dev/null || true
+        kubectl port-forward -n {{.KIND_NAMESPACE}} deployment/oksg-backend {{.BACKEND_HEALTH_PORT}}:{{.BACKEND_HEALTH_PORT}} &
+        PF_PID=$!
+        sleep 2
+        curl -sf http://localhost:{{.BACKEND_HEALTH_PORT}}/debug/graph
+        kill $PF_PID 2>/dev/null || true
+
   e2e:debug:logs:
     desc: Tail backend logs and filter for write confirmations and skipped-entity warnings
     cmds:
       - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/component=backend --tail=200 | grep -E '(wrote metric samples|skipping envelope|error)'
+
+  e2e:traffic:
+    desc: Send TRAFFIC_REQUESTS requests to gateway-go via port-forward to generate observable traffic (default 20 requests, 0.5s apart)
+    cmds:
+      - |
+        lsof -ti :{{.GATEWAY_LOCAL_PORT}} | xargs kill 2>/dev/null || true
+        kubectl port-forward -n {{.TARGET_NAMESPACE}} svc/gateway-go {{.GATEWAY_LOCAL_PORT}}:8080 &
+        PF_PID=$!
+        trap "kill $PF_PID 2>/dev/null || true" EXIT
+        sleep 2
+        echo "Sending {{.TRAFFIC_REQUESTS}} requests to gateway (triggers service-a + service-b calls)..."
+        for i in $(seq 1 {{.TRAFFIC_REQUESTS}}); do
+          echo -n "  [$i/{{.TRAFFIC_REQUESTS}}] "
+          curl -sf http://localhost:{{.GATEWAY_LOCAL_PORT}}/ | jq -c '{gateway: .service, results: [.results[] | {s: .service, status: .status}]}' 2>/dev/null || echo "(request failed)"
+          sleep {{.TRAFFIC_INTERVAL}}
+        done
+        echo "Done. Run 'task test:e2e:debug:metrics' or 'task test:e2e:debug:graph' to inspect results."
+        kill $PF_PID 2>/dev/null || true
+
+  e2e:traffic:watch:
+    desc: Continuously send requests to gateway-go every TRAFFIC_INTERVAL seconds (Ctrl-C to stop)
+    cmds:
+      - |
+        lsof -ti :{{.GATEWAY_LOCAL_PORT}} | xargs kill 2>/dev/null || true
+        kubectl port-forward -n {{.TARGET_NAMESPACE}} svc/gateway-go {{.GATEWAY_LOCAL_PORT}}:8080 &
+        PF_PID=$!
+        trap "kill $PF_PID 2>/dev/null || true" EXIT
+        sleep 2
+        echo "Streaming requests to gateway (Ctrl-C to stop)..."
+        i=0
+        while true; do
+          i=$((i+1))
+          echo -n "  [$i] "
+          curl -sf http://localhost:{{.GATEWAY_LOCAL_PORT}}/ | jq -c '{gateway: .service, results: [.results[] | {s: .service, status: .status}]}' 2>/dev/null || echo "(request failed)"
+          sleep {{.TRAFFIC_INTERVAL}}
+        done

@@ -194,3 +194,48 @@ func TestGraphStore_NilOnEmpty(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Nil(t, snap)
 }
+
+func TestGraphStore_AccumulatesNodes(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+
+	nodeID := entities.ComputeEntityID(entities.KindPod, "cluster", "ns", "pod")
+	snap := topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{{ID: nodeID, Kind: entities.KindPod}},
+			Edges: []topology.Edge{},
+		},
+	}
+	require.NoError(t, store.PutSnapshot(ctx, snap))
+
+	got, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Len(t, got.Graph.Nodes, 1)
+	assert.Equal(t, nodeID, got.Graph.Nodes[0].ID)
+	assert.Equal(t, entities.KindPod, got.Graph.Nodes[0].Kind)
+}
+
+func TestGraphStore_NodeDeduplication(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "my-node")
+	snap1 := topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{{ID: nodeID, Kind: entities.KindNode}},
+		},
+	}
+	snap2 := topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{{ID: nodeID, Kind: entities.KindNode}},
+		},
+	}
+	require.NoError(t, store.PutSnapshot(ctx, snap1))
+	require.NoError(t, store.PutSnapshot(ctx, snap2))
+
+	got, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	// Same node written twice should appear once
+	assert.Len(t, got.Graph.Nodes, 1)
+}

@@ -27,6 +27,10 @@ spec:
             - --http-listen-address=0.0.0.0:{{ .Values.backend.service.httpPort }}
             - --health-listen-address=0.0.0.0:{{ .Values.backend.service.healthPort }}
             - --enabled-signals={{ join "," .Values.enabledSignals }}
+            - --cluster-name={{ .Values.global.clusterName }}
+            {{- if .Values.backend.discoveryProfile.enabled }}
+            - --discovery-profile=/etc/oksg/profile.json
+            {{- end }}
           env:
             - name: OKSG_LOG_LEVEL
               value: {{ .Values.global.logging.level | quote }}
@@ -53,6 +57,18 @@ spec:
               port: health
             initialDelaySeconds: 15
             periodSeconds: 20
+          {{- if .Values.backend.discoveryProfile.enabled }}
+          volumeMounts:
+            - name: discovery-profile
+              mountPath: /etc/oksg
+              readOnly: true
+          {{- end }}
           resources:
 {{ toYaml .Values.backend.resources | indent 12 }}
+      {{- if .Values.backend.discoveryProfile.enabled }}
+      volumes:
+        - name: discovery-profile
+          configMap:
+            name: {{ .Values.backend.discoveryProfile.configMapName }}
+      {{- end }}
 {{- end }}

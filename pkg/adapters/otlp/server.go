@@ -30,6 +30,7 @@ type Config struct {
 	HealthListenAddress string
 	EnabledSignals      []string
 	MetricStore         persistence.MetricStore // optional; enables /debug/metrics when set
+	GraphStore          persistence.GraphStore  // optional; enables /debug/graph when set
 }
 
 type Server struct {
@@ -115,6 +116,18 @@ func NewServer(config Config, builder *backendingest.EnvelopeBuilder, router *ba
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(samples)
+		})
+	}
+	if config.GraphStore != nil {
+		gs := config.GraphStore
+		healthMux.HandleFunc("/debug/graph", func(w http.ResponseWriter, r *http.Request) {
+			snap, err := gs.GetLatest(r.Context())
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(snap)
 		})
 	}
 	server.healthServer = &http.Server{Handler: healthMux, ReadHeaderTimeout: 10 * time.Second}

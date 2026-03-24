@@ -25,9 +25,10 @@ pkg/
   adapters/otel/         source planner (hostmetrics, k8s_cluster, spanmetrics, servicegraph)
   adapters/otlp/         OTLP gRPC and HTTP server adapter
   backend/ingest/        raw-envelope conversion, signal routing, entity resolution,
-                         OTLP normalization, and topology building
+                         OTLP normalization, topology building, and multi-ingestor fan-out
                          (entity_resolver.go, normalizer.go, topology_builder.go,
-                          normalizing_ingestor.go, plus existing otlp.go and ingest.go)
+                          metric_topology_builder.go, normalizing_ingestor.go,
+                          plus existing otlp.go, ingest.go, semantic.go)
   backend/persistence/   in-memory MetricStore and GraphStore implementations
                          (memory.go)
   collector/configgen/   Helm values builder
@@ -109,13 +110,19 @@ kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.i
 
 ## Inspecting the Backend Store
 
-The backend exposes a `/debug/metrics` endpoint on its health port (13133) that returns all metric samples currently held in the in-memory store as JSON.
+The backend exposes debug endpoints on its health port (13133):
+
+- `/debug/metrics` — all metric samples currently in the in-memory store as JSON
+- `/debug/graph` — current topology snapshot including accumulated nodes and edges as JSON
 
 Use the task shortcuts:
 
 ```bash
 # Dump all stored metric samples (port-forwards, curls, then cleans up)
 task test:e2e:debug:metrics
+
+# Dump the current topology graph snapshot
+task test:e2e:debug:graph
 
 # Filter backend logs for write confirmations and skipped-entity warnings
 task test:e2e:debug:logs
@@ -126,8 +133,32 @@ Or run the steps manually:
 ```bash
 kubectl port-forward -n oksg-system deployment/oksg-backend 13133:13133 &
 curl -s http://localhost:13133/debug/metrics | jq '.[0:10]'
+curl -s http://localhost:13133/debug/graph | jq '.graph.edges[0:5]'
 kill %1
 ```
+
+### Reading the graph output
+
+A graph snapshot from `/debug/graph` looks like:
+
+```json
+{
+  "graph": {
+    "nodes": [
+      {"id": "...", "kind": "pod", ...}
+    ],
+    "edges": [
+      {"source": "...", "target": "...", "relation": "runs_on", ...},
+      {"source": "...", "target": "...", "relation": "calls", ...}
+    ]
+  }
+}
+```
+
+Expected edge relations after telemetry flows:
+- `runs_on`: pod → node (from kubeletstats resource attributes)
+- `contains`: namespace → pod, pod → container (from kubeletstats resource attributes)
+- `calls`: service → service (from OTLP trace `peer.service` attributes, when traces are enabled)
 
 ### Reading the output
 

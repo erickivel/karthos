@@ -123,6 +123,9 @@ backend:
     httpPort: 4318
     healthPort: 13133
   runtimeEnv: {}
+  discoveryProfile:
+    enabled: false
+    configMapName: oksg-discovery-profile
   resources: {}
 
 secrets:

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -9,6 +10,14 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -40,7 +49,49 @@ func init() {
 	prometheus.MustRegister(requestCounter, requestDuration)
 }
 
+func initTracer(ctx context.Context) (func(context.Context) error, error) {
+	endpoint := envOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+
+	exporter, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpointURL(endpoint),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			semconv.ServiceName(envOrDefault("OTEL_SERVICE_NAME", "gateway-go")),
+		),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	return tp.Shutdown, nil
+}
+
 func main() {
+	ctx := context.Background()
+
+	shutdown, err := initTracer(ctx)
+	if err != nil {
+		log.Printf("warning: failed to init tracer: %v", err)
+	} else {
+		defer func() {
+			if err := shutdown(ctx); err != nil {
+				log.Printf("tracer shutdown error: %v", err)
+			}
+		}()
+	}
+
 	serviceAURL := envOrDefault("SERVICE_A_URL", "http://service-a-python.oksg-demo.svc.cluster.local:8081/process")
 	serviceBURL := envOrDefault("SERVICE_B_URL", "http://service-b-node.oksg-demo.svc.cluster.local:8082/compute")
 
@@ -48,8 +99,8 @@ func main() {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		results := []downstreamResponse{
-			callDownstream("service-a-python", serviceAURL),
-			callDownstream("service-b-node", serviceBURL),
+			callDownstream(r.Context(), "service-a-python", serviceAURL),
+			callDownstream(r.Context(), "service-b-node", serviceBURL),
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -68,7 +119,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":8080",
-		Handler:           metricsMiddleware(loggingMiddleware(mux)),
+		Handler:           metricsMiddleware(tracingMiddleware(loggingMiddleware(mux))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -83,9 +134,26 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-func callDownstream(serviceName, url string) downstreamResponse {
-	resp, err := http.Get(url) //nolint:gosec // test application request path
+func callDownstream(ctx context.Context, serviceName, url string) downstreamResponse {
+	tracer := otel.Tracer("gateway-go")
+	spanCtx, span := tracer.Start(ctx, "call-"+serviceName,
+		trace.WithSpanKind(trace.SpanKindClient),
+	)
+	span.SetAttributes(attribute.String("peer.service", serviceName))
+	defer span.End()
+
+	req, err := http.NewRequestWithContext(spanCtx, http.MethodGet, url, nil) //nolint:gosec // test application request path
 	if err != nil {
+		span.RecordError(err)
+		return downstreamResponse{Service: serviceName, Error: err.Error()}
+	}
+	// Inject W3C trace context into outgoing request headers.
+	otel.GetTextMapPropagator().Inject(spanCtx, propagation.HeaderCarrier(req.Header))
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		span.RecordError(err)
 		return downstreamResponse{Service: serviceName, Error: err.Error()}
 	}
 	defer resp.Body.Close()
@@ -110,6 +178,24 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		next.ServeHTTP(w, r)
 		log.Printf("%s %s duration=%s", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
+func tracingMiddleware(next http.Handler) http.Handler {
+	tracer := otel.Tracer("gateway-go")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" || r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		spanCtx, span := tracer.Start(ctx, r.Method+" "+r.URL.Path,
+			trace.WithSpanKind(trace.SpanKindServer),
+		)
+		defer span.End()
+
+		next.ServeHTTP(w, r.WithContext(spanCtx))
 	})
 }
 
