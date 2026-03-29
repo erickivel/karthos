@@ -11,6 +11,22 @@ This guide focuses on the current implementation shape rather than future-only l
 - kubectl
 - helm
 
+## Tech Stack
+
+Keep the main application minimal:
+
+- Go
+- Kubernetes Go client for discovery and cluster-side deployment workflows
+- `sigs.k8s.io/yaml` for collector config and Helm values rendering
+- Prometheus packages only when a concrete Prometheus adapter, parser, or test application needs them
+- OTLP packages only when an OTLP adapter or receiver is added
+- `github.com/google/uuid` for event identifiers
+- `github.com/invopop/jsonschema` for generated schema documentation
+- `github.com/jackc/pgx/v5` for PostgreSQL persistence (pure Go, zero CGO)
+- `github.com/stretchr/testify` for tests
+
+Do not add large framework dependencies before there is a concrete need for them. See [GUIDELINE.md](../GUIDELINE.md) for the full dependency philosophy.
+
 ## Current Structure
 
 ```text
@@ -40,11 +56,29 @@ pkg/
   core/logging/          shared JSON stdout logger
   discovery/profile/     ClusterProfile types
 
-deploy/helm/oksg-otel/
-  Chart.yaml
-  values.yaml
-  values.schema.json
-  templates/
+  core/
+    entities/        canonical graph-facing entities and stable IDs
+    metrics/         canonical metric definitions, units, and samples
+    topology/        graph nodes, edges, relations, and snapshots
+    registry/        canonical metric registry contracts
+    featurestore/    reserved for future model-ready features
+    schema/          raw telemetry envelopes, validation, schema versions
+
+  modeling/
+    scenarios/       reserved scenario definitions
+    predictors/      predictor interfaces only
+    simulation/      reserved simulation boundary
+
+deploy/
+  helm/              Helm charts and release packaging
+  manifests/         raw manifest placeholder
+  examples/          example deployment placeholder
+
+test/
+  e2e/
+    kind/            kind cluster setup scripts and config
+    apps/            example microservices for base and Prometheus scenarios
+    scenarios/       end-to-end validation scripts and expected outputs
 ```
 
 ## Common Commands
