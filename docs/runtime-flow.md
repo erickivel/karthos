@@ -18,7 +18,7 @@ sequenceDiagram
     participant Builder as EnvelopeBuilder
     participant Router as SignalRouter
     participant NI as NormalizingIngestor
-    participant TI as TopologyIngestor
+    participant BTI as BufferedTopologyIngestor
     participant MS as MetricStore
     participant GS as GraphStore
 
@@ -39,20 +39,22 @@ sequenceDiagram
             NI->>MS: MetricStore.Write(ctx, samples)
             MS-->>NI: nil
             NI-->>MI: nil
-            MI->>MTI: TopologyIngestor(MetricTopologyBuilder).Ingest(ctx, envelope)
-            MTI->>MTI: MetricTopologyBuilder.Build → []Edge + []Node
-            MTI->>GS: GraphStore.PutSnapshot(ctx, snapshot)
-            GS-->>MTI: nil
-            MTI-->>MI: nil
+            MI->>BTI: BufferedTopologyIngestor.Ingest(ctx, envelope)
+            BTI->>BTI: MetricTopologyBuilder.Build → []Edge + []Node
+            BTI->>BTI: Merge into in-memory buffer
+            BTI-->>MI: nil
             MI-->>Router: nil
         else trace envelope
-            Router->>TI: TopologyIngestor.Ingest(ctx, envelope)
-            TI->>TI: TraceTopologyBuilder.Build → []Edge
-            TI->>GS: GraphStore.PutSnapshot(ctx, snapshot)
-            GS-->>TI: nil
-            TI-->>Router: nil
+            Router->>BTI: BufferedTopologyIngestor.Ingest(ctx, envelope)
+            BTI->>BTI: TraceTopologyBuilder.Build → []Edge
+            BTI->>BTI: Merge into in-memory buffer
+            BTI-->>Router: nil
         end
         Router-->>Backend: nil
+    end
+    loop Every flush interval (default 60s)
+        BTI->>GS: GraphStore.PutSnapshot(ctx, consolidated snapshot)
+        GS-->>BTI: nil
     end
 ```
 
@@ -132,7 +134,7 @@ sequenceDiagram
 | `pkg/backend/ingest/normalizer.go` | `OTLPNormalizer` | Maps OTLP metric payloads to canonical `MetricSample` values with unit conversion |
 | `pkg/backend/ingest/topology_builder.go` | `TraceTopologyBuilder` | Extracts service-to-service `topology.Edge` values from OTLP trace envelopes |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `NormalizingIngestor` | Implements `Ingestor`; routes metric envelopes through normalizer → `MetricStore` |
-| `pkg/backend/ingest/normalizing_ingestor.go` | `TopologyIngestor` | Implements `Ingestor`; routes envelopes through a topology builder → `GraphStore` |
+| `pkg/backend/ingest/buffered_topology_ingestor.go` | `BufferedTopologyIngestor` | Implements `Ingestor`; accumulates edges/nodes from metric and trace builders, flushes consolidated snapshots to `GraphStore` on a timer |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `MultiIngestor` | Implements `Ingestor`; fans envelopes to multiple downstream ingestors in order |
 | `pkg/backend/ingest/metric_topology_builder.go` | `MetricTopologyBuilder` | Extracts structural `runs_on`/`contains` edges and nodes from metric resource attributes |
 | `pkg/backend/ingest/structural_topology_builder.go` | `K8sStructuralTopologyBuilder` | Derives `exposes`/`routes_to`/`uses`/`mounts` edges from ClusterProfile |
@@ -168,29 +170,29 @@ Gateway
 │ (pkg/backend/ingest)    │   │ (pkg/backend/ingest)                            │
 │                         │   │                                                 │
 │ → []schema.RawEnvelope  │   │ metric → MultiIngestor                         │
-└─────────────────────────┘   │ trace  → TopologyIngestor(TraceTopologyBuilder)│
+└─────────────────────────┘   │ trace  → BufferedTopologyIngestor                 │
                                └─────────────────────────────────────────────────┘
                                         │                          │
-                              ┌─────────▼──────────┐   ┌──────────▼─────────────────┐
-                              │ MultiIngestor       │   │ TopologyIngestor            │
-                              │                    │   │ (TraceTopologyBuilder)      │
-                              │ ┌─────────────────┐│   │  → []Edge(RelCalls)         │
-                              │ │NormalizingIngest││   │ GraphStore.PutSnapshot      │
-                              │ │ OTLPNormalizer  ││   └────────────────────────────┘
-                              │ │ → []MetricSample││                │
-                              │ │ MetricStore     ││                ▼
-                              │ └─────────────────┘│   ┌─────────────────────┐
-                              │ ┌─────────────────┐│   │ GraphStore  │
-                              │ │TopologyIngestor ││   │ (nodes + edges)     │
-                              │ │(MetricTopology) ││   │ (pkg/backend/       │
-                              │ │ → []Edge + Node ││   │  persistence)       │
-                              │ │ GraphStore      ││   └─────────────────────┘
+                              ┌─────────▼──────────┐   ┌──────────▼──────────────────────────┐
+                              │ MultiIngestor       │   │ BufferedTopologyIngestor (shared)    │
+                              │                    │   │  metric + trace paths → buffer       │
+                              │ ┌─────────────────┐│   │  periodic flush → GraphStore         │
+                              │ │NormalizingIngest││   └──────────────────────────────────────┘
+                              │ │ OTLPNormalizer  ││                │
+                              │ │ → []MetricSample││                ▼
+                              │ │ MetricStore     ││   ┌─────────────────────┐
+                              │ └─────────────────┘│   │ GraphStore          │
+                              │ ┌─────────────────┐│   │ (nodes + edges)     │
+                              │ │BufferedTopology ││   │ (pkg/backend/       │
+                              │ │Ingestor (shared)││   │  persistence)       │
+                              │ │ → []Edge + Node ││   └─────────────────────┘
+                              │ │ → in-memory buf ││
                               │ └─────────────────┘│
                               └────────────────────┘
                                         │
                                         ▼
                               ┌─────────────────────┐
-                              │ MetricStore │
+                              │ MetricStore         │
                               │ (pkg/backend/       │
                               │  persistence)       │
                               └─────────────────────┘
@@ -379,11 +381,13 @@ OKSG Backend
   - Signal routing
     ├── metric → MultiIngestor
     │     ├── NormalizingIngestor → OTLPNormalizer → MetricStore
-    │     └── TopologyIngestor(MetricTopologyBuilder) → GraphStore
+    │     └── BufferedTopologyIngestor (shared) → accumulates edges + nodes
     │           edges: runs_on (pod→node), contains (ns→pod, pod→container)
     │           nodes: namespace, node, pod, container
-    └── trace → TopologyIngestor(TraceTopologyBuilder) → GraphStore
+    └── trace → BufferedTopologyIngestor (shared) → accumulates edges + nodes
           edges: calls (service→service via peer.service attribute)
+  - Periodic topology flush (default 60s)
+    └── BufferedTopologyIngestor → GraphStore.PutSnapshot(consolidated snapshot)
   - Structural topology (at startup, if --discovery-profile provided)
     └── StructuralTopologyIngestor(K8sStructuralTopologyBuilder) → GraphStore
           edges: exposes (service→workload), routes_to (ingress→service),

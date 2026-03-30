@@ -101,7 +101,8 @@ The backend normalization pipeline introduced in this layer consists of:
 - `OTLPNormalizer`: maps raw OTLP metric payloads to canonical `MetricSample` values using the `OTLPToCanonicalMappings` registry. Applies unit conversion factors and resolves directional variants for disk and network metrics. Metrics with no registered mapping are silently skipped.
 - `TraceTopologyBuilder`: extracts service-to-service topology edges from OTLP trace envelopes. Edges are identified by the `peer.service` span attribute. Deduplicates edges within a batch by edge ID; propagates `FirstSeen`/`LastSeen` from span timestamps.
 - `NormalizingIngestor`: implements the `Ingestor` interface for metric envelopes; routes them through `OTLPNormalizer` and writes resulting `MetricSample` values to `MetricStore`.
-- `TopologyIngestor`: implements the `Ingestor` interface for trace envelopes; routes them through `TraceTopologyBuilder` and writes resulting `topology.Snapshot` values to `GraphStore`.
+- `BufferedTopologyIngestor`: implements the `Ingestor` interface for both metric and trace topology paths. Accumulates edges and nodes in memory and flushes one consolidated `topology.Snapshot` to `GraphStore` on a configurable interval (default 60s), reducing per-envelope snapshot writes to one per flush window.
+- `TopologyIngestor`: unbuffered topology ingestor retained for use cases that require immediate snapshot writes (e.g. structural topology at startup).
 - `InMemoryMetricStore`: thread-safe in-memory `MetricStore` implementation. Supports write and range queries filtered by entity IDs, metric name, and time window.
 - `InMemoryGraphStore`: thread-safe in-memory `GraphStore` implementation. Accumulates edges across snapshots; updates `LastSeen` on re-observed edges. Supports edge queries filtered by source or target entity ID.
 
@@ -127,8 +128,8 @@ It also implements the optional `NodeBuilder` interface, returning `topology.Nod
 
 ```
 MultiIngestor
-  ├── NormalizingIngestor  → InMemoryMetricStore
-  └── TopologyIngestor(MetricTopologyBuilder) → InMemoryGraphStore
+  ├── NormalizingIngestor  → MetricStore
+  └── BufferedTopologyIngestor → GraphStore (flushed periodically)
 ```
 
 ### Graph Node Accumulation
@@ -230,6 +231,7 @@ The backend (`cmd/backend`) supports storage config via CLI flags:
 | `--postgres-dsn` | `OKSG_POSTGRES_DSN` | `""` | PostgreSQL connection string |
 | `--victoriametrics-url` | `OKSG_VICTORIAMETRICS_URL` | `""` | VictoriaMetrics base URL |
 | `--raw-store-enabled` | `OKSG_RAW_STORE_ENABLED` | `false` | Enable raw envelope storage |
+| `--topology-flush-interval` | `OKSG_TOPOLOGY_FLUSH_INTERVAL` | `60s` | Topology snapshot flush interval |
 
 ### Helm Storage Configuration
 
