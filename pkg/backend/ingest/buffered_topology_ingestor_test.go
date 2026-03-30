@@ -260,3 +260,83 @@ func TestBufferedTopologyIngestor_BuilderError_ReturnsError(t *testing.T) {
 	buf.Flush()
 	assert.Equal(t, 0, store.count(), "nothing buffered when builder errors")
 }
+
+func TestBufferedTopologyIngestor_Close_FinalFlush(t *testing.T) {
+	store := &recordingGraphStore{}
+	now := time.Now().UTC()
+
+	builder := &configuredBuilder{
+		edges: []topology.Edge{topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, now)},
+	}
+	builders := map[schema.SignalType]TopologyBuilder{
+		schema.SignalMetric: builder,
+	}
+
+	buf := NewBufferedTopologyIngestor(builders, store, nil, time.Hour)
+
+	env := newEnvelope(t, schema.SignalMetric, now)
+	require.NoError(t, buf.Ingest(context.Background(), env))
+	assert.Equal(t, 0, store.count(), "no flush yet")
+
+	buf.Close()
+
+	assert.Equal(t, 1, store.count(), "Close should trigger final flush")
+}
+
+func TestBufferedTopologyIngestor_FromTo_TracksWindow(t *testing.T) {
+	store := &recordingGraphStore{}
+	t1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 1, 1, 10, 0, 30, 0, time.UTC)
+	t3 := time.Date(2026, 1, 1, 10, 1, 0, 0, time.UTC)
+
+	builder := &configuredBuilder{
+		edges: []topology.Edge{topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, t2)},
+	}
+	builders := map[schema.SignalType]TopologyBuilder{
+		schema.SignalMetric: builder,
+	}
+
+	buf := NewBufferedTopologyIngestor(builders, store, nil, time.Hour)
+	defer buf.Close()
+
+	env1 := newEnvelope(t, schema.SignalMetric, t2)
+	require.NoError(t, buf.Ingest(context.Background(), env1))
+
+	builder.edges = []topology.Edge{topology.NewEdge("pod-b", "node-1", topology.RelRunsOn, t1)}
+	env2 := newEnvelope(t, schema.SignalMetric, t1)
+	require.NoError(t, buf.Ingest(context.Background(), env2))
+
+	builder.edges = []topology.Edge{topology.NewEdge("pod-c", "node-1", topology.RelRunsOn, t3)}
+	env3 := newEnvelope(t, schema.SignalMetric, t3)
+	require.NoError(t, buf.Ingest(context.Background(), env3))
+
+	buf.Flush()
+
+	require.Equal(t, 1, store.count())
+	snap := store.last()
+	assert.Equal(t, t1, snap.From, "From should be earliest timestamp")
+	assert.Equal(t, t3, snap.To, "To should be latest timestamp")
+}
+
+func TestBufferedTopologyIngestor_PeriodicFlush(t *testing.T) {
+	store := &recordingGraphStore{}
+	now := time.Now().UTC()
+
+	builder := &configuredBuilder{
+		edges: []topology.Edge{topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, now)},
+	}
+	builders := map[schema.SignalType]TopologyBuilder{
+		schema.SignalMetric: builder,
+	}
+
+	buf := NewBufferedTopologyIngestor(builders, store, nil, 50*time.Millisecond)
+	defer buf.Close()
+
+	env := newEnvelope(t, schema.SignalMetric, now)
+	require.NoError(t, buf.Ingest(context.Background(), env))
+
+	// Wait for at least one tick to fire.
+	require.Eventually(t, func() bool {
+		return store.count() > 0
+	}, time.Second, 10*time.Millisecond, "periodic flush should trigger PutSnapshot")
+}
