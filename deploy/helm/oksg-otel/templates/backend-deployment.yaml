@@ -38,6 +38,8 @@ spec:
               value: {{ .Values.storage.backend | quote }}
             - name: OKSG_RAW_STORE_ENABLED
               value: {{ .Values.storage.rawStoreEnabled | quote }}
+            - name: OKSG_TOPOLOGY_FLUSH_INTERVAL
+              value: {{ .Values.backend.topologyFlushInterval | default "60s" | quote }}
             {{- if eq .Values.storage.backend "external" }}
             - name: OKSG_POSTGRES_DSN
               valueFrom:
