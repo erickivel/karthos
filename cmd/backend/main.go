@@ -14,6 +14,7 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
@@ -89,12 +90,23 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 
+	bufferedTopo := ingest.NewBufferedTopologyIngestor(
+		map[schema.SignalType]ingest.TopologyBuilder{
+			schema.SignalMetric: metricTopoBuilder,
+			schema.SignalTrace:  traceTopoBuilder,
+		},
+		stores.GraphStore,
+		logger,
+		cfg.TopologyFlushInterval,
+	)
+	defer bufferedTopo.Close()
+
 	router := ingest.NewSignalRouter(
 		ingest.NewMultiIngestor(
 			ingest.NewNormalizingIngestor(normalizer, stores.MetricStore, logger),
-			ingest.NewTopologyIngestor(metricTopoBuilder, stores.GraphStore),
+			bufferedTopo,
 		),
-		ingest.NewTopologyIngestor(traceTopoBuilder, stores.GraphStore),
+		bufferedTopo,
 		stores.RawStore,
 	)
 
