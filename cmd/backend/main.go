@@ -28,18 +28,18 @@ const (
 )
 
 type config struct {
-	GRPCListenAddress   string
-	HTTPListenAddress   string
-	HealthListenAddress string
-	LogLevel            string
-	EnabledSignals      []string
-	ClusterName         string
-	DiscoveryProfile    string
-	StorageBackend          string
-	PostgresDSN             string
-	VMURL                   string
-	RawStoreEnabled         bool
-	TopologyFlushInterval   time.Duration
+	GRPCListenAddress     string
+	HTTPListenAddress     string
+	HealthListenAddress   string
+	LogLevel              string
+	EnabledSignals        []string
+	ClusterName           string
+	DiscoveryProfile      string
+	StorageBackend        string
+	PostgresDSN           string
+	VMURL                 string
+	RawStoreEnabled       bool
+	TopologyFlushInterval time.Duration
 }
 
 func main() {
