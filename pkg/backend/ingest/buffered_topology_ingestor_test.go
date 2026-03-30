@@ -171,3 +171,92 @@ func TestBufferedTopologyIngestor_NodeDeduplication(t *testing.T) {
 	snap := store.last()
 	assert.Len(t, snap.Graph.Nodes, 2, "nodes should be deduplicated by ID")
 }
+
+func TestBufferedTopologyIngestor_NoDirtyData_FlushIsNoop(t *testing.T) {
+	store := &recordingGraphStore{}
+	builders := map[schema.SignalType]TopologyBuilder{
+		schema.SignalMetric: &configuredBuilder{},
+	}
+
+	buf := NewBufferedTopologyIngestor(builders, store, nil, time.Hour)
+	defer buf.Close()
+
+	buf.Flush()
+
+	assert.Equal(t, 0, store.count(), "flush with no ingested data should not call PutSnapshot")
+}
+
+func TestBufferedTopologyIngestor_SignalTypeRouting(t *testing.T) {
+	store := &recordingGraphStore{}
+	now := time.Now().UTC()
+
+	metricEdge := topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, now)
+	traceEdge := topology.NewEdge("svc-a", "svc-b", topology.RelCalls, now)
+
+	metricBuilder := &configuredBuilder{edges: []topology.Edge{metricEdge}}
+	traceBuilder := &configuredBuilder{edges: []topology.Edge{traceEdge}}
+
+	builders := map[schema.SignalType]TopologyBuilder{
+		schema.SignalMetric: metricBuilder,
+		schema.SignalTrace:  traceBuilder,
+	}
+
+	buf := NewBufferedTopologyIngestor(builders, store, nil, time.Hour)
+	defer buf.Close()
+
+	metricEnv := newEnvelope(t, schema.SignalMetric, now)
+	require.NoError(t, buf.Ingest(context.Background(), metricEnv))
+
+	traceEnv := newEnvelope(t, schema.SignalTrace, now)
+	require.NoError(t, buf.Ingest(context.Background(), traceEnv))
+
+	buf.Flush()
+
+	require.Equal(t, 1, store.count())
+	snap := store.last()
+	assert.Len(t, snap.Graph.Edges, 2, "edges from both signal types in one snapshot")
+
+	relations := map[topology.RelationType]bool{}
+	for _, e := range snap.Graph.Edges {
+		relations[e.Relation] = true
+	}
+	assert.True(t, relations[topology.RelRunsOn], "metric edge present")
+	assert.True(t, relations[topology.RelCalls], "trace edge present")
+}
+
+func TestBufferedTopologyIngestor_UnknownSignalType_Skipped(t *testing.T) {
+	store := &recordingGraphStore{}
+	builders := map[schema.SignalType]TopologyBuilder{
+		schema.SignalMetric: &configuredBuilder{
+			edges: []topology.Edge{topology.NewEdge("a", "b", topology.RelRunsOn, time.Now().UTC())},
+		},
+	}
+
+	buf := NewBufferedTopologyIngestor(builders, store, nil, time.Hour)
+	defer buf.Close()
+
+	env := newEnvelope(t, schema.SignalTrace, time.Now().UTC())
+	err := buf.Ingest(context.Background(), env)
+	require.NoError(t, err, "unknown signal should not error")
+
+	buf.Flush()
+	assert.Equal(t, 0, store.count(), "no data buffered for unknown signal type")
+}
+
+func TestBufferedTopologyIngestor_BuilderError_ReturnsError(t *testing.T) {
+	store := &recordingGraphStore{}
+	builder := &configuredBuilder{errOnBuild: assert.AnError}
+	builders := map[schema.SignalType]TopologyBuilder{
+		schema.SignalMetric: builder,
+	}
+
+	buf := NewBufferedTopologyIngestor(builders, store, nil, time.Hour)
+	defer buf.Close()
+
+	env := newEnvelope(t, schema.SignalMetric, time.Now().UTC())
+	err := buf.Ingest(context.Background(), env)
+	require.Error(t, err, "builder error should propagate")
+
+	buf.Flush()
+	assert.Equal(t, 0, store.count(), "nothing buffered when builder errors")
+}
