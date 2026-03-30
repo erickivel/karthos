@@ -23,6 +23,7 @@ const (
 	defaultBackendHealthListenAddr = "0.0.0.0:13133"
 	defaultBackendLogLevel         = "info"
 	defaultStorageBackend          = "memory"
+	defaultTopologyFlushInterval   = 60 * time.Second
 )
 
 type config struct {
@@ -33,10 +34,11 @@ type config struct {
 	EnabledSignals      []string
 	ClusterName         string
 	DiscoveryProfile    string
-	StorageBackend      string
-	PostgresDSN         string
-	VMURL               string
-	RawStoreEnabled     bool
+	StorageBackend          string
+	PostgresDSN             string
+	VMURL                   string
+	RawStoreEnabled         bool
+	TopologyFlushInterval   time.Duration
 }
 
 func main() {
@@ -135,6 +137,7 @@ func parseConfig(args []string) (config, error) {
 	postgresDSN := fs.String("postgres-dsn", envOrDefault("OKSG_POSTGRES_DSN", ""), "PostgreSQL connection string")
 	vmURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
 	rawStoreEnabled := fs.Bool("raw-store-enabled", envOrDefault("OKSG_RAW_STORE_ENABLED", "false") == "true", "enable raw envelope persistence")
+	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -144,18 +147,27 @@ func parseConfig(args []string) (config, error) {
 		return config{}, err
 	}
 
+	topologyFlushInterval, err := time.ParseDuration(*topologyFlushIntervalStr)
+	if err != nil {
+		return config{}, fmt.Errorf("parse topology flush interval: %w", err)
+	}
+	if topologyFlushInterval <= 0 {
+		topologyFlushInterval = defaultTopologyFlushInterval
+	}
+
 	return config{
-		GRPCListenAddress:   *grpcListenAddress,
-		HTTPListenAddress:   *httpListenAddress,
-		HealthListenAddress: *healthListenAddress,
-		LogLevel:            *logLevel,
-		EnabledSignals:      signals,
-		ClusterName:         *clusterName,
-		DiscoveryProfile:    *discoveryProfile,
-		StorageBackend:      *storageBackend,
-		PostgresDSN:         *postgresDSN,
-		VMURL:               *vmURL,
-		RawStoreEnabled:     *rawStoreEnabled,
+		GRPCListenAddress:     *grpcListenAddress,
+		HTTPListenAddress:     *httpListenAddress,
+		HealthListenAddress:   *healthListenAddress,
+		LogLevel:              *logLevel,
+		EnabledSignals:        signals,
+		ClusterName:           *clusterName,
+		DiscoveryProfile:      *discoveryProfile,
+		StorageBackend:        *storageBackend,
+		PostgresDSN:           *postgresDSN,
+		VMURL:                 *vmURL,
+		RawStoreEnabled:       *rawStoreEnabled,
+		TopologyFlushInterval: topologyFlushInterval,
 	}, nil
 }
 
