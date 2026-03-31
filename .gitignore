@@ -24,3 +24,6 @@ deploy/helm/oksg-otel/charts/
 
 # Worktrees
 .worktrees/
+
+# Superpowers plans
+docs/superpowers/
