@@ -27,8 +27,9 @@ The frontend is purely observational. No cluster mutations, no control-plane ope
 | Graph | React Flow (@xyflow/react v12) | Custom node components, built-in pan/zoom/minimap |
 | Charts | Recharts | React-native, composable, dark-theme friendly |
 | State | Zustand | Lightweight cross-view shared state |
+| HTTP | Native `fetch` | Zero dependencies, built-in to all browsers, no axios |
 | Data Fetching | TanStack Query | Polling intervals, caching, stale detection, retry |
-| Styling | CSS Modules | Aligns with flat-hex design tokens, no framework fighting the aesthetic |
+| Styling | CSS Modules + CSS Custom Properties | Theme tokens as `var(--*)`, no hardcoded hex in components |
 | Font | Space Grotesk (Google Fonts) | Per design system spec |
 | Language | TypeScript | Type safety against API contracts |
 
@@ -40,18 +41,28 @@ The frontend is purely observational. No cluster mutations, no control-plane ope
 
 The visual language follows the "Graphic Retro-Futurism / The Analog Superintendent" design system. Key rules:
 
-### Colors (Dark Mode only)
-- **Signal Green** `#08dc7d` — nominal state, primary actions
-- **Command Red** `#c62d2f` — critical failures, error state
-- **Data Blue** `#3e9adf` — informational, infrastructure entities
-- **Surface Dark** `#1b1d1f` — application background
-- **Text Muted** `#a3a7af` — secondary metadata, labels
+### Theming Architecture
+
+**All colors are consumed exclusively via CSS custom properties (`var(--*)`).** No component or CSS module may reference a hex value directly. This enables light mode support later by swapping the theme file.
+
+Theme files live in `src/styles/themes/`:
+- `dark.css` — default theme, applied via `[data-theme="dark"]` on `<html>`
+- `light.css` — future, same variable names with light-mode values
+
+Components reference only semantic tokens like `var(--color-signal)`, `var(--surface-base)`, `var(--text-muted)`, etc.
+
+### Colors (Dark Theme)
+- `--color-signal` (`#08dc7d`) — nominal state, primary actions
+- `--color-alert` (`#c62d2f`) — critical failures, error state
+- `--color-info` (`#3e9adf`) — informational, infrastructure entities
+- `--color-text-primary` (`#e0e0e0`) — primary text
+- `--color-text-muted` (`#a3a7af`) — secondary metadata, labels
 
 ### Surface Hierarchy (tonal layering, no borders)
-1. Base: `#121416`
-2. Navigation/Sidebar: `#1a1c1e`
-3. Main modules: `#1e2022`
-4. Active/Hovered: `#333537`
+1. `--surface-base`: `#121416`
+2. `--surface-nav`: `#1a1c1e`
+3. `--surface-module`: `#1e2022`
+4. `--surface-active`: `#333537`
 
 ### Typography
 - **Font:** Space Grotesk exclusively
@@ -62,9 +73,10 @@ The visual language follows the "Graphic Retro-Futurism / The Analog Superintend
 ### Rules
 - No 1px borders — boundaries via background color shifts only
 - No shadows — hierarchy via tonal layering
-- No gradients — every element is a flat hex code
-- Corner radius: 12-16px for cards/modules
+- No gradients — every element is a flat color token
+- **Corner radius: 4-6px** — squared cards with slightly rounded corners
 - Geometric/wireframe icons matching Space Grotesk stroke weights
+- **No hardcoded hex values in components** — all colors via `var(--*)`
 
 ---
 
@@ -78,9 +90,10 @@ Three routes sharing a persistent shell (sidebar + top bar + status bar). Zustan
 
 | Component | Position | Description |
 |-----------|----------|-------------|
-| **Top Bar** | Top, full width | OKSG branding, polling interval indicator, connection status dot |
-| **Sidebar** | Left, 56px | Icon navigation for 3 routes. Active state via tonal shift + green icon |
+| **Top Bar** | Floating, top | OKSG branding, polling interval indicator, connection status dot. Floats over the canvas with `var(--surface-nav)` background, not docked to the edge. |
+| **Sidebar** | Floating, left | Icon navigation for 3 routes. Floats over the canvas, not docked. Active state via tonal shift + signal color icon. |
 | **Status Bar** | Bottom, full width | System status + OKSG tool health (see Section 5.4) |
+| **Node Inspector** | Floating, right | 280px panel, floats over canvas on `/topology` when entity selected. Not docked to edge. |
 
 ### Routes
 
@@ -119,11 +132,11 @@ The landing page. Operators see cluster health at a glance. TCC reviewers see pr
 The core view. Interactive system graph rendered with React Flow.
 
 **Layout:**
-- Full-bleed graph canvas with:
-  - Filter toolbar (top): Kind, Namespace, Relation type dropdowns
-  - Minimap (bottom-left)
-  - Zoom controls (bottom-right)
-- Node Inspector panel (right, 280px, conditional — appears on node click)
+- Full-bleed graph canvas with **dotted grid background** (subtle dots at regular intervals using `var(--surface-active)` on `var(--surface-module)`) providing spatial reference during pan/zoom
+- Floating filter toolbar (top): Kind, Namespace, Relation type dropdowns
+- Minimap (bottom-left)
+- Zoom controls (bottom-right)
+- Floating Node Inspector panel (right, 280px, conditional — appears on node click)
 
 **Node Cards (React Flow custom nodes):**
 Each entity renders as a card with a colored header and property rows.
@@ -135,12 +148,16 @@ Each entity renders as a card with a colored header and property rows.
 | Data Blue `#3e9adf` | Node, Namespace | Infrastructure entities |
 | Muted Gray `#333537` | ConfigMap, Secret, PVC | Supporting context (rendered smaller, lower opacity) |
 
-Card content: entity name (header), kind-specific icon, 2-3 key properties (kind, namespace, replicas, type, etc.).
+Card content: entity name (bold, header bar), kind-specific icon (top-right), 2-3 key properties (label + value rows), and **minimalist segmented bar indicators** for metrics like CPU, MEM, I/O — solid rectangular blocks with gaps, matching the reference mockup style (e.g., the IO `450MB/s` segmented bar in the POD_COMPUTE_02 card).
 
-**Edge Rendering:**
-- Labeled lines showing relation type
-- Color-matched: green for calls/exposes, blue for runs_on, muted for uses/mounts
-- Labels on hover or always visible (configurable)
+**Edge Rendering — "Cable Bundle" Style:**
+Edges are rendered as organized cable bundles, inspired by physical network cluster cabling:
+- Each edge is a bundle of parallel lines ("cables") routed with right-angle or smooth orthogonal paths
+- **Cable count and thickness scale with traffic/confidence:** high-traffic `calls` edges render as thick multi-cable bundles; low-traffic `uses` edges render as thin single cables
+- Color-matched to relation type: `var(--color-signal)` for calls/exposes, `var(--color-info)` for runs_on, `var(--color-text-muted)` for uses/mounts
+- Cables route along grid-aligned paths (horizontal → vertical → horizontal) to maintain the organized "server rack wiring" aesthetic
+- Relation type label shown on hover or always visible (configurable)
+- Custom React Flow edge component handles the multi-cable rendering and traffic-based scaling
 
 **Node Inspector Panel:**
 Appears when a node is clicked. Contents:
@@ -189,11 +206,12 @@ Maps 1:1 to the 5 canonical MetricCategories: resource, traffic, latency, error,
 Each canonical metric for the selected entity gets a card containing:
 - Metric name (uppercase label)
 - Current value + unit (large, colored)
-- Time-series chart: line charts for continuous metrics, bar charts for throughput
+- Time-series chart: **minimalist segmented bar charts** as the primary visualization style — solid rectangular blocks with gaps between them, using opacity gradients from `var(--surface-active)` (older data) to `var(--color-signal)` (recent data), matching the "Live Telemetry" aesthetic from the reference mockups
+- Line charts used only where continuous trend is essential (e.g., latency percentiles)
 - Multi-series support where applicable (e.g., disk read/write on same chart)
 
 **Raw Samples Table:**
-Scrollable table with columns: Metric, Value, Unit, Timestamp. Zebra-striped with tonal layering (alternating `#1a1c1e` / `#1e2022`). Useful for operators debugging and TCC reviewers inspecting raw data.
+Scrollable table with columns: Metric, Value, Unit, Timestamp. Zebra-striped with tonal layering (alternating `var(--surface-nav)` / `var(--surface-module)`). Useful for operators debugging and TCC reviewers inspecting raw data.
 
 **Data sources:**
 - `GET /api/v1/metrics?entity_id[]={id}&from=&to=` → metric samples
@@ -226,12 +244,19 @@ Persistent bottom bar across all routes. Shows both cluster system status and OK
 
 The backend has REST-only endpoints. Topology snapshots flush every 60s. The frontend polls on intervals. The data layer is structured so a WebSocket upgrade later is a transport swap, not a rewrite.
 
-### Directory Structure
+### HTTP Client: Native `fetch`
+
+No axios. The API client is a thin wrapper around the browser's native `fetch`:
+- `client.ts` provides a `request<T>(path, options)` function that handles base URL, JSON parsing, error mapping, and typed responses
+- Each API domain module (`graph.ts`, `metrics.ts`, etc.) exports pure functions that call `request<T>`
+- TanStack Query's `queryFn` calls these functions — components never call `fetch` directly
+
+### Directory Structure (modular by domain)
 
 ```
 src/
   api/
-    client.ts          — base fetch wrapper (base URL, headers, error handling)
+    client.ts          — thin native fetch wrapper (base URL, JSON, error handling)
     graph.ts           — getSnapshot(), getNode(id), getEdges(filters)
     metrics.ts         — getSamples(entityId, timeRange), getCatalog()
     entities.ts        — listEntities(filters), getEntity(id)
@@ -249,7 +274,15 @@ src/
     metrics.ts            — MetricSample, MetricCategory, CanonicalMetric
     entities.ts           — Entity, EntityQuery
     api.ts                — API response envelopes, error types
+  styles/
+    themes/
+      dark.css           — dark theme variables ([data-theme="dark"])
+      light.css          — light theme variables (future, same var names)
+    tokens.css           — semantic aliases, spacing scale, typography tokens
+    global.css           — base styles, font import, theme loading
 ```
+
+Each layer is independently replaceable: swap `api/client.ts` to change HTTP transport, swap `themes/dark.css` to change visual theme, swap a `hooks/` file to change data fetching strategy.
 
 ### WebSocket-Ready Pattern
 
@@ -296,26 +329,34 @@ web/
   index.html
   public/
   src/
-    main.tsx               — app entry, providers (QueryClient, Router)
-    App.tsx                — shell layout with sidebar, top bar, status bar, <Outlet/>
-    api/                   — typed fetch functions per API domain
-    hooks/                 — TanStack Query + Zustand hooks
+    main.tsx               — app entry, providers (QueryClient, Router, theme init)
+    App.tsx                — shell layout with floating sidebar, top bar, status bar, <Outlet/>
+    api/
+      client.ts            — thin native fetch wrapper
+      graph.ts             — graph API functions
+      metrics.ts           — metrics API functions
+      entities.ts          — entity API functions
+      discovery.ts         — discovery/status API functions
+    hooks/                 — TanStack Query + Zustand hooks (one per data domain)
     stores/                — Zustand stores
     types/                 — TypeScript types matching backend API contracts
     views/
       ClusterOverview/     — / route components
       TopologyGraph/       — /topology route components
         nodes/             — React Flow custom node components per entity kind
-        edges/             — React Flow custom edge components
-        NodeInspector.tsx  — right panel
-        FilterToolbar.tsx  — filter chips
+        edges/             — React Flow custom edge component (cable bundle renderer)
+        NodeInspector.tsx  — floating right panel
+        FilterToolbar.tsx  — floating filter chips
       MetricsExplorer/     — /metrics route components
     components/
-      Shell/               — TopBar, Sidebar, StatusBar
-      shared/              — reusable primitives (DataChip, MetricBar, etc.)
+      Shell/               — TopBar (floating), Sidebar (floating), StatusBar
+      shared/              — reusable primitives (DataChip, SegmentedBar, etc.)
     styles/
-      tokens.css           — design system color/spacing/typography tokens
-      global.css           — base styles, font import
+      themes/
+        dark.css           — [data-theme="dark"] CSS custom property definitions
+        light.css          — [data-theme="light"] (future, same variable names)
+      tokens.css           — semantic aliases, spacing scale, typography tokens
+      global.css           — base styles, font import, dotted canvas background
 ```
 
 ---
