@@ -67,16 +67,27 @@ tasks:
       - kubectl create configmap oksg-discovery-profile --from-file=profile.json={{.PROFILE_PATH}} -n {{.KIND_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
 
   e2e:apply-otel:
-    desc: Install or upgrade the OTel Helm release with generated values
+    desc: Install or upgrade the OTel Helm release with generated values and external storage
     cmds:
-      - helm upgrade --install {{.HELM_RELEASE_NAME}} {{.HELM_CHART_PATH}} --namespace {{.KIND_NAMESPACE}} --create-namespace -f {{.VALUES_PATH}}
+      - helm dependency build {{.HELM_CHART_PATH}}
+      - >-
+        helm upgrade --install {{.HELM_RELEASE_NAME}} {{.HELM_CHART_PATH}}
+        --namespace {{.KIND_NAMESPACE}} --create-namespace
+        -f {{.VALUES_PATH}}
+        --set storage.backend=external
+        --set storage.postgresql.enabled=true
+        --set storage.victoriametrics.enabled=true
+        --set postgresql.auth.password=oksg
 
   e2e:verify:
-    desc: Verify generated collectors are deployed
+    desc: Verify generated collectors and storage backends are deployed
     cmds:
       - helm status {{.HELM_RELEASE_NAME}} -n {{.KIND_NAMESPACE}}
       - kubectl get pods -n {{.KIND_NAMESPACE}}
-      - echo "Waiting for rollouts to complete..."
+      - echo "Waiting for storage backends..."
+      - kubectl rollout status statefulset/{{.HELM_RELEASE_NAME}}-postgresql -n {{.KIND_NAMESPACE}} --timeout=180s
+      - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=victoria-metrics-single -n {{.KIND_NAMESPACE}} --timeout=180s
+      - echo "Waiting for collector rollouts..."
       - kubectl rollout status deployment/oksg-backend -n {{.KIND_NAMESPACE}} --timeout=120s
       - kubectl rollout status deployment/otel-collector-gateway -n {{.KIND_NAMESPACE}} --timeout=120s
       - kubectl rollout status daemonset/otel-collector-agent -n {{.KIND_NAMESPACE}} --timeout=120s
@@ -144,7 +155,7 @@ tasks:
       - task: e2e:verify
 
   e2e:debug:metrics:
-    desc: Dump all metric samples stored in the backend InMemoryStore (port-forwards health port, curls /debug/metrics, then cleans up)
+    desc: Dump all metric samples from the backend /debug/metrics endpoint (port-forwards health port, curls, then cleans up)
     cmds:
       - |
         lsof -ti :{{.BACKEND_HEALTH_PORT}} | xargs kill 2>/dev/null || true

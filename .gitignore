@@ -19,5 +19,11 @@ schemas/
 .env.local
 .env.*.local
 
+# Helm subchart downloads (re-fetch with: helm dependency build)
+deploy/helm/oksg-otel/charts/
+
 # Worktrees
 .worktrees/
+
+# Superpowers plans
+docs/superpowers/

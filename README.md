@@ -13,7 +13,7 @@ The project is designed to:
 - reconstruct a time-aware topology graph with metrics attached to nodes and edges
 - preserve a modular boundary for later prediction, simulation, and reporting features
 
-Phase 1 established the contracts and schemas. Phase 2 added discovery-driven collection planning, Phase 3 implements the end-to-end OpenTelemetry collection plane with a real backend OTLP ingest runtime, and Phase 4 adds topology reconstruction from runtime telemetry with debug endpoints for graph and metrics inspection.
+Phase 1 established the contracts and schemas. Phase 2 added discovery-driven collection planning, Phase 3 implements the end-to-end OpenTelemetry collection plane with a real backend OTLP ingest runtime, Phase 4 adds topology reconstruction from runtime telemetry with debug endpoints for graph and metrics inspection, and Phase 5 adds durable persistence with PostgreSQL and VictoriaMetrics behind swappable storage interfaces.
 
 ## Architecture Overview
 
@@ -26,7 +26,7 @@ The long-term architecture is organized into six layers:
 5. Modeling and Prediction Layer
 6. Control and API Layer
 
-This repository currently implements Phase 1 foundation, Phase 2 discovery/planning, Phase 3 collection-plane runtime, and the initial Phase 4 topology reconstruction:
+This repository currently implements Phases 1 through 5:
 
 - canonical entities, metrics, raw telemetry envelopes, and topology contracts
 - discovery profile contracts extended with Prometheus target detection and recommended OTel receivers
@@ -35,13 +35,16 @@ This repository currently implements Phase 1 foundation, Phase 2 discovery/plann
 - OTLP gRPC/HTTP ingest in the backend with raw-envelope conversion and signal routing
 - semantic normalization with entity resolution and canonical metric mapping
 - structural topology extraction from kubeletstats resource attributes (`runs_on`, `contains` edges)
+- K8s structural topology from discovery profile (`exposes`, `routes_to`, `uses`, `mounts` edges)
 - OTLP trace-based topology extraction (`calls` edges from `peer.service` span attributes)
 - `/debug/graph` and `/debug/metrics` endpoints for runtime topology and metric inspection
+- durable persistence with PostgreSQL (graph, entities, metadata, raw envelopes) and VictoriaMetrics (metrics) behind generic store interfaces
+- storage factory with swappable `memory` and `external` backends
 - traffic generation tasks for exercising the demo app and observing graph construction
 
 ## Project Status
 
-Current phase: `Phase 4 — Topology Reconstruction`
+Current phase: `Phase 5 — Persistence`
 
 <details>
 <summary>Phase 1 — Foundation and Contracts (Completed)</summary>
@@ -79,7 +82,7 @@ Current phase: `Phase 4 — Topology Reconstruction`
 </details>
 
 <details>
-<summary>Phase 4 — Topology Reconstruction (Current Slice)</summary>
+<summary>Phase 4 — Topology Reconstruction (Completed)</summary>
 
 - Semantic normalization with `OTLPEntityResolver` and `MetricNormalizer`
 - `MetricTopologyBuilder` derives `runs_on` and `contains` edges from kubeletstats resource attributes
@@ -92,14 +95,27 @@ Current phase: `Phase 4 — Topology Reconstruction`
 
 </details>
 
+<details>
+<summary>Phase 5 — Persistence (Current)</summary>
+
+- Generic store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) in `pkg/backend/persistence/`
+- In-memory implementations for all interfaces (tests and default mode)
+- Storage factory with `memory` (default) and `external` backends
+- PostgreSQL adapter for graph topology, entity registry, metadata, and raw envelopes via `pgx/v5`
+- VictoriaMetrics adapter for time-series metrics via Prometheus HTTP API
+- Backend CLI flags: `--storage-backend`, `--postgres-dsn`, `--victoriametrics-url`, `--raw-store-enabled`
+- Helm chart storage configuration with DSN secret and VM URL
+
+</details>
+
 Planned roadmap:
 
-1. Foundation and Contracts
-2. Cluster Integration and Discovery
-3. Collection Plane Implementation
-4. Semantic Processing and Canonicalization
-5. Topology and Graph Reconstruction
-6. Visualizer and Query APIs
+1. Foundation and Contracts (done)
+2. Cluster Integration and Discovery (done)
+3. Collection Plane Implementation (done)
+4. Semantic Processing and Topology Reconstruction (done)
+5. Persistence (done)
+6. Query APIs and Visualization
 7. Future evolution toward prediction and simulation
 
 ## Prerequisites
@@ -229,8 +245,17 @@ cmd/
 
 pkg/
   adapters/        Technology-specific integration boundaries
+    kubernetes/    Kubernetes discovery adapter
+    otel/          OTel source planner
+    otlp/          OTLP gRPC/HTTP server adapter
+    storage/       Storage factory and config (memory or external)
+    storage/postgresql/      PostgreSQL stores (pgx/v5)
+    storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
   backend/         Ingest, query, and persistence contracts
-  collector/       Collection-plane contracts and placeholders
+    ingest/        Envelope building, routing, normalization, topology
+    persistence/   Store interfaces and in-memory implementations
+    query/         Graph and metrics query contracts
+  collector/       Collection-plane contracts and config generation
   core/            Canonical entities, metrics, topology, schema, and registry
   discovery/       Detection and cluster profile contracts
   modeling/        Deferred prediction and simulation contracts

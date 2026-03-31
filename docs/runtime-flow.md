@@ -18,9 +18,9 @@ sequenceDiagram
     participant Builder as EnvelopeBuilder
     participant Router as SignalRouter
     participant NI as NormalizingIngestor
-    participant TI as TopologyIngestor
-    participant MS as InMemoryMetricStore
-    participant GS as InMemoryGraphStore
+    participant BTI as BufferedTopologyIngestor
+    participant MS as MetricStore
+    participant GS as GraphStore
 
     loop Running cluster telemetry
         Workload->>Agent: Prometheus scrape targets and kubelet stats
@@ -39,20 +39,22 @@ sequenceDiagram
             NI->>MS: MetricStore.Write(ctx, samples)
             MS-->>NI: nil
             NI-->>MI: nil
-            MI->>MTI: TopologyIngestor(MetricTopologyBuilder).Ingest(ctx, envelope)
-            MTI->>MTI: MetricTopologyBuilder.Build → []Edge + []Node
-            MTI->>GS: GraphStore.PutSnapshot(ctx, snapshot)
-            GS-->>MTI: nil
-            MTI-->>MI: nil
+            MI->>BTI: BufferedTopologyIngestor.Ingest(ctx, envelope)
+            BTI->>BTI: MetricTopologyBuilder.Build → []Edge + []Node
+            BTI->>BTI: Merge into in-memory buffer
+            BTI-->>MI: nil
             MI-->>Router: nil
         else trace envelope
-            Router->>TI: TopologyIngestor.Ingest(ctx, envelope)
-            TI->>TI: TraceTopologyBuilder.Build → []Edge
-            TI->>GS: GraphStore.PutSnapshot(ctx, snapshot)
-            GS-->>TI: nil
-            TI-->>Router: nil
+            Router->>BTI: BufferedTopologyIngestor.Ingest(ctx, envelope)
+            BTI->>BTI: TraceTopologyBuilder.Build → []Edge
+            BTI->>BTI: Merge into in-memory buffer
+            BTI-->>Router: nil
         end
         Router-->>Backend: nil
+    end
+    loop Every flush interval (default 60s)
+        BTI->>GS: GraphStore.PutSnapshot(ctx, consolidated snapshot)
+        GS-->>BTI: nil
     end
 ```
 
@@ -69,14 +71,14 @@ sequenceDiagram
     participant Router as SignalRouter
     participant NI as NormalizingIngestor
     participant Norm as OTLPNormalizer
-    participant MS as InMemoryMetricStore
+    participant MS as MetricStore
 
     Note over Main: Process startup
     Main->>Main: NewOTLPEntityResolver(clusterName)
     Main->>Main: NewOTLPNormalizer(resolver)
     Main->>Main: NewTraceTopologyBuilder(resolver)
-    Main->>Main: NewInMemoryMetricStore()
-    Main->>Main: NewInMemoryGraphStore()
+    Main->>Main: NewMetricStore()
+    Main->>Main: NewGraphStore()
     Main->>Main: NewMetricTopologyBuilder(clusterName)
     Main->>NI: NewNormalizingIngestor(normalizer, metricStore)
     Main->>Main: NewTopologyIngestor(metricTopoBuilder, graphStore)
@@ -132,13 +134,16 @@ sequenceDiagram
 | `pkg/backend/ingest/normalizer.go` | `OTLPNormalizer` | Maps OTLP metric payloads to canonical `MetricSample` values with unit conversion |
 | `pkg/backend/ingest/topology_builder.go` | `TraceTopologyBuilder` | Extracts service-to-service `topology.Edge` values from OTLP trace envelopes |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `NormalizingIngestor` | Implements `Ingestor`; routes metric envelopes through normalizer → `MetricStore` |
-| `pkg/backend/ingest/normalizing_ingestor.go` | `TopologyIngestor` | Implements `Ingestor`; routes envelopes through a topology builder → `GraphStore` |
+| `pkg/backend/ingest/buffered_topology_ingestor.go` | `BufferedTopologyIngestor` | Implements `Ingestor`; accumulates edges/nodes from metric and trace builders, flushes consolidated snapshots to `GraphStore` on a timer |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `MultiIngestor` | Implements `Ingestor`; fans envelopes to multiple downstream ingestors in order |
 | `pkg/backend/ingest/metric_topology_builder.go` | `MetricTopologyBuilder` | Extracts structural `runs_on`/`contains` edges and nodes from metric resource attributes |
 | `pkg/backend/ingest/structural_topology_builder.go` | `K8sStructuralTopologyBuilder` | Derives `exposes`/`routes_to`/`uses`/`mounts` edges from ClusterProfile |
 | `pkg/backend/ingest/structural_topology_ingestor.go` | `StructuralTopologyIngestor` | Ingests K8s structural topology from ClusterProfile into GraphStore |
-| `pkg/backend/persistence/memory.go` | `InMemoryMetricStore` | Thread-safe in-memory `MetricStore`; supports write and time-range queries |
-| `pkg/backend/persistence/memory.go` | `InMemoryGraphStore` | Thread-safe in-memory `GraphStore`; accumulates edges and nodes, updates `LastSeen` on re-observation |
+| `pkg/backend/persistence/memory.go` | `MetricStore` | Thread-safe in-memory `MetricStore`; supports write and time-range queries |
+| `pkg/backend/persistence/memory.go` | `GraphStore` | Thread-safe in-memory `GraphStore`; accumulates edges and nodes, updates `LastSeen` on re-observation |
+| `pkg/adapters/storage/victoriametrics/` | `VMMetricStore` | `MetricStore` backed by VictoriaMetrics HTTP API (Prometheus text import + PromQL query) |
+| `pkg/adapters/storage/postgresql/` | `PostgresGraphStore` | `GraphStore` backed by PostgreSQL with accumulated edge upserts |
+| `pkg/adapters/storage/factory.go` | `Stores` / `NewStores` | Factory that wires memory or external (PG+VM) backends based on config |
 | `pkg/backend/ingest/ingest.go` | `Ingestor` interface | Contract: `Ingest(ctx, envelope) error` |
 | `pkg/core/schema` | `RawEnvelope` | Canonical telemetry envelope struct |
 
@@ -165,29 +170,29 @@ Gateway
 │ (pkg/backend/ingest)    │   │ (pkg/backend/ingest)                            │
 │                         │   │                                                 │
 │ → []schema.RawEnvelope  │   │ metric → MultiIngestor                         │
-└─────────────────────────┘   │ trace  → TopologyIngestor(TraceTopologyBuilder)│
+└─────────────────────────┘   │ trace  → BufferedTopologyIngestor                 │
                                └─────────────────────────────────────────────────┘
                                         │                          │
-                              ┌─────────▼──────────┐   ┌──────────▼─────────────────┐
-                              │ MultiIngestor       │   │ TopologyIngestor            │
-                              │                    │   │ (TraceTopologyBuilder)      │
-                              │ ┌─────────────────┐│   │  → []Edge(RelCalls)         │
-                              │ │NormalizingIngest││   │ GraphStore.PutSnapshot      │
-                              │ │ OTLPNormalizer  ││   └────────────────────────────┘
-                              │ │ → []MetricSample││                │
-                              │ │ MetricStore     ││                ▼
-                              │ └─────────────────┘│   ┌─────────────────────┐
-                              │ ┌─────────────────┐│   │ InMemoryGraphStore  │
-                              │ │TopologyIngestor ││   │ (nodes + edges)     │
-                              │ │(MetricTopology) ││   │ (pkg/backend/       │
-                              │ │ → []Edge + Node ││   │  persistence)       │
-                              │ │ GraphStore      ││   └─────────────────────┘
+                              ┌─────────▼──────────┐   ┌──────────▼──────────────────────────┐
+                              │ MultiIngestor       │   │ BufferedTopologyIngestor (shared)    │
+                              │                    │   │  metric + trace paths → buffer       │
+                              │ ┌─────────────────┐│   │  periodic flush → GraphStore         │
+                              │ │NormalizingIngest││   └──────────────────────────────────────┘
+                              │ │ OTLPNormalizer  ││                │
+                              │ │ → []MetricSample││                ▼
+                              │ │ MetricStore     ││   ┌─────────────────────┐
+                              │ └─────────────────┘│   │ GraphStore          │
+                              │ ┌─────────────────┐│   │ (nodes + edges)     │
+                              │ │BufferedTopology ││   │ (pkg/backend/       │
+                              │ │Ingestor (shared)││   │  persistence)       │
+                              │ │ → []Edge + Node ││   └─────────────────────┘
+                              │ │ → in-memory buf ││
                               │ └─────────────────┘│
                               └────────────────────┘
                                         │
                                         ▼
                               ┌─────────────────────┐
-                              │ InMemoryMetricStore │
+                              │ MetricStore         │
                               │ (pkg/backend/       │
                               │  persistence)       │
                               └─────────────────────┘
@@ -250,7 +255,8 @@ The `--cluster-name` flag (or `OKSG_CLUSTER_NAME` env var) controls the cluster 
 Operational notes:
 
 - logs are structured JSON to stdout
-- the backend now normalizes and persists telemetry in memory; persistence survives only for the process lifetime
+- with `--storage-backend=memory` (default), data survives only for the process lifetime
+- with `--storage-backend=external`, data is persisted to PostgreSQL (graph, entities, metadata) and VictoriaMetrics (metrics)
 
 ### 4. Raw Envelope Build
 
@@ -284,14 +290,14 @@ Metric path:
 
 - `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > service. Entity resolution errors fail the envelope.
 - `OTLPNormalizer` maps each recognized OTLP metric name to a canonical `MetricSample` using the registered `OTLPToCanonicalMappings`. Applies unit conversion. Resolves directional names for disk and network metrics from the `direction` attribute. Unrecognized metric names are silently skipped.
-- `InMemoryMetricStore` stores the resulting samples in memory. Supports time-range and entity-filtered queries.
+- `MetricStore` stores the resulting samples in memory. Supports time-range and entity-filtered queries.
 - `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds.
-- `InMemoryGraphStore` accumulates edges and nodes across snapshots. Re-observed edges have their `LastSeen` updated; nodes are merged by entity ID.
+- `GraphStore` accumulates edges and nodes across snapshots. Re-observed edges have their `LastSeen` updated; nodes are merged by entity ID.
 
 Trace path:
 
 - `TraceTopologyBuilder` scans each span for a `peer.service` attribute. When found, it resolves both caller and callee to `EntityID` values and emits a `topology.Edge` with `RelCalls` relation. Edges are deduplicated within the batch by edge ID. `FirstSeen`/`LastSeen` are taken from span timestamps.
-- `InMemoryGraphStore` accumulates edges and nodes; trace-derived `calls` edges accumulate alongside structural edges from the metric path.
+- `GraphStore` accumulates edges and nodes; trace-derived `calls` edges accumulate alongside structural edges from the metric path.
 
 ## Current Observable Behavior
 
@@ -336,11 +342,13 @@ Implemented in the current slice:
 - `MetricTopologyBuilder`: structural edges (`runs_on`, `contains`) and nodes from metric resource attributes
 - `K8sStructuralTopologyBuilder`: structural edges (`exposes`, `routes_to`, `uses`, `mounts`) from discovery profile
 - `StructuralTopologyIngestor`: ingests K8s structural topology from ClusterProfile into GraphStore at startup
-- `InMemoryMetricStore` and `InMemoryGraphStore`: thread-safe in-memory persistence with node accumulation
+- `MetricStore` and `GraphStore`: thread-safe in-memory persistence with node accumulation
+- Storage factory (`storage.NewStores`): wires memory or external (PG+VM) backends from config
+- PostgreSQL adapter: `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry` via `pgx/v5`
+- VictoriaMetrics adapter: `MetricStore` via Prometheus text import and PromQL query
 
 Not implemented yet:
 
-- durable persistence (metrics and topology survive only for the process lifetime)
 - query APIs over stored metrics or topology
 - controller-driven runtime management
 - prediction, simulation, or model-ready feature generation
@@ -372,14 +380,16 @@ OKSG Backend
   - Raw envelope build
   - Signal routing
     ├── metric → MultiIngestor
-    │     ├── NormalizingIngestor → OTLPNormalizer → InMemoryMetricStore
-    │     └── TopologyIngestor(MetricTopologyBuilder) → InMemoryGraphStore
+    │     ├── NormalizingIngestor → OTLPNormalizer → MetricStore
+    │     └── BufferedTopologyIngestor (shared) → accumulates edges + nodes
     │           edges: runs_on (pod→node), contains (ns→pod, pod→container)
     │           nodes: namespace, node, pod, container
-    └── trace → TopologyIngestor(TraceTopologyBuilder) → InMemoryGraphStore
+    └── trace → BufferedTopologyIngestor (shared) → accumulates edges + nodes
           edges: calls (service→service via peer.service attribute)
+  - Periodic topology flush (default 60s)
+    └── BufferedTopologyIngestor → GraphStore.PutSnapshot(consolidated snapshot)
   - Structural topology (at startup, if --discovery-profile provided)
-    └── StructuralTopologyIngestor(K8sStructuralTopologyBuilder) → InMemoryGraphStore
+    └── StructuralTopologyIngestor(K8sStructuralTopologyBuilder) → GraphStore
           edges: exposes (service→workload), routes_to (ingress→service),
                  uses (workload→configmap/secret), mounts (workload→pvc)
           nodes: workload, service, ingress, configmap, secret, pvc

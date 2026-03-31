@@ -34,6 +34,21 @@ spec:
           env:
             - name: OKSG_LOG_LEVEL
               value: {{ .Values.global.logging.level | quote }}
+            - name: OKSG_STORAGE_BACKEND
+              value: {{ .Values.storage.backend | quote }}
+            - name: OKSG_RAW_STORE_ENABLED
+              value: {{ .Values.storage.rawStoreEnabled | quote }}
+            - name: OKSG_TOPOLOGY_FLUSH_INTERVAL
+              value: {{ .Values.backend.topologyFlushInterval | default "60s" | quote }}
+            {{- if eq .Values.storage.backend "external" }}
+            - name: OKSG_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "oksg-otel.name" . }}-storage
+                  key: postgres-dsn
+            - name: OKSG_VICTORIAMETRICS_URL
+              value: {{ include "oksg-otel.vmURL" . | quote }}
+            {{- end }}
           {{- range $key, $value := .Values.backend.runtimeEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}

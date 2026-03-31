@@ -16,6 +16,7 @@ This folder documents the currently implemented OKSG slice: Kubernetes discovery
 
 - [README](../README.md)
 - [AGENTS.md](../AGENTS.md)
+- [GUIDELINE.md](../GUIDELINE.md)
 - [test/e2e/apps](../test/e2e/apps/)
 - [test/e2e/scenarios](../test/e2e/scenarios/)
 

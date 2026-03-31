@@ -1,0 +1,9 @@
+dependencies:
+- name: postgresql
+  repository: https://charts.bitnami.com/bitnami
+  version: 18.5.11
+- name: victoria-metrics-single
+  repository: https://victoriametrics.github.io/helm-charts
+  version: 0.33.0
+digest: sha256:fa851e8598614d245ae381499624291f2879e732eaca0eaa145720572aa2d205
+generated: "2026-03-22T20:08:12.232084-03:00"

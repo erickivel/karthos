@@ -11,6 +11,22 @@ This guide focuses on the current implementation shape rather than future-only l
 - kubectl
 - helm
 
+## Tech Stack
+
+Keep the main application minimal:
+
+- Go
+- Kubernetes Go client for discovery and cluster-side deployment workflows
+- `sigs.k8s.io/yaml` for collector config and Helm values rendering
+- Prometheus packages only when a concrete Prometheus adapter, parser, or test application needs them
+- OTLP packages only when an OTLP adapter or receiver is added
+- `github.com/google/uuid` for event identifiers
+- `github.com/invopop/jsonschema` for generated schema documentation
+- `github.com/jackc/pgx/v5` for PostgreSQL persistence (pure Go, zero CGO)
+- `github.com/stretchr/testify` for tests
+
+Do not add large framework dependencies before there is a concrete need for them. See [GUIDELINE.md](../GUIDELINE.md) for the full dependency philosophy.
+
 ## Current Structure
 
 ```text
@@ -29,18 +45,40 @@ pkg/
                          (entity_resolver.go, normalizer.go, topology_builder.go,
                           metric_topology_builder.go, normalizing_ingestor.go,
                           plus existing otlp.go, ingest.go, semantic.go)
-  backend/persistence/   in-memory MetricStore and GraphStore implementations
-                         (memory.go)
+  backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
+                         RawStore, EntityRegistry) and in-memory implementations
+  backend/query/         graph and metrics query contracts
+  adapters/storage/      storage factory and config (memory or external backends)
+  adapters/storage/postgresql/     PostgreSQL implementations (pgx/v5)
+  adapters/storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
   collector/configgen/   Helm values builder
   collector/deployer/    Helm runner
   core/logging/          shared JSON stdout logger
   discovery/profile/     ClusterProfile types
 
-deploy/helm/oksg-otel/
-  Chart.yaml
-  values.yaml
-  values.schema.json
-  templates/
+  core/
+    entities/        canonical graph-facing entities and stable IDs
+    metrics/         canonical metric definitions, units, and samples
+    topology/        graph nodes, edges, relations, and snapshots
+    registry/        canonical metric registry contracts
+    featurestore/    reserved for future model-ready features
+    schema/          raw telemetry envelopes, validation, schema versions
+
+  modeling/
+    scenarios/       reserved scenario definitions
+    predictors/      predictor interfaces only
+    simulation/      reserved simulation boundary
+
+deploy/
+  helm/              Helm charts and release packaging
+  manifests/         raw manifest placeholder
+  examples/          example deployment placeholder
+
+test/
+  e2e/
+    kind/            kind cluster setup scripts and config
+    apps/            example microservices for base and Prometheus scenarios
+    scenarios/       end-to-end validation scripts and expected outputs
 ```
 
 ## Common Commands
@@ -60,7 +98,9 @@ task ci
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
 ./bin/discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 ./bin/discovery-job --mode=deploy --profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --enabled-signals=metric,trace --cluster-name=oksg-test
+./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
+# With external storage:
+./bin/backend --storage-backend=external --postgres-dsn="postgres://oksg:pass@localhost:5432/oksg" --victoriametrics-url="http://localhost:8428" --raw-store-enabled=true --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
 ```
 
 Notes:

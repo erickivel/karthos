@@ -34,3 +34,27 @@ app.kubernetes.io/component: {{ .component }}
 {{- define "oksg-otel.gatewayChecksum" -}}
 {{- .Values.gateway.collectorConfig | sha256sum -}}
 {{- end -}}
+
+{{/*
+PostgreSQL DSN: use explicit dsn if set, otherwise build from subchart service name.
+Bitnami postgresql subchart creates a service named <release>-postgresql.
+*/}}
+{{- define "oksg-otel.postgresDSN" -}}
+{{- if .Values.storage.postgresql.dsn -}}
+{{ .Values.storage.postgresql.dsn }}
+{{- else -}}
+{{ printf "postgres://%s:%s@%s-postgresql:5432/%s?sslmode=disable" (index .Values "postgresql" "auth" "username") (index .Values "postgresql" "auth" "password") .Release.Name (index .Values "postgresql" "auth" "database") }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+VictoriaMetrics URL: use explicit url if set, otherwise derive from subchart service name.
+VM single subchart creates a service named <release>-victoria-metrics-single-server.
+*/}}
+{{- define "oksg-otel.vmURL" -}}
+{{- if .Values.storage.victoriametrics.url -}}
+{{ .Values.storage.victoriametrics.url }}
+{{- else -}}
+{{ printf "http://%s-victoria-metrics-single-server:8428" .Release.Name }}
+{{- end -}}
+{{- end -}}
