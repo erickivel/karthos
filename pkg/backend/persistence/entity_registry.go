@@ -2,9 +2,13 @@ package persistence
 
 import (
 	"context"
+	"errors"
 
 	"github.com/erickivel/oksg/pkg/core/entities"
 )
+
+// ErrEntityNotFound is returned when an entity lookup finds no matching record.
+var ErrEntityNotFound = errors.New("entity not found")
 
 // EntityQuery defines filters for listing entities.
 type EntityQuery struct {

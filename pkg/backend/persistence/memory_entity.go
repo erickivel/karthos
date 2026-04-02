@@ -51,7 +51,7 @@ func (r *InMemoryEntityRegistry) GetEntity(_ context.Context, id entities.Entity
 
 	e, ok := r.entities[id]
 	if !ok {
-		return nil, fmt.Errorf("entity not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
 	return e, nil
 }

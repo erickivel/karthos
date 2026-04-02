@@ -61,7 +61,7 @@ func (r *PostgresEntityRegistry) GetEntity(ctx context.Context, id entities.Enti
 	).Scan(&e.EntityID, &kind, &e.Cluster, &e.Namespace, &e.Name, &labelsJSON)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("entity not found: %s", id)
+			return nil, fmt.Errorf("%w: %s", persistence.ErrEntityNotFound, id)
 		}
 		return nil, fmt.Errorf("pg entity get: %w", err)
 	}
