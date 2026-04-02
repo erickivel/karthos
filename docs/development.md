@@ -32,13 +32,14 @@ Do not add large framework dependencies before there is a concrete need for them
 ```text
 cmd/
   discovery-job/   implemented discovery/plan/deploy CLI
-  backend/         OTLP ingest and semantic normalization runtime
+  backend/         OTLP ingest, semantic normalization, and REST API runtime
   controller/      placeholder
   schema-gen/      schema helper
 
 pkg/
   adapters/kubernetes/   discovery adapter (Prometheus + OTLP workload detection)
   adapters/otel/         source planner (hostmetrics, k8s_cluster, spanmetrics, servicegraph)
+  adapters/api/          REST API server (Layer 6 Phase A query and control endpoints)
   adapters/otlp/         OTLP gRPC and HTTP server adapter
   backend/ingest/        raw-envelope conversion, signal routing, entity resolution,
                          OTLP normalization, topology building, and multi-ingestor fan-out
@@ -98,7 +99,7 @@ task ci
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
 ./bin/discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 ./bin/discovery-job --mode=deploy --profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
+./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --api-listen-address=0.0.0.0:8080 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
 # With external storage:
 ./bin/backend --storage-backend=external --postgres-dsn="postgres://oksg:pass@localhost:5432/oksg" --victoriametrics-url="http://localhost:8428" --raw-store-enabled=true --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
 ```
@@ -161,6 +162,9 @@ Use the task shortcuts:
 # Dump all stored metric samples (port-forwards, curls, then cleans up)
 task test:e2e:debug:metrics
 
+# Verify backend REST API access on a dedicated local port
+task test:e2e:debug:api
+
 # Dump the current topology graph snapshot
 task test:e2e:debug:graph
 
@@ -213,3 +217,44 @@ A skipped envelope (expected for k8s_cluster workload-object metrics and raw hos
 ```
 
 Skips for `k8s.namespace`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset` resources are expected — these entity kinds are not yet part of the canonical model. Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet).
+
+## REST API (Layer 6 Phase A)
+
+The backend exposes a versioned REST API on a dedicated port (default 8080) for querying graph state, metrics, entities, and system status.
+
+For local e2e work, keep the local port split explicit to avoid colliding with `gateway-go` traffic generation:
+
+- `18080` -> `gateway-go`
+- `18081` -> backend REST API
+- `13133` -> backend debug/health
+
+```bash
+# Query system status
+curl -s http://localhost:18081/api/v1/status | jq
+
+# Get the full topology graph
+curl -s http://localhost:18081/api/v1/graph | jq '.data.summary'
+
+# List all service nodes
+curl -s http://localhost:18081/api/v1/graph/nodes?kind=service | jq
+
+# Query edges by relation type
+curl -s http://localhost:18081/api/v1/graph/edges?relation=calls | jq
+
+# Query metrics by entity and time range
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=cpu_usage_millicores&from=2026-03-30T00:00:00Z" | jq
+
+# List canonical metric definitions
+curl -s http://localhost:18081/api/v1/metrics/catalog | jq
+
+# List all entities
+curl -s http://localhost:18081/api/v1/entities?kind=pod | jq
+```
+
+In a cluster, port-forward to the backend API port:
+
+```bash
+kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
+curl -s http://localhost:18081/api/v1/status | jq
+kill %1
+```

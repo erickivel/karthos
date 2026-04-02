@@ -199,12 +199,21 @@ After deploying, generate traffic and inspect the resulting topology graph:
 # Send requests to gateway-go to generate observable traffic
 task test:e2e:traffic
 
+# Verify the backend REST API on its dedicated local port
+task test:e2e:debug:api
+
 # Inspect the topology graph built from runtime telemetry
 task test:e2e:debug:graph
 
 # Inspect metric samples stored in the backend
 task test:e2e:debug:metrics
 ```
+
+Local port convention used by the e2e helpers:
+
+- `18080` -> `gateway-go` traffic generation
+- `18081` -> backend REST API
+- `13133` -> backend debug/health endpoints
 
 #### Cleanup
 

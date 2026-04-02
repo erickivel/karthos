@@ -22,6 +22,7 @@ All implementation details live in `docs/`. Use and update these files when impl
 | [docs/discovery-flow.md](docs/discovery-flow.md) | Discovery pipeline, sequence diagrams, example outputs | Changing discovery or deployment pipeline |
 | [docs/runtime-flow.md](docs/runtime-flow.md) | Post-deploy telemetry flow, component responsibilities | Changing the deployed runtime telemetry path |
 | [docs/testing.md](docs/testing.md) | Unit tests, e2e model, scenarios, traffic generation | Changing test infrastructure, task names, or Helm install flow |
+| [docs/api-reference.md](docs/api-reference.md) | REST API routes, query params, request/response examples | Adding, removing, or changing API endpoints |
 | [docs/development.md](docs/development.md) | Project structure, tech stack, common commands, Helm ownership | Adding packages, changing structure, or modifying workflows |
 
 ## After-Change Checklist
