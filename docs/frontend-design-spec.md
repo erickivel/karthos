@@ -308,9 +308,21 @@ TanStack Query hooks are the **only** data consumers. Components never fetch dir
 
 ## 7. Deployment
 
-- **Build output:** Vite produces static files (`dist/`)
+**The frontend always runs inside a Docker container** — both in development and production. There is no local/bare-metal execution path.
+
+### Development
+
+- A `Dockerfile.dev` provides a development container with Vite's dev server (HMR enabled)
+- `docker-compose.yml` (or a `task dev` command) spins up the frontend container alongside the backend
+- Vite dev server runs inside the container, with source files mounted as a volume for live reload
+- API requests proxy to the backend container via Vite's `server.proxy` config
+- Developers interact with the app via `http://localhost:<mapped-port>` but the process itself runs in Docker
+
+### Production (Kubernetes)
+
+- **Build:** Multi-stage Dockerfile — stage 1 builds static files with Vite, stage 2 copies `dist/` into an nginx image
 - **Container:** nginx serving static files + reverse proxy for `/api/*` → `oksg-backend:8080`
-- **Helm:** Deployed as a subchart or additional templates under `deploy/helm/oksg-otel/`
+- **Helm:** Deployed as additional templates under `deploy/helm/oksg-otel/`
   - Deployment: single replica, nginx image with built frontend baked in
   - Service: ClusterIP on port 80
   - ConfigMap: nginx.conf with `/api/*` proxy pass to `oksg-backend:8080`
