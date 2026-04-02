@@ -8,6 +8,7 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
@@ -36,7 +37,7 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 		return nil, nil
 	}
 
-	callerID, err := b.resolver.Resolve(ctx, envelope.Resource)
+	callerID, err := b.resolveServiceID(ctx, callerServiceName, envelope.Resource["k8s.namespace.name"])
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +58,7 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 				calleeResource["k8s.namespace.name"] = ns
 			}
 
-			calleeID, err := b.resolver.Resolve(ctx, calleeResource)
+			calleeID, err := b.resolveServiceID(ctx, calleeServiceName, calleeResource["k8s.namespace.name"])
 			if err != nil {
 				continue
 			}
@@ -99,4 +100,68 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 		edges = append(edges, edge)
 	}
 	return edges, nil
+}
+
+// BuildNodes returns the service nodes referenced by the trace envelope so
+// graph snapshots include the endpoints referenced by calls edges.
+func (b *TraceTopologyBuilder) BuildNodes(ctx context.Context, envelope schema.RawEnvelope) []topology.Node {
+	var rs tracepb.ResourceSpans
+	if err := protojson.Unmarshal(envelope.Payload, &rs); err != nil {
+		return nil
+	}
+
+	namespace := envelope.Resource["k8s.namespace.name"]
+	callerServiceName := envelope.Resource["service.name"]
+	if callerServiceName == "" {
+		return nil
+	}
+
+	seen := make(map[entities.EntityID]topology.Node)
+	b.addTraceServiceNode(ctx, seen, callerServiceName, namespace)
+
+	for _, ss := range rs.ScopeSpans {
+		for _, span := range ss.Spans {
+			calleeServiceName := kvString(span.Attributes, "peer.service")
+			if calleeServiceName == "" {
+				continue
+			}
+			b.addTraceServiceNode(ctx, seen, calleeServiceName, namespace)
+		}
+	}
+
+	nodes := make([]topology.Node, 0, len(seen))
+	for _, node := range seen {
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+func (b *TraceTopologyBuilder) resolveServiceID(ctx context.Context, serviceName, namespace string) (entities.EntityID, error) {
+	resource := map[string]string{"service.name": serviceName}
+	if namespace != "" {
+		resource["k8s.namespace.name"] = namespace
+	}
+	return b.resolver.Resolve(ctx, resource)
+}
+
+func (b *TraceTopologyBuilder) addTraceServiceNode(ctx context.Context, seen map[entities.EntityID]topology.Node, serviceName, namespace string) {
+	if serviceName == "" {
+		return
+	}
+
+	id, err := b.resolveServiceID(ctx, serviceName, namespace)
+	if err != nil {
+		return
+	}
+
+	labels := map[string]string{"name": serviceName}
+	if namespace != "" {
+		labels["namespace"] = namespace
+	}
+
+	seen[id] = topology.Node{
+		ID:     id,
+		Kind:   entities.KindService,
+		Labels: labels,
+	}
 }

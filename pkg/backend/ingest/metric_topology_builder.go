@@ -86,19 +86,46 @@ func (b *MetricTopologyBuilder) BuildNodes(_ context.Context, envelope schema.Ra
 
 	if namespace != "" {
 		id := entities.ComputeEntityID(entities.KindNamespace, b.clusterName, namespace)
-		seen[id] = topology.Node{ID: id, Kind: entities.KindNamespace}
+		seen[id] = topology.Node{
+			ID:   id,
+			Kind: entities.KindNamespace,
+			Labels: map[string]string{
+				"name": namespace,
+			},
+		}
 	}
 	if nodeName != "" {
 		id := entities.ComputeEntityID(entities.KindNode, b.clusterName, nodeName)
-		seen[id] = topology.Node{ID: id, Kind: entities.KindNode}
+		seen[id] = topology.Node{
+			ID:   id,
+			Kind: entities.KindNode,
+			Labels: map[string]string{
+				"name": nodeName,
+			},
+		}
 	}
 	if podName != "" && namespace != "" {
 		id := entities.ComputeEntityID(entities.KindPod, b.clusterName, namespace, podName)
-		seen[id] = topology.Node{ID: id, Kind: entities.KindPod}
+		seen[id] = topology.Node{
+			ID:   id,
+			Kind: entities.KindPod,
+			Labels: map[string]string{
+				"name":      podName,
+				"namespace": namespace,
+			},
+		}
 	}
 	if containerName != "" && podName != "" && namespace != "" {
 		id := entities.ComputeEntityID(entities.KindContainer, b.clusterName, namespace, podName, containerName)
-		seen[id] = topology.Node{ID: id, Kind: entities.KindContainer}
+		seen[id] = topology.Node{
+			ID:   id,
+			Kind: entities.KindContainer,
+			Labels: map[string]string{
+				"name":      containerName,
+				"namespace": namespace,
+				"pod":       podName,
+			},
+		}
 	}
 
 	if len(seen) == 0 {
