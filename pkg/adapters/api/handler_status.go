@@ -12,11 +12,13 @@ import (
 // StatusHandler serves system status and discovery profile endpoints.
 type StatusHandler struct {
 	metadataStore    persistence.MetadataStore
+	graphStore       persistence.GraphStore
 	startTime        time.Time
 	hasMetricStore   bool
 	hasGraphStore    bool
 	hasMetadataStore bool
 	hasEntityReg     bool
+	staleThreshold   time.Duration
 	logger           *logging.Logger
 }
 
@@ -26,7 +28,7 @@ func (h *StatusHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/discovery", h.handleGetDiscovery)
 }
 
-func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, _ *http.Request) {
+func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	componentStatus := func(available bool) string {
 		if available {
 			return "available"
@@ -34,17 +36,80 @@ func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, _ *http.Request) 
 		return "unavailable"
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"version": schema.CurrentVersion,
+	reasons := []string{}
+
+	// Determine component-level status.
+	if !h.hasGraphStore {
+		reasons = append(reasons, "graph_store unavailable")
+	}
+	if !h.hasEntityReg {
+		reasons = append(reasons, "entity_registry unavailable")
+	}
+	if !h.hasMetricStore {
+		reasons = append(reasons, "metric_store unavailable")
+	}
+	if !h.hasMetadataStore {
+		reasons = append(reasons, "metadata_store unavailable")
+	}
+
+	// Snapshot freshness.
+	var lastSnapshotAt *time.Time
+	var snapshotFreshness float64
+	dataStale := true
+
+	if h.graphStore != nil {
+		snap, err := h.graphStore.GetLatest(r.Context())
+		if err == nil && snap != nil {
+			lastSnapshotAt = &snap.CreatedAt
+			snapshotFreshness = time.Since(snap.CreatedAt).Seconds()
+			dataStale = snapshotFreshness > h.staleThreshold.Seconds()
+			if dataStale {
+				reasons = append(reasons, "snapshot stale (>"+h.staleThreshold.String()+")")
+			}
+		} else if err == nil && snap == nil {
+			reasons = append(reasons, "no snapshot available")
+		}
+	}
+
+	// Discovery timestamp.
+	var lastDiscoveryAt *time.Time
+	if h.metadataStore != nil {
+		prof, err := h.metadataStore.GetDiscovery(r.Context())
+		if err == nil && prof != nil {
+			lastDiscoveryAt = &prof.DiscoveredAt
+		}
+	}
+
+	// Determine overall system status.
+	systemStatus := "nominal"
+	if !h.hasGraphStore || !h.hasEntityReg {
+		systemStatus = "disconnected"
+	} else if !h.hasMetricStore || !h.hasMetadataStore || dataStale {
+		systemStatus = "degraded"
+	}
+
+	resp := map[string]any{
+		"system_status": systemStatus,
+		"reasons":       reasons,
+		"version":       schema.CurrentVersion,
 		"components": map[string]string{
 			"metric_store":    componentStatus(h.hasMetricStore),
 			"graph_store":     componentStatus(h.hasGraphStore),
 			"metadata_store":  componentStatus(h.hasMetadataStore),
 			"entity_registry": componentStatus(h.hasEntityReg),
 		},
-		"uptime_seconds": int(time.Since(h.startTime).Seconds()),
-	})
+		"uptime_seconds":             int(time.Since(h.startTime).Seconds()),
+		"snapshot_freshness_seconds": snapshotFreshness,
+		"data_stale":                 dataStale,
+	}
+	if lastSnapshotAt != nil {
+		resp["last_snapshot_at"] = *lastSnapshotAt
+	}
+	if lastDiscoveryAt != nil {
+		resp["last_discovery_at"] = *lastDiscoveryAt
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *StatusHandler) handleGetDiscovery(w http.ResponseWriter, r *http.Request) {
