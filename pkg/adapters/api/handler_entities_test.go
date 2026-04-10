@@ -39,7 +39,7 @@ func TestListEntitiesAll(t *testing.T) {
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data := parseResponseData(t, resp)
+	data := parsePaginatedData(t, resp)
 	require.EqualValues(t, 3, data["total"])
 }
 
@@ -52,7 +52,7 @@ func TestListEntitiesFilterByKind(t *testing.T) {
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data := parseResponseData(t, resp)
+	data := parsePaginatedData(t, resp)
 	require.EqualValues(t, 2, data["total"])
 }
 
@@ -65,8 +65,30 @@ func TestListEntitiesFilterByNamespace(t *testing.T) {
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	data := parseResponseData(t, resp)
+	data := parsePaginatedData(t, resp)
 	require.EqualValues(t, 2, data["total"])
+}
+
+func TestListEntitiesPagination(t *testing.T) {
+	reg := seedEntities(t)
+	srv := newTestServer(t, Config{EntityRegistry: reg})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/entities?page_size=2")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+
+	data, nextToken := parsePaginatedDataWithToken(t, resp)
+	require.EqualValues(t, 3, data["total"])
+	ents := data["entities"].([]any)
+	require.Len(t, ents, 2)
+	require.NotEmpty(t, nextToken)
+
+	resp2 := doGet(t, srv, "/api/v1/entities?page_size=2&next_token="+nextToken)
+	defer func() { require.NoError(t, resp2.Body.Close()) }()
+	data2, nextToken2 := parsePaginatedDataWithToken(t, resp2)
+	ents2 := data2["entities"].([]any)
+	require.Len(t, ents2, 1)
+	require.Empty(t, nextToken2)
 }
 
 func TestGetEntityByID(t *testing.T) {

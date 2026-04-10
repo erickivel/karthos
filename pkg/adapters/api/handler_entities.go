@@ -1,8 +1,10 @@
 package api
 
 import (
+	"cmp"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
@@ -42,10 +44,21 @@ func (h *EntityHandler) handleListEntities(w http.ResponseWriter, r *http.Reques
 		result = []entities.Entity{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"entities": result,
-		"total":    len(result),
+	slices.SortFunc(result, func(a, b entities.Entity) int {
+		if c := cmp.Compare(string(a.Kind()), string(b.Kind())); c != 0 {
+			return c
+		}
+		return cmp.Compare(string(a.ID()), string(b.ID()))
 	})
+
+	total := len(result)
+	pag := parsePaginationParams(r)
+	page, nextToken := applyPagination(result, pag)
+
+	writeJSONPaginated(w, http.StatusOK, map[string]any{
+		"entities": page,
+		"total":    total,
+	}, nextToken)
 }
 
 func (h *EntityHandler) handleGetEntity(w http.ResponseWriter, r *http.Request) {
