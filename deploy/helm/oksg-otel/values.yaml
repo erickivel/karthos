@@ -123,6 +123,7 @@ backend:
     httpPort: 4318
     healthPort: 13133
     apiPort: 8080
+  statusStaleSeconds: 300
   topologyFlushInterval: "60s"
   runtimeEnv: {}
   discoveryProfile:

@@ -15,11 +15,12 @@ import (
 // Config holds the API server configuration. All store fields are interfaces;
 // the API package never imports concrete storage implementations.
 type Config struct {
-	ListenAddress  string
-	MetricStore    persistence.MetricStore
-	GraphStore     persistence.GraphStore
-	MetadataStore  persistence.MetadataStore
-	EntityRegistry persistence.EntityRegistry
+	ListenAddress      string
+	MetricStore        persistence.MetricStore
+	GraphStore         persistence.GraphStore
+	MetadataStore      persistence.MetadataStore
+	EntityRegistry     persistence.EntityRegistry
+	StatusStaleSeconds int // default 300 if zero
 }
 
 // Server is the REST API server for query and control endpoints.
@@ -57,27 +58,32 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 		startTime: now,
 	}
 
+	staleSeconds := cfg.StatusStaleSeconds
+	if staleSeconds <= 0 {
+		staleSeconds = 300
+	}
+
 	statusHandler := &StatusHandler{
 		metadataStore:    cfg.MetadataStore,
+		graphStore:       cfg.GraphStore,
 		startTime:        now,
 		hasMetricStore:   cfg.MetricStore != nil,
 		hasGraphStore:    cfg.GraphStore != nil,
 		hasMetadataStore: cfg.MetadataStore != nil,
 		hasEntityReg:     cfg.EntityRegistry != nil,
+		staleThreshold:   time.Duration(staleSeconds) * time.Second,
 		logger:           logger,
 	}
 	statusHandler.RegisterRoutes(mux)
 
 	graphHandler := &GraphHandler{
-		graphStore: cfg.GraphStore,
-		logger:     logger,
+		graphStore:     cfg.GraphStore,
+		entityRegistry: cfg.EntityRegistry,
+		logger:         logger,
 	}
 	graphHandler.RegisterRoutes(mux)
 
-	metricsHandler := &MetricsHandler{
-		metricStore: cfg.MetricStore,
-		logger:      logger,
-	}
+	metricsHandler := newMetricsHandler(cfg.MetricStore, logger)
 	metricsHandler.RegisterRoutes(mux)
 
 	entityHandler := &EntityHandler{

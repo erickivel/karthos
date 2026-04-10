@@ -27,6 +27,7 @@ spec:
             - --http-listen-address=0.0.0.0:{{ .Values.backend.service.httpPort }}
             - --health-listen-address=0.0.0.0:{{ .Values.backend.service.healthPort }}
             - --api-listen-address=0.0.0.0:{{ .Values.backend.service.apiPort }}
+            - --status-stale-seconds={{ .Values.backend.statusStaleSeconds | default 300 }}
             - --enabled-signals={{ join "," .Values.enabledSignals }}
             - --cluster-name={{ .Values.global.clusterName }}
             {{- if .Values.backend.discoveryProfile.enabled }}

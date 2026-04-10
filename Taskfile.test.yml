@@ -20,8 +20,8 @@ vars:
   BACKEND_HEALTH_PORT: "13133"
   BACKEND_API_LOCAL_PORT: "18081"
   GATEWAY_LOCAL_PORT: "18080"
-  TRAFFIC_REQUESTS: "20"
-  TRAFFIC_INTERVAL: "0.5"
+  TRAFFIC_REQUESTS_DEFAULT: "20"
+  TRAFFIC_INTERVAL_DEFAULT: "0.5"
   KUBECONFIG:
     sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
 
@@ -195,6 +195,9 @@ tasks:
 
   e2e:traffic:
     desc: Send TRAFFIC_REQUESTS requests to gateway-go via port-forward to generate observable traffic (default 20 requests, 0.5s apart)
+    vars:
+      TRAFFIC_REQUESTS: '{{default .TRAFFIC_REQUESTS_DEFAULT .TRAFFIC_REQUESTS}}'
+      TRAFFIC_INTERVAL: '{{default .TRAFFIC_INTERVAL_DEFAULT .TRAFFIC_INTERVAL}}'
     cmds:
       - |
         lsof -ti :{{.GATEWAY_LOCAL_PORT}} | xargs kill 2>/dev/null || true
@@ -213,6 +216,9 @@ tasks:
 
   e2e:traffic:watch:
     desc: Continuously send requests to gateway-go every TRAFFIC_INTERVAL seconds (Ctrl-C to stop)
+    vars:
+      TRAFFIC_REQUESTS: '{{default .TRAFFIC_REQUESTS_DEFAULT .TRAFFIC_REQUESTS}}'
+      TRAFFIC_INTERVAL: '{{default .TRAFFIC_INTERVAL_DEFAULT .TRAFFIC_INTERVAL}}'
     cmds:
       - |
         lsof -ti :{{.GATEWAY_LOCAL_PORT}} | xargs kill 2>/dev/null || true

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ const (
 	defaultBackendLogLevel         = "info"
 	defaultStorageBackend          = "memory"
 	defaultTopologyFlushInterval   = 60 * time.Second
+	defaultStatusStaleSeconds      = 300
 )
 
 type config struct {
@@ -43,6 +45,7 @@ type config struct {
 	VMURL                 string
 	RawStoreEnabled       bool
 	TopologyFlushInterval time.Duration
+	StatusStaleSeconds    int
 }
 
 func main() {
@@ -118,11 +121,12 @@ func run(ctx context.Context, args []string) error {
 	)
 
 	apiServer, err := api.NewServer(api.Config{
-		ListenAddress:  cfg.APIListenAddress,
-		MetricStore:    stores.MetricStore,
-		GraphStore:     stores.GraphStore,
-		MetadataStore:  stores.MetadataStore,
-		EntityRegistry: stores.EntityRegistry,
+		ListenAddress:      cfg.APIListenAddress,
+		MetricStore:        stores.MetricStore,
+		GraphStore:         stores.GraphStore,
+		MetadataStore:      stores.MetadataStore,
+		EntityRegistry:     stores.EntityRegistry,
+		StatusStaleSeconds: cfg.StatusStaleSeconds,
 	}, logger)
 	if err != nil {
 		return fmt.Errorf("create api server: %w", err)
@@ -178,6 +182,7 @@ func parseConfig(args []string) (config, error) {
 	vmURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
 	rawStoreEnabled := fs.Bool("raw-store-enabled", envOrDefault("OKSG_RAW_STORE_ENABLED", "false") == "true", "enable raw envelope persistence")
 	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
+	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -209,7 +214,19 @@ func parseConfig(args []string) (config, error) {
 		VMURL:                 *vmURL,
 		RawStoreEnabled:       *rawStoreEnabled,
 		TopologyFlushInterval: topologyFlushInterval,
+		StatusStaleSeconds:    *statusStaleSeconds,
 	}, nil
+}
+
+func parseIntOrDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func parseSignals(input string) ([]string, error) {
