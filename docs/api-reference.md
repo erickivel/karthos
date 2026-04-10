@@ -236,7 +236,7 @@ Query metric samples with unit from catalog. Sorted by timestamp descending.
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
-| `metric_name` | string | Filter by canonical metric name |
+| `metric_name` | string | **Required.** Canonical metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
 | `page_size` | int | Items per page (default 100) |
@@ -269,7 +269,7 @@ Metric samples grouped by metric name with catalog metadata (unit, category, des
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
-| `metric_name` | string | Filter by canonical metric name |
+| `metric_name` | string | **Required.** Canonical metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
 | `page_size` | int | Series per page (default 100) |

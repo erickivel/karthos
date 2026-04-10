@@ -30,17 +30,27 @@ func seedMetrics(t *testing.T) *persistence.InMemoryMetricStore {
 	return ms
 }
 
-func TestQueryMetricsReturnsAllWithUnit(t *testing.T) {
+func TestQueryMetricsRequiresMetricName(t *testing.T) {
 	ms := seedMetrics(t)
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
 	resp := doGet(t, srv, "/api/v1/metrics")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestQueryMetricsReturnsWithUnit(t *testing.T) {
+	ms := seedMetrics(t)
+	srv := newTestServer(t, Config{MetricStore: ms})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parsePaginatedData(t, resp)
-	require.EqualValues(t, 3, data["total"])
+	require.EqualValues(t, 2, data["total"])
 
 	samples := data["samples"].([]any)
 	sample := samples[0].(map[string]any)
@@ -53,12 +63,12 @@ func TestQueryMetricsFilterByEntityID(t *testing.T) {
 	defer srv.cancel()
 
 	entityA := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "pod-a")
-	resp := doGet(t, srv, "/api/v1/metrics?entity_id="+string(entityA))
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores&entity_id="+string(entityA))
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parsePaginatedData(t, resp)
-	require.EqualValues(t, 2, data["total"])
+	require.EqualValues(t, 1, data["total"])
 }
 
 func TestQueryMetricsFilterByMetricName(t *testing.T) {
@@ -79,7 +89,7 @@ func TestQueryMetricsFilterByTimeRange(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?from=2026-03-30T10:30:00Z&to=2026-03-30T11:30:00Z")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores&from=2026-03-30T10:30:00Z&to=2026-03-30T11:30:00Z")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -102,13 +112,13 @@ func TestQueryMetricsPagination(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?page_size=2")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores&page_size=1")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data, nextToken := parsePaginatedDataWithToken(t, resp)
-	require.EqualValues(t, 3, data["total"])
+	require.EqualValues(t, 2, data["total"])
 	samples := data["samples"].([]any)
-	require.Len(t, samples, 2)
+	require.Len(t, samples, 1)
 	require.NotEmpty(t, nextToken)
 }
 
@@ -138,20 +148,30 @@ func TestCatalogFilterByCategory(t *testing.T) {
 	require.EqualValues(t, 2, data["total"])
 }
 
-func TestMetricSeriesGrouped(t *testing.T) {
+func TestMetricSeriesRequiresMetricName(t *testing.T) {
 	ms := seedMetrics(t)
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
 	resp := doGet(t, srv, "/api/v1/metrics/series")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestMetricSeriesGrouped(t *testing.T) {
+	ms := seedMetrics(t)
+	srv := newTestServer(t, Config{MetricStore: ms})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=cpu_usage_millicores")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parsePaginatedData(t, resp)
-	require.EqualValues(t, 2, data["total"])
+	require.EqualValues(t, 1, data["total"])
 
 	series := data["series"].([]any)
-	require.Len(t, series, 2)
+	require.Len(t, series, 1)
 
 	s0 := series[0].(map[string]any)
 	require.Equal(t, "cpu_usage_millicores", s0["metric_name"])
@@ -183,7 +203,7 @@ func TestMetricSeriesEmpty(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series")
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=cpu_usage_millicores")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data := parsePaginatedData(t, resp)

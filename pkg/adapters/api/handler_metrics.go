@@ -73,6 +73,12 @@ func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	metricName := r.URL.Query().Get("metric_name")
+	if metricName == "" {
+		writeError(w, http.StatusBadRequest, "metric_name query parameter is required")
+		return
+	}
+
 	var entityIDs []entities.EntityID
 	for _, id := range r.URL.Query()["entity_id"] {
 		entityIDs = append(entityIDs, entities.EntityID(id))
@@ -80,7 +86,7 @@ func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Reque
 
 	q := query.MetricQuery{
 		EntityIDs:  entityIDs,
-		MetricName: r.URL.Query().Get("metric_name"),
+		MetricName: metricName,
 		From:       from,
 		To:         to,
 	}
@@ -158,6 +164,12 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	metricName := r.URL.Query().Get("metric_name")
+	if metricName == "" {
+		writeError(w, http.StatusBadRequest, "metric_name query parameter is required")
+		return
+	}
+
 	var entityIDs []entities.EntityID
 	for _, id := range r.URL.Query()["entity_id"] {
 		entityIDs = append(entityIDs, entities.EntityID(id))
@@ -165,7 +177,7 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 
 	q := query.MetricQuery{
 		EntityIDs:  entityIDs,
-		MetricName: r.URL.Query().Get("metric_name"),
+		MetricName: metricName,
 		From:       from,
 		To:         to,
 	}
