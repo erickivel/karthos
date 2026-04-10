@@ -396,14 +396,16 @@ OKSG Backend
                  uses (workload→configmap/secret), mounts (workload→pvc)
           nodes: workload, service, ingress, configmap, secret, pvc
 
-REST API Server (:8080)
-  - /api/v1/status      → system status, component availability
-  - /api/v1/discovery   → MetadataStore → discovery profile summary
-  - /api/v1/graph       → GraphStore → full topology snapshot
-  - /api/v1/graph/nodes → GraphStore → filtered node list
-  - /api/v1/graph/edges → GraphStore → filtered edge list
-  - /api/v1/metrics     → MetricStore → filtered metric samples
-  - /api/v1/entities    → EntityRegistry → filtered entity list
+REST API Server (:8080) — all list endpoints support cursor-based pagination
+  - /api/v1/status         → system_status (nominal/degraded/disconnected), freshness
+  - /api/v1/discovery      → MetadataStore → discovery profile summary
+  - /api/v1/graph          → GraphStore → snapshot + kind/relation counts + available_filters
+  - /api/v1/graph/nodes    → GraphStore + EntityRegistry → enriched nodes (name, namespace, status)
+  - /api/v1/graph/nodes/id → GraphStore + EntityRegistry → node detail + enriched edges
+  - /api/v1/graph/edges    → GraphStore → filtered edge list
+  - /api/v1/metrics        → MetricStore → samples with unit from catalog
+  - /api/v1/metrics/series → MetricStore → samples grouped by metric name + catalog metadata
+  - /api/v1/entities       → EntityRegistry → filtered entity list
 ```
 
 ## Debugging Commands

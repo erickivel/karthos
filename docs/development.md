@@ -99,7 +99,7 @@ task ci
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
 ./bin/discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 ./bin/discovery-job --mode=deploy --profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --api-listen-address=0.0.0.0:8080 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
+./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --api-listen-address=0.0.0.0:8080 --status-stale-seconds=300 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
 # With external storage:
 ./bin/backend --storage-backend=external --postgres-dsn="postgres://oksg:pass@localhost:5432/oksg" --victoriametrics-url="http://localhost:8428" --raw-store-enabled=true --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
 ```
@@ -218,9 +218,9 @@ A skipped envelope (expected for k8s_cluster workload-object metrics and raw hos
 
 Skips for `k8s.namespace`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset` resources are expected — these entity kinds are not yet part of the canonical model. Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet).
 
-## REST API (Layer 6 Phase A)
+## REST API (Layer 6)
 
-The backend exposes a versioned REST API on a dedicated port (default 8080) for querying graph state, metrics, entities, and system status.
+The backend exposes a versioned REST API on a dedicated port (default 8080) for querying graph state, metrics, entities, and system status. All list endpoints support cursor-based pagination (`page_size`, `next_token`). See [docs/api-reference.md](api-reference.md) for the complete reference.
 
 For local e2e work, keep the local port split explicit to avoid colliding with `gateway-go` traffic generation:
 
@@ -229,32 +229,32 @@ For local e2e work, keep the local port split explicit to avoid colliding with `
 - `13133` -> backend debug/health
 
 ```bash
-# Query system status
-curl -s http://localhost:18081/api/v1/status | jq
+# Query system status (nominal/degraded/disconnected)
+curl -s http://localhost:18081/api/v1/status | jq '.data.system_status'
 
-# Get the full topology graph
+# Graph summary with kind/relation counts and available filters
 curl -s http://localhost:18081/api/v1/graph | jq '.data.summary'
 
-# List all service nodes
-curl -s http://localhost:18081/api/v1/graph/nodes?kind=service | jq
+# Enriched nodes with entity metadata, paginated
+curl -s "http://localhost:18081/api/v1/graph/nodes?kind=pod&page_size=10" | jq .
 
-# Query edges by relation type
-curl -s http://localhost:18081/api/v1/graph/edges?relation=calls | jq
+# Node detail with enriched related entities
+curl -s http://localhost:18081/api/v1/graph/nodes/<id> | jq '.data.edges.outbound[0].related_node'
 
-# Query metrics by entity and time range
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=cpu_usage_millicores&from=2026-03-30T00:00:00Z" | jq
+# Metric series grouped by name with catalog metadata
+curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=cpu_usage_millicores" | jq '.data.series[0]'
 
 # List canonical metric definitions
 curl -s http://localhost:18081/api/v1/metrics/catalog | jq
 
-# List all entities
-curl -s http://localhost:18081/api/v1/entities?kind=pod | jq
+# List entities with pagination
+curl -s "http://localhost:18081/api/v1/entities?kind=pod&page_size=10" | jq .
 ```
 
 In a cluster, port-forward to the backend API port:
 
 ```bash
 kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
-curl -s http://localhost:18081/api/v1/status | jq
+curl -s http://localhost:18081/api/v1/status | jq '.data.system_status'
 kill %1
 ```

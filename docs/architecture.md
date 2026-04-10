@@ -274,27 +274,28 @@ When `storage.backend=external`, the chart creates a `storage-secret` with the P
 
 After modifying `Chart.yaml` dependencies, run `helm dependency build deploy/helm/oksg-otel/` to download the subchart tarballs.
 
-## Layer 6 Phase A: REST API
+## Layer 6: REST API
 
-Layer 6 Phase A introduces a versioned REST API for querying system state. The API server runs on a dedicated port (default 8080) within the backend binary, separate from OTLP ingest (4317/4318) and health check (13133) ports.
+The REST API server runs on a dedicated port (default 8080) within the backend binary, separate from OTLP ingest (4317/4318) and health check (13133) ports.
 
-The API package (`pkg/adapters/api/`) depends only on persistence interfaces -- it never imports concrete storage implementations. The storage backend can be swapped without touching API code.
+The API package (`pkg/adapters/api/`) depends only on persistence interfaces -- it never imports concrete storage implementations. The storage backend can be swapped without touching API code. Graph handlers cross-reference the EntityRegistry to enrich node responses with display-friendly metadata (name, namespace, cluster, status).
 
 ### Endpoints
 
-All endpoints are versioned under `/api/v1/` and return JSON with a consistent envelope (`{"data": ...}` or `{"error": ..., "code": N}`).
+All endpoints are versioned under `/api/v1/` and return JSON with a consistent envelope. List endpoints support cursor-based pagination (`page_size`, `next_token`).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/status` | System status, component availability, uptime |
+| GET | `/api/v1/status` | System status (nominal/degraded/disconnected), freshness, components |
 | GET | `/api/v1/discovery` | Discovery profile summary with entity counts |
-| GET | `/api/v1/graph` | Full latest topology snapshot with summary counts |
-| GET | `/api/v1/graph/nodes` | List graph nodes (filter: `kind`, `namespace`) |
-| GET | `/api/v1/graph/nodes/{id}` | Single node with inbound/outbound edges |
-| GET | `/api/v1/graph/edges` | List edges (filter: `source`, `target`, `relation`) |
-| GET | `/api/v1/metrics` | Query metric samples (filter: `entity_id`, `metric_name`, `from`, `to`) |
-| GET | `/api/v1/metrics/catalog` | List canonical metric definitions (filter: `category`) |
-| GET | `/api/v1/entities` | List entities (filter: `kind`, `namespace`) |
+| GET | `/api/v1/graph` | Full topology snapshot with kind/relation counts and available filters |
+| GET | `/api/v1/graph/nodes` | Enriched graph nodes (filter: `kind`, `namespace`) with pagination |
+| GET | `/api/v1/graph/nodes/{id}` | Single node with enriched edges including related entity summaries |
+| GET | `/api/v1/graph/edges` | Edges (filter: `source`, `target`, `relation`) with pagination |
+| GET | `/api/v1/metrics` | Metric samples with unit (filter: `entity_id`, `metric_name`, `from`, `to`) |
+| GET | `/api/v1/metrics/series` | Samples grouped by metric name with catalog metadata |
+| GET | `/api/v1/metrics/catalog` | Canonical metric definitions (filter: `category`) |
+| GET | `/api/v1/entities` | Entity list (filter: `kind`, `namespace`) with pagination |
 | GET | `/api/v1/entities/{id}` | Get single entity by ID |
 
 ### Configuration
@@ -302,6 +303,7 @@ All endpoints are versioned under `/api/v1/` and return JSON with a consistent e
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--api-listen-address` | `OKSG_BACKEND_API_LISTEN_ADDRESS` | `0.0.0.0:8080` | REST API listen address |
+| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `300` | Snapshot staleness threshold |
 
 ## Deployment Model
 
