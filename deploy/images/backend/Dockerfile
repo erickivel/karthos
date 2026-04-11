@@ -1,4 +1,4 @@
-FROM golang:1.26.1-alpine AS builder
+FROM golang:1.26.2-alpine AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -11,5 +11,5 @@ FROM alpine:3.20
 RUN adduser -D -u 10001 appuser
 USER appuser
 COPY --from=builder /bin/backend /backend
-EXPOSE 4317 4318 13133
+EXPOSE 4317 4318 8080 13133
 ENTRYPOINT ["/backend"]

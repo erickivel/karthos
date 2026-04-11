@@ -11,6 +11,16 @@ import (
 	"github.com/erickivel/oksg/pkg/core/entities"
 )
 
+// firstLabel returns the first non-empty value for the given keys.
+func firstLabel(m map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v := m[k]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // PostgresEntityRegistry implements persistence.EntityRegistry using PostgreSQL.
 type PostgresEntityRegistry struct {
 	conn *Conn
@@ -30,15 +40,34 @@ func (r *PostgresEntityRegistry) UpsertEntity(ctx context.Context, entity entiti
 		return fmt.Errorf("pg entity marshal labels: %w", err)
 	}
 
-	cluster := labels["cluster"]
-	namespace := labels["namespace"]
-	name := labels["name"]
+	var cluster, namespace, name string
+	if se, ok := entity.(persistence.StoredEntity); ok {
+		cluster = se.Cluster
+		namespace = se.Namespace
+		name = se.Name
+	}
+	if sep, ok := entity.(*persistence.StoredEntity); ok {
+		cluster = sep.Cluster
+		namespace = sep.Namespace
+		name = sep.Name
+	}
+	if cluster == "" {
+		cluster = firstLabel(labels, "cluster", "k8s.cluster.name")
+	}
+	if namespace == "" {
+		namespace = firstLabel(labels, "namespace", "k8s.namespace.name")
+	}
+	if name == "" {
+		name = firstLabel(labels, "name", "k8s.pod.name", "k8s.container.name", "k8s.node.name", "service.name", "k8s.namespace.name")
+	}
 
 	_, err = r.conn.pool.Exec(ctx,
 		`INSERT INTO entities (id, kind, cluster, namespace, name, labels)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (id) DO UPDATE SET
 		   labels = EXCLUDED.labels,
+		   cluster = EXCLUDED.cluster,
+		   namespace = EXCLUDED.namespace,
 		   name = EXCLUDED.name,
 		   last_seen = NOW()`,
 		string(entity.ID()), string(entity.Kind()), cluster, namespace, name, labelsJSON,
@@ -61,7 +90,7 @@ func (r *PostgresEntityRegistry) GetEntity(ctx context.Context, id entities.Enti
 	).Scan(&e.EntityID, &kind, &e.Cluster, &e.Namespace, &e.Name, &labelsJSON)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("entity not found: %s", id)
+			return nil, fmt.Errorf("%w: %s", persistence.ErrEntityNotFound, id)
 		}
 		return nil, fmt.Errorf("pg entity get: %w", err)
 	}

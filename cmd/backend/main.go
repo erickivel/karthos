@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/erickivel/oksg/pkg/adapters/api"
 	"github.com/erickivel/oksg/pkg/adapters/otlp"
 	"github.com/erickivel/oksg/pkg/adapters/storage"
 	"github.com/erickivel/oksg/pkg/backend/ingest"
@@ -22,15 +24,18 @@ const (
 	defaultBackendGRPCListenAddr   = "0.0.0.0:4317"
 	defaultBackendHTTPListenAddr   = "0.0.0.0:4318"
 	defaultBackendHealthListenAddr = "0.0.0.0:13133"
+	defaultBackendAPIListenAddr    = "0.0.0.0:8080"
 	defaultBackendLogLevel         = "info"
 	defaultStorageBackend          = "memory"
 	defaultTopologyFlushInterval   = 60 * time.Second
+	defaultStatusStaleSeconds      = 300
 )
 
 type config struct {
 	GRPCListenAddress     string
 	HTTPListenAddress     string
 	HealthListenAddress   string
+	APIListenAddress      string
 	LogLevel              string
 	EnabledSignals        []string
 	ClusterName           string
@@ -40,6 +45,7 @@ type config struct {
 	VMURL                 string
 	RawStoreEnabled       bool
 	TopologyFlushInterval time.Duration
+	StatusStaleSeconds    int
 }
 
 func main() {
@@ -114,6 +120,18 @@ func run(ctx context.Context, args []string) error {
 		logging.String("cluster_name", cfg.ClusterName),
 	)
 
+	apiServer, err := api.NewServer(api.Config{
+		ListenAddress:      cfg.APIListenAddress,
+		MetricStore:        stores.MetricStore,
+		GraphStore:         stores.GraphStore,
+		MetadataStore:      stores.MetadataStore,
+		EntityRegistry:     stores.EntityRegistry,
+		StatusStaleSeconds: cfg.StatusStaleSeconds,
+	}, logger)
+	if err != nil {
+		return fmt.Errorf("create api server: %w", err)
+	}
+
 	server, err := otlp.NewServer(otlp.Config{
 		GRPCListenAddress:   cfg.GRPCListenAddress,
 		HTTPListenAddress:   cfg.HTTPListenAddress,
@@ -130,10 +148,23 @@ func run(ctx context.Context, args []string) error {
 		logging.String("grpc_listen_address", server.GRPCAddress()),
 		logging.String("http_listen_address", server.HTTPAddress()),
 		logging.String("health_listen_address", server.HealthAddress()),
+		logging.String("api_listen_address", apiServer.Address()),
 		logging.Any("enabled_signals", cfg.EnabledSignals),
 	)
 
-	return server.Run(ctx)
+	apiErrCh := make(chan error, 1)
+	go func() { apiErrCh <- apiServer.Run(ctx) }()
+
+	if err := server.Run(ctx); err != nil {
+		return err
+	}
+
+	select {
+	case err := <-apiErrCh:
+		return err
+	default:
+		return nil
+	}
 }
 
 func parseConfig(args []string) (config, error) {
@@ -141,6 +172,7 @@ func parseConfig(args []string) (config, error) {
 	grpcListenAddress := fs.String("grpc-listen-address", envOrDefault("OKSG_BACKEND_GRPC_LISTEN_ADDRESS", defaultBackendGRPCListenAddr), "OTLP gRPC listen address")
 	httpListenAddress := fs.String("http-listen-address", envOrDefault("OKSG_BACKEND_HTTP_LISTEN_ADDRESS", defaultBackendHTTPListenAddr), "OTLP HTTP listen address")
 	healthListenAddress := fs.String("health-listen-address", envOrDefault("OKSG_BACKEND_HEALTH_LISTEN_ADDRESS", defaultBackendHealthListenAddr), "health listen address")
+	apiListenAddress := fs.String("api-listen-address", envOrDefault("OKSG_BACKEND_API_LISTEN_ADDRESS", defaultBackendAPIListenAddr), "REST API listen address")
 	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultBackendLogLevel), "structured log level")
 	enabledSignals := fs.String("enabled-signals", envOrDefault("OKSG_BACKEND_ENABLED_SIGNALS", "metric,trace"), "comma-separated enabled signals")
 	clusterName := fs.String("cluster-name", envOrDefault("OKSG_CLUSTER_NAME", "default"), "cluster name for entity resolution")
@@ -150,6 +182,7 @@ func parseConfig(args []string) (config, error) {
 	vmURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
 	rawStoreEnabled := fs.Bool("raw-store-enabled", envOrDefault("OKSG_RAW_STORE_ENABLED", "false") == "true", "enable raw envelope persistence")
 	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
+	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -171,6 +204,7 @@ func parseConfig(args []string) (config, error) {
 		GRPCListenAddress:     *grpcListenAddress,
 		HTTPListenAddress:     *httpListenAddress,
 		HealthListenAddress:   *healthListenAddress,
+		APIListenAddress:      *apiListenAddress,
 		LogLevel:              *logLevel,
 		EnabledSignals:        signals,
 		ClusterName:           *clusterName,
@@ -180,7 +214,19 @@ func parseConfig(args []string) (config, error) {
 		VMURL:                 *vmURL,
 		RawStoreEnabled:       *rawStoreEnabled,
 		TopologyFlushInterval: topologyFlushInterval,
+		StatusStaleSeconds:    *statusStaleSeconds,
 	}, nil
+}
+
+func parseIntOrDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func parseSignals(input string) ([]string, error) {

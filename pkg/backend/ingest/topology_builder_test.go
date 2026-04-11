@@ -11,6 +11,7 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
@@ -195,4 +196,68 @@ func TestTraceTopologyBuilder_EnvelopeProvenance(t *testing.T) {
 	require.Len(t, edges, 1)
 
 	assert.Equal(t, []string{source}, edges[0].Provenance)
+}
+
+func TestTraceTopologyBuilder_BuildNodesIncludesCallerAndCalleeServices(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	builder := NewTraceTopologyBuilder(resolver)
+
+	resource := map[string]string{"service.name": "svc-a"}
+	rs := &tracepb.ResourceSpans{
+		ScopeSpans: []*tracepb.ScopeSpans{
+			{
+				Spans: []*tracepb.Span{
+					makeSpan("svc-b", 1000000, 2000000),
+				},
+			},
+		},
+	}
+
+	envelope := makeTraceEnvelope(t, "test-source", resource, rs)
+	nodes := builder.BuildNodes(context.Background(), envelope)
+	require.Len(t, nodes, 2)
+
+	gotKinds := map[string]string{}
+	for _, node := range nodes {
+		gotKinds[string(node.ID)] = string(node.Kind)
+	}
+
+	callerID, err := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-a"})
+	require.NoError(t, err)
+	calleeID, err := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-b"})
+	require.NoError(t, err)
+
+	assert.Equal(t, string(entities.KindService), gotKinds[string(callerID)])
+	assert.Equal(t, string(entities.KindService), gotKinds[string(calleeID)])
+}
+
+func TestTraceTopologyBuilder_PrefersServiceEntityOverNodeForCaller(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	builder := NewTraceTopologyBuilder(resolver)
+
+	resource := map[string]string{
+		"service.name":       "svc-a",
+		"k8s.node.name":      "node-1",
+		"k8s.namespace.name": "default",
+	}
+	rs := &tracepb.ResourceSpans{
+		ScopeSpans: []*tracepb.ScopeSpans{
+			{
+				Spans: []*tracepb.Span{
+					makeSpan("svc-b", 1000000, 2000000),
+				},
+			},
+		},
+	}
+
+	envelope := makeTraceEnvelope(t, "test-source", resource, rs)
+	edges, err := builder.Build(context.Background(), envelope)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+
+	expectedCaller := entities.ComputeEntityID(entities.KindService, testCluster, "default", "svc-a")
+	expectedCallee := entities.ComputeEntityID(entities.KindService, testCluster, "default", "svc-b")
+
+	assert.Equal(t, expectedCaller, edges[0].Source)
+	assert.Equal(t, expectedCallee, edges[0].Target)
 }

@@ -18,9 +18,10 @@ vars:
   RENDERED_PATH: ./bin/e2e/rendered
   DISCOVERY_JOB_BIN: ./bin/discovery-job
   BACKEND_HEALTH_PORT: "13133"
+  BACKEND_API_LOCAL_PORT: "18081"
   GATEWAY_LOCAL_PORT: "18080"
-  TRAFFIC_REQUESTS: "20"
-  TRAFFIC_INTERVAL: "0.5"
+  TRAFFIC_REQUESTS_DEFAULT: "20"
+  TRAFFIC_INTERVAL_DEFAULT: "0.5"
   KUBECONFIG:
     sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
 
@@ -176,6 +177,17 @@ tasks:
         curl -sf http://localhost:{{.BACKEND_HEALTH_PORT}}/debug/graph
         kill $PF_PID 2>/dev/null || true
 
+  e2e:debug:api:
+    desc: Query the backend REST API status endpoint via a dedicated local port-forward
+    cmds:
+      - |
+        lsof -ti :{{.BACKEND_API_LOCAL_PORT}} | xargs kill 2>/dev/null || true
+        kubectl port-forward -n {{.KIND_NAMESPACE}} deployment/oksg-backend {{.BACKEND_API_LOCAL_PORT}}:8080 &
+        PF_PID=$!
+        sleep 2
+        curl -sf http://localhost:{{.BACKEND_API_LOCAL_PORT}}/api/v1/status
+        kill $PF_PID 2>/dev/null || true
+
   e2e:debug:logs:
     desc: Tail backend logs and filter for write confirmations and skipped-entity warnings
     cmds:
@@ -183,6 +195,9 @@ tasks:
 
   e2e:traffic:
     desc: Send TRAFFIC_REQUESTS requests to gateway-go via port-forward to generate observable traffic (default 20 requests, 0.5s apart)
+    vars:
+      TRAFFIC_REQUESTS: '{{default .TRAFFIC_REQUESTS_DEFAULT .TRAFFIC_REQUESTS}}'
+      TRAFFIC_INTERVAL: '{{default .TRAFFIC_INTERVAL_DEFAULT .TRAFFIC_INTERVAL}}'
     cmds:
       - |
         lsof -ti :{{.GATEWAY_LOCAL_PORT}} | xargs kill 2>/dev/null || true
@@ -201,6 +216,9 @@ tasks:
 
   e2e:traffic:watch:
     desc: Continuously send requests to gateway-go every TRAFFIC_INTERVAL seconds (Ctrl-C to stop)
+    vars:
+      TRAFFIC_REQUESTS: '{{default .TRAFFIC_REQUESTS_DEFAULT .TRAFFIC_REQUESTS}}'
+      TRAFFIC_INTERVAL: '{{default .TRAFFIC_INTERVAL_DEFAULT .TRAFFIC_INTERVAL}}'
     cmds:
       - |
         lsof -ti :{{.GATEWAY_LOCAL_PORT}} | xargs kill 2>/dev/null || true

@@ -166,3 +166,31 @@ func TestMetricTopologyBuilder_EmptyEnvelope_ReturnsNil(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, edges)
 }
+
+func TestMetricTopologyBuilder_BuildNodesIncludesFilterLabels(t *testing.T) {
+	b := NewMetricTopologyBuilder(testCluster)
+	env := makeMetricEnvelope("kubeletstats", map[string]string{
+		"k8s.pod.name":       "my-pod",
+		"k8s.namespace.name": "default",
+		"k8s.node.name":      "my-node",
+		"k8s.container.name": "my-container",
+	})
+
+	nodes := b.BuildNodes(context.Background(), env)
+	require.Len(t, nodes, 4)
+
+	byID := map[entities.EntityID]topology.Node{}
+	for _, node := range nodes {
+		byID[node.ID] = node
+	}
+
+	podID := entities.ComputeEntityID(entities.KindPod, testCluster, "default", "my-pod")
+	containerID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "my-pod", "my-container")
+	namespaceID := entities.ComputeEntityID(entities.KindNamespace, testCluster, "default")
+
+	assert.Equal(t, "default", byID[podID].Labels["namespace"])
+	assert.Equal(t, "my-pod", byID[podID].Labels["name"])
+	assert.Equal(t, "default", byID[containerID].Labels["namespace"])
+	assert.Equal(t, "my-container", byID[containerID].Labels["name"])
+	assert.Equal(t, "default", byID[namespaceID].Labels["name"])
+}

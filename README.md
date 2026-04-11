@@ -13,7 +13,7 @@ The project is designed to:
 - reconstruct a time-aware topology graph with metrics attached to nodes and edges
 - preserve a modular boundary for later prediction, simulation, and reporting features
 
-Phase 1 established the contracts and schemas. Phase 2 added discovery-driven collection planning, Phase 3 implements the end-to-end OpenTelemetry collection plane with a real backend OTLP ingest runtime, Phase 4 adds topology reconstruction from runtime telemetry with debug endpoints for graph and metrics inspection, and Phase 5 adds durable persistence with PostgreSQL and VictoriaMetrics behind swappable storage interfaces.
+Phase 1 established the contracts and schemas. Phase 2 added discovery-driven collection planning, Phase 3 implements the end-to-end OpenTelemetry collection plane with a real backend OTLP ingest runtime, Phase 4 adds topology reconstruction from runtime telemetry with debug endpoints for graph and metrics inspection, Phase 5 adds durable persistence with PostgreSQL and VictoriaMetrics behind swappable storage interfaces, and Phase 6 exposes a REST API layer with enriched graph queries, entity management, metric series, and system status endpoints.
 
 ## Architecture Overview
 
@@ -26,7 +26,7 @@ The long-term architecture is organized into six layers:
 5. Modeling and Prediction Layer
 6. Control and API Layer
 
-This repository currently implements Phases 1 through 5:
+This repository currently implements Phases 1 through 6:
 
 - canonical entities, metrics, raw telemetry envelopes, and topology contracts
 - discovery profile contracts extended with Prometheus target detection and recommended OTel receivers
@@ -41,10 +41,13 @@ This repository currently implements Phases 1 through 5:
 - durable persistence with PostgreSQL (graph, entities, metadata, raw envelopes) and VictoriaMetrics (metrics) behind generic store interfaces
 - storage factory with swappable `memory` and `external` backends
 - traffic generation tasks for exercising the demo app and observing graph construction
+- REST API with enriched graph nodes, entity management, metric series, and system status
+- cursor-based pagination on all list endpoints
+- configurable staleness threshold for system health status
 
 ## Project Status
 
-Current phase: `Phase 5 — Persistence`
+Current phase: `Phase 6 — Query APIs and Visualization`
 
 <details>
 <summary>Phase 1 — Foundation and Contracts (Completed)</summary>
@@ -96,7 +99,7 @@ Current phase: `Phase 5 — Persistence`
 </details>
 
 <details>
-<summary>Phase 5 — Persistence (Current)</summary>
+<summary>Phase 5 — Persistence (Completed)</summary>
 
 - Generic store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) in `pkg/backend/persistence/`
 - In-memory implementations for all interfaces (tests and default mode)
@@ -108,6 +111,20 @@ Current phase: `Phase 5 — Persistence`
 
 </details>
 
+<details>
+<summary>Phase 6 — Query APIs and Visualization (Current)</summary>
+
+- REST API server with enriched graph, entity, metric, and status endpoints
+- Cursor-based pagination on all list endpoints (default page_size=100, max=1000)
+- Graph summary with kind_counts, relation_counts, available_filters, snapshot_age
+- Entity enrichment from registry with OTLP label resolution (name, namespace, cluster)
+- Node detail with enriched inbound/outbound edges and related entity summaries
+- `/metrics/series` endpoint grouping samples by metric name with catalog metadata
+- Normalized system status (nominal/degraded/disconnected) with configurable staleness threshold
+- Backend CLI flags: `--api-listen-address`, `--status-stale-seconds`
+
+</details>
+
 Planned roadmap:
 
 1. Foundation and Contracts (done)
@@ -115,7 +132,7 @@ Planned roadmap:
 3. Collection Plane Implementation (done)
 4. Semantic Processing and Topology Reconstruction (done)
 5. Persistence (done)
-6. Query APIs and Visualization
+6. Query APIs and Visualization (current)
 7. Future evolution toward prediction and simulation
 
 ## Prerequisites
@@ -199,12 +216,21 @@ After deploying, generate traffic and inspect the resulting topology graph:
 # Send requests to gateway-go to generate observable traffic
 task test:e2e:traffic
 
+# Verify the backend REST API on its dedicated local port
+task test:e2e:debug:api
+
 # Inspect the topology graph built from runtime telemetry
 task test:e2e:debug:graph
 
 # Inspect metric samples stored in the backend
 task test:e2e:debug:metrics
 ```
+
+Local port convention used by the e2e helpers:
+
+- `18080` -> `gateway-go` traffic generation
+- `18081` -> backend REST API
+- `13133` -> backend debug/health endpoints
 
 #### Cleanup
 

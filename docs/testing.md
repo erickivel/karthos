@@ -106,6 +106,7 @@ Typical sequence after a scenario run:
 ```bash
 task test:e2e:scenario:prometheus   # deploy and wire up telemetry
 task test:e2e:traffic TRAFFIC_REQUESTS=30  # generate traffic
+task test:e2e:debug:api             # verify backend REST API access
 task test:e2e:debug:metrics         # inspect stored metric samples
 task test:e2e:debug:graph           # inspect topology graph snapshot
 ```
@@ -115,15 +116,23 @@ Configurable variables (all override-able on the command line):
 | Variable | Default | Description |
 |---|---|---|
 | `GATEWAY_LOCAL_PORT` | `18080` | Local port used for the gateway port-forward |
+| `BACKEND_API_LOCAL_PORT` | `18081` | Local port used for the backend REST API port-forward |
 | `TRAFFIC_REQUESTS` | `20` | Number of requests sent by `e2e:traffic` |
 | `TRAFFIC_INTERVAL` | `0.5` | Seconds between requests |
 
 Use the debug tasks to inspect backend state after traffic has flowed:
 
 ```bash
+task test:e2e:debug:api      # query backend /api/v1/status on a dedicated local port
 task test:e2e:debug:metrics  # dump all stored metric samples
 task test:e2e:debug:graph    # dump full topology graph snapshot
 ```
+
+Recommended local port convention during e2e work:
+
+- `18080` -> `gateway-go` traffic generation
+- `18081` -> backend REST API
+- `13133` -> backend debug/health
 
 ### No Telemetry Fallback
 

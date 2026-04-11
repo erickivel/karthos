@@ -27,3 +27,4 @@ deploy/helm/oksg-otel/charts/
 
 # Superpowers plans
 docs/superpowers/
+.superpowers/

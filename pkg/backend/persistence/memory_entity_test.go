@@ -103,6 +103,57 @@ func TestEntityRegistry_ListByNamespace(t *testing.T) {
 	assert.Len(t, got, 1)
 }
 
+func TestEntityRegistry_UpsertStoredEntityPreservesFields(t *testing.T) {
+	reg := NewInMemoryEntityRegistry()
+	ctx := context.Background()
+
+	// Simulate what entity_resolver.go does: passes a StoredEntity with
+	// Name/Namespace/Cluster already resolved, and Metadata containing OTLP keys.
+	se := StoredEntity{
+		EntityID:   "test-pod-id",
+		EntityKind: entities.KindPod,
+		Cluster:    "my-cluster",
+		Namespace:  "default",
+		Name:       "my-pod",
+		Metadata: map[string]string{
+			"k8s.pod.name":       "my-pod",
+			"k8s.namespace.name": "default",
+			"k8s.node.name":      "node-1",
+		},
+	}
+
+	require.NoError(t, reg.UpsertEntity(ctx, se))
+
+	got, err := reg.GetEntity(ctx, "test-pod-id")
+	require.NoError(t, err)
+
+	stored := got.(StoredEntity)
+	assert.Equal(t, "my-pod", stored.Name)
+	assert.Equal(t, "default", stored.Namespace)
+	assert.Equal(t, "my-cluster", stored.Cluster)
+}
+
+func TestEntityRegistry_UpsertOTLPLabelsDerivesFields(t *testing.T) {
+	reg := NewInMemoryEntityRegistry()
+	ctx := context.Background()
+
+	// Simulate a non-StoredEntity (e.g., entities.NewPod) with OTLP-style labels
+	// where the "name"/"namespace" short keys are absent.
+	pod := entities.NewPod("", "default", "my-pod", map[string]string{
+		"k8s.pod.name":       "my-pod",
+		"k8s.namespace.name": "default",
+	})
+
+	require.NoError(t, reg.UpsertEntity(ctx, pod))
+
+	got, err := reg.GetEntity(ctx, pod.ID())
+	require.NoError(t, err)
+
+	stored := got.(StoredEntity)
+	assert.Equal(t, "my-pod", stored.Name)
+	assert.Equal(t, "default", stored.Namespace)
+}
+
 func TestEntityRegistry_ListAll(t *testing.T) {
 	reg := NewInMemoryEntityRegistry()
 	ctx := context.Background()

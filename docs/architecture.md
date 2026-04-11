@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization, Layer 4 topology reconstruction, and Layer 5 durable persistence with PostgreSQL and VictoriaMetrics.
+OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization, Layer 4 topology reconstruction, Layer 5 durable persistence with PostgreSQL and VictoriaMetrics, and Layer 6 Phase A REST API for querying graph state, metrics, entities, and system status.
 
 ## Current Implemented Boundary
 
@@ -22,13 +22,14 @@ What is real today:
 - `pkg/adapters/storage` provides a factory that wires either in-memory or external (PostgreSQL + VictoriaMetrics) backends based on config
 - `pkg/adapters/storage/postgresql` implements `GraphStore`, `MetadataStore`, `RawStore`, and `EntityRegistry` using `pgx/v5`
 - `pkg/adapters/storage/victoriametrics` implements `MetricStore` using VictoriaMetrics' Prometheus-compatible HTTP API
-- `cmd/backend` runs the backend OTLP ingest and normalization service with configurable storage backend
+- `pkg/adapters/api` provides the Layer 6 Phase A REST API server for querying graph state, metrics, entities, and system status
+- `cmd/backend` runs the backend OTLP ingest, normalization, and REST API services with configurable storage backend
 - `cmd/discovery-job` orchestrates discover, plan, and deploy modes
 
 What is not implemented yet:
 
 - `cmd/controller` is still a placeholder
-- query APIs over stored metrics and topology
+- Layer 6 Phase B: visualization UI
 - modeling and prediction
 
 ## Layer View
@@ -71,8 +72,15 @@ Persistence (Layer 5)
   VictoriaMetrics adapter (time-series metrics) via Prometheus HTTP API
   Helm chart storage configuration (backend, DSN secret, VM URL)
 
+Query and Control (Layer 6 Phase A)
+  REST API server on dedicated port (8080)
+  Graph query endpoints (full graph, nodes, edges, node detail)
+  Metrics query and catalog endpoints
+  Entity query endpoints
+  System status and discovery profile endpoints
+
 Future Layers
-  query and control APIs
+  Layer 6 Phase B: visualization UI
   modeling and prediction
 ```
 
@@ -265,6 +273,37 @@ victoria-metrics-single:
 When `storage.backend=external`, the chart creates a `storage-secret` with the PostgreSQL DSN and passes all storage env vars to the backend deployment. The DSN and VM URL are auto-derived from subchart service names unless explicitly overridden via `storage.postgresql.dsn` or `storage.victoriametrics.url`.
 
 After modifying `Chart.yaml` dependencies, run `helm dependency build deploy/helm/oksg-otel/` to download the subchart tarballs.
+
+## Layer 6: REST API
+
+The REST API server runs on a dedicated port (default 8080) within the backend binary, separate from OTLP ingest (4317/4318) and health check (13133) ports.
+
+The API package (`pkg/adapters/api/`) depends only on persistence interfaces -- it never imports concrete storage implementations. The storage backend can be swapped without touching API code. Graph handlers cross-reference the EntityRegistry to enrich node responses with display-friendly metadata (name, namespace, cluster, status).
+
+### Endpoints
+
+All endpoints are versioned under `/api/v1/` and return JSON with a consistent envelope. List endpoints support cursor-based pagination (`page_size`, `next_token`).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/status` | System status (nominal/degraded/disconnected), freshness, components |
+| GET | `/api/v1/discovery` | Discovery profile summary with entity counts |
+| GET | `/api/v1/graph` | Full topology snapshot with kind/relation counts and available filters |
+| GET | `/api/v1/graph/nodes` | Enriched graph nodes (filter: `kind`, `namespace`) with pagination |
+| GET | `/api/v1/graph/nodes/{id}` | Single node with enriched edges including related entity summaries |
+| GET | `/api/v1/graph/edges` | Edges (filter: `source`, `target`, `relation`) with pagination |
+| GET | `/api/v1/metrics` | Metric samples with unit (filter: `entity_id`, `metric_name`, `from`, `to`) |
+| GET | `/api/v1/metrics/series` | Samples grouped by metric name with catalog metadata |
+| GET | `/api/v1/metrics/catalog` | Canonical metric definitions (filter: `category`) |
+| GET | `/api/v1/entities` | Entity list (filter: `kind`, `namespace`) with pagination |
+| GET | `/api/v1/entities/{id}` | Get single entity by ID |
+
+### Configuration
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--api-listen-address` | `OKSG_BACKEND_API_LISTEN_ADDRESS` | `0.0.0.0:8080` | REST API listen address |
+| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `300` | Snapshot staleness threshold |
 
 ## Deployment Model
 

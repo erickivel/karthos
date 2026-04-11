@@ -169,14 +169,14 @@ Gateway
 │ EnvelopeBuilder         │   │ SignalRouter                                    │
 │ (pkg/backend/ingest)    │   │ (pkg/backend/ingest)                            │
 │                         │   │                                                 │
-│ → []schema.RawEnvelope  │   │ metric → MultiIngestor                         │
-└─────────────────────────┘   │ trace  → BufferedTopologyIngestor                 │
-                               └─────────────────────────────────────────────────┘
+│ → []schema.RawEnvelope  │   │ metric → MultiIngestor                          │
+└─────────────────────────┘   │ trace  → BufferedTopologyIngestor               │
+                              └─────────────────────────────────────────────────┘
                                         │                          │
                               ┌─────────▼──────────┐   ┌──────────▼──────────────────────────┐
-                              │ MultiIngestor       │   │ BufferedTopologyIngestor (shared)    │
-                              │                    │   │  metric + trace paths → buffer       │
-                              │ ┌─────────────────┐│   │  periodic flush → GraphStore         │
+                              │ MultiIngestor      │   │ BufferedTopologyIngestor (shared)   │
+                              │                    │   │  metric + trace paths → buffer      │
+                              │ ┌─────────────────┐│   │  periodic flush → GraphStore        │
                               │ │NormalizingIngest││   └──────────────────────────────────────┘
                               │ │ OTLPNormalizer  ││                │
                               │ │ → []MetricSample││                ▼
@@ -246,6 +246,7 @@ What it does today:
 - listens for OTLP gRPC on port `4317`
 - listens for OTLP HTTP on port `4318`
 - serves health checks on port `13133`
+- serves the REST API on port `8080` (Layer 6 Phase A query and control endpoints)
 - accepts enabled signal classes from the deployed plan
 - parses incoming OTLP metrics and traces
 - hands accepted payloads to the normalization pipeline
@@ -346,10 +347,11 @@ Implemented in the current slice:
 - Storage factory (`storage.NewStores`): wires memory or external (PG+VM) backends from config
 - PostgreSQL adapter: `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry` via `pgx/v5`
 - VictoriaMetrics adapter: `MetricStore` via Prometheus text import and PromQL query
+- REST API server (Layer 6 Phase A): versioned query endpoints for graph, metrics, entities, and system status on dedicated port 8080
 
 Not implemented yet:
 
-- query APIs over stored metrics or topology
+- Layer 6 Phase B: visualization UI
 - controller-driven runtime management
 - prediction, simulation, or model-ready feature generation
 
@@ -393,6 +395,17 @@ OKSG Backend
           edges: exposes (service→workload), routes_to (ingress→service),
                  uses (workload→configmap/secret), mounts (workload→pvc)
           nodes: workload, service, ingress, configmap, secret, pvc
+
+REST API Server (:8080) — all list endpoints support cursor-based pagination
+  - /api/v1/status         → system_status (nominal/degraded/disconnected), freshness
+  - /api/v1/discovery      → MetadataStore → discovery profile summary
+  - /api/v1/graph          → GraphStore → snapshot + kind/relation counts + available_filters
+  - /api/v1/graph/nodes    → GraphStore + EntityRegistry → enriched nodes (name, namespace, status)
+  - /api/v1/graph/nodes/id → GraphStore + EntityRegistry → node detail + enriched edges
+  - /api/v1/graph/edges    → GraphStore → filtered edge list
+  - /api/v1/metrics        → MetricStore → samples with unit from catalog
+  - /api/v1/metrics/series → MetricStore → samples grouped by metric name + catalog metadata
+  - /api/v1/entities       → EntityRegistry → filtered entity list
 ```
 
 ## Debugging Commands
