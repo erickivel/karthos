@@ -42,6 +42,23 @@ GitHub Actions runs on PRs and pushes to `main`/`development`:
 
 Run `task ci` locally before pushing.
 
+## Upgrading the Go Version
+
+When upgrading Go (e.g., to fix `govulncheck` findings), update **all** of these files:
+
+| File | What to change |
+|------|----------------|
+| `go.mod` | `go X.Y.Z` directive |
+| `.tool-versions` | `golang X.Y.Z` (asdf) |
+| `.github/workflows/ci.yml` | `GO_VERSION: "X.Y.Z"` env var |
+| `.env.example` | `GO_VERSION` comment |
+| `deploy/images/backend/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
+| `test/e2e/apps/base/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
+| `test/e2e/apps/with-prometheus/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
+| `test/e2e/apps/with-prometheus/gateway-go/go.mod` | `go X.Y.Z` directive |
+
+After updating, run `go mod tidy`, reinstall tools (`go install ...`), `asdf reshim golang`, then `task ci` and `task security`.
+
 ## Documentation Maintenance Rules
 
 - Treat `docs/` as the primary implementation documentation surface.
