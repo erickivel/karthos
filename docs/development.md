@@ -70,6 +70,24 @@ pkg/
     predictors/      predictor interfaces only
     simulation/      reserved simulation boundary
 
+web/
+  src/
+    api/             thin native fetch wrapper + domain API modules
+    hooks/           TanStack Query hooks with polling intervals
+    stores/          Zustand cross-view state (selectedEntityId, connectionStatus)
+    types/           TypeScript types matching backend API contracts
+    views/
+      ClusterOverview/  KPIs, entity breakdown, relation types
+      TopologyGraph/    React Flow canvas, dagre layout, custom nodes/edges
+      MetricsExplorer/  category tabs, segmented bar charts, raw samples
+    components/
+      Shell/          floating TopBar, Sidebar, StatusBar
+      shared/         DataChip, SegmentedBar
+    styles/           CSS custom properties theme system
+  Dockerfile.dev     development container (Vite HMR)
+  Dockerfile         production multi-stage (Vite build → nginx)
+  nginx.conf         SPA fallback + /api/* proxy
+
 deploy/
   helm/              Helm charts and release packaging
   manifests/         raw manifest placeholder
@@ -85,12 +103,20 @@ test/
 ## Common Commands
 
 ```bash
+# Backend (Go)
 task fmt
 task test
 task build
 task vet
 task lint
 task ci
+
+# Frontend (Docker-only — never run npm/node locally)
+task web:dev         # start dev container with Vite HMR (port 5173)
+task web:build       # build production Docker image
+task web:install     # install npm dependencies inside container
+task web:typecheck   # run tsc --noEmit inside container
+task web:lint        # run ESLint inside container
 ```
 
 ## Discovery And Deployment Workflow

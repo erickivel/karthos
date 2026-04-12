@@ -59,6 +59,37 @@ When upgrading Go (e.g., to fix `govulncheck` findings), update **all** of these
 
 After updating, run `go mod tidy`, reinstall tools (`go install ...`), `asdf reshim golang`, then `task ci` and `task security`.
 
+## Frontend Development Rules
+
+The frontend lives in `web/`. **All frontend operations run inside Docker containers — never install or run npm/node locally.**
+
+### Commands
+
+| Command | What it does |
+|---------|-------------|
+| `task web:dev` | Start dev container with Vite HMR (port 5173) |
+| `task web:build` | Build production Docker image |
+| `task web:install` | Install npm dependencies inside container |
+| `task web:typecheck` | Run `tsc --noEmit` inside container |
+| `task web:lint` | Run ESLint inside container |
+
+### Key rules
+
+- **Never run `npm install`, `npm run`, `npx`, or any node/npm command on the host machine.** Always use Docker (`docker compose run --rm oksg-frontend <command>` or the Taskfile shortcuts).
+- Source files are volume-mounted into the dev container for HMR. Edit files on the host, the container picks up changes.
+- API requests are proxied: Vite dev server proxies `/api/*` to the backend container, nginx does the same in production.
+- The `web/` directory has its own `Taskfile.yml` included from the root.
+
+## Kubernetes Port-Forwarding
+
+When you need to access cluster services locally, use these commands:
+
+| Service | Command |
+|---------|---------|
+| OKSG Backend API | `kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080` |
+
+The backend API is then available at `http://localhost:18081/api/v1/...`.
+
 ## Documentation Maintenance Rules
 
 - Treat `docs/` as the primary implementation documentation surface.

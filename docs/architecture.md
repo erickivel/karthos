@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization, Layer 4 topology reconstruction, Layer 5 durable persistence with PostgreSQL and VictoriaMetrics, and Layer 6 Phase A REST API for querying graph state, metrics, entities, and system status.
+OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization, Layer 4 topology reconstruction, Layer 5 durable persistence with PostgreSQL and VictoriaMetrics, Layer 6 Phase A REST API for querying graph state, metrics, entities, and system status, and Layer 6 Phase B frontend UI (React dashboard with topology graph, metrics explorer, and cluster overview).
 
 ## Current Implemented Boundary
 
@@ -29,7 +29,7 @@ What is real today:
 What is not implemented yet:
 
 - `cmd/controller` is still a placeholder
-- Layer 6 Phase B: visualization UI
+- cable-bundle edge rendering (MVP uses simple bezier edges)
 - modeling and prediction
 
 ## Layer View
@@ -79,8 +79,19 @@ Query and Control (Layer 6 Phase A)
   Entity query endpoints
   System status and discovery profile endpoints
 
+Visualization (Layer 6 Phase B)
+  React frontend in web/ (Vite + TypeScript)
+  Three views: Cluster Overview (/), Topology Graph (/topology), Metrics Explorer (/metrics)
+  React Flow graph with dagre layout, custom EntityNode and RelationEdge components
+  TanStack Query polling (30s graph/status, 120s discovery)
+  Zustand for cross-view state (selected entity, connection status)
+  CSS custom properties theme system (dark theme, no hardcoded colors)
+  Docker-only development (Dockerfile.dev + Vite HMR)
+  Production: multi-stage build → nginx with /api/* proxy to backend
+  Helm templates: frontend-deployment, frontend-service, frontend-configmap
+
 Future Layers
-  Layer 6 Phase B: visualization UI
+  Cable-bundle edge rendering (replacing simple bezier edges)
   modeling and prediction
 ```
 
