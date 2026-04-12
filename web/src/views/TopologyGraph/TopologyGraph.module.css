@@ -1,0 +1,19 @@
+.container {
+  height: 100%;
+  width: 100%;
+  position: relative;
+  background: var(--surface-nav);
+}
+
+/* Make all React Flow layers transparent so the container background shows */
+.container :global(.react-flow),
+.container :global(.react-flow__pane),
+.container :global(.react-flow__viewport),
+.container :global(.react-flow__background) {
+  background: transparent !important;
+}
+
+/* Allow namespace pill labels to overflow the node wrapper */
+.container :global(.react-flow__node-namespace) {
+  overflow: visible !important;
+}

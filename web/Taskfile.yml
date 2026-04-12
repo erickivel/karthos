@@ -1,0 +1,32 @@
+version: "3"
+
+tasks:
+  dev:
+    desc: Start frontend dev container with HMR
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - docker compose up oksg-frontend --build
+
+  build:
+    desc: Build production frontend Docker image
+    dir: '{{.ROOT_DIR}}/web'
+    cmds:
+      - docker build -t oksg-frontend:latest .
+
+  install:
+    desc: Install npm dependencies (in container)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - docker compose run --rm --no-deps oksg-frontend npm install
+
+  typecheck:
+    desc: Run TypeScript type checking (in container)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - docker compose run --rm --no-deps oksg-frontend npx tsc --noEmit
+
+  lint:
+    desc: Run ESLint (in container)
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - docker compose run --rm --no-deps oksg-frontend npm run lint

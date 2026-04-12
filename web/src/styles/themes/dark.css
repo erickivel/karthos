@@ -1,0 +1,16 @@
+[data-theme="dark"] {
+  /* Signal colors */
+  --color-signal: #08dc7d;
+  --color-alert: #c62d2f;
+  --color-info: #3e9adf;
+
+  /* Text */
+  --color-text-primary: #e0e0e0;
+  --color-text-muted: #a3a7af;
+
+  /* Surface hierarchy (tonal layering) */
+  --surface-base: #121416;
+  --surface-nav: #1a1c1e;
+  --surface-module: #1e2022;
+  --surface-active: #333537;
+}

@@ -1,0 +1,47 @@
+@import './themes/dark.css';
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+  color: var(--color-text-primary);
+  background-color: var(--surface-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-active);
+  border-radius: 3px;
+}
+
+/* Dotted grid background utility */
+.dotted-grid {
+  background-image: radial-gradient(var(--surface-active) 1px, transparent 1px);
+  background-size: 20px 20px;
+}

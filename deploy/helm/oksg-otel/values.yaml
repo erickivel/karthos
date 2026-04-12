@@ -159,6 +159,18 @@ victoria-metrics-single:
       size: 5Gi
     retentionPeriod: 30d
 
+frontend:
+  enabled: true
+  image:
+    repository: oksg-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
+
 secrets:
   existingSecretName: ""
 

@@ -1,0 +1,41 @@
+.container {
+  min-width: 200px;
+  min-height: 80px;
+  background: rgba(62, 154, 223, 0.06);
+  border: 1px solid rgba(62, 154, 223, 0.25);
+  border-radius: var(--radius-lg);
+  position: relative;
+}
+
+.pill {
+  position: absolute;
+  top: -12px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  background: var(--color-info);
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.pillIcon {
+  color: var(--surface-base);
+  opacity: 0.8;
+}
+
+.pillLabel {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--surface-base);
+}
+
+.handle {
+  width: 6px;
+  height: 6px;
+  background: var(--surface-active);
+  border: none;
+}

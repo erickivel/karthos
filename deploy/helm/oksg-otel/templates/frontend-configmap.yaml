@@ -1,0 +1,30 @@
+{{- if .Values.frontend.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oksg-frontend-nginx
+  namespace: {{ include "oksg-otel.namespace" . }}
+  labels:
+    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "frontend") | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location /api/ {
+            proxy_pass http://oksg-backend:{{ .Values.backend.service.apiPort }};
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+{{- end }}

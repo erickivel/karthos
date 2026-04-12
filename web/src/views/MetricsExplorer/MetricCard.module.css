@@ -1,0 +1,70 @@
+.card {
+  background: var(--surface-module);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.name {
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.currentValue {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-signal);
+  font-variant-numeric: tabular-nums;
+}
+
+.unit {
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.chart {
+  width: 100%;
+}
+
+.empty {
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-body);
+}
+
+.tooltip {
+  background: var(--surface-nav);
+  border: 1px solid var(--surface-active);
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.tooltipValue {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--color-signal);
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltipTime {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}

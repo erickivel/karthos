@@ -27,6 +27,10 @@ app.kubernetes.io/component: {{ .component }}
 {{ printf "%s:%s" .Values.backend.image.repository .Values.backend.image.tag }}
 {{- end -}}
 
+{{- define "oksg-otel.frontendImage" -}}
+{{ printf "%s:%s" .Values.frontend.image.repository .Values.frontend.image.tag }}
+{{- end -}}
+
 {{- define "oksg-otel.agentChecksum" -}}
 {{- .Values.agent.collectorConfig | sha256sum -}}
 {{- end -}}

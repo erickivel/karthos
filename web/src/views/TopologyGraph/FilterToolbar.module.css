@@ -1,0 +1,32 @@
+.toolbar {
+  position: absolute;
+  top: var(--space-md);
+  left: calc(52px + var(--space-md) + var(--space-md));
+  z-index: 50;
+  display: flex;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface-nav);
+  border-radius: var(--radius-lg);
+  /* Offset below topbar */
+  margin-top: calc(40px + var(--space-sm));
+}
+
+.select {
+  appearance: none;
+  background: var(--surface-module);
+  color: var(--color-text-primary);
+  border: none;
+  border-radius: var(--radius);
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--font-family);
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  outline: none;
+}
+
+.select:focus {
+  background: var(--surface-active);
+}

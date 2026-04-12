@@ -1,0 +1,61 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-xl);
+  padding-left: calc(52px + var(--space-xl) + var(--space-md));
+  padding-top: calc(52px + var(--space-xl));
+  height: 100%;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.title {
+  font-size: var(--text-headline);
+  font-weight: 600;
+  letter-spacing: var(--letter-tight);
+}
+
+.controls {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.select {
+  appearance: none;
+  background: var(--surface-module);
+  color: var(--color-text-primary);
+  border: none;
+  border-radius: var(--radius);
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+  cursor: pointer;
+  outline: none;
+  min-width: 200px;
+}
+
+.select:focus {
+  background: var(--surface-active);
+}
+
+.chartGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+}
+
+.prompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2xl);
+  color: var(--color-text-muted);
+  font-size: var(--text-body);
+}

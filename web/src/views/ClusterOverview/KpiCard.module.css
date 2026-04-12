@@ -1,0 +1,22 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  background: var(--surface-module);
+  border-radius: var(--radius-lg);
+}
+
+.value {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: var(--letter-tight);
+  color: var(--color-signal);
+}
+
+.label {
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
