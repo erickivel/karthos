@@ -28,7 +28,7 @@ export interface GraphNode {
   namespace: string
   cluster: string
   status: string
-  labels: Record<string, string>
+  labels?: Record<string, string>
 }
 
 export interface GraphEdge {
@@ -37,10 +37,10 @@ export interface GraphEdge {
   target: string
   relation: RelationType
   confidence: number
-  provenance: string[]
+  provenance?: string[]
   first_seen: string
   last_seen: string
-  metadata: Record<string, string>
+  metadata?: Record<string, string>
 }
 
 export interface Graph {
@@ -80,7 +80,7 @@ export interface EnrichedEdge extends GraphEdge {
     name: string
     namespace: string
     cluster: string
-    labels: Record<string, string>
+    labels?: Record<string, string>
   } | null
 }
 

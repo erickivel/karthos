@@ -6,11 +6,14 @@ import {
   Box,
   Server,
   Container,
+  CircleDot,
   ArrowRightFromLine,
   FileText,
   Lock,
   HardDrive,
+  type LucideIcon,
 } from 'lucide-react'
+import { SegmentedBar } from '@/components/shared/SegmentedBar'
 import type { GraphNode, EntityKind } from '@/types/graph'
 import styles from './EntityNode.module.css'
 
@@ -24,7 +27,8 @@ function getHeaderColor(kind: EntityKind, status: string): string {
 
 const SMALL_KINDS: EntityKind[] = ['configmap', 'secret', 'pvc']
 
-const KIND_ICONS: Record<EntityKind, React.ComponentType<{ size?: number; strokeWidth?: number }>> = {
+const KIND_ICONS: Record<EntityKind, LucideIcon> = {
+  cluster: Boxes,
   service: Globe,
   workload: Boxes,
   pod: Box,
@@ -32,6 +36,7 @@ const KIND_ICONS: Record<EntityKind, React.ComponentType<{ size?: number; stroke
   namespace: Boxes,
   container: Container,
   ingress: ArrowRightFromLine,
+  endpoint: CircleDot,
   configmap: FileText,
   secret: Lock,
   pvc: HardDrive,
@@ -39,8 +44,9 @@ const KIND_ICONS: Record<EntityKind, React.ComponentType<{ size?: number; stroke
 
 interface MetricBarData {
   label: string
-  value: string
-  ratio: number
+  value: number
+  max: number
+  unit?: string
 }
 
 function formatCpu(cpu: number): string {
@@ -66,8 +72,9 @@ function getMetricBars(node: GraphNode): MetricBarData[] {
     const maxCpu = parseFloat(labels['cpu_capacity_millicores'] || '100')
     bars.push({
       label: 'CPU',
-      value: formatCpu(cpu),
-      ratio: Math.min(cpu / maxCpu, 1),
+      value: cpu,
+      max: maxCpu,
+      unit: 'm',
     })
   }
 
@@ -77,28 +84,12 @@ function getMetricBars(node: GraphNode): MetricBarData[] {
     const maxMem = parseFloat(labels['memory_capacity_bytes'] || String(256 * 1024 * 1024))
     bars.push({
       label: 'MEM',
-      value: formatMem(mem),
-      ratio: Math.min(mem / maxMem, 1),
+      value: mem,
+      max: maxMem,
     })
   }
 
   return bars
-}
-
-function SegmentedBar({ ratio }: { ratio: number }) {
-  const segments = 10
-  const filled = Math.round(ratio * segments)
-  return (
-    <div className={styles.barSegments}>
-      {Array.from({ length: segments }, (_, i) => (
-        <div
-          key={i}
-          className={styles.barBlock}
-          data-filled={i < filled}
-        />
-      ))}
-    </div>
-  )
 }
 
 function EntityNodeComponent({ data }: NodeProps) {
@@ -143,9 +134,11 @@ function EntityNodeComponent({ data }: NodeProps) {
             <div key={bar.label} className={styles.metricBlock}>
               <div className={styles.metricHeader}>
                 <span className={styles.metricLabel}>{bar.label}</span>
-                <span className={styles.metricValue}>{bar.value}</span>
+                <span className={styles.metricValue}>
+                  {bar.label === 'CPU' ? formatCpu(bar.value) : formatMem(bar.value)}
+                </span>
               </div>
-              <SegmentedBar ratio={bar.ratio} />
+              <SegmentedBar value={bar.value} max={bar.max} unit={bar.unit} />
             </div>
           ))}
         </div>

@@ -101,24 +101,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.barSegments {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-}
-
-.barBlock {
-  flex: 1;
-  height: 10px;
-  border-radius: 1px;
-  background: var(--surface-active);
-  transition: background var(--transition-fast);
-}
-
-.barBlock[data-filled="true"] {
-  background: var(--color-signal);
-}
-
 .telemetryHint {
   padding: 2px var(--space-sm) var(--space-xs);
   font-size: var(--text-label);

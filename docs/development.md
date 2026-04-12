@@ -117,6 +117,7 @@ task web:build       # build production Docker image
 task web:install     # install npm dependencies inside container
 task web:typecheck   # run tsc --noEmit inside container
 task web:lint        # run ESLint inside container
+task ci              # backend checks plus frontend Docker build verification
 ```
 
 ## Discovery And Deployment Workflow

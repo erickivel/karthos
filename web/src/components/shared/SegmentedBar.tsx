@@ -11,6 +11,7 @@ interface SegmentedBarProps {
 export function SegmentedBar({ value, max, segments = 10, label, unit }: SegmentedBarProps) {
   const ratio = max > 0 ? Math.min(value / max, 1) : 0
   const filledCount = Math.round(ratio * segments)
+  const formattedValue = formatValue(value)
 
   return (
     <div className={styles.container}>
@@ -18,7 +19,7 @@ export function SegmentedBar({ value, max, segments = 10, label, unit }: Segment
         <div className={styles.header}>
           <span className={styles.label}>{label}</span>
           <span className={styles.value}>
-            {formatValue(value)}{unit ? ` ${unit}` : ''}
+            {formattedValue}{unit ? ` ${unit}` : ''}
           </span>
         </div>
       )}

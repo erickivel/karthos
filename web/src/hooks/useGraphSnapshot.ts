@@ -12,6 +12,7 @@ function normalizeSnapshot(snapshot: GraphSnapshot): GraphSnapshot {
       ...snapshot.graph,
       nodes: snapshot.graph.nodes.map((n) => ({
         ...n,
+        labels: n.labels ?? {},
         name: n.name || n.labels?.['name'] || n.id,
         namespace: n.namespace || n.labels?.['namespace'] || '',
         cluster: n.cluster || '',

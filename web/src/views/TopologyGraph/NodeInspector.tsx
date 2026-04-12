@@ -13,6 +13,7 @@ export function NodeInspector() {
   if (!selectedEntityId || !data) return null
 
   const { node, edges } = data
+  const labels = node.labels ?? {}
 
   return (
     <div className={styles.panel}>
@@ -37,12 +38,17 @@ export function NodeInspector() {
       <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Properties</h3>
         <div className={styles.propList}>
-          {Object.entries(node.labels).map(([key, value]) => (
+          {Object.entries(labels).map(([key, value]) => (
             <div key={key} className={styles.prop}>
               <span className={styles.propKey}>{key}</span>
               <span className={styles.propVal}>{value}</span>
             </div>
           ))}
+          {Object.keys(labels).length === 0 && (
+            <div className={styles.prop}>
+              <span className={styles.propVal}>No properties available</span>
+            </div>
+          )}
         </div>
       </section>
 

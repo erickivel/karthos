@@ -83,6 +83,7 @@ tasks:
       - task: lint
       - task: test:race
       - task: build:check
+      - task: web:build
 
   clean:
     desc: Remove generated artifacts and any binaries accidentally built in repo root
