@@ -206,12 +206,21 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 	namespaces := sortedSetKeys(nsSet)
 	relations := sortedKeys(relationCounts)
 
+	enrichedNodes := make([]enrichedNode, 0, len(snap.Graph.Nodes))
+	for _, n := range snap.Graph.Nodes {
+		enrichedNodes = append(enrichedNodes, h.enrichNode(r.Context(), n))
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":    snap.Version,
 		"from":       snap.From,
 		"to":         snap.To,
 		"created_at": snap.CreatedAt,
-		"graph":      snap.Graph,
+		"graph": map[string]any{
+			"timestamp": snap.Graph.Timestamp,
+			"nodes":     enrichedNodes,
+			"edges":     snap.Graph.Edges,
+		},
 		"summary": map[string]any{
 			"node_count":           len(snap.Graph.Nodes),
 			"edge_count":           len(snap.Graph.Edges),
