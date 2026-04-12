@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -61,13 +62,28 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 				value := rawValue * mapping.ConversionFactor
 
 				canonicalName := resolveDirectionalName(metric.Name, mapping.CanonicalName, dp.Attributes)
+				if canonicalName == "" {
+					continue
+				}
+
+				labels := map[string]string{"source": envelope.Source}
+
+				// Preserve edge context from servicegraph connector metrics.
+				if strings.HasPrefix(metric.Name, "traces.service.graph.") {
+					if c := kvString(dp.Attributes, "client"); c != "" {
+						labels["edge_client"] = c
+					}
+					if s := kvString(dp.Attributes, "server"); s != "" {
+						labels["edge_server"] = s
+					}
+				}
 
 				samples = append(samples, metrics.MetricSample{
 					MetricName: canonicalName,
 					EntityID:   entityID,
 					Value:      value,
 					Timestamp:  ts,
-					Labels:     map[string]string{"source": envelope.Source},
+					Labels:     labels,
 				})
 			}
 		}
@@ -103,6 +119,17 @@ func resolveDirectionalName(metricName, defaultName string, attrs []*commonpb.Ke
 			return "net_tx_bps"
 		}
 		return "net_rx_bps"
+	case "k8s.node.condition":
+		condType := kvString(attrs, "condition")
+		switch condType {
+		case "Ready":
+			return "node_condition_ready"
+		case "MemoryPressure":
+			return "node_condition_memory_pressure"
+		case "DiskPressure":
+			return "node_condition_disk_pressure"
+		}
+		return "" // skip unknown conditions
 	}
 	return defaultName
 }

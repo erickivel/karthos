@@ -8,6 +8,7 @@ const (
 	CategoryLatency  MetricCategory = "latency"
 	CategoryError    MetricCategory = "error"
 	CategoryCapacity MetricCategory = "capacity"
+	CategoryHealth   MetricCategory = "health"
 )
 
 type CanonicalMetric struct {

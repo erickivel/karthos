@@ -13,6 +13,7 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
@@ -133,6 +134,69 @@ func TestStatusIncludesDiscoveryTimestamp(t *testing.T) {
 
 	data := parseResponseData(t, resp)
 	require.NotNil(t, data["last_discovery_at"])
+}
+
+func TestStatusHealthSummaryWithMetrics(t *testing.T) {
+	ms := persistence.NewInMemoryMetricStore()
+	now := time.Now().UTC()
+
+	// Write node condition metrics.
+	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "node_condition_ready", EntityID: "node-1", Value: 1, Timestamp: now},
+		{MetricName: "node_condition_ready", EntityID: "node-2", Value: 1, Timestamp: now},
+		{MetricName: "node_condition_ready", EntityID: "node-3", Value: 0, Timestamp: now},
+	}))
+	// Write pod phase metrics.
+	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "pod_phase", EntityID: "pod-1", Value: 1, Timestamp: now}, // Running
+		{MetricName: "pod_phase", EntityID: "pod-2", Value: 1, Timestamp: now}, // Running
+		{MetricName: "pod_phase", EntityID: "pod-3", Value: 2, Timestamp: now}, // Pending
+		{MetricName: "pod_phase", EntityID: "pod-4", Value: 4, Timestamp: now}, // Failed
+	}))
+
+	srv := newTestServer(t, Config{
+		MetricStore:    ms,
+		GraphStore:     freshGraphStore(t),
+		MetadataStore:  persistence.NewInMemoryMetadataStore(),
+		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
+	})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/status")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+
+	data := parseResponseData(t, resp)
+
+	hs, ok := data["health_summary"].(map[string]any)
+	require.True(t, ok, "expected health_summary in status response")
+
+	nodes := hs["nodes"].(map[string]any)
+	require.EqualValues(t, 2, nodes["healthy"])
+	require.EqualValues(t, 1, nodes["unhealthy"])
+
+	pods := hs["pods"].(map[string]any)
+	require.EqualValues(t, 2, pods["running"])
+	require.EqualValues(t, 1, pods["pending"])
+	require.EqualValues(t, 1, pods["failed"])
+
+	// Unhealthy node should cause degraded status.
+	require.Equal(t, "degraded", data["system_status"])
+}
+
+func TestStatusHealthSummaryOmittedWithoutMetricStore(t *testing.T) {
+	srv := newTestServer(t, Config{
+		GraphStore:     freshGraphStore(t),
+		MetadataStore:  persistence.NewInMemoryMetadataStore(),
+		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
+	})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/status")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+
+	data := parseResponseData(t, resp)
+	_, hasHealthSummary := data["health_summary"]
+	require.False(t, hasHealthSummary, "health_summary should be absent when metric store is nil")
 }
 
 func TestDiscoveryReturnsProfileSummary(t *testing.T) {

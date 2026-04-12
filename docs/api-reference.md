@@ -56,17 +56,23 @@ Response:
     "last_snapshot_at": "2026-04-02T15:22:12Z",
     "last_discovery_at": "2026-03-31T01:35:36Z",
     "snapshot_freshness_seconds": 12.5,
-    "data_stale": false
+    "data_stale": false,
+    "health_summary": {
+      "nodes": {"healthy": 3, "unhealthy": 0},
+      "pods": {"running": 12, "pending": 0, "failed": 0}
+    }
   }
 }
 ```
+
+`health_summary` is present when a MetricStore is configured and `node_condition_ready` / `pod_phase` metrics are available. It aggregates the latest samples per entity from the last 5 minutes.
 
 Status values:
 
 | Value | Meaning |
 |-------|---------|
 | `nominal` | All stores available AND snapshot fresh |
-| `degraded` | Stores available but snapshot stale (> `--status-stale-seconds`), or non-critical stores unavailable |
+| `degraded` | Stores available but snapshot stale (> `--status-stale-seconds`), non-critical stores unavailable, or unhealthy nodes detected |
 | `disconnected` | GraphStore or EntityRegistry unavailable |
 
 Configuration:

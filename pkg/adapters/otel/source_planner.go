@@ -224,6 +224,11 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			"collection_interval":         "30s",
 			"node_conditions_to_report":   []string{"Ready", "MemoryPressure", "DiskPressure"},
 			"allocatable_types_to_report": []string{"cpu", "memory", "ephemeral-storage"},
+			"metrics": map[string]any{
+				"k8s.node.condition": map[string]any{
+					"enabled": true,
+				},
+			},
 		},
 	}
 

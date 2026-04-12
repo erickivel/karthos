@@ -31,7 +31,8 @@ func NewOTLPEntityResolverWithRegistry(clusterName string, registry persistence.
 }
 
 // Resolve maps OTLP resource attributes to a canonical EntityID using OTLP semantic conventions.
-// Resolution is attempted in priority order: container, pod, node, service.
+// Resolution is attempted in priority order: container, pod, node, deployment, statefulset,
+// replicaset, daemonset, namespace, service.
 // Returns ErrUnresolvableEntity when no known attributes are present.
 func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]string) (entities.EntityID, error) {
 	containerName, hasContainer := resource["k8s.container.name"]
@@ -39,6 +40,10 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 	namespace, hasNamespace := resource["k8s.namespace.name"]
 	nodeName, hasNode := resource["k8s.node.name"]
 	serviceName, hasService := resource["service.name"]
+	deploymentName, hasDeployment := resource["k8s.deployment.name"]
+	statefulSetName, hasStatefulSet := resource["k8s.statefulset.name"]
+	replicaSetName, hasReplicaSet := resource["k8s.replicaset.name"]
+	daemonSetName, hasDaemonSet := resource["k8s.daemonset.name"]
 
 	var id entities.EntityID
 	var kind entities.EntityKind
@@ -63,7 +68,37 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 		kind = entities.KindNode
 		name = nodeName
 
-	// 4. Service: requires service name; namespace is optional (best-effort)
+	// 4. Deployment: requires deployment name and namespace
+	case hasDeployment && hasNamespace:
+		id = entities.ComputeEntityID(entities.KindWorkload, r.clusterName, namespace, string(entities.WorkloadDeployment), deploymentName)
+		kind = entities.KindWorkload
+		name = deploymentName
+
+	// 5. StatefulSet: requires statefulset name and namespace
+	case hasStatefulSet && hasNamespace:
+		id = entities.ComputeEntityID(entities.KindWorkload, r.clusterName, namespace, string(entities.WorkloadStatefulSet), statefulSetName)
+		kind = entities.KindWorkload
+		name = statefulSetName
+
+	// 6. ReplicaSet: requires replicaset name and namespace (no deployment present)
+	case hasReplicaSet && hasNamespace:
+		id = entities.ComputeEntityID(entities.KindWorkload, r.clusterName, namespace, "replicaset", replicaSetName)
+		kind = entities.KindWorkload
+		name = replicaSetName
+
+	// 7. DaemonSet: requires daemonset name and namespace
+	case hasDaemonSet && hasNamespace:
+		id = entities.ComputeEntityID(entities.KindWorkload, r.clusterName, namespace, string(entities.WorkloadDaemonSet), daemonSetName)
+		kind = entities.KindWorkload
+		name = daemonSetName
+
+	// 8. Namespace: requires namespace name but no more specific entity or service
+	case hasNamespace && !hasService:
+		id = entities.ComputeEntityID(entities.KindNamespace, r.clusterName, namespace)
+		kind = entities.KindNamespace
+		name = namespace
+
+	// 9. Service: requires service name; namespace is optional (best-effort)
 	case hasService && hasNamespace:
 		id = entities.ComputeEntityID(entities.KindService, r.clusterName, namespace, serviceName)
 		kind = entities.KindService

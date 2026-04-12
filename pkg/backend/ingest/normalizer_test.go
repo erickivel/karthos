@@ -248,6 +248,141 @@ func TestOTLPNormalizer_EntityResolutionError(t *testing.T) {
 	assert.Contains(t, err.Error(), "resolve entity")
 }
 
+func makeGaugeRMWithAttrs(metricName string, value float64, tsNano uint64, attrs map[string]string) *metricspb.ResourceMetrics {
+	var kvs []*commonpb.KeyValue
+	for k, v := range attrs {
+		kvs = append(kvs, &commonpb.KeyValue{
+			Key:   k,
+			Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}},
+		})
+	}
+	return &metricspb.ResourceMetrics{
+		ScopeMetrics: []*metricspb.ScopeMetrics{
+			{
+				Metrics: []*metricspb.Metric{
+					{
+						Name: metricName,
+						Data: &metricspb.Metric_Gauge{
+							Gauge: &metricspb.Gauge{
+								DataPoints: []*metricspb.NumberDataPoint{
+									{
+										Attributes:   kvs,
+										Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: value},
+										TimeUnixNano: tsNano,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func serviceResource() map[string]string {
+	return map[string]string{
+		"service.name":       "test-service",
+		"k8s.namespace.name": "default",
+	}
+}
+
+func TestOTLPNormalizer_ServiceGraphEdgeLabels(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("traces.service.graph.request.total", 42.0, tsNano, map[string]string{
+		"client": "service-a",
+		"server": "service-b",
+	})
+	env := makeEnvelope(t, serviceResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	s := samples[0]
+	assert.Equal(t, "request_rate_per_second", s.MetricName)
+	assert.Equal(t, "service-a", s.Labels["edge_client"])
+	assert.Equal(t, "service-b", s.Labels["edge_server"])
+}
+
+func TestOTLPNormalizer_NonServiceGraphHasNoEdgeLabels(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRM("k8s.pod.cpu.usage", 0.5, tsNano)
+	env := makeEnvelope(t, podResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	_, hasClient := samples[0].Labels["edge_client"]
+	_, hasServer := samples[0].Labels["edge_server"]
+	assert.False(t, hasClient, "non-servicegraph metric should not have edge_client label")
+	assert.False(t, hasServer, "non-servicegraph metric should not have edge_server label")
+}
+
+func TestOTLPNormalizer_NodeConditionReady(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+	nodeResource := map[string]string{"k8s.node.name": "test-node"}
+
+	rm := makeGaugeRMWithAttr("k8s.node.condition", 1.0, tsNano, "condition", "Ready")
+	env := makeEnvelope(t, nodeResource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	assert.Equal(t, "node_condition_ready", samples[0].MetricName)
+}
+
+func TestOTLPNormalizer_NodeConditionMemoryPressure(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+	nodeResource := map[string]string{"k8s.node.name": "test-node"}
+
+	rm := makeGaugeRMWithAttr("k8s.node.condition", 0.0, tsNano, "condition", "MemoryPressure")
+	env := makeEnvelope(t, nodeResource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	assert.Equal(t, "node_condition_memory_pressure", samples[0].MetricName)
+}
+
+func TestOTLPNormalizer_NodeConditionUnknownSkipped(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+	nodeResource := map[string]string{"k8s.node.name": "test-node"}
+
+	rm := makeGaugeRMWithAttr("k8s.node.condition", 0.0, tsNano, "condition", "SomeUnknownCondition")
+	env := makeEnvelope(t, nodeResource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	assert.Empty(t, samples, "unknown condition type should be skipped")
+}
+
+func TestOTLPNormalizer_DeploymentEntityResolution(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+	deployResource := map[string]string{
+		"k8s.deployment.name": "my-deployment",
+		"k8s.namespace.name":  "default",
+	}
+
+	rm := makeGaugeRM("k8s.deployment.desired", 3.0, tsNano)
+	env := makeEnvelope(t, deployResource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	assert.Equal(t, "replica_count", samples[0].MetricName)
+	assert.InDelta(t, 3.0, samples[0].Value, 1e-9)
+}
+
 func TestOTLPNormalizer_SumDataPointInt64(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())
