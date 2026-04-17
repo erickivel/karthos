@@ -25,7 +25,7 @@ func TestStructuralTopologyIngestor_WritesSnapshotToGraphStore(t *testing.T) {
 
 	store := persistence.NewInMemoryGraphStore()
 	builder := NewK8sStructuralTopologyBuilder("test")
-	ingestor := NewStructuralTopologyIngestor(builder, store)
+	ingestor := NewStructuralTopologyIngestor(builder, store, nil)
 
 	err := ingestor.IngestProfile(context.Background(), prof)
 	require.NoError(t, err)
@@ -43,11 +43,66 @@ func TestStructuralTopologyIngestor_EmptyProfileWritesNothing(t *testing.T) {
 
 	store := persistence.NewInMemoryGraphStore()
 	builder := NewK8sStructuralTopologyBuilder("test")
-	ingestor := NewStructuralTopologyIngestor(builder, store)
+	ingestor := NewStructuralTopologyIngestor(builder, store, nil)
 
 	err := ingestor.IngestProfile(context.Background(), prof)
 	require.NoError(t, err)
 	snapshot, err := store.GetLatest(context.Background())
 	require.NoError(t, err)
 	require.Nil(t, snapshot)
+}
+
+func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
+	prof := &profile.ClusterProfile{
+		ClusterName: "test",
+		Services: []entities.Service{
+			entities.NewService("test", "demo", "gateway-go", map[string]string{"app": "gateway-go"}, map[string]string{"name": "gateway-go", "namespace": "demo"}),
+		},
+		Workloads: []entities.Workload{
+			func() entities.Workload {
+				w := workloadWithPodLabels("test", "demo", "gateway-go", map[string]string{"app": "gateway-go"})
+				w.ConfigMapRefs = []string{"gateway-config"}
+				w.SecretRefs = []string{"gateway-secret"}
+				w.PVCRefs = []string{"gateway-cache"}
+				return w
+			}(),
+		},
+		Ingresses: []entities.Ingress{
+			entities.NewIngress("test", "demo", "gateway", "gateway.demo.local", map[string]string{"name": "gateway", "namespace": "demo"}),
+		},
+	}
+	prof.Ingresses[0].BackendServices = []entities.IngressBackend{{ServiceName: "gateway-go", ServicePort: 8080}}
+
+	graphStore := persistence.NewInMemoryGraphStore()
+	entityRegistry := persistence.NewInMemoryEntityRegistry()
+	builder := NewK8sStructuralTopologyBuilder("test")
+	ingestor := NewStructuralTopologyIngestor(builder, graphStore, entityRegistry)
+
+	err := ingestor.IngestProfile(context.Background(), prof)
+	require.NoError(t, err)
+
+	assertEntity := func(id entities.EntityID, kind entities.EntityKind, name, namespace string) {
+		t.Helper()
+		entity, err := entityRegistry.GetEntity(context.Background(), id)
+		require.NoError(t, err)
+		stored, ok := entity.(persistence.StoredEntity)
+		require.True(t, ok)
+		require.Equal(t, kind, stored.Kind())
+		require.Equal(t, name, stored.Name)
+		require.Equal(t, namespace, stored.Namespace)
+	}
+
+	workloadID := prof.Workloads[0].ID()
+	serviceID := prof.Services[0].ID()
+	ingressID := prof.Ingresses[0].ID()
+	configMapID := entities.ComputeEntityID(entities.KindConfigMap, "test", "demo", "gateway-config")
+	secretID := entities.ComputeEntityID(entities.KindSecret, "test", "demo", "gateway-secret")
+	pvcID := entities.ComputeEntityID(entities.KindPVC, "test", "demo", "gateway-cache")
+
+	assertEntity(workloadID, entities.KindWorkload, "gateway-go", "demo")
+	assertEntity(serviceID, entities.KindService, "gateway-go", "demo")
+	assertEntity(ingressID, entities.KindIngress, "gateway", "demo")
+	assertEntity(configMapID, entities.KindConfigMap, "gateway-config", "demo")
+	assertEntity(secretID, entities.KindSecret, "gateway-secret", "demo")
+	assertEntity(pvcID, entities.KindPVC, "gateway-cache", "demo")
 }

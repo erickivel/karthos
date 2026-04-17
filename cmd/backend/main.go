@@ -91,7 +91,7 @@ func run(ctx context.Context, args []string) error {
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
 
 	if cfg.DiscoveryProfile != "" {
-		if err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, logger); err != nil {
+		if err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger); err != nil {
 			return err
 		}
 	}
@@ -263,7 +263,14 @@ func contextNow() time.Time {
 	return time.Now().UTC()
 }
 
-func ingestDiscoveryProfile(ctx context.Context, cfg config, graphStore persistence.GraphStore, metadataStore persistence.MetadataStore, logger *logging.Logger) error {
+func ingestDiscoveryProfile(
+	ctx context.Context,
+	cfg config,
+	graphStore persistence.GraphStore,
+	metadataStore persistence.MetadataStore,
+	entityRegistry persistence.EntityRegistry,
+	logger *logging.Logger,
+) error {
 	data, err := os.ReadFile(cfg.DiscoveryProfile)
 	if err != nil {
 		return fmt.Errorf("read discovery profile: %w", err)
@@ -278,7 +285,7 @@ func ingestDiscoveryProfile(ctx context.Context, cfg config, graphStore persiste
 	}
 
 	builder := ingest.NewK8sStructuralTopologyBuilder(cfg.ClusterName)
-	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore)
+	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore, entityRegistry)
 	if err := ingestor.IngestProfile(ctx, &prof); err != nil {
 		return fmt.Errorf("ingest structural topology: %w", err)
 	}

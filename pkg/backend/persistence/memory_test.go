@@ -280,3 +280,52 @@ func TestGraphStore_NodeDeduplication(t *testing.T) {
 	// Same node written twice should appear once
 	assert.Len(t, got.Graph.Nodes, 1)
 }
+
+func TestGraphStore_AccumulatesNodesAcrossSnapshots(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+
+	serviceID := entities.ComputeEntityID(entities.KindService, "cluster", "demo", "gateway")
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "demo", "gateway-pod")
+
+	structural := topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{
+				{
+					ID:   serviceID,
+					Kind: entities.KindService,
+					Labels: map[string]string{
+						"name":      "gateway",
+						"namespace": "demo",
+					},
+				},
+			},
+		},
+	}
+	runtime := topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{
+				{
+					ID:   podID,
+					Kind: entities.KindPod,
+					Labels: map[string]string{
+						"name":      "gateway-pod",
+						"namespace": "demo",
+					},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, store.PutSnapshot(ctx, structural))
+	require.NoError(t, store.PutSnapshot(ctx, runtime))
+
+	got, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Len(t, got.Graph.Nodes, 2)
+	assert.ElementsMatch(t, []entities.EntityID{serviceID, podID}, []entities.EntityID{
+		got.Graph.Nodes[0].ID,
+		got.Graph.Nodes[1].ID,
+	})
+}

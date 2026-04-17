@@ -23,7 +23,8 @@ func NewPostgresGraphStore(conn *Conn) *PostgresGraphStore {
 }
 
 // PutSnapshot stores a topology snapshot. Edges are upserted (accumulated)
-// using ON CONFLICT to update last_seen. Nodes are stored per-snapshot.
+// using ON CONFLICT to update last_seen. Nodes are stored per-snapshot and
+// materialized cumulatively at read time.
 func (s *PostgresGraphStore) PutSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
 	tx, err := s.conn.pool.Begin(ctx)
 	if err != nil {
@@ -87,7 +88,7 @@ func (s *PostgresGraphStore) PutSnapshot(ctx context.Context, snapshot topology.
 	return nil
 }
 
-// GetLatest returns the latest snapshot with its nodes and all accumulated edges.
+// GetLatest returns the latest snapshot with the accumulated node and edge set.
 // Returns nil, nil if no snapshot exists.
 func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot, error) {
 	// Get latest snapshot.
@@ -104,9 +105,12 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 		return nil, fmt.Errorf("pg graph get latest snapshot: %w", err)
 	}
 
-	// Get nodes for the latest snapshot.
+	// Get the latest version of each node across all snapshots so structural nodes
+	// remain visible after newer runtime-only snapshots are written.
 	nodeRows, err := s.conn.pool.Query(ctx,
-		`SELECT entity_id, kind, labels FROM topology_nodes WHERE snapshot_id = $1`, snapshotID,
+		`SELECT DISTINCT ON (entity_id) entity_id, kind, labels
+		 FROM topology_nodes
+		 ORDER BY entity_id, snapshot_id DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("pg graph get nodes: %w", err)
