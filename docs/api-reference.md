@@ -242,6 +242,8 @@ Query metric samples with unit from catalog. Sorted by timestamp descending.
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
+| `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
+| `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
 | `metric_name` | string | **Required.** Canonical metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
@@ -273,7 +275,29 @@ Response:
 }
 ```
 
-Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include `edge_client` / `edge_server` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint.
+For edge-oriented metrics, samples include an optional `edge` object plus the original edge labels:
+
+```json
+{
+  "metric_name": "edge_latency_nanoseconds",
+  "entity_id": "...",
+  "value": 12000000,
+  "timestamp": "2026-03-30T10:00:00Z",
+  "unit": "nanoseconds",
+  "edge": {
+    "source_id": "svc-a-id",
+    "target_id": "svc-b-id"
+  },
+  "labels": {
+    "edge_client": "svc-a",
+    "edge_server": "svc-b",
+    "edge_client_id": "svc-a-id",
+    "edge_server_id": "svc-b-id"
+  }
+}
+```
+
+Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint.
 
 Returns 400 if `from` or `to` is not valid RFC3339.
 
@@ -284,6 +308,8 @@ Metric samples grouped by metric name with catalog metadata (unit, category, des
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
+| `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
+| `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
 | `metric_name` | string | **Required.** Canonical metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
@@ -322,6 +348,8 @@ Response:
 }
 ```
 
+When edge filters are used, series are grouped by metric name and edge identity, so two different service-to-service links produce two separate series entries even if they share the same canonical metric name.
+
 ### GET /api/v1/metrics/catalog
 
 List canonical metric definitions.
@@ -343,7 +371,7 @@ Response:
     "metrics": [
       {"name": "cpu_usage_millicores", "unit": "millicores", "category": "resource", "description": "..."}
     ],
-    "total": 27
+    "total": 50
   }
 }
 ```

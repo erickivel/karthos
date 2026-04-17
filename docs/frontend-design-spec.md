@@ -166,7 +166,7 @@ Appears when a node is clicked. Contents:
 - Properties section: namespace, kind-specific fields from entity labels
 - Inbound relations: list with relation type + source entity name (clickable)
 - Outbound relations: list with relation type + target entity name (clickable)
-- Metrics preview: CPU and MEM bars with current values
+- Edge metric shortcuts on `calls` relations: navigate directly to edge metrics in the Metrics Explorer
 - "View Full Metrics →" link: navigates to `/metrics?entity={id}`
 
 **Data sources:**
@@ -185,22 +185,25 @@ Appears when a node is clicked. Contents:
 
 ### 5.3 Metrics Explorer (`/metrics`)
 
-Per-entity time-series exploration across the 5 canonical metric categories.
+Entity and edge time-series exploration across the canonical metric categories.
 
 **Layout:**
-- Header: entity name + Entity selector dropdown + Time range dropdown
-- Category tabs: Resource, Traffic, Latency, Error, Capacity
+- Header: mode switch + Entity or Edge selector + Time range dropdown
+- Category tabs: Resource, Traffic, Latency, Error, Capacity, Health
 - Chart grid (2 columns): one card per metric in the active category
 - Raw Samples table: scrollable table of MetricSample records
 
-**Entity Selector:**
+**Entity mode:**
 Dropdown listing all known entities. Pre-filled when arriving from the topology inspector via `/metrics?entity={id}`.
+
+**Edge mode:**
+Dropdown listing graph `calls` edges by source and target display names. Pre-filled when arriving from the topology inspector via `/metrics?mode=edge&edgeSource={id}&edgeTarget={id}`.
 
 **Time Range:**
 Dropdown: Last 5m, 15m, 1h, 6h, 24h. Maps to `from` and `to` query params on the metrics API.
 
 **Category Tabs:**
-Maps 1:1 to the 5 canonical MetricCategories: resource, traffic, latency, error, capacity. Active tab highlighted in Signal Green.
+Maps 1:1 to the canonical `MetricCategory` values: resource, traffic, latency, error, capacity, health. Active tab highlighted in Signal Green.
 
 **Chart Cards:**
 Each canonical metric for the selected entity gets a card containing:
@@ -214,9 +217,11 @@ Each canonical metric for the selected entity gets a card containing:
 Scrollable table with columns: Metric, Value, Unit, Timestamp. Zebra-striped with tonal layering (alternating `var(--surface-nav)` / `var(--surface-module)`). Useful for operators debugging and TCC reviewers inspecting raw data.
 
 **Data sources:**
-- `GET /api/v1/metrics?entity_id[]={id}&from=&to=` → metric samples
+- `GET /api/v1/metrics/series?entity_id[]={id}&from=&to=` → entity metric series
+- `GET /api/v1/metrics/series?edge_source_id={id}&edge_target_id={id}&from=&to=` → edge metric series
 - `GET /api/v1/metrics/catalog?category=` → canonical metric definitions
 - `GET /api/v1/entities` → entity list for the selector
+- `GET /api/v1/graph` → graph edges for the edge selector
 
 ### 5.4 Status Bar
 
