@@ -4,6 +4,7 @@ export type MetricCategory =
   | 'latency'
   | 'error'
   | 'capacity'
+  | 'health'
 
 export interface MetricSample {
   metric_name: string
@@ -11,6 +12,7 @@ export interface MetricSample {
   value: number
   timestamp: string
   unit: string
+  labels?: Record<string, string>
 }
 
 export interface MetricSeries {

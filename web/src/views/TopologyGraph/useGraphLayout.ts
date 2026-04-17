@@ -3,6 +3,8 @@ import dagre from '@dagrejs/dagre'
 import { MarkerType, type Node, type Edge } from '@xyflow/react'
 import type { GraphNode, GraphEdge, EntityKind, RelationType } from '@/types/graph'
 import type { NodeMetric } from '@/hooks/useNodeMetrics'
+import type { EdgeMetricSnapshot, GraphEdgeMetricData } from './edgeMetrics'
+import { getEdgeMetricKeyFromNodes } from './edgeMetrics'
 
 const DIRECTED_RELATIONS: RelationType[] = ['calls', 'runs_on', 'routes_to', 'exposes']
 
@@ -23,6 +25,7 @@ export function useGraphLayout(
   graphNodes: GraphNode[],
   graphEdges: GraphEdge[],
   nodeMetrics?: Map<string, NodeMetric>,
+  edgeMetrics?: Map<string, EdgeMetricSnapshot>,
 ): LayoutResult {
   return useMemo(() => {
     if (graphNodes.length === 0) return { nodes: [], edges: [] }
@@ -31,6 +34,7 @@ export function useGraphLayout(
     const namespaceNodes = graphNodes.filter((n) => n.kind === 'namespace')
     const contentNodes = graphNodes.filter((n) => n.kind !== 'namespace')
     const namespaceIds = new Set(namespaceNodes.map((n) => n.id))
+    const contentNodeMap = new Map(contentNodes.map((node) => [node.id, node]))
 
     // Remove edges that connect to/from namespace nodes
     const contentEdges = graphEdges.filter(
@@ -137,12 +141,24 @@ export function useGraphLayout(
       .filter((edge) => g.hasNode(edge.source) && g.hasNode(edge.target))
       .map((edge) => {
         const directed = DIRECTED_RELATIONS.includes(edge.relation)
+        const sourceNode = contentNodeMap.get(edge.source)
+        const targetNode = contentNodeMap.get(edge.target)
+        const edgeMetricKey = getEdgeMetricKeyFromNodes(
+          edge.relation,
+          sourceNode?.name,
+          targetNode?.name,
+        )
         return {
           id: edge.id,
           source: edge.source,
           target: edge.target,
           type: 'relation' as const,
-          data: { ...edge } as Record<string, unknown>,
+          data: {
+            ...edge,
+            sourceName: sourceNode?.name,
+            targetName: targetNode?.name,
+            metrics: edgeMetricKey ? edgeMetrics?.get(edgeMetricKey) : undefined,
+          } as GraphEdge & GraphEdgeMetricData & Record<string, unknown>,
           ...(directed && {
             markerEnd: {
               type: MarkerType.ArrowClosed,
@@ -154,5 +170,5 @@ export function useGraphLayout(
       })
 
     return { nodes, edges }
-  }, [graphNodes, graphEdges, nodeMetrics])
+  }, [graphNodes, graphEdges, nodeMetrics, edgeMetrics])
 }

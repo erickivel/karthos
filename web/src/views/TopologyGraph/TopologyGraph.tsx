@@ -11,6 +11,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useGraphSnapshot } from '@/hooks/useGraphSnapshot'
 import { useNodeMetrics } from '@/hooks/useNodeMetrics'
+import { useEdgeMetrics } from '@/hooks/useEdgeMetrics'
 import { useAppStore } from '@/stores/useAppStore'
 import { useGraphLayout } from './useGraphLayout'
 import { EntityNode } from './nodes/EntityNode'
@@ -26,6 +27,7 @@ const edgeTypes = { relation: RelationEdge }
 export function TopologyGraph() {
   const { data: snapshot } = useGraphSnapshot()
   const nodeMetrics = useNodeMetrics()
+  const edgeMetrics = useEdgeMetrics()
   const [searchParams] = useSearchParams()
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId)
 
@@ -58,7 +60,12 @@ export function TopologyGraph() {
     return { nodes, edges }
   }, [snapshot, kindFilter, namespaceFilter, relationFilter])
 
-  const { nodes, edges } = useGraphLayout(filteredGraph.nodes, filteredGraph.edges, nodeMetrics)
+  const { nodes, edges } = useGraphLayout(
+    filteredGraph.nodes,
+    filteredGraph.edges,
+    nodeMetrics,
+    edgeMetrics,
+  )
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {

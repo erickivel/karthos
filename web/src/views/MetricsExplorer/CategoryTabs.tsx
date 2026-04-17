@@ -7,6 +7,7 @@ const CATEGORIES: { label: string; value: MetricCategory }[] = [
   { label: 'Latency', value: 'latency' },
   { label: 'Error', value: 'error' },
   { label: 'Capacity', value: 'capacity' },
+  { label: 'Health', value: 'health' },
 ]
 
 interface CategoryTabsProps {

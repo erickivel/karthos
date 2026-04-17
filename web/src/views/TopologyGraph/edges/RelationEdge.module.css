@@ -10,14 +10,21 @@
   text-transform: uppercase;
   color: var(--color-text-muted);
   text-align: center;
-  white-space: nowrap;
   background: var(--surface-nav);
   border: 1px solid var(--surface-active);
   border-radius: 6px;
-  padding: 1px 6px;
+  padding: 2px 7px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   width: fit-content;
   margin: 0 auto;
+  white-space: nowrap;
+}
+
+.metricSummary {
+  font-size: 0.5rem;
+  letter-spacing: 0.03em;
+  text-transform: none;
 }

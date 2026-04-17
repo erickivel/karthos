@@ -95,6 +95,46 @@
   gap: 2px;
 }
 
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-xs);
+}
+
+.summaryCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-xs);
+  border-radius: var(--radius);
+  background: var(--surface-module);
+}
+
+.summaryCard[data-tone="signal"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-signal) 35%, transparent);
+}
+
+.summaryCard[data-tone="info"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-info) 35%, transparent);
+}
+
+.summaryCard[data-tone="alert"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-alert) 35%, transparent);
+}
+
+.summaryLabel {
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.summaryValue {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
 .prop {
   display: flex;
   gap: var(--space-xs);

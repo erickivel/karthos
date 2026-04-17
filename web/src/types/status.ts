@@ -1,6 +1,18 @@
 export type SystemStatusValue = 'nominal' | 'degraded' | 'disconnected'
 export type ComponentStatus = 'available' | 'unavailable'
 
+export interface HealthSummary {
+  nodes: {
+    healthy: number
+    unhealthy: number
+  }
+  pods: {
+    running: number
+    pending: number
+    failed: number
+  }
+}
+
 export interface SystemStatus {
   system_status: SystemStatusValue
   reasons: string[]
@@ -16,6 +28,7 @@ export interface SystemStatus {
   last_discovery_at: string
   snapshot_freshness_seconds: number
   data_stale: boolean
+  health_summary?: HealthSummary
 }
 
 export interface DiscoverySource {

@@ -1,14 +1,17 @@
 import { useDiscovery } from '@/hooks/useDiscovery'
 import { useGraphSnapshot } from '@/hooks/useGraphSnapshot'
+import { useSystemStatus } from '@/hooks/useSystemStatus'
 import { KpiCard } from './KpiCard'
 import { EntityBreakdown } from './EntityBreakdown'
 import { RelationTypes } from './RelationTypes'
 import { DiscoverySources } from './DiscoverySources'
+import { HealthSummary } from './HealthSummary'
 import styles from './ClusterOverview.module.css'
 
 export function ClusterOverview() {
   const { data: discovery } = useDiscovery()
   const { data: snapshot } = useGraphSnapshot()
+  const { data: status } = useSystemStatus()
 
   return (
     <div className={styles.container}>
@@ -30,6 +33,8 @@ export function ClusterOverview() {
         <KpiCard label="Services" value={discovery?.service_count ?? 0} />
         <KpiCard label="Graph Edges" value={snapshot?.summary.edge_count ?? 0} />
       </div>
+
+      <HealthSummary healthSummary={status?.health_summary} />
 
       <div className={styles.body}>
         <EntityBreakdown kindCounts={snapshot?.summary.kind_counts ?? {}} />

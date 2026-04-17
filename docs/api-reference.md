@@ -258,13 +258,22 @@ Response:
 {
   "data": {
     "samples": [
-      {"metric_name": "cpu_usage_millicores", "entity_id": "...", "value": 250, "timestamp": "2026-03-30T10:00:00Z", "unit": "millicores"}
+      {
+        "metric_name": "request_rate_per_second",
+        "entity_id": "...",
+        "value": 7.5,
+        "timestamp": "2026-03-30T10:00:00Z",
+        "unit": "per_second",
+        "labels": {"edge_client": "service-a", "edge_server": "service-b", "source": "otlp"}
+      }
     ],
     "total": 100
   },
   "next_token": "NQ=="
 }
 ```
+
+Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include `edge_client` / `edge_server` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint.
 
 Returns 400 if `from` or `to` is not valid RFC3339.
 
@@ -297,7 +306,14 @@ Response:
         "category": "resource",
         "description": "CPU usage in millicores",
         "samples": [
-          {"metric_name": "cpu_usage_millicores", "entity_id": "...", "value": 250, "timestamp": "2026-03-30T10:00:00Z", "unit": "millicores"}
+          {
+            "metric_name": "cpu_usage_millicores",
+            "entity_id": "...",
+            "value": 250,
+            "timestamp": "2026-03-30T10:00:00Z",
+            "unit": "millicores",
+            "labels": {"source": "kubeletstats"}
+          }
         ]
       }
     ],
@@ -312,7 +328,7 @@ List canonical metric definitions.
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `category` | string | Filter by category (`resource`, `traffic`, `latency`, `error`, `capacity`) |
+| `category` | string | Filter by category (`resource`, `traffic`, `latency`, `error`, `capacity`, `health`) |
 
 ```bash
 curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[].name'
