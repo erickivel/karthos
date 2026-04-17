@@ -49,13 +49,13 @@ export function NodeInspector() {
   const selectedEntityId = useAppStore((s) => s.selectedEntityId)
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId)
   const { data } = useNodeDetail(selectedEntityId)
+  const metricSummary = useNodeMetricSummary(data?.node)
 
   if (!selectedEntityId || !data) return null
 
   const { node, edges } = data
   const labels = node.labels ?? {}
   const detailItems = getDetailItems(node)
-  const metricSummary = useNodeMetricSummary(node)
   const openEdgeMetrics = (sourceId: string, targetId: string) => {
     navigate(`/metrics?mode=edge&edgeSource=${encodeURIComponent(sourceId)}&edgeTarget=${encodeURIComponent(targetId)}`)
   }
