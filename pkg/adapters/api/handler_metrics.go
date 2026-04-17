@@ -46,6 +46,7 @@ type enrichedSample struct {
 	Timestamp  string            `json:"timestamp"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	Unit       metrics.Unit      `json:"unit,omitempty"`
+	Edge       *edgeRef          `json:"edge,omitempty"`
 }
 
 type metricSeries struct {
@@ -54,6 +55,12 @@ type metricSeries struct {
 	Category    string           `json:"category,omitempty"`
 	Description string           `json:"description,omitempty"`
 	Samples     []enrichedSample `json:"samples"`
+	Edge        *edgeRef         `json:"edge,omitempty"`
+}
+
+type edgeRef struct {
+	SourceID entities.EntityID `json:"source_id"`
+	TargetID entities.EntityID `json:"target_id"`
 }
 
 func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Request) {
@@ -85,10 +92,12 @@ func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Reque
 	}
 
 	q := query.MetricQuery{
-		EntityIDs:  entityIDs,
-		MetricName: metricName,
-		From:       from,
-		To:         to,
+		EntityIDs:    entityIDs,
+		MetricName:   metricName,
+		From:         from,
+		To:           to,
+		EdgeSourceID: entities.EntityID(r.URL.Query().Get("edge_source_id")),
+		EdgeTargetID: entities.EntityID(r.URL.Query().Get("edge_target_id")),
 	}
 
 	samples, err := h.metricStore.Query(r.Context(), q)
@@ -107,6 +116,7 @@ func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Reque
 			Timestamp:  s.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
 			Labels:     s.Labels,
 			Unit:       h.unitLookup[s.MetricName],
+			Edge:       edgeRefFromLabels(s.Labels),
 		})
 	}
 
@@ -176,10 +186,12 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 	}
 
 	q := query.MetricQuery{
-		EntityIDs:  entityIDs,
-		MetricName: metricName,
-		From:       from,
-		To:         to,
+		EntityIDs:    entityIDs,
+		MetricName:   metricName,
+		From:         from,
+		To:           to,
+		EdgeSourceID: entities.EntityID(r.URL.Query().Get("edge_source_id")),
+		EdgeTargetID: entities.EntityID(r.URL.Query().Get("edge_target_id")),
 	}
 
 	samples, err := h.metricStore.Query(r.Context(), q)
@@ -189,7 +201,7 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Group samples by metric name.
+	// Group samples by metric name and edge identity when present.
 	groups := map[string][]enrichedSample{}
 	for _, s := range samples {
 		es := enrichedSample{
@@ -199,8 +211,9 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 			Timestamp:  s.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
 			Labels:     s.Labels,
 			Unit:       h.unitLookup[s.MetricName],
+			Edge:       edgeRefFromLabels(s.Labels),
 		}
-		groups[s.MetricName] = append(groups[s.MetricName], es)
+		groups[seriesGroupKey(s.MetricName, es.Edge)] = append(groups[seriesGroupKey(s.MetricName, es.Edge)], es)
 	}
 
 	// Build catalog lookup for metadata.
@@ -212,16 +225,18 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 	// Build sorted series.
 	seriesNames := sortedKeys(groups)
 	series := make([]metricSeries, 0, len(seriesNames))
-	for _, name := range seriesNames {
-		samps := groups[name]
+	for _, key := range seriesNames {
+		samps := groups[key]
 		slices.SortFunc(samps, func(a, b enrichedSample) int {
 			return cmp.Compare(b.Timestamp, a.Timestamp) // descending
 		})
 
+		name := samps[0].MetricName
 		ms := metricSeries{
 			MetricName: name,
 			Unit:       h.unitLookup[name],
 			Samples:    samps,
+			Edge:       samps[0].Edge,
 		}
 		if cm, ok := catalogMap[name]; ok {
 			ms.Category = string(cm.Category)
@@ -238,4 +253,23 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 		"series": page,
 		"total":  total,
 	}, nextToken)
+}
+
+func edgeRefFromLabels(labels map[string]string) *edgeRef {
+	if labels == nil {
+		return nil
+	}
+	source := entities.EntityID(labels["edge_client_id"])
+	target := entities.EntityID(labels["edge_server_id"])
+	if source == "" || target == "" {
+		return nil
+	}
+	return &edgeRef{SourceID: source, TargetID: target}
+}
+
+func seriesGroupKey(metricName string, edge *edgeRef) string {
+	if edge == nil {
+		return metricName
+	}
+	return metricName + "|" + string(edge.SourceID) + "|" + string(edge.TargetID)
 }

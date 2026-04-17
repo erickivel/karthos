@@ -95,6 +95,15 @@ func TestBuildPromQL(t *testing.T) {
 			},
 			expected: `memory_usage_bytes{entity_id=~"abc|def"}`,
 		},
+		{
+			name: "metric name with edge source and target filters",
+			query: query.MetricQuery{
+				MetricName:   "edge_latency_nanoseconds",
+				EdgeSourceID: entities.EntityID("svc-a"),
+				EdgeTargetID: entities.EntityID("svc-b"),
+			},
+			expected: `edge_latency_nanoseconds{edge_client_id="svc-a",edge_server_id="svc-b"}`,
+		},
 	}
 
 	for _, tt := range tests {

@@ -6,6 +6,11 @@ export type MetricCategory =
   | 'capacity'
   | 'health'
 
+export interface MetricEdgeRef {
+  source_id: string
+  target_id: string
+}
+
 export interface MetricSample {
   metric_name: string
   entity_id: string
@@ -13,6 +18,7 @@ export interface MetricSample {
   timestamp: string
   unit: string
   labels?: Record<string, string>
+  edge?: MetricEdgeRef
 }
 
 export interface MetricSeries {
@@ -21,6 +27,7 @@ export interface MetricSeries {
   category: MetricCategory
   description: string
   samples: MetricSample[]
+  edge?: MetricEdgeRef
 }
 
 export interface CanonicalMetric {
@@ -48,6 +55,8 @@ export interface MetricCatalogResponse {
 export interface MetricQueryParams {
   metric_name: string
   entity_id?: string[]
+  edge_source_id?: string
+  edge_target_id?: string
   from?: string
   to?: string
   page_size?: number

@@ -11,6 +11,8 @@ export function getSamples(params: MetricQueryParams): Promise<MetricSamplesResp
   return request<MetricSamplesResponse>('/api/v1/metrics', {
     metric_name: params.metric_name,
     entity_id: params.entity_id,
+    edge_source_id: params.edge_source_id,
+    edge_target_id: params.edge_target_id,
     from: params.from,
     to: params.to,
     page_size: params.page_size,
@@ -22,6 +24,8 @@ export function getSeries(params: MetricQueryParams): Promise<MetricSeriesRespon
   return request<MetricSeriesResponse>('/api/v1/metrics/series', {
     metric_name: params.metric_name,
     entity_id: params.entity_id,
+    edge_source_id: params.edge_source_id,
+    edge_target_id: params.edge_target_id,
     from: params.from,
     to: params.to,
     page_size: params.page_size,

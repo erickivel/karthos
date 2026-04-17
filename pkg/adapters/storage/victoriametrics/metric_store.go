@@ -173,15 +173,24 @@ func buildPromQL(q query.MetricQuery) string {
 		return ""
 	}
 
-	if len(q.EntityIDs) == 0 {
+	var matchers []string
+	if len(q.EntityIDs) > 0 {
+		ids := make([]string, 0, len(q.EntityIDs))
+		for _, id := range q.EntityIDs {
+			ids = append(ids, string(id))
+		}
+		matchers = append(matchers, fmt.Sprintf(`entity_id=~"%s"`, strings.Join(ids, "|")))
+	}
+	if q.EdgeSourceID != "" {
+		matchers = append(matchers, fmt.Sprintf(`edge_client_id="%s"`, q.EdgeSourceID))
+	}
+	if q.EdgeTargetID != "" {
+		matchers = append(matchers, fmt.Sprintf(`edge_server_id="%s"`, q.EdgeTargetID))
+	}
+	if len(matchers) == 0 {
 		return q.MetricName
 	}
-
-	ids := make([]string, 0, len(q.EntityIDs))
-	for _, id := range q.EntityIDs {
-		ids = append(ids, string(id))
-	}
-	return fmt.Sprintf(`%s{entity_id=~"%s"}`, q.MetricName, strings.Join(ids, "|"))
+	return fmt.Sprintf(`%s{%s}`, q.MetricName, strings.Join(matchers, ","))
 }
 
 // queryRangeResponse represents the Prometheus query_range API response.

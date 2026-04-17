@@ -163,6 +163,12 @@
   display: flex;
   gap: var(--space-xs);
   align-items: center;
+}
+
+.edgePrimary {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
   padding: 2px var(--space-xs);
   border: none;
   background: var(--surface-module);
@@ -173,10 +179,25 @@
   font-family: inherit;
   font-size: var(--text-body);
   transition: background var(--transition-fast);
+  flex: 1;
 }
 
-.edgeItem:hover {
+.edgePrimary:hover,
+.edgeMetricLink:hover {
   background: var(--surface-active);
+}
+
+.edgeMetricLink {
+  border: none;
+  background: var(--surface-module);
+  border-radius: var(--radius);
+  color: var(--color-signal);
+  cursor: pointer;
+  padding: 2px var(--space-xs);
+  font-family: inherit;
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
 }
 
 .edgeRelation {

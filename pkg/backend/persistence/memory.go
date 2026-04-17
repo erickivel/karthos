@@ -28,8 +28,9 @@ func (s *InMemoryMetricStore) Write(_ context.Context, samples []metrics.MetricS
 	return nil
 }
 
-// Query filters samples by EntityIDs (if non-empty), MetricName (if non-empty),
-// and time range (if non-zero). Returns a copy of the matching samples.
+// Query filters samples by EntityIDs (if non-empty), edge source/target IDs
+// carried in labels (if non-empty), MetricName (if non-empty), and time range
+// (if non-zero). Returns a copy of the matching samples.
 func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]metrics.MetricSample, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -51,6 +52,12 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 			}
 		}
 		if q.MetricName != "" && sample.MetricName != q.MetricName {
+			continue
+		}
+		if q.EdgeSourceID != "" && sample.Labels["edge_client_id"] != string(q.EdgeSourceID) {
+			continue
+		}
+		if q.EdgeTargetID != "" && sample.Labels["edge_server_id"] != string(q.EdgeTargetID) {
 			continue
 		}
 		if !q.From.IsZero() && sample.Timestamp.Before(q.From) {

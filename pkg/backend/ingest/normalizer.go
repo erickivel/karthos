@@ -10,6 +10,7 @@ import (
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 )
@@ -72,9 +73,15 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 				if strings.HasPrefix(metric.Name, "traces.service.graph.") {
 					if c := kvString(dp.Attributes, "client"); c != "" {
 						labels["edge_client"] = c
+						if ns := envelope.Resource["k8s.namespace.name"]; ns != "" {
+							labels["edge_client_id"] = string(metricsServiceEntityID(n.resolver, envelope.Resource, c, ns))
+						}
 					}
 					if s := kvString(dp.Attributes, "server"); s != "" {
 						labels["edge_server"] = s
+						if ns := envelope.Resource["k8s.namespace.name"]; ns != "" {
+							labels["edge_server_id"] = string(metricsServiceEntityID(n.resolver, envelope.Resource, s, ns))
+						}
 					}
 				}
 
@@ -90,6 +97,17 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 	}
 
 	return samples, nil
+}
+
+func metricsServiceEntityID(resolver EntityResolver, resource map[string]string, serviceName, namespace string) entities.EntityID {
+	clusterName := ""
+	if r, ok := resolver.(*OTLPEntityResolver); ok {
+		clusterName = r.clusterName
+	}
+	if clusterName == "" {
+		clusterName = resource["k8s.cluster.name"]
+	}
+	return entities.ComputeEntityID(entities.KindService, clusterName, namespace, serviceName)
 }
 
 // collectDataPoints returns all NumberDataPoints from Gauge or Sum metrics.

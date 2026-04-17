@@ -25,6 +25,7 @@
   display: flex;
   gap: var(--space-sm);
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .select {
@@ -45,10 +46,45 @@
   background: var(--surface-active);
 }
 
+.modeSwitch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: var(--surface-module);
+}
+
+.modeButton {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+}
+
+.modeButton[data-active='true'] {
+  background: var(--surface-active);
+  color: var(--color-text-primary);
+}
+
+.selectionSummary {
+  color: var(--color-text-muted);
+  font-size: var(--text-body);
+}
+
 .chartGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-md);
+}
+
+@media (max-width: 960px) {
+  .chartGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .prompt {

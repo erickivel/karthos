@@ -10,10 +10,12 @@ import (
 )
 
 type MetricQuery struct {
-	EntityIDs  []entities.EntityID
-	MetricName string
-	From       time.Time
-	To         time.Time
+	EntityIDs    []entities.EntityID
+	MetricName   string
+	From         time.Time
+	To           time.Time
+	EdgeSourceID entities.EntityID
+	EdgeTargetID entities.EntityID
 }
 
 type EdgeQuery struct {

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/backend/ingest"
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/schema"
 )
 
@@ -305,6 +306,14 @@ func TestOTLPNormalizer_ServiceGraphEdgeLabels(t *testing.T) {
 	assert.Equal(t, "request_rate_per_second", s.MetricName)
 	assert.Equal(t, "service-a", s.Labels["edge_client"])
 	assert.Equal(t, "service-b", s.Labels["edge_server"])
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "default", "service-a")),
+		s.Labels["edge_client_id"],
+	)
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "default", "service-b")),
+		s.Labels["edge_server_id"],
+	)
 }
 
 func TestOTLPNormalizer_NonServiceGraphHasNoEdgeLabels(t *testing.T) {

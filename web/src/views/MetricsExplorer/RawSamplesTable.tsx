@@ -16,6 +16,7 @@ export function RawSamplesTable({ samples }: RawSamplesTableProps) {
           <thead>
             <tr>
               <th>Metric</th>
+              <th>Scope</th>
               <th>Value</th>
               <th>Unit</th>
               <th>Timestamp</th>
@@ -25,6 +26,7 @@ export function RawSamplesTable({ samples }: RawSamplesTableProps) {
             {samples.map((s, i) => (
               <tr key={i} className={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
                 <td>{s.metric_name}</td>
+                <td>{formatScope(s)}</td>
                 <td className={styles.value}>{s.value.toFixed(2)}</td>
                 <td>{s.unit}</td>
                 <td>{new Date(s.timestamp).toLocaleString()}</td>
@@ -35,4 +37,11 @@ export function RawSamplesTable({ samples }: RawSamplesTableProps) {
       </div>
     </div>
   )
+}
+
+function formatScope(sample: MetricSample): string {
+  if (sample.edge) {
+    return `${sample.edge.source_id} -> ${sample.edge.target_id}`
+  }
+  return sample.entity_id
 }

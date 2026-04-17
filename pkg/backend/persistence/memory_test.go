@@ -113,6 +113,47 @@ func TestMetricStore_TimeRangeFilter(t *testing.T) {
 	}
 }
 
+func TestMetricStore_FilterByEdgeIDs(t *testing.T) {
+	store := NewInMemoryMetricStore()
+	ctx := context.Background()
+
+	sourceA := entities.ComputeEntityID(entities.KindService, "cluster", "default", "service-a")
+	targetB := entities.ComputeEntityID(entities.KindService, "cluster", "default", "service-b")
+	targetC := entities.ComputeEntityID(entities.KindService, "cluster", "default", "service-c")
+	now := time.Now()
+	require.NoError(t, store.Write(ctx, []metrics.MetricSample{
+		{
+			MetricName: "request_rate_per_second",
+			EntityID:   svc("servicegraph"),
+			Value:      1.0,
+			Timestamp:  now,
+			Labels: map[string]string{
+				"edge_client_id": string(sourceA),
+				"edge_server_id": string(targetB),
+			},
+		},
+		{
+			MetricName: "request_rate_per_second",
+			EntityID:   svc("servicegraph"),
+			Value:      2.0,
+			Timestamp:  now,
+			Labels: map[string]string{
+				"edge_client_id": string(sourceA),
+				"edge_server_id": string(targetC),
+			},
+		},
+	}))
+
+	got, err := store.Query(ctx, query.MetricQuery{
+		MetricName:   "request_rate_per_second",
+		EdgeSourceID: sourceA,
+		EdgeTargetID: targetB,
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, string(targetB), got[0].Labels["edge_server_id"])
+}
+
 // ─── GraphStore tests ─────────────────────────────────────────────────────────
 
 func TestGraphStore_PutAndGetLatest(t *testing.T) {

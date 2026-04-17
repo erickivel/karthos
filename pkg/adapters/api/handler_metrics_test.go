@@ -71,6 +71,49 @@ func TestQueryMetricsFilterByEntityID(t *testing.T) {
 	require.EqualValues(t, 1, data["total"])
 }
 
+func TestQueryMetricsFilterByEdgeIDs(t *testing.T) {
+	ms := persistence.NewInMemoryMetricStore()
+	now := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+	sourceID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-a")
+	targetID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-b")
+	otherTargetID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-c")
+	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
+		{
+			MetricName: "edge_latency_nanoseconds",
+			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
+			Value:      12,
+			Timestamp:  now,
+			Labels: map[string]string{
+				"edge_client_id": string(sourceID),
+				"edge_server_id": string(targetID),
+			},
+		},
+		{
+			MetricName: "edge_latency_nanoseconds",
+			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
+			Value:      15,
+			Timestamp:  now,
+			Labels: map[string]string{
+				"edge_client_id": string(sourceID),
+				"edge_server_id": string(otherTargetID),
+			},
+		},
+	}))
+	srv := newTestServer(t, Config{MetricStore: ms})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=edge_latency_nanoseconds&edge_source_id="+string(sourceID)+"&edge_target_id="+string(targetID))
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parsePaginatedData(t, resp)
+	require.EqualValues(t, 1, data["total"])
+	sample := data["samples"].([]any)[0].(map[string]any)
+	labels := sample["labels"].(map[string]any)
+	require.Equal(t, string(sourceID), labels["edge_client_id"])
+	require.Equal(t, string(targetID), labels["edge_server_id"])
+}
+
 func TestQueryMetricsFilterByMetricName(t *testing.T) {
 	ms := seedMetrics(t)
 	srv := newTestServer(t, Config{MetricStore: ms})
@@ -210,4 +253,45 @@ func TestMetricSeriesEmpty(t *testing.T) {
 	require.EqualValues(t, 0, data["total"])
 	series := data["series"].([]any)
 	require.Empty(t, series)
+}
+
+func TestMetricSeriesGroupsEdgeMetricsPerEdge(t *testing.T) {
+	ms := persistence.NewInMemoryMetricStore()
+	now := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+	sourceID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-a")
+	targetB := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-b")
+	targetC := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-c")
+	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
+		{
+			MetricName: "edge_latency_nanoseconds",
+			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
+			Value:      12,
+			Timestamp:  now,
+			Labels: map[string]string{
+				"edge_client_id": string(sourceID),
+				"edge_server_id": string(targetB),
+			},
+		},
+		{
+			MetricName: "edge_latency_nanoseconds",
+			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
+			Value:      15,
+			Timestamp:  now.Add(time.Minute),
+			Labels: map[string]string{
+				"edge_client_id": string(sourceID),
+				"edge_server_id": string(targetC),
+			},
+		},
+	}))
+	srv := newTestServer(t, Config{MetricStore: ms})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=edge_latency_nanoseconds&edge_source_id="+string(sourceID))
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parsePaginatedData(t, resp)
+	require.EqualValues(t, 2, data["total"])
+	series := data["series"].([]any)
+	require.Len(t, series, 2)
 }

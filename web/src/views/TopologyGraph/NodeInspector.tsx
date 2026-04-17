@@ -56,6 +56,9 @@ export function NodeInspector() {
   const labels = node.labels ?? {}
   const detailItems = getDetailItems(node)
   const metricSummary = useNodeMetricSummary(node)
+  const openEdgeMetrics = (sourceId: string, targetId: string) => {
+    navigate(`/metrics?mode=edge&edgeSource=${encodeURIComponent(sourceId)}&edgeTarget=${encodeURIComponent(targetId)}`)
+  }
 
   return (
     <div className={styles.panel}>
@@ -131,16 +134,25 @@ export function NodeInspector() {
           <h3 className={styles.sectionTitle}>Inbound ({edges.inbound.length})</h3>
           <div className={styles.edgeList}>
             {edges.inbound.map((e) => (
-              <button
-                key={e.id}
-                className={styles.edgeItem}
-                onClick={() => e.related_node && setSelectedEntityId(e.related_node.id)}
-              >
-                <span className={styles.edgeRelation}>{e.relation}</span>
-                <span className={styles.edgeEntity}>
-                  {e.related_node?.name || String(e.source)}
-                </span>
-              </button>
+              <div key={e.id} className={styles.edgeItem}>
+                <button
+                  className={styles.edgePrimary}
+                  onClick={() => e.related_node && setSelectedEntityId(e.related_node.id)}
+                >
+                  <span className={styles.edgeRelation}>{e.relation}</span>
+                  <span className={styles.edgeEntity}>
+                    {e.related_node?.name || String(e.source)}
+                  </span>
+                </button>
+                {e.relation === 'calls' && (
+                  <button
+                    className={styles.edgeMetricLink}
+                    onClick={() => openEdgeMetrics(String(e.source), String(e.target))}
+                  >
+                    Metrics
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </section>
@@ -151,16 +163,25 @@ export function NodeInspector() {
           <h3 className={styles.sectionTitle}>Outbound ({edges.outbound.length})</h3>
           <div className={styles.edgeList}>
             {edges.outbound.map((e) => (
-              <button
-                key={e.id}
-                className={styles.edgeItem}
-                onClick={() => e.related_node && setSelectedEntityId(e.related_node.id)}
-              >
-                <span className={styles.edgeRelation}>{e.relation}</span>
-                <span className={styles.edgeEntity}>
-                  {e.related_node?.name || String(e.target)}
-                </span>
-              </button>
+              <div key={e.id} className={styles.edgeItem}>
+                <button
+                  className={styles.edgePrimary}
+                  onClick={() => e.related_node && setSelectedEntityId(e.related_node.id)}
+                >
+                  <span className={styles.edgeRelation}>{e.relation}</span>
+                  <span className={styles.edgeEntity}>
+                    {e.related_node?.name || String(e.target)}
+                  </span>
+                </button>
+                {e.relation === 'calls' && (
+                  <button
+                    className={styles.edgeMetricLink}
+                    onClick={() => openEdgeMetrics(String(e.source), String(e.target))}
+                  >
+                    Metrics
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </section>
