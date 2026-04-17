@@ -39,3 +39,12 @@
   background: var(--surface-active);
   border: none;
 }
+
+.nodeVariant {
+  background: rgba(168, 120, 255, 0.06);
+  border-color: rgba(168, 120, 255, 0.3);
+}
+
+.pillNode {
+  background: #8a6edc;
+}

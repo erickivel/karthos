@@ -30,3 +30,32 @@
 .select:focus {
   background: var(--surface-active);
 }
+
+.group {
+  display: inline-flex;
+  background: var(--surface-module);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.toggle {
+  appearance: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  border: none;
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--font-family);
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  outline: none;
+}
+
+.toggle + .toggle {
+  border-left: 1px solid var(--surface-nav);
+}
+
+.toggleActive {
+  background: var(--surface-active);
+}

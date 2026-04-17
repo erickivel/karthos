@@ -14,6 +14,8 @@ import { useNodeMetrics } from '@/hooks/useNodeMetrics'
 import { useEdgeMetrics } from '@/hooks/useEdgeMetrics'
 import { useAppStore } from '@/stores/useAppStore'
 import { useGraphLayout } from './useGraphLayout'
+import { useProjectionState } from './useProjectionState'
+import { project } from './projection'
 import { EntityNode } from './nodes/EntityNode'
 import { NamespaceNode } from './nodes/NamespaceNode'
 import { RelationEdge } from './edges/RelationEdge'
@@ -30,6 +32,7 @@ export function TopologyGraph() {
   const edgeMetrics = useEdgeMetrics()
   const [searchParams] = useSearchParams()
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId)
+  const { mode, granularity } = useProjectionState()
 
   const kindFilter = searchParams.get('kind')
   const namespaceFilter = searchParams.get('namespace')
@@ -42,12 +45,19 @@ export function TopologyGraph() {
     let edges = snapshot.graph.edges
 
     if (kindFilter) {
-      // When filtering by kind, also include namespace nodes so containers render
-      nodes = nodes.filter((n) => n.kind === kindFilter || (kindFilter !== 'namespace' && n.kind === 'namespace'))
+      nodes = nodes.filter(
+        (n) =>
+          n.kind === kindFilter ||
+          (kindFilter !== 'namespace' && n.kind === 'namespace') ||
+          (kindFilter !== 'node' && n.kind === 'node'),
+      )
     }
     if (namespaceFilter) {
-      // Include namespace nodes whose name matches the filter
-      nodes = nodes.filter((n) => n.namespace === namespaceFilter || (n.kind === 'namespace' && n.name === namespaceFilter))
+      nodes = nodes.filter(
+        (n) =>
+          n.namespace === namespaceFilter ||
+          (n.kind === 'namespace' && n.name === namespaceFilter),
+      )
     }
 
     const nodeIds = new Set(nodes.map((n) => n.id))
@@ -60,12 +70,12 @@ export function TopologyGraph() {
     return { nodes, edges }
   }, [snapshot, kindFilter, namespaceFilter, relationFilter])
 
-  const { nodes, edges } = useGraphLayout(
-    filteredGraph.nodes,
-    filteredGraph.edges,
-    nodeMetrics,
-    edgeMetrics,
+  const projection = useMemo(
+    () => project(filteredGraph.nodes, filteredGraph.edges, mode, granularity),
+    [filteredGraph, mode, granularity],
   )
+
+  const { nodes, edges } = useGraphLayout(projection, nodeMetrics, edgeMetrics)
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
