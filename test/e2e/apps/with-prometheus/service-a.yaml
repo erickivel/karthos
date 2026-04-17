@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: service-a-python
+  namespace: oksg-demo
 spec:
   replicas: 1
   selector:
@@ -16,6 +17,8 @@ spec:
         prometheus.io/path: /metrics
         prometheus.io/port: "8081"
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: oksg-test-worker
       containers:
         - name: service-a-python
           image: localhost:5001/service-a-python:latest
@@ -30,6 +33,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: service-a-python
+  namespace: oksg-demo
   annotations:
     prometheus.io/scrape: "true"
     prometheus.io/path: /metrics
