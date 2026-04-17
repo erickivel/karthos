@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { BaseEdge, getSmoothStepPath, type EdgeProps } from '@xyflow/react'
+import { getSmoothStepPath, type EdgeProps } from '@xyflow/react'
 import type { GraphEdge, RelationType } from '@/types/graph'
 import type { GraphEdgeMetricData } from '../edgeMetrics'
 import styles from './RelationEdge.module.css'
@@ -38,14 +38,25 @@ function formatLatency(ns?: number): string | null {
   return `${ms.toFixed(2)}ms`
 }
 
+function getCableOffsets(count: number, spacing: number): number[] {
+  const center = (count - 1) / 2
+  return Array.from({ length: count }, (_, index) => (index - center) * spacing)
+}
+
 function getMetricState(edge: GraphEdge & GraphEdgeMetricData) {
   const rate = edge.metrics?.requestRate ?? 0
   const latencyNs = edge.metrics?.latencyNs
   const errorRatio = edge.metrics?.errorRatio ?? 0
   const errorRate = edge.metrics?.errorRate ?? 0
 
-  const width = 1.5 + clamp(Math.log10(rate + 1) * 2.2, 0, 5)
-  const opacity = 0.38 + clamp(Math.log10(rate + 1) * 0.18, 0, 0.45)
+  const cableCount =
+    edge.relation === 'calls'
+      ? Math.min(6, Math.max(1, Math.ceil(Math.log10(rate + 1) * 2.4)))
+      : 1
+  const cableWidth = 1.15 + clamp(Math.log10(rate + 1) * 0.24, 0, 0.7)
+  const cableSpacing = cableCount > 1 ? 2 + clamp(Math.log10(rate + 1) * 0.35, 0, 0.9) : 0
+  const bundleWidth = cableWidth + cableSpacing * Math.max(0, cableCount - 1) + 2
+  const opacity = 0.5 + clamp(Math.log10(rate + 1) * 0.1, 0, 0.22)
   const latencyMs = latencyNs !== undefined ? latencyNs / 1_000_000 : 0
 
   let stroke = getEdgeColor(edge.relation)
@@ -58,10 +69,12 @@ function getMetricState(edge: GraphEdge & GraphEdgeMetricData) {
   }
 
   return {
-    width,
+    cableCount,
+    cableWidth,
+    cableSpacing,
+    bundleWidth,
     opacity: clamp(opacity, 0.38, 0.88),
     stroke,
-    glow: clamp(width * 1.35, 3, 9),
     summary: [
       rate > 0 ? `${rate.toFixed(rate >= 10 ? 0 : 1)} rps` : null,
       formatLatency(latencyNs),
@@ -77,6 +90,11 @@ function RelationEdgeComponent(props: EdgeProps) {
   const relation = edge?.relation ?? 'calls'
   const directed = DIRECTED_RELATIONS.includes(relation)
   const metricState = edge ? getMetricState(edge) : null
+  const dx = props.targetX - props.sourceX
+  const dy = props.targetY - props.sourceY
+  const length = Math.hypot(dx, dy) || 1
+  const normalX = -dy / length
+  const normalY = dx / length
 
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX: props.sourceX,
@@ -88,19 +106,39 @@ function RelationEdgeComponent(props: EdgeProps) {
     borderRadius: 8,
   })
 
+  const cableOffsets = getCableOffsets(
+    metricState?.cableCount ?? 1,
+    metricState?.cableSpacing ?? 0,
+  )
+  const markerCableIndex = Math.floor(cableOffsets.length / 2)
+
   return (
     <>
-      <BaseEdge
-        id={props.id}
-        path={edgePath}
-        style={{
-          stroke: metricState?.stroke ?? getEdgeColor(relation),
-          strokeWidth: metricState?.width ?? 1.5,
-          opacity: metricState?.opacity ?? 0.7,
-          filter: metricState ? `drop-shadow(0 0 ${metricState.glow}px ${metricState.stroke})` : undefined,
-        }}
-        markerEnd={directed ? props.markerEnd : undefined}
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="var(--surface-active)"
+        strokeWidth={metricState?.bundleWidth ?? 3}
+        strokeOpacity={0.95}
+        strokeLinecap="round"
       />
+      {cableOffsets.map((offset, index) => (
+        <path
+          key={`${props.id}-cable-${index}`}
+          d={edgePath}
+          fill="none"
+          stroke={metricState?.stroke ?? getEdgeColor(relation)}
+          strokeWidth={metricState?.cableWidth ?? 1.35}
+          strokeOpacity={metricState ? Math.max(0.42, metricState.opacity - index * 0.03) : 0.7}
+          strokeLinecap="round"
+          transform={
+            offset === 0
+              ? undefined
+              : `translate(${(normalX * offset).toFixed(2)} ${(normalY * offset).toFixed(2)})`
+          }
+          markerEnd={directed && index === markerCableIndex ? props.markerEnd : undefined}
+        />
+      ))}
       <foreignObject
         x={labelX - 68}
         y={labelY - 18}
