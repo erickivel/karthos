@@ -54,6 +54,9 @@ task test:e2e:apply-otel
 task test:e2e:verify
 ```
 
+`task test:e2e:setup` now provisions one control-plane node and one worker
+node so topology QA can validate cross-node placement in the live cluster.
+
 What each stage now does:
 
 - `test:e2e:discover`
@@ -133,6 +136,37 @@ Recommended local port convention during e2e work:
 - `18080` -> `gateway-go` traffic generation
 - `18081` -> backend REST API
 - `13133` -> backend debug/health
+
+## Frontend Topology QA
+
+The topology Playwright suite runs against the live frontend and a
+port-forwarded backend API. Keep all Node/Playwright commands inside Docker.
+
+Prerequisites:
+
+- `task test:e2e:scenario:prometheus`
+- `task web:e2e:install`
+- `task web:dev`
+- `kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080`
+
+Run the suite:
+
+```bash
+task web:e2e
+```
+
+Update committed screenshot baselines for the 9 projection/granularity views:
+
+```bash
+task web:e2e:update
+```
+
+Coverage currently includes:
+
+- projection mode grouping behavior
+- granularity transitions and selection persistence
+- sparse/orphan pod handling
+- screenshot baselines for all `mode x granularity` combinations
 
 ### No Telemetry Fallback
 

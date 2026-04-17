@@ -117,6 +117,9 @@ task web:build       # build production Docker image
 task web:install     # install npm dependencies inside container
 task web:typecheck   # run tsc --noEmit inside container
 task web:lint        # run ESLint inside container
+task web:e2e:install # install Playwright support inside the Docker e2e runner
+task web:e2e         # run topology Playwright tests against the live frontend/backend
+task web:e2e:update  # update committed topology screenshot baselines
 task ci              # backend checks plus frontend Docker build verification
 ```
 

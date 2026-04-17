@@ -174,6 +174,10 @@ E2E tests require Docker, kind, and kubectl. First, set up the test cluster:
 task test:e2e:setup
 ```
 
+The default kind topology now includes one control-plane node plus one worker
+node so the topology projection QA scenarios can assert real cross-node
+placement.
+
 #### Option 1: Run Full Scenarios (Recommended)
 
 Run a complete scenario that deploys apps, discovers telemetry, generates OTel configs, and verifies:
@@ -231,6 +235,31 @@ Local port convention used by the e2e helpers:
 - `18080` -> `gateway-go` traffic generation
 - `18081` -> backend REST API
 - `13133` -> backend debug/health endpoints
+
+#### Frontend Topology QA with Playwright
+
+Projection-mode coverage runs against the live frontend and a port-forwarded
+backend:
+
+```bash
+# install frontend deps and Playwright support in Docker
+task web:e2e:install
+
+# start the frontend
+task web:dev
+
+# expose the backend API
+kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
+
+# run the topology suite
+task web:e2e
+
+# refresh committed screenshots when intended UI changes land
+task web:e2e:update
+```
+
+The Playwright runner expects the frontend at `http://localhost:5173` and uses
+the Vite proxy to reach the backend API at `http://localhost:18081`.
 
 #### Cleanup
 
