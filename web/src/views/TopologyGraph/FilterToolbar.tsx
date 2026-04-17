@@ -47,7 +47,12 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
 
   return (
     <div className={styles.toolbar}>
-      <div className={styles.group} role="group" aria-label="Projection mode">
+      <div
+        className={styles.group}
+        role="group"
+        aria-label="Projection mode"
+        data-testid="topology-mode-group"
+      >
         {PROJECTION_MODES.map((m) => (
           <button
             key={m}
@@ -62,7 +67,12 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
         ))}
       </div>
 
-      <div className={styles.group} role="group" aria-label="Granularity">
+      <div
+        className={styles.group}
+        role="group"
+        aria-label="Granularity"
+        data-testid="topology-granularity-group"
+      >
         {GRANULARITIES.map((g) => (
           <button
             key={g}
@@ -81,6 +91,7 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
         className={styles.select}
         value={currentKind}
         onChange={(e) => updateFilter('kind', e.target.value)}
+        data-testid="filter-kind"
       >
         <option value="">All Kinds</option>
         {filters?.kinds.map((k) => (
@@ -94,6 +105,7 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
         className={styles.select}
         value={currentNamespace}
         onChange={(e) => updateFilter('namespace', e.target.value)}
+        data-testid="filter-namespace"
       >
         <option value="">All Namespaces</option>
         {filters?.namespaces.map((ns) => (
@@ -107,6 +119,7 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
         className={styles.select}
         value={currentRelation}
         onChange={(e) => updateFilter('relation', e.target.value)}
+        data-testid="filter-relation"
       >
         <option value="">All Relations</option>
         {filters?.relations.map((r) => (

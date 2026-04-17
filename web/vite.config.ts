@@ -12,6 +12,7 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    allowedHosts: ['host.docker.internal'],
     proxy: {
       '/api': {
         target: process.env.VITE_API_PROXY_TARGET || 'http://oksg-backend:8080',

@@ -90,35 +90,37 @@ export function TopologyGraph() {
 
   return (
     <div className={styles.container}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        onNodeClick={onNodeClick}
-        onPaneClick={onPaneClick}
-        fitView
-        minZoom={0.1}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={24}
-          size={1.5}
-          color="#4a4d50"
-          bgColor="transparent"
-        />
-        <MiniMap
-          nodeColor="var(--surface-active)"
-          maskColor="rgba(18, 20, 22, 0.8)"
-          style={{ background: 'var(--surface-nav)' }}
-        />
-        <Controls
-          showInteractive={false}
-          style={{ background: 'var(--surface-nav)' }}
-        />
-      </ReactFlow>
+      <div className={styles.graphSurface} data-testid="topology-graph">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
+          fitView
+          minZoom={0.1}
+          maxZoom={2}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={24}
+            size={1.5}
+            color="#4a4d50"
+            bgColor="transparent"
+          />
+          <MiniMap
+            nodeColor="var(--surface-active)"
+            maskColor="rgba(18, 20, 22, 0.8)"
+            style={{ background: 'var(--surface-nav)' }}
+          />
+          <Controls
+            showInteractive={false}
+            style={{ background: 'var(--surface-nav)' }}
+          />
+        </ReactFlow>
+      </div>
       <FilterToolbar filters={snapshot?.summary.available_filters} />
       <NodeInspector />
     </div>

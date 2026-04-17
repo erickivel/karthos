@@ -61,15 +61,18 @@ export function NodeInspector() {
   }
 
   return (
-    <div className={styles.panel}>
+    <div className={styles.panel} data-testid="node-inspector">
       <div className={styles.header}>
         <div className={styles.titleRow}>
           <span className={styles.dot} data-status={node.status} />
-          <h2 className={styles.name}>{node.name}</h2>
+          <h2 className={styles.name} data-testid="node-inspector-title">
+            {node.name}
+          </h2>
         </div>
         <button
           className={styles.closeBtn}
           onClick={() => setSelectedEntityId(null)}
+          aria-label="Close inspector"
         >
           x
         </button>

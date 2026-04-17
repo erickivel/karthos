@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { getSeries } from '@/api/metrics'
+import { usePollingEnabled } from './usePollingEnabled'
 
 export interface NodeMetric {
   cpu?: number
@@ -9,11 +10,12 @@ export interface NodeMetric {
 
 /** Fetches latest CPU and memory values for all entities, returns a map by entity_id. */
 export function useNodeMetrics(): Map<string, NodeMetric> {
+  const pollingEnabled = usePollingEnabled()
   const queries = useQueries({
     queries: ['cpu_usage_millicores', 'memory_usage_bytes'].map((metric) => ({
       queryKey: ['node-metrics', metric],
       queryFn: () => getSeries({ metric_name: metric }),
-      refetchInterval: 30_000,
+      refetchInterval: pollingEnabled ? 30_000 : false,
       staleTime: 15_000,
     })),
   })

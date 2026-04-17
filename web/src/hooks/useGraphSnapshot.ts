@@ -3,6 +3,7 @@ import { getSnapshot } from '@/api/graph'
 import { useAppStore } from '@/stores/useAppStore'
 import { useEffect } from 'react'
 import type { GraphSnapshot } from '@/types/graph'
+import { usePollingEnabled } from './usePollingEnabled'
 
 /** Ensure every node has top-level name/namespace (fall back to labels). */
 function normalizeSnapshot(snapshot: GraphSnapshot): GraphSnapshot {
@@ -24,11 +25,12 @@ function normalizeSnapshot(snapshot: GraphSnapshot): GraphSnapshot {
 
 export function useGraphSnapshot() {
   const setConnectionStatus = useAppStore((s) => s.setConnectionStatus)
+  const pollingEnabled = usePollingEnabled()
 
   const query = useQuery({
     queryKey: ['graph-snapshot'],
     queryFn: getSnapshot,
-    refetchInterval: 30_000,
+    refetchInterval: pollingEnabled ? 30_000 : false,
     select: normalizeSnapshot,
   })
 

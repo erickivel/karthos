@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { getSamples } from '@/api/metrics'
 import type { MetricSample } from '@/types/metrics'
+import { usePollingEnabled } from './usePollingEnabled'
 import {
   buildEdgeMetricKey,
   getEdgeMetricKeyFromLabels,
@@ -45,11 +46,12 @@ function applySample(
 }
 
 export function useEdgeMetrics(): Map<string, EdgeMetricSnapshot> {
+  const pollingEnabled = usePollingEnabled()
   const queries = useQueries({
     queries: EDGE_METRIC_NAMES.map((metricName) => ({
       queryKey: ['edge-metrics', metricName],
       queryFn: () => getSamples({ metric_name: metricName, page_size: 1000 }),
-      refetchInterval: 30_000,
+      refetchInterval: pollingEnabled ? 30_000 : false,
       staleTime: 15_000,
     })),
   })

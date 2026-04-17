@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, type KeyboardEvent, type MouseEvent } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
   Globe,
@@ -14,7 +14,9 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { SegmentedBar } from '@/components/shared/SegmentedBar'
+import { useAppStore } from '@/stores/useAppStore'
 import type { GraphNode, EntityKind } from '@/types/graph'
+import { topologyEntityTestId } from '../testIds'
 import styles from './EntityNode.module.css'
 
 function getHeaderColor(kind: EntityKind, status: string): string {
@@ -94,16 +96,37 @@ function getMetricBars(node: GraphNode): MetricBarData[] {
 
 function EntityNodeComponent({ data }: NodeProps) {
   const node = data as unknown as GraphNode
+  const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId)
   const isSmall = SMALL_KINDS.includes(node.kind)
   const hasTelemetry = node.status !== 'unknown' || Object.keys(node.labels ?? {}).length > 0
   const IconComponent = KIND_ICONS[node.kind] ?? Box
   const metricBars = getMetricBars(node)
+  const selectNode = () => setSelectedEntityId(node.id)
+  const handleClick = (event: MouseEvent<HTMLDivElement>) => {
+    event.stopPropagation()
+    selectNode()
+  }
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      event.stopPropagation()
+      selectNode()
+    }
+  }
 
   return (
     <div
       className={styles.card}
       data-small={isSmall}
       data-no-telemetry={!hasTelemetry}
+      data-testid={topologyEntityTestId(node.kind, node.name)}
+      data-entity-kind={node.kind}
+      data-entity-name={node.name}
+      data-entity-namespace={node.namespace}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
     >
       <Handle type="target" position={Position.Top} className={styles.handle} />
 
@@ -129,7 +152,7 @@ function EntityNodeComponent({ data }: NodeProps) {
       </div>
 
       {metricBars.length > 0 && (
-        <div className={styles.metrics}>
+        <div className={styles.metrics} data-topology-dynamic="metrics">
           {metricBars.map((bar) => (
             <div key={bar.label} className={styles.metricBlock}>
               <div className={styles.metricHeader}>

@@ -5,6 +5,11 @@
   background: var(--surface-nav);
 }
 
+.graphSurface {
+  position: absolute;
+  inset: 0;
+}
+
 /* Make all React Flow layers transparent so the container background shows */
 .container :global(.react-flow),
 .container :global(.react-flow__pane),
