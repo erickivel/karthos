@@ -329,3 +329,36 @@ func TestGraphStore_AccumulatesNodesAcrossSnapshots(t *testing.T) {
 		got.Graph.Nodes[1].ID,
 	})
 }
+
+func TestGraphStore_NodeTTLAgesOutStaleNodes(t *testing.T) {
+	store := NewInMemoryGraphStore(WithInMemoryNodeTTL(1 * time.Hour))
+	ctx := context.Background()
+
+	// Advance a controllable clock.
+	base := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
+	current := base
+	store.nowFn = func() time.Time { return current }
+
+	staleID := entities.ComputeEntityID(entities.KindPod, "cluster", "demo", "old-pod")
+	freshID := entities.ComputeEntityID(entities.KindPod, "cluster", "demo", "new-pod")
+
+	// Write a snapshot containing the stale node at t=base.
+	require.NoError(t, store.PutSnapshot(ctx, topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{{ID: staleID, Kind: entities.KindPod}},
+		},
+	}))
+
+	// Advance past the TTL, then write a new snapshot with just the fresh node.
+	current = base.Add(2 * time.Hour)
+	require.NoError(t, store.PutSnapshot(ctx, topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{{ID: freshID, Kind: entities.KindPod}},
+		},
+	}))
+
+	got, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.Graph.Nodes, 1)
+	assert.Equal(t, freshID, got.Graph.Nodes[0].ID)
+}

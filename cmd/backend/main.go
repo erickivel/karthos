@@ -29,6 +29,7 @@ const (
 	defaultStorageBackend          = "memory"
 	defaultTopologyFlushInterval   = 60 * time.Second
 	defaultStatusStaleSeconds      = 300
+	defaultNodeTTL                 = 24 * time.Hour
 )
 
 type config struct {
@@ -46,6 +47,7 @@ type config struct {
 	RawStoreEnabled       bool
 	TopologyFlushInterval time.Duration
 	StatusStaleSeconds    int
+	NodeTTL               time.Duration
 }
 
 func main() {
@@ -71,6 +73,7 @@ func run(ctx context.Context, args []string) error {
 		PostgresDSN: cfg.PostgresDSN,
 		VMURL:       cfg.VMURL,
 		RawEnabled:  cfg.RawStoreEnabled,
+		NodeTTL:     cfg.NodeTTL,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize stores: %w", err)
@@ -183,6 +186,7 @@ func parseConfig(args []string) (config, error) {
 	rawStoreEnabled := fs.Bool("raw-store-enabled", envOrDefault("OKSG_RAW_STORE_ENABLED", "false") == "true", "enable raw envelope persistence")
 	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
 	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
+	nodeTTLStr := fs.String("node-ttl", envOrDefault("OKSG_NODE_TTL", defaultNodeTTL.String()), "topology node TTL; nodes absent from snapshots for longer than this age out (0 disables)")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -200,6 +204,14 @@ func parseConfig(args []string) (config, error) {
 		topologyFlushInterval = defaultTopologyFlushInterval
 	}
 
+	nodeTTL, err := time.ParseDuration(*nodeTTLStr)
+	if err != nil {
+		return config{}, fmt.Errorf("parse node ttl: %w", err)
+	}
+	if nodeTTL < 0 {
+		nodeTTL = 0
+	}
+
 	return config{
 		GRPCListenAddress:     *grpcListenAddress,
 		HTTPListenAddress:     *httpListenAddress,
@@ -215,6 +227,7 @@ func parseConfig(args []string) (config, error) {
 		RawStoreEnabled:       *rawStoreEnabled,
 		TopologyFlushInterval: topologyFlushInterval,
 		StatusStaleSeconds:    *statusStaleSeconds,
+		NodeTTL:               nodeTTL,
 	}, nil
 }
 

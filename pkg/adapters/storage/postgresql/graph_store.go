@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -14,12 +15,26 @@ import (
 
 // PostgresGraphStore implements persistence.GraphStore using PostgreSQL.
 type PostgresGraphStore struct {
-	conn *Conn
+	conn    *Conn
+	nodeTTL time.Duration // 0 = no TTL filter
+}
+
+// PostgresGraphStoreOption configures a PostgresGraphStore.
+type PostgresGraphStoreOption func(*PostgresGraphStore)
+
+// WithPostgresNodeTTL filters GetLatest to nodes whose containing snapshot was
+// created within ttl. 0 disables the TTL.
+func WithPostgresNodeTTL(ttl time.Duration) PostgresGraphStoreOption {
+	return func(s *PostgresGraphStore) { s.nodeTTL = ttl }
 }
 
 // NewPostgresGraphStore creates a new PostgresGraphStore with the given connection.
-func NewPostgresGraphStore(conn *Conn) *PostgresGraphStore {
-	return &PostgresGraphStore{conn: conn}
+func NewPostgresGraphStore(conn *Conn, opts ...PostgresGraphStoreOption) *PostgresGraphStore {
+	s := &PostgresGraphStore{conn: conn}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // PutSnapshot stores a topology snapshot. Edges are upserted (accumulated)
@@ -107,11 +122,25 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 
 	// Get the latest version of each node across all snapshots so structural nodes
 	// remain visible after newer runtime-only snapshots are written.
-	nodeRows, err := s.conn.pool.Query(ctx,
-		`SELECT DISTINCT ON (entity_id) entity_id, kind, labels
-		 FROM topology_nodes
-		 ORDER BY entity_id, snapshot_id DESC`,
-	)
+	// When nodeTTL > 0, drop nodes whose most recent containing snapshot was created
+	// before NOW() - nodeTTL so deleted entities eventually age out.
+	var nodeRows pgx.Rows
+	if s.nodeTTL > 0 {
+		nodeRows, err = s.conn.pool.Query(ctx,
+			`SELECT DISTINCT ON (n.entity_id) n.entity_id, n.kind, n.labels
+			 FROM topology_nodes n
+			 JOIN topology_snapshots ts ON ts.id = n.snapshot_id
+			 WHERE ts.created_at > NOW() - $1::interval
+			 ORDER BY n.entity_id, n.snapshot_id DESC`,
+			fmt.Sprintf("%d seconds", int64(s.nodeTTL.Seconds())),
+		)
+	} else {
+		nodeRows, err = s.conn.pool.Query(ctx,
+			`SELECT DISTINCT ON (entity_id) entity_id, kind, labels
+			 FROM topology_nodes
+			 ORDER BY entity_id, snapshot_id DESC`,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("pg graph get nodes: %w", err)
 	}
