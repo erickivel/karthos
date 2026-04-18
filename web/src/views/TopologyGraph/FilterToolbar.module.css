@@ -12,6 +12,56 @@
   margin-top: calc(40px + var(--space-sm));
 }
 
+.toolbarRight {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  width: 200px;
+  background: var(--surface-nav);
+  border-radius: var(--radius-lg);
+  margin-top: calc(40px + var(--space-sm));
+}
+
+.toolbarRight .group {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-module);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.toolbarRight .toggle,
+.toolbarRight .help {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 0.875rem;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  font-weight: 500;
+  gap: 10px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.toolbarRight .toggle svg,
+.toolbarRight .help svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.toolbarRight .toggle + .toggle {
+  border-left: none;
+  border-top: 1px solid var(--surface-nav);
+}
+
 .select {
   appearance: none;
   background: var(--surface-module);
@@ -50,6 +100,18 @@
   text-transform: uppercase;
   cursor: pointer;
   outline: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toggleIcon {
+  color: var(--color-text-muted);
+  transition: color var(--transition-fast);
+}
+
+.toggle:hover .toggleIcon {
+  color: var(--color-text-primary);
 }
 
 .toggle + .toggle {
@@ -58,4 +120,35 @@
 
 .toggleActive {
   background: var(--surface-active);
+}
+
+.toggleActive .toggleIcon {
+  color: var(--color-signal);
+}
+
+.help {
+  appearance: none;
+  background: var(--surface-module);
+  color: var(--color-text-primary);
+  border: none;
+  border-radius: var(--radius);
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--font-family);
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  outline: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.help:hover {
+  background: var(--surface-active);
+}
+
+.helpActive {
+  background: var(--surface-active);
+  color: var(--color-signal);
 }

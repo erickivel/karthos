@@ -19,12 +19,24 @@ import type { GraphNode, EntityKind } from '@/types/graph'
 import { topologyEntityTestId } from '../testIds'
 import styles from './EntityNode.module.css'
 
+const KIND_COLOR_VAR: Record<EntityKind, string> = {
+  cluster: 'var(--kind-cluster)',
+  namespace: 'var(--kind-namespace)',
+  node: 'var(--kind-node)',
+  service: 'var(--kind-service)',
+  workload: 'var(--kind-workload)',
+  pod: 'var(--kind-pod)',
+  container: 'var(--kind-container)',
+  ingress: 'var(--kind-ingress)',
+  endpoint: 'var(--kind-endpoint)',
+  configmap: 'var(--kind-configmap)',
+  secret: 'var(--kind-secret)',
+  pvc: 'var(--kind-pvc)',
+}
+
 function getHeaderColor(kind: EntityKind, status: string): string {
   if (status === 'error') return 'var(--color-alert)'
-  if (['service', 'workload', 'pod'].includes(kind)) return 'var(--color-signal)'
-  if (['node', 'namespace'].includes(kind)) return 'var(--color-info)'
-  if (kind === 'container') return '#6b7280'
-  return 'var(--surface-active)'
+  return KIND_COLOR_VAR[kind] ?? 'var(--surface-active)'
 }
 
 const SMALL_KINDS: EntityKind[] = ['configmap', 'secret', 'pvc']

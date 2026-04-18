@@ -1,33 +1,20 @@
+import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { HelpCircle } from 'lucide-react'
 import type { AvailableFilters } from '@/types/graph'
-import {
-  GRANULARITIES,
-  PROJECTION_MODES,
-  type Granularity,
-  type ProjectionMode,
-} from './projection'
 import { useProjectionState } from './useProjectionState'
+import { LegendPanel } from './LegendPanel'
+import { GRANULARITY_ENTRIES, MODE_ENTRIES } from './modes'
 import styles from './FilterToolbar.module.css'
 
 interface FilterToolbarProps {
   filters: AvailableFilters | undefined
 }
 
-const MODE_LABEL: Record<ProjectionMode, string> = {
-  ownership: 'Ownership',
-  infrastructure: 'Infra',
-  traffic: 'Traffic',
-}
-
-const GRANULARITY_LABEL: Record<Granularity, string> = {
-  overview: 'L1',
-  runtime: 'L2',
-  detailed: 'L3',
-}
-
 export function FilterToolbar({ filters }: FilterToolbarProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const { mode, granularity, setMode, setGranularity } = useProjectionState()
+  const [legendOpen, setLegendOpen] = useState(false)
 
   const currentKind = searchParams.get('kind') ?? ''
   const currentNamespace = searchParams.get('namespace') ?? ''
@@ -46,88 +33,114 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
   }
 
   return (
-    <div className={styles.toolbar}>
-      <div
-        className={styles.group}
-        role="group"
-        aria-label="Projection mode"
-        data-testid="topology-mode-group"
-      >
-        {PROJECTION_MODES.map((m) => (
-          <button
-            key={m}
-            type="button"
-            className={`${styles.toggle} ${mode === m ? styles.toggleActive : ''}`}
-            aria-pressed={mode === m}
-            onClick={() => setMode(m)}
-            data-testid={`mode-${m}`}
-          >
-            {MODE_LABEL[m]}
-          </button>
-        ))}
+    <>
+      <div className={styles.toolbar}>
+        <select
+          className={styles.select}
+          value={currentKind}
+          onChange={(e) => updateFilter('kind', e.target.value)}
+          data-testid="filter-kind"
+          title="Filter by entity kind"
+        >
+          <option value="">All Kinds</option>
+          {filters?.kinds.map((k) => (
+            <option key={k} value={k}>
+              {k}
+            </option>
+          ))}
+        </select>
+
+        <select
+          className={styles.select}
+          value={currentNamespace}
+          onChange={(e) => updateFilter('namespace', e.target.value)}
+          data-testid="filter-namespace"
+          title="Filter by namespace"
+        >
+          <option value="">All Namespaces</option>
+          {filters?.namespaces.map((ns) => (
+            <option key={ns} value={ns}>
+              {ns}
+            </option>
+          ))}
+        </select>
+
+        <select
+          className={styles.select}
+          value={currentRelation}
+          onChange={(e) => updateFilter('relation', e.target.value)}
+          data-testid="filter-relation"
+          title="Filter by relation type"
+        >
+          <option value="">All Relations</option>
+          {filters?.relations.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
       </div>
 
-      <div
-        className={styles.group}
-        role="group"
-        aria-label="Granularity"
-        data-testid="topology-granularity-group"
-      >
-        {GRANULARITIES.map((g) => (
-          <button
-            key={g}
-            type="button"
-            className={`${styles.toggle} ${granularity === g ? styles.toggleActive : ''}`}
-            aria-pressed={granularity === g}
-            onClick={() => setGranularity(g)}
-            data-testid={`granularity-${g}`}
-          >
-            {GRANULARITY_LABEL[g]}
-          </button>
-        ))}
+      <div className={styles.toolbarRight}>
+        <div
+          className={styles.group}
+          role="group"
+          aria-label="Projection mode"
+          data-testid="topology-mode-group"
+        >
+          {MODE_ENTRIES.map(({ value, shortLabel, label, icon: Icon, description }) => (
+            <button
+              key={value}
+              type="button"
+              className={`${styles.toggle} ${mode === value ? styles.toggleActive : ''}`}
+              aria-pressed={mode === value}
+              title={`${label} — ${description}`}
+              onClick={() => setMode(value)}
+              data-testid={`mode-${value}`}
+            >
+              <Icon size={12} strokeWidth={1.75} className={styles.toggleIcon} />
+              <span>{shortLabel}</span>
+            </button>
+          ))}
+        </div>
+
+        <div
+          className={styles.group}
+          role="group"
+          aria-label="Granularity"
+          data-testid="topology-granularity-group"
+        >
+          {GRANULARITY_ENTRIES.map(({ value, shortLabel, label, icon: Icon, description }) => (
+            <button
+              key={value}
+              type="button"
+              className={`${styles.toggle} ${granularity === value ? styles.toggleActive : ''}`}
+              aria-pressed={granularity === value}
+              title={`${label} — ${description}`}
+              onClick={() => setGranularity(value)}
+              data-testid={`granularity-${value}`}
+            >
+              <Icon size={12} strokeWidth={1.75} className={styles.toggleIcon} />
+              <span>{shortLabel}</span>
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className={`${styles.help} ${legendOpen ? styles.helpActive : ''}`}
+          onClick={() => setLegendOpen((v) => !v)}
+          aria-pressed={legendOpen}
+          aria-label="Toggle topology legend"
+          title="Show legend: modes, granularity and entity colors"
+          data-testid="topology-legend-toggle"
+        >
+          <HelpCircle size={14} strokeWidth={1.75} />
+          <span>Legend</span>
+        </button>
       </div>
 
-      <select
-        className={styles.select}
-        value={currentKind}
-        onChange={(e) => updateFilter('kind', e.target.value)}
-        data-testid="filter-kind"
-      >
-        <option value="">All Kinds</option>
-        {filters?.kinds.map((k) => (
-          <option key={k} value={k}>
-            {k}
-          </option>
-        ))}
-      </select>
-
-      <select
-        className={styles.select}
-        value={currentNamespace}
-        onChange={(e) => updateFilter('namespace', e.target.value)}
-        data-testid="filter-namespace"
-      >
-        <option value="">All Namespaces</option>
-        {filters?.namespaces.map((ns) => (
-          <option key={ns} value={ns}>
-            {ns}
-          </option>
-        ))}
-      </select>
-
-      <select
-        className={styles.select}
-        value={currentRelation}
-        onChange={(e) => updateFilter('relation', e.target.value)}
-        data-testid="filter-relation"
-      >
-        <option value="">All Relations</option>
-        {filters?.relations.map((r) => (
-          <option key={r} value={r}>
-            {r}
-          </option>
-        ))}
-      </select>
-    </div>
+      {legendOpen && <LegendPanel onClose={() => setLegendOpen(false)} />}
+    </>
   )
 }

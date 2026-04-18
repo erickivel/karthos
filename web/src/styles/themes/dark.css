@@ -3,6 +3,7 @@
   --color-signal: #08dc7d;
   --color-alert: #c62d2f;
   --color-info: #3e9adf;
+  --color-warn: #f2b73a;
 
   /* Text */
   --color-text-primary: #e0e0e0;
@@ -13,4 +14,18 @@
   --surface-nav: #1a1c1e;
   --surface-module: #1e2022;
   --surface-active: #333537;
+
+  /* Per-kind entity colors (header / accent) */
+  --kind-namespace: #3e9adf;  /* blue   */
+  --kind-node: #8a6edc;       /* violet */
+  --kind-service: #08dc7d;    /* green  */
+  --kind-workload: #18b8d4;   /* teal   */
+  --kind-pod: #5bd0ff;        /* light blue */
+  --kind-container: #7c8691;  /* gray   */
+  --kind-ingress: #ff8a3d;    /* orange */
+  --kind-configmap: #e6c84a;  /* amber  */
+  --kind-secret: #e46aa7;     /* pink   */
+  --kind-pvc: #b48ef2;        /* lilac  */
+  --kind-endpoint: #ffd166;   /* yellow */
+  --kind-cluster: #9aa5b1;    /* slate  */
 }
