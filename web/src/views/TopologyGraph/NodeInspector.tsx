@@ -1,10 +1,94 @@
 import { useNavigate } from 'react-router-dom'
 import { useNodeDetail } from '@/hooks/useNodeDetail'
-import { useNodeMetricSummary } from '@/hooks/useNodeMetricSummary'
 import { useAppStore } from '@/stores/useAppStore'
 import { DataChip } from '@/components/shared/DataChip'
 import type { GraphNode } from '@/types/graph'
 import styles from './NodeInspector.module.css'
+
+interface NodeMetricSummaryItem {
+  label: string
+  value: string
+  tone?: 'signal' | 'info' | 'alert' | 'muted'
+}
+
+function formatBytes(n: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let v = n
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+function parseLabelNumber(labels: Record<string, string>, key: string): number | null {
+  const raw = labels[key]
+  if (raw === undefined) return null
+  const v = Number(raw)
+  return Number.isFinite(v) ? v : null
+}
+
+// buildMetricSummary reads synthesised metric labels that useGraphLayout and
+// backend enrichment populate on node.labels. It deliberately does not issue
+// new queries — the goal is to reuse what the caller already has.
+function buildMetricSummary(node: GraphNode): NodeMetricSummaryItem[] {
+  const labels = node.labels ?? {}
+  const items: NodeMetricSummaryItem[] = []
+
+  const cpu = parseLabelNumber(labels, 'cpu_usage_millicores')
+  if (cpu !== null) {
+    items.push({ label: 'CPU', value: `${Math.round(cpu)} m`, tone: 'info' })
+  }
+  const mem = parseLabelNumber(labels, 'memory_usage_bytes')
+  if (mem !== null) {
+    items.push({ label: 'Memory', value: formatBytes(mem), tone: 'info' })
+  }
+
+  const phase = parseLabelNumber(labels, 'pod_phase')
+  if (phase !== null) {
+    // OTel k8sclusterreceiver encoding: 1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown.
+    const name =
+      phase === 1 ? 'Pending'
+      : phase === 2 ? 'Running'
+      : phase === 3 ? 'Succeeded'
+      : phase === 4 ? 'Failed'
+      : 'Unknown'
+    const tone: NodeMetricSummaryItem['tone'] =
+      name === 'Running' ? 'signal'
+      : name === 'Pending' ? 'info'
+      : name === 'Failed' ? 'alert'
+      : 'muted'
+    items.push({ label: 'Phase', value: name, tone })
+  }
+
+  const ready = parseLabelNumber(labels, 'node_condition_ready')
+  if (ready !== null) {
+    items.push({
+      label: 'Ready',
+      value: ready >= 1 ? 'Ready' : 'Not Ready',
+      tone: ready >= 1 ? 'signal' : 'alert',
+    })
+  }
+  const memPressure = parseLabelNumber(labels, 'node_condition_memory_pressure')
+  if (memPressure !== null) {
+    items.push({
+      label: 'Memory Pressure',
+      value: memPressure >= 1 ? 'Detected' : 'Clear',
+      tone: memPressure >= 1 ? 'alert' : 'signal',
+    })
+  }
+  const diskPressure = parseLabelNumber(labels, 'node_condition_disk_pressure')
+  if (diskPressure !== null) {
+    items.push({
+      label: 'Disk Pressure',
+      value: diskPressure >= 1 ? 'Detected' : 'Clear',
+      tone: diskPressure >= 1 ? 'alert' : 'signal',
+    })
+  }
+
+  return items
+}
 
 function getDetailItems(node: GraphNode) {
   const labels = node.labels ?? {}
@@ -49,9 +133,10 @@ export function NodeInspector() {
   const selectedEntityId = useAppStore((s) => s.selectedEntityId)
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId)
   const { data } = useNodeDetail(selectedEntityId)
-  const metricSummary = useNodeMetricSummary(data?.node)
 
   if (!selectedEntityId || !data) return null
+
+  const metricSummary = buildMetricSummary(data.node)
 
   const { node, edges } = data
   const labels = node.labels ?? {}

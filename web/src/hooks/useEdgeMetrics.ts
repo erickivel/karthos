@@ -4,7 +4,6 @@ import { getSamples } from '@/api/metrics'
 import type { MetricSample } from '@/types/metrics'
 import { usePollingEnabled } from './usePollingEnabled'
 import {
-  buildEdgeMetricKey,
   getEdgeMetricKeyFromLabels,
   type EdgeMetricSnapshot,
 } from '@/views/TopologyGraph/edgeMetrics'
@@ -70,5 +69,3 @@ export function useEdgeMetrics(): Map<string, EdgeMetricSnapshot> {
     return map
   }, [queries])
 }
-
-export { buildEdgeMetricKey }
