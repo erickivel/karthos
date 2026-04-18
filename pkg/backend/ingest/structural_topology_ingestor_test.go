@@ -25,7 +25,7 @@ func TestStructuralTopologyIngestor_WritesSnapshotToGraphStore(t *testing.T) {
 
 	store := persistence.NewInMemoryGraphStore()
 	builder := NewK8sStructuralTopologyBuilder("test")
-	ingestor := NewStructuralTopologyIngestor(builder, store, nil)
+	ingestor := NewStructuralTopologyIngestor(builder, store, nil, nil)
 
 	err := ingestor.IngestProfile(context.Background(), prof)
 	require.NoError(t, err)
@@ -43,7 +43,7 @@ func TestStructuralTopologyIngestor_EmptyProfileWritesNothing(t *testing.T) {
 
 	store := persistence.NewInMemoryGraphStore()
 	builder := NewK8sStructuralTopologyBuilder("test")
-	ingestor := NewStructuralTopologyIngestor(builder, store, nil)
+	ingestor := NewStructuralTopologyIngestor(builder, store, nil, nil)
 
 	err := ingestor.IngestProfile(context.Background(), prof)
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
 	graphStore := persistence.NewInMemoryGraphStore()
 	entityRegistry := persistence.NewInMemoryEntityRegistry()
 	builder := NewK8sStructuralTopologyBuilder("test")
-	ingestor := NewStructuralTopologyIngestor(builder, graphStore, entityRegistry)
+	ingestor := NewStructuralTopologyIngestor(builder, graphStore, entityRegistry, nil)
 
 	err := ingestor.IngestProfile(context.Background(), prof)
 	require.NoError(t, err)

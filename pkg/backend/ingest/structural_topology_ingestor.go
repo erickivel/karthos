@@ -7,6 +7,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
@@ -18,14 +19,16 @@ type StructuralTopologyIngestor struct {
 	builder  StructuralTopologyBuilder
 	store    persistence.GraphStore
 	registry persistence.EntityRegistry
+	logger   *logging.Logger
 }
 
 func NewStructuralTopologyIngestor(
 	builder StructuralTopologyBuilder,
 	store persistence.GraphStore,
 	registry persistence.EntityRegistry,
+	logger *logging.Logger,
 ) *StructuralTopologyIngestor {
-	return &StructuralTopologyIngestor{builder: builder, store: store, registry: registry}
+	return &StructuralTopologyIngestor{builder: builder, store: store, registry: registry, logger: logger}
 }
 
 func (i *StructuralTopologyIngestor) IngestProfile(ctx context.Context, prof *profile.ClusterProfile) error {
@@ -33,6 +36,8 @@ func (i *StructuralTopologyIngestor) IngestProfile(ctx context.Context, prof *pr
 		if err := i.upsertStructuralEntities(ctx, prof); err != nil {
 			return fmt.Errorf("upsert structural entities: %w", err)
 		}
+	} else if i.logger != nil {
+		i.logger.Warn("structural ingest: entity registry not configured; discovered entities will not be upserted")
 	}
 
 	edges, nodes, err := i.builder.BuildStructural(ctx, prof)

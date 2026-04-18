@@ -298,7 +298,7 @@ func ingestDiscoveryProfile(
 	}
 
 	builder := ingest.NewK8sStructuralTopologyBuilder(cfg.ClusterName)
-	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore, entityRegistry)
+	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore, entityRegistry, logger)
 	if err := ingestor.IngestProfile(ctx, &prof); err != nil {
 		return fmt.Errorf("ingest structural topology: %w", err)
 	}
