@@ -80,9 +80,10 @@ func (h *GraphHandler) enrichNode(ctx context.Context, n topology.Node) enriched
 	}
 	if h.entityRegistry != nil {
 		if entity, err := h.entityRegistry.GetEntity(ctx, n.ID); err == nil {
-			en.Name = entityName(entity)
-			en.Namespace = entityNamespace(entity)
-			en.Cluster = entityCluster(entity)
+			ref := entityRefOf(entity)
+			en.Name = ref.Name
+			en.Namespace = ref.Namespace
+			en.Cluster = ref.Cluster
 		}
 	}
 	if en.Name == "" && n.Labels != nil {
@@ -102,12 +103,13 @@ func (h *GraphHandler) resolveEntitySummary(ctx context.Context, id entities.Ent
 	if err != nil {
 		return nil
 	}
+	ref := entityRefOf(entity)
 	return &relatedEntitySummary{
 		ID:        entity.ID(),
 		Kind:      entity.Kind(),
-		Name:      entityName(entity),
-		Namespace: entityNamespace(entity),
-		Cluster:   entityCluster(entity),
+		Name:      ref.Name,
+		Namespace: ref.Namespace,
+		Cluster:   ref.Cluster,
 		Labels:    entity.Labels(),
 	}
 }
@@ -131,40 +133,25 @@ func toEnrichedEdge(e topology.Edge, related *relatedEntitySummary) enrichedEdge
 	}
 }
 
-func entityName(e entities.Entity) string {
-	switch se := e.(type) {
-	case persistence.StoredEntity:
-		return se.Name
-	case *persistence.StoredEntity:
-		return se.Name
-	}
-	if labels := e.Labels(); labels != nil {
-		return labels["name"]
-	}
-	return ""
+type entityRef struct {
+	Name      string
+	Namespace string
+	Cluster   string
 }
 
-func entityNamespace(e entities.Entity) string {
+func entityRefOf(e entities.Entity) entityRef {
 	switch se := e.(type) {
 	case persistence.StoredEntity:
-		return se.Namespace
+		return entityRef{Name: se.Name, Namespace: se.Namespace, Cluster: se.Cluster}
 	case *persistence.StoredEntity:
-		return se.Namespace
+		return entityRef{Name: se.Name, Namespace: se.Namespace, Cluster: se.Cluster}
 	}
+	var ref entityRef
 	if labels := e.Labels(); labels != nil {
-		return labels["namespace"]
+		ref.Name = labels["name"]
+		ref.Namespace = labels["namespace"]
 	}
-	return ""
-}
-
-func entityCluster(e entities.Entity) string {
-	switch se := e.(type) {
-	case persistence.StoredEntity:
-		return se.Cluster
-	case *persistence.StoredEntity:
-		return se.Cluster
-	}
-	return ""
+	return ref
 }
 
 // --- handlers ---
