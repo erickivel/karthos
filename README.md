@@ -174,7 +174,7 @@ E2E tests require Docker, kind, and kubectl. First, set up the test cluster:
 task test:e2e:setup
 ```
 
-The default kind topology now includes one control-plane node plus one worker
+The default kind topology includes one control-plane node plus one worker
 node so the topology projection QA scenarios can assert real cross-node
 placement.
 
