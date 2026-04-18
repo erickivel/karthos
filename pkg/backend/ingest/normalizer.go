@@ -70,17 +70,30 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 				labels := map[string]string{"source": envelope.Source}
 
 				// Preserve edge context from servicegraph connector metrics.
+				// Namespace preference order: data-point attribute (set by the
+				// connector from span resources) → envelope resource (the
+				// collector's own namespace). Falls back gracefully when the
+				// gateway-emitted servicegraph metric has no resource namespace.
 				if strings.HasPrefix(metric.Name, "traces.service.graph.") {
+					resourceNS := envelope.Resource["k8s.namespace.name"]
 					if c := kvString(dp.Attributes, "client"); c != "" {
 						labels["edge_client"] = c
-						if ns := envelope.Resource["k8s.namespace.name"]; ns != "" {
-							labels["edge_client_id"] = string(metricsServiceEntityID(n.resolver, envelope.Resource, c, ns))
+						clientNS := kvString(dp.Attributes, "client_namespace")
+						if clientNS == "" {
+							clientNS = resourceNS
+						}
+						if clientNS != "" {
+							labels["edge_client_id"] = string(metricsServiceEntityID(n.resolver, envelope.Resource, c, clientNS))
 						}
 					}
 					if s := kvString(dp.Attributes, "server"); s != "" {
 						labels["edge_server"] = s
-						if ns := envelope.Resource["k8s.namespace.name"]; ns != "" {
-							labels["edge_server_id"] = string(metricsServiceEntityID(n.resolver, envelope.Resource, s, ns))
+						serverNS := kvString(dp.Attributes, "server_namespace")
+						if serverNS == "" {
+							serverNS = resourceNS
+						}
+						if serverNS != "" {
+							labels["edge_server_id"] = string(metricsServiceEntityID(n.resolver, envelope.Resource, s, serverNS))
 						}
 					}
 				}

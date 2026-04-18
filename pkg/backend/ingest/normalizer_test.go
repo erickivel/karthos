@@ -316,6 +316,62 @@ func TestOTLPNormalizer_ServiceGraphEdgeLabels(t *testing.T) {
 	)
 }
 
+func TestOTLPNormalizer_ServiceGraphEdgeLabels_AttrsNamespace(t *testing.T) {
+	// Gateway-emitted servicegraph metrics may not carry k8s.namespace.name on
+	// the resource; the connector sets client_namespace/server_namespace on
+	// the data point instead.
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("traces.service.graph.request.total", 7.0, tsNano, map[string]string{
+		"client":           "service-a",
+		"server":           "service-b",
+		"client_namespace": "ns-a",
+		"server_namespace": "ns-b",
+	})
+	// Resource resolves to a node (no namespace on envelope).
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "gateway-node"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	s := samples[0]
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "ns-a", "service-a")),
+		s.Labels["edge_client_id"],
+	)
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "ns-b", "service-b")),
+		s.Labels["edge_server_id"],
+	)
+}
+
+func TestOTLPNormalizer_ServiceGraphEdgeLabels_NoNamespace(t *testing.T) {
+	// If neither dp attribute nor envelope resource supplies a namespace,
+	// the edge_*_id labels are omitted rather than computed with an empty ns.
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("traces.service.graph.request.total", 1.0, tsNano, map[string]string{
+		"client": "service-a",
+		"server": "service-b",
+	})
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "gateway-node"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	s := samples[0]
+	assert.Equal(t, "service-a", s.Labels["edge_client"])
+	assert.Equal(t, "service-b", s.Labels["edge_server"])
+	_, hasClientID := s.Labels["edge_client_id"]
+	_, hasServerID := s.Labels["edge_server_id"]
+	assert.False(t, hasClientID, "edge_client_id should be omitted without namespace")
+	assert.False(t, hasServerID, "edge_server_id should be omitted without namespace")
+}
+
 func TestOTLPNormalizer_NonServiceGraphHasNoEdgeLabels(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())
