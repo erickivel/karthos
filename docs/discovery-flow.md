@@ -13,6 +13,9 @@ sequenceDiagram
     participant SP as SourcePlanner
     participant RV as ReleaseValuesBuilder
     participant B as backend
+    participant STI as StructuralTopologyIngestor
+    participant ER as EntityRegistry
+    participant GS as GraphStore
     participant H as Helm runner
     participant Cluster as K8s Cluster
 
@@ -54,6 +57,14 @@ sequenceDiagram
     CLI->>H: helm upgrade --install
     H->>Cluster: Create or update release resources
     Cluster-->>H: Release applied
+
+    Note over Cluster,B: Backend startup
+    Cluster->>B: Mount /etc/oksg/profile.json and start pod
+    B->>STI: IngestProfile(ctx, profile)
+    STI->>ER: UpsertEntity(namespace / workload / service / pod / container / ...)
+    STI->>GS: PutSnapshot(structural topology)
+
+    Note over Cluster,B: Runtime telemetry
     Cluster->>B: Gateway forwards OTLP metrics/traces
     B-->>Cluster: Backend logs accepted raw envelopes
 ```
@@ -129,6 +140,16 @@ The Helm chart is responsible for:
 - gateway Service and Deployment
 - backend Service and Deployment
 - restart-on-config-change annotations
+
+### 5. Backend Structural Ingest
+
+The backend pod mounts the generated `profile.json` at `/etc/oksg/profile.json`
+and runs `StructuralTopologyIngestor.IngestProfile` once at startup. This
+seeds the `EntityRegistry` with every entity discovered in the profile
+(namespaces, workloads, services, pods, containers, and their supporting
+objects) and writes an initial structural snapshot to the `GraphStore`, so
+the topology API returns discovered entities even before any runtime
+telemetry arrives.
 
 ## Example Output
 
