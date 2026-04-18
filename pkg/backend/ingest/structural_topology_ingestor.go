@@ -149,26 +149,12 @@ func newStoredEntity(
 	name string,
 	labels map[string]string,
 ) persistence.StoredEntity {
-	metadata := make(map[string]string, len(labels)+3)
-	for k, v := range labels {
-		metadata[k] = v
-	}
-	if cluster != "" {
-		metadata["cluster"] = cluster
-	}
-	if namespace != "" {
-		metadata["namespace"] = namespace
-	}
-	if name != "" {
-		metadata["name"] = name
-	}
-
 	return persistence.StoredEntity{
 		EntityID:   id,
 		EntityKind: kind,
 		Cluster:    cluster,
 		Namespace:  namespace,
 		Name:       name,
-		Metadata:   metadata,
+		Metadata:   buildEntityMetadata(cluster, namespace, name, labels),
 	}
 }

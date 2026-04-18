@@ -199,23 +199,10 @@ func newNode(
 	name string,
 	labels map[string]string,
 ) topology.Node {
-	enriched := make(map[string]string, len(labels)+3)
-	for k, v := range labels {
-		enriched[k] = v
-	}
-	if cluster != "" {
-		enriched["cluster"] = cluster
-	}
-	if namespace != "" {
-		enriched["namespace"] = namespace
-	}
-	if name != "" {
-		enriched["name"] = name
-	}
 	return topology.Node{
 		ID:     id,
 		Kind:   kind,
-		Labels: enriched,
+		Labels: buildEntityMetadata(cluster, namespace, name, labels),
 	}
 }
 
