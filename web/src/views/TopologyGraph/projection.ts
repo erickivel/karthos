@@ -3,13 +3,6 @@ import type { EntityKind, GraphEdge, GraphNode } from '@/types/graph'
 export type ProjectionMode = 'ownership' | 'infrastructure' | 'traffic'
 export type Granularity = 'overview' | 'runtime' | 'detailed'
 
-export const PROJECTION_MODES: ProjectionMode[] = [
-  'ownership',
-  'infrastructure',
-  'traffic',
-]
-export const GRANULARITIES: Granularity[] = ['overview', 'runtime', 'detailed']
-
 const OVERVIEW_KINDS: EntityKind[] = [
   'namespace',
   'node',
@@ -89,9 +82,13 @@ export function project(
     for (const n of visibleNodes) if (n.kind === 'node') nodeEntitiesById.set(n.id, n)
 
     const podToHostNode = new Map<string, string>()
+    const containerToPod = new Map<string, string>()
     for (const e of edges) {
-      if (e.relation !== 'runs_on') continue
-      if (nodeEntitiesById.has(e.target)) podToHostNode.set(e.source, e.target)
+      if (e.relation === 'runs_on') {
+        if (nodeEntitiesById.has(e.target)) podToHostNode.set(e.source, e.target)
+      } else if (e.relation === 'contains') {
+        containerToPod.set(e.target, e.source)
+      }
     }
     for (const n of visibleNodes) {
       if (n.kind === 'node') continue
@@ -99,12 +96,9 @@ export function project(
         const host = podToHostNode.get(n.id)
         if (host) groupOf.set(n.id, host)
       } else if (n.kind === 'container') {
-        // container inherits its pod's host via contains pod->container
-        const podEdge = edges.find(
-          (e) => e.relation === 'contains' && e.target === n.id,
-        )
-        if (podEdge) {
-          const host = podToHostNode.get(podEdge.source)
+        const podId = containerToPod.get(n.id)
+        if (podId) {
+          const host = podToHostNode.get(podId)
           if (host) groupOf.set(n.id, host)
         }
       }
