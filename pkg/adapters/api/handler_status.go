@@ -142,9 +142,10 @@ type nodeSummary struct {
 }
 
 type podSummary struct {
-	Running int `json:"running"`
-	Pending int `json:"pending"`
-	Failed  int `json:"failed"`
+	Pending   int `json:"pending"`
+	Running   int `json:"running"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
 }
 
 func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary {
@@ -196,9 +197,11 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 		for _, v := range latest {
 			switch int(v) {
 			case 1:
-				hs.Pods.Running++
-			case 2:
 				hs.Pods.Pending++
+			case 2:
+				hs.Pods.Running++
+			case 3:
+				hs.Pods.Succeeded++
 			case 4:
 				hs.Pods.Failed++
 			}

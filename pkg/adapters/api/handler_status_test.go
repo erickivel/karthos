@@ -146,11 +146,11 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 		{MetricName: "node_condition_ready", EntityID: "node-2", Value: 1, Timestamp: now},
 		{MetricName: "node_condition_ready", EntityID: "node-3", Value: 0, Timestamp: now},
 	}))
-	// Write pod phase metrics.
+	// Write pod phase metrics (OTel encoding: 1=Pending, 2=Running, 3=Succeeded, 4=Failed).
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "pod_phase", EntityID: "pod-1", Value: 1, Timestamp: now}, // Running
-		{MetricName: "pod_phase", EntityID: "pod-2", Value: 1, Timestamp: now}, // Running
-		{MetricName: "pod_phase", EntityID: "pod-3", Value: 2, Timestamp: now}, // Pending
+		{MetricName: "pod_phase", EntityID: "pod-1", Value: 2, Timestamp: now}, // Running
+		{MetricName: "pod_phase", EntityID: "pod-2", Value: 2, Timestamp: now}, // Running
+		{MetricName: "pod_phase", EntityID: "pod-3", Value: 1, Timestamp: now}, // Pending
 		{MetricName: "pod_phase", EntityID: "pod-4", Value: 4, Timestamp: now}, // Failed
 	}))
 

@@ -49,7 +49,7 @@ var defaultCatalog = []CanonicalMetric{
 	{Name: "paging_operations_per_second", Unit: UnitPerSecond, Category: CategoryResource, Description: "Paging operations per second."},
 
 	// Kubernetes state metrics (k8s_cluster receiver)
-	{Name: "pod_phase", Unit: UnitCount, Category: CategoryHealth, Description: "Pod phase as a gauge (1=Running, 2=Pending, 3=Succeeded, 4=Failed, 5=Unknown)."},
+	{Name: "pod_phase", Unit: UnitCount, Category: CategoryHealth, Description: "Pod phase as a gauge (1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown)."},
 	{Name: "namespace_phase", Unit: UnitCount, Category: CategoryHealth, Description: "Namespace phase (1=active, 0=terminating)."},
 	{Name: "node_condition_ready", Unit: UnitCount, Category: CategoryHealth, Description: "Node Ready condition (1=true, 0=false)."},
 	{Name: "node_condition_memory_pressure", Unit: UnitCount, Category: CategoryHealth, Description: "Node MemoryPressure condition (1=true, 0=false)."},
