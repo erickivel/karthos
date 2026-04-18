@@ -59,13 +59,13 @@ Response:
     "data_stale": false,
     "health_summary": {
       "nodes": {"healthy": 3, "unhealthy": 0},
-      "pods": {"running": 12, "pending": 0, "failed": 0}
+      "pods": {"pending": 0, "running": 12, "succeeded": 0, "failed": 0}
     }
   }
 }
 ```
 
-`health_summary` is present when a MetricStore is configured and `node_condition_ready` / `pod_phase` metrics are available. It aggregates the latest samples per entity from the last 5 minutes.
+`health_summary` is present when a MetricStore is configured and `node_condition_ready` / `pod_phase` metrics are available. It aggregates the latest samples per entity from the last 5 minutes. `pod_phase` follows the OTel `k8sclusterreceiver` encoding: `1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown`.
 
 Status values:
 
