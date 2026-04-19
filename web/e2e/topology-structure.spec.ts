@@ -9,7 +9,6 @@ import {
   groupCardsByAttributes,
   openTopology,
   selectEntity,
-  selectKind,
   selectNamespace,
   setGranularity,
   setMode,

@@ -55,3 +55,14 @@
 .separator {
   color: var(--surface-active);
 }
+
+@media (max-width: 860px) {
+  .statusBar {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .right {
+    margin-left: 0;
+  }
+}

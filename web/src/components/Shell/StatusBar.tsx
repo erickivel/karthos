@@ -15,10 +15,10 @@ export function StatusBar() {
   const { data: snapshot } = useGraphSnapshot()
 
   const systemLabel = connectionStatus === 'connected'
-    ? 'SYSTEM_NOMINAL'
+    ? 'BACKEND_OK'
     : connectionStatus === 'degraded'
-      ? 'DEGRADED'
-      : 'DISCONNECTED'
+      ? 'BACKEND_DEGRADED'
+      : 'BACKEND_OFFLINE'
 
   const nodeCount = snapshot?.summary.node_count ?? 0
   const edgeCount = snapshot?.summary.edge_count ?? 0
@@ -34,7 +34,7 @@ export function StatusBar() {
       <div className={styles.segment}>
         <span className={styles.tag}>[OKSG]</span>
         <span className={styles.label}>
-          {connectionStatus !== 'disconnected' ? 'BACKEND CONNECTED' : 'BACKEND UNREACHABLE'}
+          {connectionStatus !== 'disconnected' ? 'BACKEND STATUS' : 'BACKEND UNREACHABLE'}
         </span>
         {snapshotAge !== undefined && (
           <>
@@ -51,7 +51,7 @@ export function StatusBar() {
       <div className={styles.right}>
         <span className={styles.tag}>[NET]</span>
         <span className={styles.label}>
-          POLLING {status ? 'oksg-backend:8080' : '--'}
+          API {status ? 'oksg-backend:8080' : '--'}
         </span>
       </div>
     </footer>

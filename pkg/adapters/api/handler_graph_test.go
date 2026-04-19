@@ -327,3 +327,48 @@ func TestGetGraphIncludesStructuralKindsWhenGraphContainsThem(t *testing.T) {
 	require.Contains(t, filters["kinds"], "pvc")
 	require.Contains(t, filters["kinds"], "ingress")
 }
+
+func TestGetGraphCanonicalizesLegacyNamespaceLessServiceNodesAndEdges(t *testing.T) {
+	gs := persistence.NewInMemoryGraphStore()
+	now := time.Now().UTC()
+
+	canonicalGateway := entities.ComputeEntityID(entities.KindService, "cluster", "oksg-demo", "gateway-go")
+	legacyGateway := entities.ComputeEntityID(entities.KindService, "cluster", "gateway-go")
+	canonicalServiceA := entities.ComputeEntityID(entities.KindService, "cluster", "oksg-demo", "service-a")
+	legacyServiceA := entities.ComputeEntityID(entities.KindService, "cluster", "service-a")
+
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		From:      now,
+		To:        now,
+		CreatedAt: now,
+		Graph: topology.Graph{
+			Timestamp: now,
+			Nodes: []topology.Node{
+				{ID: canonicalGateway, Kind: entities.KindService, Labels: map[string]string{"name": "gateway-go", "namespace": "oksg-demo"}},
+				{ID: legacyGateway, Kind: entities.KindService, Labels: map[string]string{"name": "gateway-go"}},
+				{ID: canonicalServiceA, Kind: entities.KindService, Labels: map[string]string{"name": "service-a", "namespace": "oksg-demo"}},
+				{ID: legacyServiceA, Kind: entities.KindService, Labels: map[string]string{"name": "service-a"}},
+			},
+			Edges: []topology.Edge{
+				topology.NewEdge(legacyGateway, legacyServiceA, topology.RelCalls, now),
+			},
+		},
+	}))
+
+	srv := newTestServer(t, Config{GraphStore: gs})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/graph")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parseResponseData(t, resp)
+	graph := data["graph"].(map[string]any)
+	nodes := graph["nodes"].([]any)
+	require.Len(t, nodes, 2)
+	edges := graph["edges"].([]any)
+	require.Len(t, edges, 1)
+	edge := edges[0].(map[string]any)
+	require.Equal(t, string(canonicalGateway), edge["source"])
+	require.Equal(t, string(canonicalServiceA), edge["target"])
+}

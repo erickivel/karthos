@@ -41,6 +41,7 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
           onChange={(e) => updateFilter('kind', e.target.value)}
           data-testid="filter-kind"
           title="Filter by entity kind"
+          aria-label="Filter by entity kind"
         >
           <option value="">All Kinds</option>
           {filters?.kinds.map((k) => (
@@ -56,6 +57,7 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
           onChange={(e) => updateFilter('namespace', e.target.value)}
           data-testid="filter-namespace"
           title="Filter by namespace"
+          aria-label="Filter by namespace"
         >
           <option value="">All Namespaces</option>
           {filters?.namespaces.map((ns) => (
@@ -71,6 +73,7 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
           onChange={(e) => updateFilter('relation', e.target.value)}
           data-testid="filter-relation"
           title="Filter by relation type"
+          aria-label="Filter by relation type"
         >
           <option value="">All Relations</option>
           {filters?.relations.map((r) => (

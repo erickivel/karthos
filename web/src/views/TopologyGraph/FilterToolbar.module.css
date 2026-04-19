@@ -152,3 +152,21 @@
   background: var(--surface-active);
   color: var(--color-signal);
 }
+
+@media (max-width: 860px) {
+  .toolbar {
+    left: 50%;
+    transform: translateX(-50%);
+    flex-wrap: wrap;
+    justify-content: center;
+    width: min(100% - (2 * var(--space-md)), 540px);
+  }
+
+  .toolbarRight {
+    top: auto;
+    bottom: calc(40px + var(--space-xl));
+    right: var(--space-md);
+    width: min(220px, calc(100% - (2 * var(--space-md))));
+    margin-top: 0;
+  }
+}

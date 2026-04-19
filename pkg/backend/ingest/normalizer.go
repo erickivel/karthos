@@ -33,11 +33,6 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 		return nil, fmt.Errorf("unmarshal ResourceMetrics: %w", err)
 	}
 
-	entityID, err := n.resolver.Resolve(ctx, envelope.Resource)
-	if err != nil {
-		return nil, fmt.Errorf("resolve entity: %w", err)
-	}
-
 	var samples []metrics.MetricSample
 
 	for _, sm := range rm.ScopeMetrics {
@@ -67,33 +62,25 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					continue
 				}
 
+				entityID, err := n.resolveMetricEntity(ctx, envelope.Resource, metric.Name, dp.Attributes)
+				if err != nil {
+					return nil, fmt.Errorf("resolve entity: %w", err)
+				}
+
 				labels := map[string]string{"source": envelope.Source}
 
 				// Preserve edge context from servicegraph connector metrics.
-				// Namespace preference order: data-point attribute (set by the
-				// connector from span resources) → envelope resource (the
-				// collector's own namespace). Falls back gracefully when the
-				// gateway-emitted servicegraph metric has no resource namespace.
 				if strings.HasPrefix(metric.Name, "traces.service.graph.") {
-					resourceNS := envelope.Resource["k8s.namespace.name"]
 					if c := kvString(dp.Attributes, "client"); c != "" {
 						labels["edge_client"] = c
-						clientNS := kvString(dp.Attributes, "client_namespace")
-						if clientNS == "" {
-							clientNS = resourceNS
-						}
-						if clientNS != "" {
-							labels["edge_client_id"] = string(metricsServiceEntityID(n.resolver, envelope.Resource, c, clientNS))
+						if clientID, ok := resolveServiceMetricEntityID(ctx, n.resolver, envelope.Resource, c, kvString(dp.Attributes, "client_namespace")); ok {
+							labels["edge_client_id"] = string(clientID)
 						}
 					}
 					if s := kvString(dp.Attributes, "server"); s != "" {
 						labels["edge_server"] = s
-						serverNS := kvString(dp.Attributes, "server_namespace")
-						if serverNS == "" {
-							serverNS = resourceNS
-						}
-						if serverNS != "" {
-							labels["edge_server_id"] = string(metricsServiceEntityID(n.resolver, envelope.Resource, s, serverNS))
+						if serverID, ok := resolveServiceMetricEntityID(ctx, n.resolver, envelope.Resource, s, kvString(dp.Attributes, "server_namespace")); ok {
+							labels["edge_server_id"] = string(serverID)
 						}
 					}
 				}
@@ -112,15 +99,72 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 	return samples, nil
 }
 
-func metricsServiceEntityID(resolver EntityResolver, resource map[string]string, serviceName, namespace string) entities.EntityID {
-	clusterName := ""
-	if r, ok := resolver.(*OTLPEntityResolver); ok {
-		clusterName = r.clusterName
+func (n *OTLPNormalizer) resolveMetricEntity(
+	ctx context.Context,
+	resource map[string]string,
+	metricName string,
+	attrs []*commonpb.KeyValue,
+) (entities.EntityID, error) {
+	if strings.HasPrefix(metricName, "traces.service.graph.") {
+		if client := kvString(attrs, "client"); client != "" {
+			if clientID, ok := resolveServiceMetricEntityID(ctx, n.resolver, resource, client, kvString(attrs, "client_namespace")); ok {
+				return clientID, nil
+			}
+		}
 	}
-	if clusterName == "" {
-		clusterName = resource["k8s.cluster.name"]
+
+	if strings.HasPrefix(metricName, "traces.span.metrics.") {
+		if serviceName := resource["service.name"]; serviceName != "" {
+			if serviceID, ok := resolveServiceMetricEntityID(ctx, n.resolver, resource, serviceName, resource["k8s.namespace.name"]); ok {
+				return serviceID, nil
+			}
+		}
 	}
-	return entities.ComputeEntityID(entities.KindService, clusterName, namespace, serviceName)
+
+	return n.resolver.Resolve(ctx, resource)
+}
+
+func resolveServiceMetricEntityID(
+	ctx context.Context,
+	resolver EntityResolver,
+	resource map[string]string,
+	serviceName, namespaceHint string,
+) (entities.EntityID, bool) {
+	if serviceName == "" {
+		return "", false
+	}
+
+	if otlpResolver, ok := resolver.(*OTLPEntityResolver); ok {
+		if serviceID, _, ok := otlpResolver.resolveCanonicalService(ctx, serviceName, namespaceHint); ok {
+			return serviceID, true
+		}
+	}
+
+	if fallbackNS := fallbackMetricServiceNamespace(resource, serviceName); fallbackNS != "" {
+		clusterName := resource["k8s.cluster.name"]
+		if otlpResolver, ok := resolver.(*OTLPEntityResolver); ok && otlpResolver.clusterName != "" {
+			clusterName = otlpResolver.clusterName
+		}
+		return entities.ComputeEntityID(entities.KindService, clusterName, fallbackNS, serviceName), true
+	}
+
+	return "", false
+}
+
+func fallbackMetricServiceNamespace(resource map[string]string, serviceName string) string {
+	namespace := resource["k8s.namespace.name"]
+	if namespace == "" {
+		return ""
+	}
+
+	resourceService := resource["service.name"]
+	if resourceService == "" || resourceService == serviceName {
+		return namespace
+	}
+	if resource["k8s.node.name"] != "" {
+		return ""
+	}
+	return namespace
 }
 
 // collectDataPoints returns all NumberDataPoints from Gauge or Sum metrics.

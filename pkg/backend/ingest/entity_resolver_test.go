@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -157,6 +158,29 @@ func TestOTLPEntityResolver_ServiceBestEffort_Deterministic(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, id1, id2)
+}
+
+func TestOTLPEntityResolver_ServiceBestEffortPrefersCanonicalNamespacedRegistryEntity(t *testing.T) {
+	registry := persistence.NewInMemoryEntityRegistry()
+	require.NoError(t, registry.UpsertEntity(context.Background(), persistence.StoredEntity{
+		EntityID:   entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "my-service"),
+		EntityKind: entities.KindService,
+		Cluster:    testCluster,
+		Namespace:  "oksg-demo",
+		Name:       "my-service",
+		Metadata: map[string]string{
+			"service.name":       "my-service",
+			"k8s.namespace.name": "oksg-demo",
+		},
+	}))
+
+	resolver := NewOTLPEntityResolverWithRegistry(testCluster, registry)
+
+	id, err := resolver.Resolve(context.Background(), map[string]string{
+		"service.name": "my-service",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "my-service"), id)
 }
 
 func TestOTLPEntityResolver_Deployment(t *testing.T) {

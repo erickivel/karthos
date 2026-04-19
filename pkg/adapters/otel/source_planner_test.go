@@ -202,21 +202,26 @@ func TestPlanSpanmetricsAndServicegraphConnectorsWhenOTLPTracesEnabled(t *testin
 	})
 	require.NoError(t, err)
 
-	// Connectors must be present.
-	require.NotNil(t, plan.AgentConfig.Connectors)
-	require.Contains(t, plan.AgentConfig.Connectors, "spanmetrics")
-	require.Contains(t, plan.AgentConfig.Connectors, "servicegraph")
+	// Connectors must be present on the aggregation point (gateway), not the agent.
+	require.Nil(t, plan.AgentConfig.Connectors)
+	require.NotNil(t, plan.GatewayConfig.Connectors)
+	require.Contains(t, plan.GatewayConfig.Connectors, "spanmetrics")
+	require.Contains(t, plan.GatewayConfig.Connectors, "servicegraph")
 
-	// Traces pipeline exporters must include the connectors.
-	tracesPipeline := plan.AgentConfig.Service.Pipelines["traces"]
+	// Traces pipeline exporters must include the connectors on the gateway.
+	tracesPipeline := plan.GatewayConfig.Service.Pipelines["traces"]
 	require.Contains(t, tracesPipeline.Exporters, "spanmetrics")
 	require.Contains(t, tracesPipeline.Exporters, "servicegraph")
 	require.Contains(t, tracesPipeline.Exporters, "otlp")
 
-	// Metrics pipeline receivers must include connector outputs.
-	metricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
+	// Metrics pipeline receivers must include connector outputs on the gateway.
+	metricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
 	require.Contains(t, metricsPipeline.Receivers, "spanmetrics")
 	require.Contains(t, metricsPipeline.Receivers, "servicegraph")
+
+	// Agent traces should forward upstream only; connectors live on the gateway.
+	agentTracesPipeline := plan.AgentConfig.Service.Pipelines["traces"]
+	require.Equal(t, []string{"otlp"}, agentTracesPipeline.Exporters)
 }
 
 // TestPlanPrometheusAndTracesProfile verifies that when both prometheus and OTLP
@@ -256,22 +261,33 @@ func TestPlanPrometheusAndTracesProfile(t *testing.T) {
 	// Prometheus scraping enabled.
 	require.Contains(t, plan.AgentConfig.Receivers, "prometheus")
 
-	// Connectors present for trace-derived metrics.
-	require.Contains(t, plan.AgentConfig.Connectors, "spanmetrics")
-	require.Contains(t, plan.AgentConfig.Connectors, "servicegraph")
+	// Connectors present for trace-derived metrics on the gateway.
+	require.Nil(t, plan.AgentConfig.Connectors)
+	require.Contains(t, plan.GatewayConfig.Connectors, "spanmetrics")
+	require.Contains(t, plan.GatewayConfig.Connectors, "servicegraph")
 
-	// Traces pipeline exports to both backend and connectors.
-	tracesPipeline := plan.AgentConfig.Service.Pipelines["traces"]
+	// Traces pipeline exports to both backend and connectors on the gateway.
+	tracesPipeline := plan.GatewayConfig.Service.Pipelines["traces"]
 	require.Contains(t, tracesPipeline.Exporters, "spanmetrics")
 	require.Contains(t, tracesPipeline.Exporters, "servicegraph")
 	require.Contains(t, tracesPipeline.Exporters, "otlp")
 
-	// Metrics pipeline receives from connectors alongside prometheus and kubeletstats.
-	metricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
+	// Agent metrics pipeline keeps its node-local receivers.
+	agentMetricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
+	require.Contains(t, agentMetricsPipeline.Receivers, "prometheus")
+	require.Contains(t, agentMetricsPipeline.Receivers, "kubeletstats")
+	require.NotContains(t, agentMetricsPipeline.Receivers, "spanmetrics")
+	require.NotContains(t, agentMetricsPipeline.Receivers, "servicegraph")
+
+	agentTracesPipeline := plan.AgentConfig.Service.Pipelines["traces"]
+	require.Equal(t, []string{"otlp"}, agentTracesPipeline.Exporters)
+
+	// Gateway metrics pipeline receives from connectors alongside OTLP and k8s_cluster.
+	metricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
 	require.Contains(t, metricsPipeline.Receivers, "spanmetrics")
 	require.Contains(t, metricsPipeline.Receivers, "servicegraph")
-	require.Contains(t, metricsPipeline.Receivers, "prometheus")
-	require.Contains(t, metricsPipeline.Receivers, "kubeletstats")
+	require.Contains(t, metricsPipeline.Receivers, "otlp")
+	require.Contains(t, metricsPipeline.Receivers, "k8s_cluster")
 }
 
 // TestPlanNoConnectorsWhenTracesNotEnabled verifies that connectors are absent
@@ -288,8 +304,9 @@ func TestPlanNoConnectorsWhenTracesNotEnabled(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Nil(t, plan.AgentConfig.Connectors)
+	require.Nil(t, plan.GatewayConfig.Connectors)
 
-	metricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
+	metricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
 	require.NotContains(t, metricsPipeline.Receivers, "spanmetrics")
 	require.NotContains(t, metricsPipeline.Receivers, "servicegraph")
 }

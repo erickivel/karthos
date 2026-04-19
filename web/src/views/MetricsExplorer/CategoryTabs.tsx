@@ -12,15 +12,19 @@ const CATEGORIES: { label: string; value: MetricCategory }[] = [
 
 interface CategoryTabsProps {
   active: MetricCategory
+  categories?: MetricCategory[]
   onChange: (cat: MetricCategory) => void
 }
 
-export function CategoryTabs({ active, onChange }: CategoryTabsProps) {
+export function CategoryTabs({ active, categories, onChange }: CategoryTabsProps) {
+  const visibleCategories = categories ?? CATEGORIES.map((cat) => cat.value)
+
   return (
     <div className={styles.tabs}>
-      {CATEGORIES.map((cat) => (
+      {CATEGORIES.filter((cat) => visibleCategories.includes(cat.value)).map((cat) => (
         <button
           key={cat.value}
+          type="button"
           className={styles.tab}
           data-active={cat.value === active}
           onClick={() => onChange(cat.value)}

@@ -37,3 +37,20 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--space-md);
 }
+
+@media (max-width: 860px) {
+  .container {
+    padding: var(--space-lg);
+    padding-top: calc(52px + var(--space-xl) + 56px);
+  }
+
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .kpiRow,
+  .body {
+    grid-template-columns: 1fr;
+  }
+}

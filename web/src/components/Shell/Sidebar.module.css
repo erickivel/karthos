@@ -22,6 +22,7 @@
   border-radius: var(--radius);
   cursor: pointer;
   transition: background var(--transition-fast);
+  text-decoration: none;
 }
 
 .navButton:hover {
@@ -39,4 +40,13 @@
 .icon {
   color: var(--color-text-muted);
   transition: color var(--transition-fast);
+}
+
+@media (max-width: 860px) {
+  .sidebar {
+    top: calc(52px + var(--space-md));
+    left: 50%;
+    transform: translateX(-50%);
+    flex-direction: row;
+  }
 }

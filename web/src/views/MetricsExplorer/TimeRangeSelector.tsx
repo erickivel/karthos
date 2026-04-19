@@ -29,6 +29,7 @@ export function TimeRangeSelector({ value, onChange }: TimeRangeSelectorProps) {
       className={styles.select}
       value={value}
       onChange={(e) => onChange(e.target.value as TimeRange)}
+      aria-label="Select time range"
     >
       {RANGES.map((r) => (
         <option key={r.value} value={r.value}>{r.label}</option>

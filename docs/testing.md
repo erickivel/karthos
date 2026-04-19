@@ -64,9 +64,9 @@ What each stage now does:
 - `test:e2e:plan`
   writes `bin/e2e/otel-values.yaml` and optional rendered chart output under `bin/e2e/rendered`
 - `test:e2e:apply-otel`
-  runs `helm upgrade --install` for agent, gateway, and backend
+  runs `helm upgrade --install` for agent, gateway, backend, and frontend
 - `test:e2e:verify`
-  checks Helm status, pod readiness, and recent agent/gateway/backend logs
+  checks Helm status, pod readiness including the frontend rollout, and recent agent/gateway/backend logs
 - generated values can also carry collector `featureGates`; the default agent e2e flow enables `receiver.kubeletstats.enableCPUUsageMetrics` to reduce known kubeletstats deprecation noise
 
 ## Scenario Expectations
@@ -80,9 +80,9 @@ Expected:
 - Prometheus-annotated services are detected
 - gateway-go emits OTLP traces (instrumented with OTel Go SDK, `peer.service` attributes set)
 - generated Helm values include Prometheus receiver config and spanmetrics/servicegraph connectors
-- agent DaemonSet, gateway Deployment, and backend Deployment become ready
+- agent DaemonSet, gateway Deployment, backend Deployment, and frontend Deployment become ready
 - backend logs show accepted metric envelopes after the gateway forwards traffic
-- after ~60s, `/debug/metrics` returns at least one metric sample
+- after traffic has flowed, `/api/v1/metrics` returns normalized samples and edge-filtered queries can resolve live call edges
 - `/debug/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
 
 ## Generating Traffic
@@ -110,7 +110,7 @@ Typical sequence after a scenario run:
 task test:e2e:scenario:prometheus   # deploy and wire up telemetry
 task test:e2e:traffic TRAFFIC_REQUESTS=30  # generate traffic
 task test:e2e:debug:api             # verify backend REST API access
-task test:e2e:debug:metrics         # inspect stored metric samples
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second" | jq .
 task test:e2e:debug:graph           # inspect topology graph snapshot
 ```
 
@@ -127,7 +127,7 @@ Use the debug tasks to inspect backend state after traffic has flowed:
 
 ```bash
 task test:e2e:debug:api      # query backend /api/v1/status on a dedicated local port
-task test:e2e:debug:metrics  # dump all stored metric samples
+task test:e2e:debug:metrics  # memory-store only; external storage users should query /api/v1/metrics or VictoriaMetrics directly
 task test:e2e:debug:graph    # dump full topology graph snapshot
 ```
 

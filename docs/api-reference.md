@@ -32,7 +32,7 @@ Applies to: `/graph/nodes`, `/graph/edges`, `/entities`, `/metrics`, `/metrics/s
 
 ### GET /api/v1/status
 
-System health, component availability, and snapshot freshness.
+Backend health, component availability, and snapshot freshness. This endpoint reflects backend stores, entity registry availability, and graph freshness; it does not report frontend deployment readiness.
 
 ```bash
 curl -s http://localhost:18081/api/v1/status | jq .

@@ -105,7 +105,12 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 		name = serviceName
 
 	case hasService:
-		id = entities.ComputeEntityID(entities.KindService, r.clusterName, serviceName)
+		if canonicalID, canonicalNS, ok := r.resolveCanonicalService(ctx, serviceName, ""); ok {
+			id = canonicalID
+			namespace = canonicalNS
+		} else {
+			id = entities.ComputeEntityID(entities.KindService, r.clusterName, serviceName)
+		}
 		kind = entities.KindService
 		name = serviceName
 
@@ -125,4 +130,72 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 	}
 
 	return id, nil
+}
+
+func (r *OTLPEntityResolver) resolveCanonicalService(ctx context.Context, serviceName, namespaceHint string) (entities.EntityID, string, bool) {
+	if serviceName == "" {
+		return "", "", false
+	}
+	if namespaceHint != "" {
+		return entities.ComputeEntityID(entities.KindService, r.clusterName, namespaceHint, serviceName), namespaceHint, true
+	}
+	if r.registry == nil {
+		return "", "", false
+	}
+
+	candidates, err := r.registry.ListEntities(ctx, persistence.EntityQuery{Kind: entities.KindService})
+	if err != nil {
+		return "", "", false
+	}
+
+	var namespaced []entities.Entity
+	var fallback []entities.Entity
+	for _, candidate := range candidates {
+		candidateName := serviceEntityName(candidate)
+		if candidateName != serviceName {
+			continue
+		}
+		if candidateNS := serviceEntityNamespace(candidate); candidateNS != "" {
+			namespaced = append(namespaced, candidate)
+			continue
+		}
+		fallback = append(fallback, candidate)
+	}
+
+	if len(namespaced) == 1 {
+		candidate := namespaced[0]
+		return candidate.ID(), serviceEntityNamespace(candidate), true
+	}
+	if len(namespaced) == 0 && len(fallback) == 1 {
+		return fallback[0].ID(), "", true
+	}
+	return "", "", false
+}
+
+func serviceEntityName(entity entities.Entity) string {
+	if stored, ok := entity.(persistence.StoredEntity); ok && stored.Name != "" {
+		return stored.Name
+	}
+	if stored, ok := entity.(*persistence.StoredEntity); ok && stored.Name != "" {
+		return stored.Name
+	}
+	labels := entity.Labels()
+	if labels["service.name"] != "" {
+		return labels["service.name"]
+	}
+	return labels["name"]
+}
+
+func serviceEntityNamespace(entity entities.Entity) string {
+	if stored, ok := entity.(persistence.StoredEntity); ok && stored.Namespace != "" {
+		return stored.Namespace
+	}
+	if stored, ok := entity.(*persistence.StoredEntity); ok && stored.Namespace != "" {
+		return stored.Namespace
+	}
+	labels := entity.Labels()
+	if labels["k8s.namespace.name"] != "" {
+		return labels["k8s.namespace.name"]
+	}
+	return labels["namespace"]
 }

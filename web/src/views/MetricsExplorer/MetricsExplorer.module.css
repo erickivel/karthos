@@ -87,6 +87,17 @@
   }
 }
 
+@media (max-width: 860px) {
+  .container {
+    padding: var(--space-lg);
+    padding-top: calc(52px + var(--space-xl) + 56px);
+  }
+
+  .select {
+    min-width: min(100%, 220px);
+  }
+}
+
 .prompt {
   display: flex;
   align-items: center;

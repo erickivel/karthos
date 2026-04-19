@@ -14,11 +14,12 @@ export function EntitySelector({ value, onChange }: EntitySelectorProps) {
       className={styles.select}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      aria-label="Select entity"
     >
       <option value="">Select entity...</option>
       {data?.entities.map((entity) => (
         <option key={entity.id} value={entity.id}>
-          [{entity.kind}] {entity.namespace}/{entity.name}
+          [{entity.kind}] {entity.namespace ? `${entity.namespace}/` : ''}{entity.name}
         </option>
       ))}
     </select>

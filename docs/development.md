@@ -184,7 +184,7 @@ kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.i
 
 The backend exposes debug endpoints on its health port (13133):
 
-- `/debug/metrics` — all metric samples currently in the in-memory store as JSON
+- `/debug/metrics` — all metric samples currently in the in-memory store as JSON; when external VictoriaMetrics storage is enabled, use `/api/v1/metrics` or VictoriaMetrics directly instead
 - `/debug/graph` — current topology snapshot including accumulated nodes and edges as JSON
 
 Use the task shortcuts:
@@ -210,6 +210,13 @@ kubectl port-forward -n oksg-system deployment/oksg-backend 13133:13133 &
 curl -s http://localhost:13133/debug/metrics | jq '.[0:10]'
 curl -s http://localhost:13133/debug/graph | jq '.graph.edges[0:5]'
 kill %1
+```
+
+For external-storage e2e runs, prefer:
+
+```bash
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second" | jq '.data.samples[0:10]'
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second&edge_source_id=<source>&edge_target_id=<target>" | jq .
 ```
 
 ### Reading the graph output
@@ -251,7 +258,7 @@ Skips for `k8s.namespace`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset` r
 
 ## REST API (Layer 6)
 
-The backend exposes a versioned REST API on a dedicated port (default 8080) for querying graph state, metrics, entities, and system status. All list endpoints support cursor-based pagination (`page_size`, `next_token`). See [docs/api-reference.md](api-reference.md) for the complete reference.
+The backend exposes a versioned REST API on a dedicated port (default 8080) for querying graph state, metrics, entities, and backend status. All list endpoints support cursor-based pagination (`page_size`, `next_token`). See [docs/api-reference.md](api-reference.md) for the complete reference.
 
 For local e2e work, keep the local port split explicit to avoid colliding with `gateway-go` traffic generation:
 

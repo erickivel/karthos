@@ -91,6 +91,40 @@ func TestListEntitiesPagination(t *testing.T) {
 	require.Empty(t, nextToken2)
 }
 
+func TestListEntitiesSuppressesLegacyNamespaceLessServiceDuplicates(t *testing.T) {
+	reg := persistence.NewInMemoryEntityRegistry()
+	ctx := context.Background()
+	require.NoError(t, reg.UpsertEntity(ctx, &persistence.StoredEntity{
+		EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "oksg-demo", "gateway-go"),
+		EntityKind: entities.KindService,
+		Cluster:    "cluster",
+		Namespace:  "oksg-demo",
+		Name:       "gateway-go",
+		Metadata:   map[string]string{"name": "gateway-go", "namespace": "oksg-demo"},
+	}))
+	require.NoError(t, reg.UpsertEntity(ctx, &persistence.StoredEntity{
+		EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "gateway-go"),
+		EntityKind: entities.KindService,
+		Cluster:    "cluster",
+		Name:       "gateway-go",
+		Metadata:   map[string]string{"name": "gateway-go"},
+	}))
+
+	srv := newTestServer(t, Config{EntityRegistry: reg})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/entities?kind=service")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parsePaginatedData(t, resp)
+	require.EqualValues(t, 1, data["total"])
+	entitiesData := data["entities"].([]any)
+	require.Len(t, entitiesData, 1)
+	entity := entitiesData[0].(map[string]any)
+	require.Equal(t, "oksg-demo", entity["namespace"])
+}
+
 func TestGetEntityByID(t *testing.T) {
 	reg := seedEntities(t)
 	srv := newTestServer(t, Config{EntityRegistry: reg})

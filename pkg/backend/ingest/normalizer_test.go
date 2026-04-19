@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/erickivel/oksg/pkg/backend/persistence"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -370,6 +371,98 @@ func TestOTLPNormalizer_ServiceGraphEdgeLabels_NoNamespace(t *testing.T) {
 	_, hasServerID := s.Labels["edge_server_id"]
 	assert.False(t, hasClientID, "edge_client_id should be omitted without namespace")
 	assert.False(t, hasServerID, "edge_server_id should be omitted without namespace")
+}
+
+func TestOTLPNormalizer_ServiceGraphUsesCanonicalServiceIDsFromRegistry(t *testing.T) {
+	registry := persistence.NewInMemoryEntityRegistry()
+	require.NoError(t, registry.UpsertEntity(context.Background(), persistence.StoredEntity{
+		EntityID:   entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go"),
+		EntityKind: entities.KindService,
+		Cluster:    testCluster,
+		Namespace:  "oksg-demo",
+		Name:       "gateway-go",
+		Metadata: map[string]string{
+			"service.name":       "gateway-go",
+			"k8s.namespace.name": "oksg-demo",
+		},
+	}))
+	require.NoError(t, registry.UpsertEntity(context.Background(), persistence.StoredEntity{
+		EntityID:   entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "service-a-python"),
+		EntityKind: entities.KindService,
+		Cluster:    testCluster,
+		Namespace:  "oksg-demo",
+		Name:       "service-a-python",
+		Metadata: map[string]string{
+			"service.name":       "service-a-python",
+			"k8s.namespace.name": "oksg-demo",
+		},
+	}))
+
+	normalizer := ingest.NewOTLPNormalizer(ingest.NewOTLPEntityResolverWithRegistry(testCluster, registry))
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("traces.service.graph.request.total", 11.0, tsNano, map[string]string{
+		"client": "gateway-go",
+		"server": "service-a-python",
+	})
+	env := makeEnvelope(t, map[string]string{
+		"k8s.node.name":       "gateway-node",
+		"k8s.namespace.name":  "oksg-system",
+		"k8s.cluster.name":    testCluster,
+		"service.name":        "otel-collector-gateway",
+		"service.instance.id": "collector-1",
+	}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	s := samples[0]
+	assert.Equal(t,
+		entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go"),
+		s.EntityID,
+	)
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go")),
+		s.Labels["edge_client_id"],
+	)
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "service-a-python")),
+		s.Labels["edge_server_id"],
+	)
+}
+
+func TestOTLPNormalizer_SpanMetricsUseServiceEntityOverNode(t *testing.T) {
+	registry := persistence.NewInMemoryEntityRegistry()
+	require.NoError(t, registry.UpsertEntity(context.Background(), persistence.StoredEntity{
+		EntityID:   entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go"),
+		EntityKind: entities.KindService,
+		Cluster:    testCluster,
+		Namespace:  "oksg-demo",
+		Name:       "gateway-go",
+		Metadata: map[string]string{
+			"service.name":       "gateway-go",
+			"k8s.namespace.name": "oksg-demo",
+		},
+	}))
+
+	normalizer := ingest.NewOTLPNormalizer(ingest.NewOTLPEntityResolverWithRegistry(testCluster, registry))
+	tsNano := uint64(time.Now().UnixNano())
+	rm := makeGaugeRM("traces.span.metrics.calls", 5.0, tsNano)
+	env := makeEnvelope(t, map[string]string{
+		"service.name":       "gateway-go",
+		"k8s.namespace.name": "oksg-demo",
+		"k8s.node.name":      "worker-1",
+	}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	assert.Equal(t,
+		entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go"),
+		samples[0].EntityID,
+	)
 }
 
 func TestOTLPNormalizer_NonServiceGraphHasNoEdgeLabels(t *testing.T) {

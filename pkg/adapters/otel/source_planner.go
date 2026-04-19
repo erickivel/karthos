@@ -127,35 +127,6 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		enabledSignals = append(enabledSignals, "trace")
 	}
 
-	// Build connectors when traces are enabled (spanmetrics and servicegraph).
-	var agentConnectors map[string]any
-	if otlpSignals.traces {
-		agentConnectors = map[string]any{
-			"spanmetrics": map[string]any{
-				"histogram": map[string]any{
-					"explicit": map[string]any{
-						"buckets": []string{"100ms", "250ms", "500ms", "1s", "2s", "5s"},
-					},
-				},
-				"dimensions": []map[string]any{
-					{"name": "http.method", "default": "GET"},
-					{"name": "http.status_code"},
-				},
-				"exemplars": map[string]any{"enabled": true},
-			},
-			"servicegraph": map[string]any{
-				"latency_histogram_buckets": []string{"100ms", "250ms", "500ms", "1s", "5s"},
-				"dimensions":                []string{"http.method"},
-				"store": map[string]any{
-					"ttl":       "2s",
-					"max_items": 1000,
-				},
-			},
-		}
-		// Connectors act as receivers in the metrics pipeline.
-		pipelineReceivers = append(pipelineReceivers, "spanmetrics", "servicegraph")
-	}
-
 	agentConfig := CollectorConfig{
 		Extensions: map[string]any{
 			"health_check": map[string]any{
@@ -179,7 +150,6 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			},
 			"batch": map[string]any{},
 		},
-		Connectors: agentConnectors,
 		Exporters: map[string]any{
 			"otlp": map[string]any{
 				"endpoint": DefaultGatewayGRPCEndpoint,
@@ -200,11 +170,10 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		},
 	}
 	if otlpSignals.traces {
-		// Connectors are both exporters (from traces) and receivers (for metrics).
 		agentConfig.Service.Pipelines["traces"] = PipelineConfig{
 			Receivers:  []string{"otlp"},
 			Processors: []string{"resource", "k8sattributes", "batch"},
-			Exporters:  []string{"otlp", "spanmetrics", "servicegraph"},
+			Exporters:  []string{"otlp"},
 		}
 	}
 
@@ -231,6 +200,33 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			},
 		},
 	}
+	gatewayMetricsReceivers := []string{"otlp", "k8s_cluster"}
+	var gatewayConnectors map[string]any
+	if otlpSignals.traces {
+		gatewayConnectors = map[string]any{
+			"spanmetrics": map[string]any{
+				"histogram": map[string]any{
+					"explicit": map[string]any{
+						"buckets": []string{"100ms", "250ms", "500ms", "1s", "2s", "5s"},
+					},
+				},
+				"dimensions": []map[string]any{
+					{"name": "http.method", "default": "GET"},
+					{"name": "http.status_code"},
+				},
+				"exemplars": map[string]any{"enabled": true},
+			},
+			"servicegraph": map[string]any{
+				"latency_histogram_buckets": []string{"100ms", "250ms", "500ms", "1s", "5s"},
+				"dimensions":                []string{"http.method"},
+				"store": map[string]any{
+					"ttl":       "2s",
+					"max_items": 1000,
+				},
+			},
+		}
+		gatewayMetricsReceivers = append(gatewayMetricsReceivers, "spanmetrics", "servicegraph")
+	}
 
 	gatewayConfig := CollectorConfig{
 		Extensions: map[string]any{
@@ -247,6 +243,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			},
 			"batch": map[string]any{},
 		},
+		Connectors: gatewayConnectors,
 		Exporters: map[string]any{
 			"otlp": map[string]any{
 				"endpoint": DefaultBackendGRPCEndpoint,
@@ -265,7 +262,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			Extensions: []string{"health_check"},
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
-					Receivers:  []string{"otlp", "k8s_cluster"},
+					Receivers:  gatewayMetricsReceivers,
 					Processors: []string{"memory_limiter", "batch"},
 					Exporters:  []string{"otlp"},
 				},
@@ -276,7 +273,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		gatewayConfig.Service.Pipelines["traces"] = PipelineConfig{
 			Receivers:  []string{"otlp"},
 			Processors: []string{"memory_limiter", "batch"},
-			Exporters:  []string{"otlp"},
+			Exporters:  []string{"otlp", "spanmetrics", "servicegraph"},
 		}
 	}
 

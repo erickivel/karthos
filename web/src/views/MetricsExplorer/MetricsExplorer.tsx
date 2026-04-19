@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { useMetricCatalog } from '@/hooks/useMetricCatalog'
@@ -15,6 +15,9 @@ import type { MetricCategory, MetricSeries, MetricSample } from '@/types/metrics
 import styles from './MetricsExplorer.module.css'
 
 type ExplorerMode = 'entity' | 'edge'
+
+const ENTITY_MODE_CATEGORIES: MetricCategory[] = ['resource', 'traffic', 'latency', 'error', 'capacity', 'health']
+const EDGE_MODE_CATEGORIES: MetricCategory[] = ['traffic', 'latency', 'error']
 
 export function MetricsExplorer() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -56,7 +59,14 @@ export function MetricsExplorer() {
   // (getTimeRange uses new Date() which changes every millisecond)
   const { from, to } = useMemo(() => getTimeRange(timeRange), [timeRange])
   const isEntityMode = mode === 'entity'
+  const visibleCategories = isEntityMode ? ENTITY_MODE_CATEGORIES : EDGE_MODE_CATEGORIES
   const hasSelection = isEntityMode ? !!entityId : !!edgeSourceId && !!edgeTargetId
+
+  useEffect(() => {
+    if (!visibleCategories.includes(category)) {
+      setCategory(visibleCategories[0] ?? 'traffic')
+    }
+  }, [category, visibleCategories])
 
   // Fetch series for ALL metrics in the category in parallel
   const seriesQueries = useQueries({
@@ -156,6 +166,7 @@ export function MetricsExplorer() {
         <div className={styles.controls}>
           <div className={styles.modeSwitch}>
             <button
+              type="button"
               className={styles.modeButton}
               data-active={isEntityMode}
               onClick={() => setMode('entity')}
@@ -163,6 +174,7 @@ export function MetricsExplorer() {
               Entity
             </button>
             <button
+              type="button"
               className={styles.modeButton}
               data-active={!isEntityMode}
               onClick={() => setMode('edge')}
@@ -177,6 +189,7 @@ export function MetricsExplorer() {
               className={styles.select}
               value={edgeSourceId && edgeTargetId ? `${edgeSourceId}|${edgeTargetId}` : ''}
               onChange={(e) => setEdge(e.target.value)}
+              aria-label="Select edge"
             >
               <option value="">Select edge...</option>
               {edgeOptions.map((edge) => (
@@ -195,7 +208,7 @@ export function MetricsExplorer() {
         )}
       </header>
 
-      <CategoryTabs active={category} onChange={setCategory} />
+      <CategoryTabs active={category} categories={visibleCategories} onChange={setCategory} />
 
       {!hasSelection && (
         <div className={styles.prompt}>

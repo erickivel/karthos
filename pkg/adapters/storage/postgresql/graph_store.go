@@ -196,7 +196,15 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 		return nil, fmt.Errorf("pg graph edges iteration: %w", err)
 	}
 
+	applySnapshotTimestamp(&snap)
 	return &snap, nil
+}
+
+func applySnapshotTimestamp(snap *topology.Snapshot) {
+	if snap == nil {
+		return
+	}
+	snap.Graph.Timestamp = snap.CreatedAt
 }
 
 // QueryEdges filters accumulated edges by Source and/or Target.

@@ -34,6 +34,15 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 8082
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://$(HOST_IP):4318
+            - name: OTEL_SERVICE_NAME
+              value: service-b-node
 ---
 apiVersion: v1
 kind: Service
@@ -44,6 +53,7 @@ metadata:
     prometheus.io/scrape: "true"
     prometheus.io/path: /metrics
     prometheus.io/port: "8082"
+    oksg.io/otlp-traces: "true"
 spec:
   selector:
     app: service-b-node
