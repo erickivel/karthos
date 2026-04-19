@@ -126,6 +126,50 @@ func makeSumRMInt(metricName string, value int64, tsNano uint64) *metricspb.Reso
 	}
 }
 
+func makeHistogramRM(metricName string, sum float64, count uint64, tsNano uint64) *metricspb.ResourceMetrics {
+	return makeHistogramRMWithAttrs(metricName, sum, count, tsNano, nil)
+}
+
+func makeHistogramRMWithAttrs(
+	metricName string,
+	sum float64,
+	count uint64,
+	tsNano uint64,
+	attrs map[string]string,
+) *metricspb.ResourceMetrics {
+	var kvs []*commonpb.KeyValue
+	for k, v := range attrs {
+		kvs = append(kvs, &commonpb.KeyValue{
+			Key:   k,
+			Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}},
+		})
+	}
+
+	return &metricspb.ResourceMetrics{
+		ScopeMetrics: []*metricspb.ScopeMetrics{
+			{
+				Metrics: []*metricspb.Metric{
+					{
+						Name: metricName,
+						Data: &metricspb.Metric_Histogram{
+							Histogram: &metricspb.Histogram{
+								DataPoints: []*metricspb.HistogramDataPoint{
+									{
+										Attributes:   kvs,
+										Sum:          &sum,
+										Count:        count,
+										TimeUnixNano: tsNano,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func newNormalizer() *ingest.OTLPNormalizer {
 	resolver := ingest.NewOTLPEntityResolver(testCluster)
 	return ingest.NewOTLPNormalizer(resolver)
@@ -463,6 +507,87 @@ func TestOTLPNormalizer_SpanMetricsUseServiceEntityOverNode(t *testing.T) {
 		entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go"),
 		samples[0].EntityID,
 	)
+}
+
+func TestOTLPNormalizer_PrometheusDurationHistogramUsesNanoseconds(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeHistogramRM("http_request_duration_seconds", 1.5, 3, tsNano)
+	env := makeEnvelope(t, podResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	assert.Equal(t, "request_duration_nanoseconds", samples[0].MetricName)
+	assert.InDelta(t, 500_000_000.0, samples[0].Value, 1e-6)
+}
+
+func TestOTLPNormalizer_SpanMetricsDurationHistogramUsesMilliseconds(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeHistogramRM("traces.span.metrics.duration", 18, 3, tsNano)
+	env := makeEnvelope(t, serviceResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	assert.Equal(t, "request_duration_nanoseconds", samples[0].MetricName)
+	assert.InDelta(t, 6_000_000.0, samples[0].Value, 1e-6)
+}
+
+func TestOTLPNormalizer_ServiceGraphServerHistogramUsesSeconds(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeHistogramRMWithAttrs("traces.service.graph.request.server", 2.4, 3, tsNano, map[string]string{
+		"client": "service-a",
+		"server": "service-b",
+	})
+	env := makeEnvelope(t, serviceResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	assert.Equal(t, "edge_latency_nanoseconds", samples[0].MetricName)
+	assert.InDelta(t, 800_000_000.0, samples[0].Value, 1e-6)
+	assert.Equal(t, "service-a", samples[0].Labels["edge_client"])
+	assert.Equal(t, "service-b", samples[0].Labels["edge_server"])
+}
+
+func TestOTLPNormalizer_ServiceGraphFailedTotalMapsToErrorRateCounter(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("traces.service.graph.request_failed_total", 9, tsNano, map[string]string{
+		"client": "service-a",
+		"server": "service-b",
+	})
+	env := makeEnvelope(t, serviceResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	assert.Equal(t, "error_rate_per_second", samples[0].MetricName)
+	assert.Equal(t, "service-a", samples[0].Labels["edge_client"])
+	assert.Equal(t, "service-b", samples[0].Labels["edge_server"])
+}
+
+func TestOTLPNormalizer_HistogramWithZeroCountSkipped(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeHistogramRM("http_request_duration_seconds", 1.5, 0, tsNano)
+	env := makeEnvelope(t, podResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	assert.Empty(t, samples)
 }
 
 func TestOTLPNormalizer_NonServiceGraphHasNoEdgeLabels(t *testing.T) {

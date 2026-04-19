@@ -42,20 +42,10 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 				continue
 			}
 
-			dps := collectDataPoints(metric)
+			dps := collectScalarDataPoints(metric)
 			for _, dp := range dps {
-				var rawValue float64
-				switch v := dp.Value.(type) {
-				case *metricspb.NumberDataPoint_AsDouble:
-					rawValue = v.AsDouble
-				case *metricspb.NumberDataPoint_AsInt:
-					rawValue = float64(v.AsInt)
-				default:
-					continue
-				}
-
 				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
-				value := rawValue * mapping.ConversionFactor
+				value := dp.Value * mapping.ConversionFactor
 
 				canonicalName := resolveDirectionalName(metric.Name, mapping.CanonicalName, dp.Attributes)
 				if canonicalName == "" {
@@ -167,15 +157,73 @@ func fallbackMetricServiceNamespace(resource map[string]string, serviceName stri
 	return namespace
 }
 
-// collectDataPoints returns all NumberDataPoints from Gauge or Sum metrics.
-func collectDataPoints(metric *metricspb.Metric) []*metricspb.NumberDataPoint {
+type scalarDataPoint struct {
+	Attributes   []*commonpb.KeyValue
+	TimeUnixNano uint64
+	Value        float64
+}
+
+// collectScalarDataPoints extracts scalar datapoints from OTLP metrics that can be
+// represented in the canonical samples API.
+func collectScalarDataPoints(metric *metricspb.Metric) []scalarDataPoint {
 	if g := metric.GetGauge(); g != nil {
-		return g.DataPoints
+		return numberDataPointsToScalar(g.DataPoints)
 	}
 	if s := metric.GetSum(); s != nil {
-		return s.DataPoints
+		return numberDataPointsToScalar(s.DataPoints)
+	}
+	if h := metric.GetHistogram(); h != nil {
+		return histogramDataPointsToScalar(h.DataPoints)
 	}
 	return nil
+}
+
+func numberDataPointsToScalar(points []*metricspb.NumberDataPoint) []scalarDataPoint {
+	if len(points) == 0 {
+		return nil
+	}
+
+	scalars := make([]scalarDataPoint, 0, len(points))
+	for _, dp := range points {
+		var rawValue float64
+		switch v := dp.Value.(type) {
+		case *metricspb.NumberDataPoint_AsDouble:
+			rawValue = v.AsDouble
+		case *metricspb.NumberDataPoint_AsInt:
+			rawValue = float64(v.AsInt)
+		default:
+			continue
+		}
+
+		scalars = append(scalars, scalarDataPoint{
+			Attributes:   dp.Attributes,
+			TimeUnixNano: dp.TimeUnixNano,
+			Value:        rawValue,
+		})
+	}
+
+	return scalars
+}
+
+func histogramDataPointsToScalar(points []*metricspb.HistogramDataPoint) []scalarDataPoint {
+	if len(points) == 0 {
+		return nil
+	}
+
+	scalars := make([]scalarDataPoint, 0, len(points))
+	for _, dp := range points {
+		if dp.Count == 0 || dp.Sum == nil {
+			continue
+		}
+
+		scalars = append(scalars, scalarDataPoint{
+			Attributes:   dp.Attributes,
+			TimeUnixNano: dp.TimeUnixNano,
+			Value:        *dp.Sum / float64(dp.Count),
+		})
+	}
+
+	return scalars
 }
 
 // resolveDirectionalName overrides the default canonical name based on the "direction"

@@ -104,6 +104,46 @@ func TestBuildPromQL(t *testing.T) {
 			},
 			expected: `edge_latency_nanoseconds{edge_client_id="svc-a",edge_server_id="svc-b"}`,
 		},
+		{
+			name: "request rate metric uses one minute rate window",
+			query: query.MetricQuery{
+				MetricName: "request_rate_per_second",
+			},
+			expected: `rate(request_rate_per_second[1m])`,
+		},
+		{
+			name: "request rate metric keeps entity filters inside rate query",
+			query: query.MetricQuery{
+				MetricName: "request_rate_per_second",
+				EntityIDs:  []entities.EntityID{"abc123"},
+			},
+			expected: `rate(request_rate_per_second{entity_id=~"abc123"}[1m])`,
+		},
+		{
+			name: "request rate metric keeps edge filters inside rate query",
+			query: query.MetricQuery{
+				MetricName:   "request_rate_per_second",
+				EdgeSourceID: entities.EntityID("svc-a"),
+				EdgeTargetID: entities.EntityID("svc-b"),
+			},
+			expected: `rate(request_rate_per_second{edge_client_id="svc-a",edge_server_id="svc-b"}[1m])`,
+		},
+		{
+			name: "error rate metric uses one minute rate window",
+			query: query.MetricQuery{
+				MetricName: "error_rate_per_second",
+			},
+			expected: `rate(error_rate_per_second[1m])`,
+		},
+		{
+			name: "error ratio uses request and error rate expressions",
+			query: query.MetricQuery{
+				MetricName:   "error_ratio",
+				EdgeSourceID: entities.EntityID("svc-a"),
+				EdgeTargetID: entities.EntityID("svc-b"),
+			},
+			expected: `rate(error_rate_per_second{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(request_rate_per_second{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1e-9)`,
+		},
 	}
 
 	for _, tt := range tests {

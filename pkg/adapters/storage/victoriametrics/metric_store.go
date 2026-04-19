@@ -128,7 +128,18 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 		return nil, fmt.Errorf("vm query: unexpected status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return parseQueryRangeResponse(resp.Body)
+	samples, err := parseQueryRangeResponse(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range samples {
+		if samples[i].MetricName == "" {
+			samples[i].MetricName = q.MetricName
+		}
+	}
+
+	return samples, nil
 }
 
 // samplesToPrometheusText converts MetricSamples to Prometheus text exposition
@@ -173,6 +184,20 @@ func buildPromQL(q query.MetricQuery) string {
 		return ""
 	}
 
+	selector := metricSelector(q)
+	switch q.MetricName {
+	case "request_rate_per_second", "error_rate_per_second":
+		return fmt.Sprintf("rate(%s[1m])", selector)
+	case "error_ratio":
+		errorRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "error_rate_per_second")))
+		requestRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "request_rate_per_second")))
+		return fmt.Sprintf("%s / clamp_min(%s, 1e-9)", errorRate, requestRate)
+	default:
+		return selector
+	}
+}
+
+func metricSelector(q query.MetricQuery) string {
 	var matchers []string
 	if len(q.EntityIDs) > 0 {
 		ids := make([]string, 0, len(q.EntityIDs))
@@ -191,6 +216,11 @@ func buildPromQL(q query.MetricQuery) string {
 		return q.MetricName
 	}
 	return fmt.Sprintf(`%s{%s}`, q.MetricName, strings.Join(matchers, ","))
+}
+
+func withMetricName(q query.MetricQuery, metricName string) query.MetricQuery {
+	q.MetricName = metricName
+	return q
 }
 
 // queryRangeResponse represents the Prometheus query_range API response.

@@ -191,6 +191,30 @@ func TestCatalogFilterByCategory(t *testing.T) {
 	require.EqualValues(t, 2, data["total"])
 }
 
+func TestCatalogReturnsMetricScopes(t *testing.T) {
+	srv := newTestServer(t, Config{})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/metrics/catalog")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parseResponseData(t, resp)
+	metricsList := data["metrics"].([]any)
+
+	var requestRate map[string]any
+	for _, raw := range metricsList {
+		entry := raw.(map[string]any)
+		if entry["name"] == "request_rate_per_second" {
+			requestRate = entry
+			break
+		}
+	}
+
+	require.NotNil(t, requestRate)
+	require.Equal(t, []any{"entity", "edge"}, requestRate["scopes"])
+}
+
 func TestMetricSeriesRequiresMetricName(t *testing.T) {
 	ms := seedMetrics(t)
 	srv := newTestServer(t, Config{MetricStore: ms})

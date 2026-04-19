@@ -53,14 +53,17 @@ var OTLPToCanonicalMappings = map[string]OTLPMetricMapping{
 	"k8s.statefulset.desired_pods":          {"statefulset_desired_pods", 1.0},
 	"k8s.statefulset.ready_pods":            {"statefulset_ready_pods", 1.0},
 	// spanmetrics connector
-	"traces.span.metrics.calls":        {"request_rate_per_second", 1.0},
-	"traces.span.metrics.duration.sum": {"request_duration_nanoseconds", 1e9}, // seconds → nanoseconds
+	"traces.span.metrics.calls":    {"request_rate_per_second", 1.0},
+	"traces.span.metrics.duration": {"request_duration_nanoseconds", 1e6}, // milliseconds → nanoseconds
+	// keep legacy mapping for any pre-existing serialized samples/tests
+	"traces.span.metrics.duration.sum": {"request_duration_nanoseconds", 1e6}, // milliseconds → nanoseconds
 	// servicegraph connector
-	"traces.service.graph.request.total":    {"request_rate_per_second", 1.0},
-	"traces.service.graph.request.duration": {"edge_latency_nanoseconds", 1e9}, // seconds → nanoseconds
+	"traces.service.graph.request.total":        {"request_rate_per_second", 1.0},
+	"traces.service.graph.request.server":       {"edge_latency_nanoseconds", 1e9}, // seconds → nanoseconds
+	"traces.service.graph.request_failed_total": {"error_rate_per_second", 1.0},
 	// prometheus receiver (forwards Prometheus-style names as-is over OTLP)
 	"http_requests_total":               {"request_rate_per_second", 1.0},
-	"http_request_duration_seconds":     {"request_duration_nanoseconds", 1.0},
+	"http_request_duration_seconds":     {"request_duration_nanoseconds", 1e9},
 	"container_cpu_usage_seconds_total": {"cpu_usage_millicores", 1.0},
 	"container_memory_usage_bytes":      {"memory_usage_bytes", 1.0},
 }

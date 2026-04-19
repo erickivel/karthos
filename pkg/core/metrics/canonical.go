@@ -1,6 +1,7 @@
 package metrics
 
 type MetricCategory string
+type MetricScope string
 
 const (
 	CategoryResource MetricCategory = "resource"
@@ -9,12 +10,16 @@ const (
 	CategoryError    MetricCategory = "error"
 	CategoryCapacity MetricCategory = "capacity"
 	CategoryHealth   MetricCategory = "health"
+
+	ScopeEntity MetricScope = "entity"
+	ScopeEdge   MetricScope = "edge"
 )
 
 type CanonicalMetric struct {
 	Name        string         `json:"name"`
 	Unit        Unit           `json:"unit"`
 	Category    MetricCategory `json:"category"`
+	Scopes      []MetricScope  `json:"scopes,omitempty"`
 	Dimensions  []string       `json:"dimensions,omitempty"`
 	Description string         `json:"description"`
 }

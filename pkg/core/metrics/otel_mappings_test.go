@@ -67,6 +67,35 @@ func TestOTLPToCanonicalMappingsWorkloadState(t *testing.T) {
 	}
 }
 
+func TestOTLPToCanonicalMappingsPrometheusDurationUsesNanoseconds(t *testing.T) {
+	mapping, ok := OTLPToCanonicalMappings["http_request_duration_seconds"]
+	require.True(t, ok, "expected http_request_duration_seconds to be present")
+	require.Equal(t, "request_duration_nanoseconds", mapping.CanonicalName)
+	require.Equal(t, 1e9, mapping.ConversionFactor)
+}
+
+func TestOTLPToCanonicalMappingsSpanMetricsDurationUsesMilliseconds(t *testing.T) {
+	mapping, ok := OTLPToCanonicalMappings["traces.span.metrics.duration"]
+	require.True(t, ok, "expected traces.span.metrics.duration to be present")
+	require.Equal(t, "request_duration_nanoseconds", mapping.CanonicalName)
+	require.Equal(t, 1e6, mapping.ConversionFactor)
+}
+
+func TestOTLPToCanonicalMappingsServiceGraphMetrics(t *testing.T) {
+	serverLatency, ok := OTLPToCanonicalMappings["traces.service.graph.request.server"]
+	require.True(t, ok, "expected traces.service.graph.request.server to be present")
+	require.Equal(t, "edge_latency_nanoseconds", serverLatency.CanonicalName)
+	require.Equal(t, 1e9, serverLatency.ConversionFactor)
+
+	requestTotal, ok := OTLPToCanonicalMappings["traces.service.graph.request.total"]
+	require.True(t, ok, "expected traces.service.graph.request.total to be present")
+	require.Equal(t, "request_rate_per_second", requestTotal.CanonicalName)
+
+	requestFailed, ok := OTLPToCanonicalMappings["traces.service.graph.request_failed_total"]
+	require.True(t, ok, "expected traces.service.graph.request_failed_total to be present")
+	require.Equal(t, "error_rate_per_second", requestFailed.CanonicalName)
+}
+
 func TestOTLPToCanonicalMappingsUnmappedMetricIsAbsent(t *testing.T) {
 	_, ok := OTLPToCanonicalMappings["some.unknown.metric"]
 	require.False(t, ok, "expected some.unknown.metric to be absent from OTLPToCanonicalMappings")
