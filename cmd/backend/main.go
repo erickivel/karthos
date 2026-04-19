@@ -67,6 +67,12 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if cfg.NodeTTL > 0 && cfg.NodeTTL < cfg.TopologyFlushInterval {
+		logger.Warn("node_ttl shorter than flush interval",
+			logging.String("node_ttl", cfg.NodeTTL.String()),
+			logging.String("topology_flush_interval", cfg.TopologyFlushInterval.String()),
+		)
+	}
 
 	stores, err := storage.NewStores(ctx, storage.StorageConfig{
 		Backend:     storage.StorageBackend(cfg.StorageBackend),

@@ -126,20 +126,11 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 	// before NOW() - nodeTTL so deleted entities eventually age out.
 	var nodeRows pgx.Rows
 	if s.nodeTTL > 0 {
-		nodeRows, err = s.conn.pool.Query(ctx,
-			`SELECT DISTINCT ON (n.entity_id) n.entity_id, n.kind, n.labels
-			 FROM topology_nodes n
-			 JOIN topology_snapshots ts ON ts.id = n.snapshot_id
-			 WHERE ts.created_at > NOW() - $1::interval
-			 ORDER BY n.entity_id, n.snapshot_id DESC`,
-			fmt.Sprintf("%d seconds", int64(s.nodeTTL.Seconds())),
-		)
+		sql, args := latestNodeQuery(s.nodeTTL)
+		nodeRows, err = s.conn.pool.Query(ctx, sql, args...)
 	} else {
-		nodeRows, err = s.conn.pool.Query(ctx,
-			`SELECT DISTINCT ON (entity_id) entity_id, kind, labels
-			 FROM topology_nodes
-			 ORDER BY entity_id, snapshot_id DESC`,
-		)
+		sql, args := latestNodeQuery(0)
+		nodeRows, err = s.conn.pool.Query(ctx, sql, args...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("pg graph get nodes: %w", err)
@@ -198,6 +189,22 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 
 	applySnapshotTimestamp(&snap)
 	return &snap, nil
+}
+
+func latestNodeQuery(ttl time.Duration) (string, []any) {
+	if ttl > 0 {
+		return `SELECT DISTINCT ON (n.entity_id) n.entity_id, n.kind, n.labels
+			 FROM topology_nodes n
+			 JOIN topology_snapshots ts ON ts.id = n.snapshot_id
+			 WHERE ts.created_at > NOW() - $1::interval
+			 ORDER BY n.entity_id, n.snapshot_id DESC`,
+			[]any{ttl.String()}
+	}
+
+	return `SELECT DISTINCT ON (entity_id) entity_id, kind, labels
+			 FROM topology_nodes
+			 ORDER BY entity_id, snapshot_id DESC`,
+		nil
 }
 
 func applySnapshotTimestamp(snap *topology.Snapshot) {
