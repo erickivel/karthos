@@ -3,18 +3,15 @@ import { useSearchParams } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { useMetricCatalog } from '@/hooks/useMetricCatalog'
 import { useGraphSnapshot } from '@/hooks/useGraphSnapshot'
-import { useEntities } from '@/hooks/useEntities'
 import { getSeries } from '@/api/metrics'
 import { EntitySelector } from './EntitySelector'
 import { TimeRangeSelector, getTimeRange, type TimeRange } from './TimeRangeSelector'
 import { CategoryTabs } from './CategoryTabs'
 import { MetricCard } from './MetricCard'
 import { RawSamplesTable } from './RawSamplesTable'
-import type { GraphEdge, GraphNode } from '@/types/graph'
 import type { MetricCategory, MetricSeries, MetricSample } from '@/types/metrics'
+import { buildEdgeOptions, buildEntityOptions, filterMetricsForMode, type ExplorerMode } from './model'
 import styles from './MetricsExplorer.module.css'
-
-type ExplorerMode = 'entity' | 'edge'
 
 const ENTITY_MODE_CATEGORIES: MetricCategory[] = ['resource', 'traffic', 'latency', 'error', 'capacity', 'health']
 const EDGE_MODE_CATEGORIES: MetricCategory[] = ['traffic', 'latency', 'error']
@@ -30,30 +27,18 @@ export function MetricsExplorer() {
 
   const { data: catalog } = useMetricCatalog()
   const { data: snapshot } = useGraphSnapshot()
-  const { data: entityData } = useEntities({ page_size: 1000 })
 
   const categoryMetrics = useMemo(
-    () => catalog?.metrics.filter((m) => m.category === category) ?? [],
-    [catalog, category],
+    () => filterMetricsForMode(catalog?.metrics, category, mode),
+    [catalog?.metrics, category, mode],
   )
 
-  const edgeOptions = useMemo(() => {
-    if (!snapshot) return []
+  const entityOptions = useMemo(() => buildEntityOptions(snapshot?.graph.nodes), [snapshot?.graph.nodes])
 
-    const nodeByID = new Map<string, GraphNode>(snapshot.graph.nodes.map((node) => [node.id, node]))
-    const entityByID = new Map((entityData?.entities ?? []).map((entity) => [entity.id, entity]))
-    const seen = new Set<string>()
-
-    return snapshot.graph.edges
-      .filter((edge) => edge.relation === 'calls')
-      .filter((edge) => {
-        const key = `${edge.source}|${edge.target}`
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-      .map((edge) => toEdgeOption(edge, nodeByID, entityByID))
-  }, [entityData?.entities, snapshot])
+  const edgeOptions = useMemo(
+    () => buildEdgeOptions(snapshot?.graph.edges, snapshot?.graph.nodes),
+    [snapshot?.graph.edges, snapshot?.graph.nodes],
+  )
 
   // Memoize time range so from/to are stable between renders
   // (getTimeRange uses new Date() which changes every millisecond)
@@ -183,7 +168,7 @@ export function MetricsExplorer() {
             </button>
           </div>
           {isEntityMode ? (
-            <EntitySelector value={entityId} onChange={setEntityId} />
+            <EntitySelector value={entityId} onChange={setEntityId} options={entityOptions} />
           ) : (
             <select
               className={styles.select}
@@ -241,19 +226,4 @@ export function MetricsExplorer() {
       )}
     </div>
   )
-}
-
-function toEdgeOption(
-  edge: GraphEdge,
-  nodeByID: Map<string, GraphNode>,
-  entityByID: Map<string, { name: string; namespace: string }>,
-) {
-  const source = nodeByID.get(edge.source) ?? entityByID.get(edge.source)
-  const target = nodeByID.get(edge.target) ?? entityByID.get(edge.target)
-
-  return {
-    sourceId: edge.source,
-    targetId: edge.target,
-    label: `${source?.name ?? edge.source} -> ${target?.name ?? edge.target}`,
-  }
 }

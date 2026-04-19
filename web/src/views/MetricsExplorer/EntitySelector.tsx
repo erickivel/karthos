@@ -1,14 +1,13 @@
-import { useEntities } from '@/hooks/useEntities'
 import styles from './MetricsExplorer.module.css'
+import type { EntityOption } from './model'
 
 interface EntitySelectorProps {
   value: string
   onChange: (id: string) => void
+  options: EntityOption[]
 }
 
-export function EntitySelector({ value, onChange }: EntitySelectorProps) {
-  const { data } = useEntities({ page_size: 1000 })
-
+export function EntitySelector({ value, onChange, options }: EntitySelectorProps) {
   return (
     <select
       className={styles.select}
@@ -17,9 +16,9 @@ export function EntitySelector({ value, onChange }: EntitySelectorProps) {
       aria-label="Select entity"
     >
       <option value="">Select entity...</option>
-      {data?.entities.map((entity) => (
+      {options.map((entity) => (
         <option key={entity.id} value={entity.id}>
-          [{entity.kind}] {entity.namespace ? `${entity.namespace}/` : ''}{entity.name}
+          {entity.label}
         </option>
       ))}
     </select>

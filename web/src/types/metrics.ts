@@ -6,6 +6,8 @@ export type MetricCategory =
   | 'capacity'
   | 'health'
 
+export type MetricScope = 'entity' | 'edge'
+
 export interface MetricEdgeRef {
   source_id: string
   target_id: string
@@ -34,6 +36,7 @@ export interface CanonicalMetric {
   name: string
   unit: string
   category: MetricCategory
+  scopes: MetricScope[]
   description: string
 }
 
