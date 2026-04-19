@@ -264,9 +264,9 @@ the Vite proxy to reach the backend API at `http://localhost:18081`.
 #### Cleanup
 
 ```bash
-task test:e2e:reset       # remove OTel collectors only
-task test:e2e:reset-apps  # remove demo microservices only
-task test:e2e:reset-all   # remove both OTel collectors and demo apps
+task test:e2e:reset       # remove OTel collectors and the applied discovery-profile ConfigMap
+task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
+task test:e2e:reset-all   # remove both OTel collectors and all demo fixtures
 task test:e2e:teardown    # destroy entire cluster and registry
 ```
 

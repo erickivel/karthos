@@ -8,6 +8,7 @@ vars:
   HELM_RELEASE_NAME: oksg-otel
   HELM_CHART_PATH: ./deploy/helm/oksg-otel
   TARGET_NAMESPACE: oksg-demo
+  SPARSE_NAMESPACE: oksg-sparse
   BACKEND_IMAGE_REPOSITORY: localhost:{{.KIND_REGISTRY_PORT}}/oksg-backend
   BACKEND_IMAGE_TAG: latest
   BACKEND_IMAGE_PULL_POLICY: Always
@@ -109,14 +110,16 @@ tasks:
     desc: Remove deployed OTel Helm release
     cmds:
       - helm uninstall {{.HELM_RELEASE_NAME}} --namespace {{.KIND_NAMESPACE}} || true
+      - kubectl delete configmap oksg-discovery-profile -n {{.KIND_NAMESPACE}} --ignore-not-found
 
   e2e:reset-apps:
-    desc: Remove deployed demo microservices
+    desc: Remove deployed demo fixtures across all e2e app namespaces
     cmds:
       - kubectl delete namespace {{.TARGET_NAMESPACE}} --ignore-not-found
+      - kubectl delete namespace {{.SPARSE_NAMESPACE}} --ignore-not-found
 
   e2e:reset-all:
-    desc: Remove both OTel collectors and demo microservices
+    desc: Remove both OTel collectors and all deployed demo fixtures
     cmds:
       - task: e2e:reset
       - task: e2e:reset-apps

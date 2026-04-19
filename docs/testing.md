@@ -195,6 +195,8 @@ When changing the e2e flow, keep log inspection and rendered Helm artifacts easy
 ## Cleanup
 
 ```bash
-task test:e2e:reset
-task test:e2e:teardown
+task test:e2e:reset       # remove OTel collectors and the applied discovery-profile ConfigMap
+task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
+task test:e2e:reset-all   # remove both OTel collectors and all demo fixtures
+task test:e2e:teardown    # destroy the kind cluster and local registry
 ```
