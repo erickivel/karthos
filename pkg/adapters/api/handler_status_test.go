@@ -19,6 +19,47 @@ import (
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
+func TestLatestSamplePerEntity(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		samples  []metrics.MetricSample
+		expected map[entities.EntityID]float64
+	}{
+		{
+			name: "keeps newest sample per entity",
+			samples: []metrics.MetricSample{
+				{EntityID: "node-a", Value: 0, Timestamp: base},
+				{EntityID: "node-a", Value: 1, Timestamp: base.Add(30 * time.Second)},
+				{EntityID: "node-b", Value: 1, Timestamp: base.Add(15 * time.Second)},
+			},
+			expected: map[entities.EntityID]float64{
+				"node-a": 1,
+				"node-b": 1,
+			},
+		},
+		{
+			name: "ignores older duplicate samples",
+			samples: []metrics.MetricSample{
+				{EntityID: "pod-a", Value: 2, Timestamp: base.Add(45 * time.Second)},
+				{EntityID: "pod-a", Value: 1, Timestamp: base},
+			},
+			expected: map[entities.EntityID]float64{
+				"pod-a": 2,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.expected, latestSamplePerEntity(tt.samples))
+		})
+	}
+}
+
 func freshGraphStore(t *testing.T) persistence.GraphStore {
 	t.Helper()
 	gs := persistence.NewInMemoryGraphStore()

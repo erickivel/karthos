@@ -13,7 +13,7 @@ Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Agent/Gatewa
 What is real today:
 
 - `pkg/adapters/kubernetes` discovers cluster resources, Prometheus annotation-based targets, and OTLP-capable workloads
-- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics, k8scluster, spanmetrics, and servicegraph
+- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics and k8scluster on the agent plus spanmetrics and servicegraph on the gateway
 - `pkg/adapters/otlp` exposes OTLP gRPC and HTTP ingest for the backend runtime
 - `pkg/collector/configgen` converts the plan into typed Helm values
 - `pkg/collector/deployer` runs Helm lint/template/upgrade-install
@@ -29,7 +29,6 @@ What is real today:
 What is not implemented yet:
 
 - `cmd/controller` is still a placeholder
-- cable-bundle edge rendering (MVP uses simple bezier edges)
 - modeling and prediction
 
 ## Layer View
@@ -82,7 +81,7 @@ Query and Control (Layer 6 Phase A)
 Visualization (Layer 6 Phase B)
   React frontend in web/ (Vite + TypeScript)
   Three views: Cluster Overview (/), Topology Graph (/topology), Metrics Explorer (/metrics)
-  React Flow graph with dagre layout, custom EntityNode and RelationEdge components
+  React Flow graph with dagre layout, custom EntityNode components, and cable-bundle RelationEdge rendering
   TanStack Query polling (30s graph/status, 120s discovery)
   Zustand for cross-view state (selected entity, connection status)
   CSS custom properties theme system (dark theme, no hardcoded colors)
@@ -91,7 +90,6 @@ Visualization (Layer 6 Phase B)
   Helm templates: frontend-deployment, frontend-service, frontend-configmap
 
 Future Layers
-  Cable-bundle edge rendering (replacing simple bezier edges)
   modeling and prediction
 ```
 
@@ -104,8 +102,10 @@ The source planner now configures expanded receivers beyond the baseline `kubele
 - `hostmetrics` receiver: always active; collects host-level CPU, memory, disk I/O, network I/O, and load metrics from each node
 - `k8scluster` receiver: always active; collects Kubernetes state metrics including replica counts, pod phases, and node conditions
 - `kubeletstats` expanded: now includes volume metrics in addition to pod and container stats
-- `spanmetrics` connector: enabled when OTLP traces are present; derives request rate and latency distributions from span data
-- `servicegraph` connector: enabled when OTLP traces are present; derives service-to-service call edges from spans
+- `spanmetrics` connector: enabled on the gateway when OTLP traces are present; derives request rate and latency distributions from span data
+- `servicegraph` connector: enabled on the gateway when OTLP traces are present; derives service-to-service call edges from spans
+
+Placing `spanmetrics` and `servicegraph` on the gateway keeps a single shared connector instance for cluster traffic aggregation. That avoids per-agent duplication and double-counting while still letting the agents forward raw OTLP data upstream.
 
 The Kubernetes discovery adapter now auto-detects OTLP-capable workloads via:
 

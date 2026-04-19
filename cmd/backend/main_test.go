@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -44,4 +45,14 @@ func TestParseConfigStorageFlags(t *testing.T) {
 	require.Equal(t, "postgres://localhost/oksg", cfg.PostgresDSN)
 	require.Equal(t, "http://localhost:8428", cfg.VMURL)
 	require.True(t, cfg.RawStoreEnabled)
+}
+
+func TestParseConfigParsesNodeTTLAndFlushInterval(t *testing.T) {
+	cfg, err := parseConfig([]string{
+		"--topology-flush-interval=30s",
+		"--node-ttl=250ms",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Second, cfg.TopologyFlushInterval)
+	require.Equal(t, 250*time.Millisecond, cfg.NodeTTL)
 }

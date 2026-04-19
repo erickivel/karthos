@@ -142,6 +142,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Shared setup
+        uses: ./.github/actions/setup-go-ci
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          task-version: ${{ env.TASK_VERSION }}
+          golangci-lint-version: ${{ env.GOLANGCI_LINT_VERSION }}
+          govulncheck-version: ${{ env.GOVULNCHECK_VERSION }}
+          gosec-version: ${{ env.GOSEC_VERSION }}
+
+      - name: Typecheck frontend
+        run: task web:typecheck
+
+      - name: Lint frontend
+        run: task web:lint
+
       - name: Build frontend container
         run: task web:build
 

@@ -67,6 +67,21 @@ func (i *StructuralTopologyIngestor) upsertStructuralEntities(ctx context.Contex
 	upsert := func(entity persistence.StoredEntity) error {
 		return i.registry.UpsertEntity(ctx, entity)
 	}
+	upsertRefs := func(kind entities.EntityKind, cluster, namespace string, refs []string) error {
+		for _, ref := range refs {
+			if err := upsert(newStoredEntity(
+				entities.ComputeEntityID(kind, cluster, namespace, ref),
+				kind,
+				cluster,
+				namespace,
+				ref,
+				nil,
+			)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 
 	for _, svc := range prof.Services {
 		if err := upsert(newStoredEntity(
@@ -92,41 +107,14 @@ func (i *StructuralTopologyIngestor) upsertStructuralEntities(ctx context.Contex
 		)); err != nil {
 			return err
 		}
-		for _, ref := range workload.ConfigMapRefs {
-			if err := upsert(newStoredEntity(
-				entities.ComputeEntityID(entities.KindConfigMap, prof.ClusterName, workload.Namespace, ref),
-				entities.KindConfigMap,
-				prof.ClusterName,
-				workload.Namespace,
-				ref,
-				nil,
-			)); err != nil {
-				return err
-			}
+		if err := upsertRefs(entities.KindConfigMap, prof.ClusterName, workload.Namespace, workload.ConfigMapRefs); err != nil {
+			return err
 		}
-		for _, ref := range workload.SecretRefs {
-			if err := upsert(newStoredEntity(
-				entities.ComputeEntityID(entities.KindSecret, prof.ClusterName, workload.Namespace, ref),
-				entities.KindSecret,
-				prof.ClusterName,
-				workload.Namespace,
-				ref,
-				nil,
-			)); err != nil {
-				return err
-			}
+		if err := upsertRefs(entities.KindSecret, prof.ClusterName, workload.Namespace, workload.SecretRefs); err != nil {
+			return err
 		}
-		for _, ref := range workload.PVCRefs {
-			if err := upsert(newStoredEntity(
-				entities.ComputeEntityID(entities.KindPVC, prof.ClusterName, workload.Namespace, ref),
-				entities.KindPVC,
-				prof.ClusterName,
-				workload.Namespace,
-				ref,
-				nil,
-			)); err != nil {
-				return err
-			}
+		if err := upsertRefs(entities.KindPVC, prof.ClusterName, workload.Namespace, workload.PVCRefs); err != nil {
+			return err
 		}
 	}
 

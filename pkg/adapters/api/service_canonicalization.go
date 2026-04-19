@@ -5,6 +5,11 @@ import (
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
+type serviceKey struct {
+	Cluster string
+	Name    string
+}
+
 func dedupeEntities(items []entities.Entity) []entities.Entity {
 	if len(items) == 0 {
 		return items
@@ -15,13 +20,14 @@ func dedupeEntities(items []entities.Entity) []entities.Entity {
 		keepLegacy[item.ID()] = true
 	}
 
-	groups := make(map[string][]entities.Entity)
+	groups := make(map[serviceKey][]entities.Entity)
 	for _, item := range items {
 		if item.Kind() != entities.KindService {
 			continue
 		}
 		ref := entityRefOf(item)
-		groups[ref.Cluster+"|"+ref.Name] = append(groups[ref.Cluster+"|"+ref.Name], item)
+		key := serviceKey{Cluster: ref.Cluster, Name: ref.Name}
+		groups[key] = append(groups[key], item)
 	}
 
 	for _, group := range groups {
@@ -92,13 +98,14 @@ func canonicalizeGraph(nodes []topology.Node, edges []topology.Edge) ([]topology
 
 func buildServiceAliases(nodes []topology.Node) map[entities.EntityID]entities.EntityID {
 	aliases := make(map[entities.EntityID]entities.EntityID)
-	groups := make(map[string][]topology.Node)
+	groups := make(map[serviceKey][]topology.Node)
 
 	for _, node := range nodes {
 		if node.Kind != entities.KindService {
 			continue
 		}
-		groups[nodeName(node)] = append(groups[nodeName(node)], node)
+		key := serviceKey{Cluster: nodeCluster(node), Name: nodeName(node)}
+		groups[key] = append(groups[key], node)
 	}
 
 	for _, group := range groups {
@@ -149,4 +156,11 @@ func nodeNamespace(node topology.Node) string {
 		return ""
 	}
 	return node.Labels["namespace"]
+}
+
+func nodeCluster(node topology.Node) string {
+	if node.Labels == nil {
+		return ""
+	}
+	return node.Labels["cluster"]
 }

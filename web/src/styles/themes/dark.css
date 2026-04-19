@@ -14,6 +14,7 @@
   --surface-nav: #1a1c1e;
   --surface-module: #1e2022;
   --surface-active: #333537;
+  --surface-divider: #4a4d50;
 
   /* Per-kind entity colors (header / accent) */
   --kind-namespace: #3e9adf;  /* blue   */

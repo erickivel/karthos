@@ -9,6 +9,7 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 )
 
@@ -161,16 +162,7 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 		To:         now,
 	})
 	if err == nil {
-		// Deduplicate: keep latest sample per entity.
-		latest := make(map[entities.EntityID]float64)
-		latestTS := make(map[entities.EntityID]time.Time)
-		for _, s := range nodeSamples {
-			if ts, ok := latestTS[s.EntityID]; !ok || s.Timestamp.After(ts) {
-				latest[s.EntityID] = s.Value
-				latestTS[s.EntityID] = s.Timestamp
-			}
-		}
-		for _, v := range latest {
+		for _, v := range latestSamplePerEntity(nodeSamples) {
 			if v >= 1.0 {
 				hs.Nodes.Healthy++
 			} else {
@@ -186,15 +178,7 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 		To:         now,
 	})
 	if err == nil {
-		latest := make(map[entities.EntityID]float64)
-		latestTS := make(map[entities.EntityID]time.Time)
-		for _, s := range podSamples {
-			if ts, ok := latestTS[s.EntityID]; !ok || s.Timestamp.After(ts) {
-				latest[s.EntityID] = s.Value
-				latestTS[s.EntityID] = s.Timestamp
-			}
-		}
-		for _, v := range latest {
+		for _, v := range latestSamplePerEntity(podSamples) {
 			switch int(v) {
 			case 1:
 				hs.Pods.Pending++
@@ -209,6 +193,18 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 	}
 
 	return hs
+}
+
+func latestSamplePerEntity(samples []metrics.MetricSample) map[entities.EntityID]float64 {
+	latest := make(map[entities.EntityID]float64, len(samples))
+	latestTS := make(map[entities.EntityID]time.Time, len(samples))
+	for _, sample := range samples {
+		if ts, ok := latestTS[sample.EntityID]; !ok || sample.Timestamp.After(ts) {
+			latest[sample.EntityID] = sample.Value
+			latestTS[sample.EntityID] = sample.Timestamp
+		}
+	}
+	return latest
 }
 
 func (h *StatusHandler) handleGetDiscovery(w http.ResponseWriter, r *http.Request) {

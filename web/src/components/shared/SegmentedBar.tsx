@@ -1,17 +1,24 @@
-import styles from './SegmentedBar.module.css'
+import { formatValue } from "../../utils/formatters";
+import styles from "./SegmentedBar.module.css";
 
 interface SegmentedBarProps {
-  value: number
-  max: number
-  segments?: number
-  label?: string
-  unit?: string
+  value: number;
+  max: number;
+  segments?: number;
+  label?: string;
+  unit?: string;
 }
 
-export function SegmentedBar({ value, max, segments = 10, label, unit }: SegmentedBarProps) {
-  const ratio = max > 0 ? Math.min(value / max, 1) : 0
-  const filledCount = Math.round(ratio * segments)
-  const formattedValue = formatValue(value)
+export function SegmentedBar({
+  value,
+  max,
+  segments = 10,
+  label,
+  unit,
+}: SegmentedBarProps) {
+  const ratio = max > 0 ? Math.min(value / max, 1) : 0;
+  const filledCount = Math.round(ratio * segments);
+  const formattedValue = formatValue(value);
 
   return (
     <div className={styles.container}>
@@ -19,7 +26,8 @@ export function SegmentedBar({ value, max, segments = 10, label, unit }: Segment
         <div className={styles.header}>
           <span className={styles.label}>{label}</span>
           <span className={styles.value}>
-            {formattedValue}{unit ? ` ${unit}` : ''}
+            {formattedValue}
+            {unit ? ` ${unit}` : ""}
           </span>
         </div>
       )}
@@ -33,11 +41,5 @@ export function SegmentedBar({ value, max, segments = 10, label, unit }: Segment
         ))}
       </div>
     </div>
-  )
-}
-
-function formatValue(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`
-  return v.toFixed(v % 1 === 0 ? 0 : 1)
+  );
 }

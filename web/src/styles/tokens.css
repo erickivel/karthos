@@ -22,4 +22,7 @@
   /* Transitions */
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
+
+  /* Semantic aliases */
+  --surface-divider: var(--surface-active);
 }

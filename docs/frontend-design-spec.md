@@ -75,7 +75,7 @@ Components reference only semantic tokens like `var(--color-signal)`, `var(--sur
 - No shadows — hierarchy via tonal layering
 - No gradients — every element is a flat color token
 - **Corner radius: 4-6px** — squared cards with slightly rounded corners
-- Geometric/wireframe icons matching Space Grotesk stroke weights
+- Icons use `lucide-react`, selecting glyphs with a consistent 1.5-2px stroke width that pairs cleanly with Space Grotesk
 - **No hardcoded hex values in components** — all colors via `var(--*)`
 
 ---
@@ -389,6 +389,7 @@ web/
 | `recharts` | ^2 | Time-series charts |
 | `zustand` | ^4 | State management |
 | `@tanstack/react-query` | ^5 | Data fetching with polling |
+| `lucide-react` | ^0.468 | Consistent geometric icon set with adjustable stroke width |
 | `typescript` | ^5 | Type safety |
 
-No additional UI frameworks, icon libraries (custom geometric SVGs), or CSS frameworks.
+No additional UI frameworks or CSS frameworks.

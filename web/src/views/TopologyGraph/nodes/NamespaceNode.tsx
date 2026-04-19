@@ -1,25 +1,29 @@
-import { memo } from 'react'
-import { type NodeProps } from '@xyflow/react'
-import { Boxes, Server } from 'lucide-react'
-import type { EntityKind, GraphNode } from '@/types/graph'
-import { topologyGroupTestId } from '../testIds'
-import styles from './NamespaceNode.module.css'
+import { memo } from "react";
+import { type Node, type NodeProps } from "@xyflow/react";
+import { Boxes, Server } from "lucide-react";
+import type { EntityKind, GraphNode } from "@/types/graph";
+import { topologyGroupTestId } from "../testIds";
+import styles from "./NamespaceNode.module.css";
 
 interface NamespaceData extends GraphNode {
-  nsWidth: number
-  nsHeight: number
-  variant?: EntityKind
+  nsWidth: number;
+  nsHeight: number;
+  variant?: EntityKind;
 }
 
-function NamespaceNodeComponent({ data }: NodeProps) {
-  const node = data as unknown as NamespaceData
-  const width = node.nsWidth ?? 200
-  const height = node.nsHeight ?? 80
-  const isNode = node.variant === 'node'
-  const Icon = isNode ? Server : Boxes
-  const containerClass = isNode ? `${styles.container} ${styles.nodeVariant}` : styles.container
-  const pillClass = isNode ? `${styles.pill} ${styles.pillNode}` : styles.pill
-  const groupKind = isNode ? 'node' : 'namespace'
+type NamespaceNodeData = NamespaceData & Record<string, unknown>;
+
+function NamespaceNodeComponent({ data }: NodeProps<Node<NamespaceNodeData>>) {
+  const node = data;
+  const width = node.nsWidth ?? 200;
+  const height = node.nsHeight ?? 80;
+  const isNode = node.variant === "node";
+  const Icon = isNode ? Server : Boxes;
+  const containerClass = isNode
+    ? `${styles.container} ${styles.nodeVariant}`
+    : styles.container;
+  const pillClass = isNode ? `${styles.pill} ${styles.pillNode}` : styles.pill;
+  const groupKind = isNode ? "node" : "namespace";
 
   return (
     <div
@@ -34,7 +38,7 @@ function NamespaceNodeComponent({ data }: NodeProps) {
         <span className={styles.pillLabel}>{node.name}</span>
       </div>
     </div>
-  )
+  );
 }
 
-export const NamespaceNode = memo(NamespaceNodeComponent)
+export const NamespaceNode = memo(NamespaceNodeComponent);
