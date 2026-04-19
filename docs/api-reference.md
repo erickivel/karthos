@@ -239,6 +239,12 @@ Response:
 
 Query metric samples with unit from catalog. Sorted by timestamp descending.
 
+Rate-like canonical metrics are served with query-time derivation:
+
+- `request_rate_per_second` -> `rate(...[1m])`
+- `error_rate_per_second` -> `rate(...[1m])`
+- `error_ratio` -> `rate(error_rate_per_second[1m]) / clamp_min(rate(request_rate_per_second[1m]), 1e-9)`
+
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
@@ -357,6 +363,21 @@ List canonical metric definitions.
 | Param | Type | Description |
 |-------|------|-------------|
 | `category` | string | Filter by category (`resource`, `traffic`, `latency`, `error`, `capacity`, `health`) |
+
+Response entries include a `scopes` array describing whether each canonical metric supports entity queries, edge queries, or both.
+
+Example:
+
+```bash
+curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[] | {name, scopes}'
+```
+
+```json
+{
+  "name": "request_rate_per_second",
+  "scopes": ["entity", "edge"]
+}
+```
 
 ```bash
 curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[].name'

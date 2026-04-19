@@ -98,3 +98,10 @@ The backend API is then available at `http://localhost:18081/api/v1/...`.
 - Keep `docs/discovery-flow.md` explicit about what auto-detection does today versus what the planner accepts from externally supplied profiles.
 - Keep logging documentation in `docs/`: structured JSON logs to stdout only, `kubectl logs` as the debugging path.
 - Update example outputs in `docs/discovery-flow.md` when ClusterProfile structure changes.
+
+## Telemetry Mapping Rules
+
+- Before adding or remapping any metric, trace-derived metric, or telemetry source, verify the upstream or source-of-truth docs/spec first.
+- Record the signal contract you verified: how the signal is generated, whether it is gauge/sum/histogram and cumulative or delta, its units, and any default rate, flush, or aggregation window semantics.
+- Only after that verification should you change canonical metric mappings, unit conversions, query-time derivations, storage expectations, or UI assumptions.
+- Do not infer telemetry semantics from a metric name alone. Connectors such as `spanmetrics` and `servicegraph` can emit counters, histograms, and unit defaults that differ from what the canonical name suggests.

@@ -216,8 +216,15 @@ For external-storage e2e runs, prefer:
 
 ```bash
 curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second" | jq '.data.samples[0:10]'
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second&edge_source_id=<source>&edge_target_id=<target>" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=edge_latency_nanoseconds&edge_source_id=<source>&edge_target_id=<target>" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=error_ratio&edge_source_id=<source>&edge_target_id=<target>" | jq .
 ```
+
+Notes:
+
+- `request_rate_per_second` and `error_rate_per_second` are served as 1-minute rates at query time, even though the stored canonical series are counter-derived.
+- `error_ratio` is query-derived from the served request and error rates.
+- The Metrics Explorer entity selector is driven by the latest graph snapshot, not the historical `/api/v1/entities` registry.
 
 ### Reading the graph output
 

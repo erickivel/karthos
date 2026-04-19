@@ -259,6 +259,28 @@ Operational notes:
 - with `--storage-backend=memory` (default), data survives only for the process lifetime
 - with `--storage-backend=external`, data is persisted to PostgreSQL (graph, entities, metadata) and VictoriaMetrics (metrics)
 
+### Metric Normalization Semantics
+
+The backend serves a scalar metrics API, so OTLP metrics are normalized into canonical samples before storage and query:
+
+- Gauge and Sum datapoints are copied as scalar samples, then multiplied by the configured conversion factor.
+- Histogram datapoints are normalized as average values using `sum / count`. Datapoints with `count == 0` are skipped.
+- Servicegraph-derived metrics preserve `edge_client`, `edge_server`, `edge_client_id`, and `edge_server_id` labels so edge queries can join runtime telemetry back onto topology edges.
+
+### Request, Error, and Duration Semantics
+
+The canonical names intentionally hide collector-specific metric names, but the semantics still come from the upstream emitters:
+
+- `traces.span.metrics.calls` is ingested as a counter-like canonical series under `request_rate_per_second`, then served from VictoriaMetrics as `rate(request_rate_per_second[1m])`.
+- `traces.service.graph.request.total` is treated the same way for edge traffic.
+- `traces.service.graph.request_failed_total` is ingested as a counter-like canonical series under `error_rate_per_second`, then served as `rate(error_rate_per_second[1m])`.
+- `error_ratio` is not stored directly; the API derives it at query time as `rate(error_rate_per_second[1m]) / clamp_min(rate(request_rate_per_second[1m]), 1e-9)`.
+- `http_request_duration_seconds` is normalized from seconds to nanoseconds.
+- `traces.span.metrics.duration` is normalized from milliseconds to nanoseconds unless the collector configuration is explicitly changed to export seconds.
+- `traces.service.graph.request.server` is normalized from seconds to nanoseconds and exposed as `edge_latency_nanoseconds`.
+
+The fixed query window for request and error rates is currently 1 minute.
+
 ### 4. Raw Envelope Build
 
 After the backend receives OTLP payloads, `pkg/backend/ingest` converts them into canonical raw envelopes.

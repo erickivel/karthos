@@ -194,7 +194,7 @@ Entity and edge time-series exploration across the canonical metric categories.
 - Raw Samples table: scrollable table of MetricSample records
 
 **Entity mode:**
-Dropdown listing all known entities. Pre-filled when arriving from the topology inspector via `/metrics?entity={id}`.
+Dropdown listing entities from the latest graph snapshot only. Pre-filled when arriving from the topology inspector via `/metrics?entity={id}`.
 
 **Edge mode:**
 Dropdown listing graph `calls` edges by source and target display names. Pre-filled when arriving from the topology inspector via `/metrics?mode=edge&edgeSource={id}&edgeTarget={id}`.
@@ -217,11 +217,17 @@ Each canonical metric for the selected entity gets a card containing:
 Scrollable table with columns: Metric, Value, Unit, Timestamp. Zebra-striped with tonal layering (alternating `var(--surface-nav)` / `var(--surface-module)`). Useful for operators debugging and TCC reviewers inspecting raw data.
 
 **Data sources:**
-- `GET /api/v1/metrics/series?entity_id[]={id}&from=&to=` → entity metric series
-- `GET /api/v1/metrics/series?edge_source_id={id}&edge_target_id={id}&from=&to=` → edge metric series
-- `GET /api/v1/metrics/catalog?category=` → canonical metric definitions
-- `GET /api/v1/entities` → entity list for the selector
+- `GET /api/v1/metrics/series?metric_name={name}&entity_id[]={id}&from=&to=` → entity metric series
+- `GET /api/v1/metrics/series?metric_name={name}&edge_source_id={id}&edge_target_id={id}&from=&to=` → edge metric series
+- `GET /api/v1/metrics/catalog?category=` → canonical metric definitions, including per-metric `scopes`
 - `GET /api/v1/graph` → graph edges for the edge selector
+- `GET /api/v1/graph` → live graph nodes for the entity selector
+
+The Metrics Explorer must treat catalog `scopes` as authoritative:
+
+- entity mode renders only metrics whose scopes include `entity`
+- edge mode renders only metrics whose scopes include `edge`
+- entity-only traffic metrics such as `net_rx_bytes` and `net_tx_bytes` must never be requested in edge mode
 
 ### 5.4 Status Bar
 
