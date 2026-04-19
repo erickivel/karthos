@@ -1,13 +1,8 @@
 import { useSystemStatus } from '@/hooks/useSystemStatus'
 import { useGraphSnapshot } from '@/hooks/useGraphSnapshot'
 import { useAppStore } from '@/stores/useAppStore'
+import { formatAge } from '../../utils/formatters'
 import styles from './StatusBar.module.css'
-
-function formatAge(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s AGO`
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m AGO`
-  return `${Math.round(seconds / 3600)}h AGO`
-}
 
 export function StatusBar() {
   const connectionStatus = useAppStore((s) => s.connectionStatus)

@@ -1,49 +1,75 @@
-import { BarChart, Bar, XAxis, ResponsiveContainer, Cell, Tooltip } from 'recharts'
-import type { MetricSample } from '@/types/metrics'
-import styles from './MetricCard.module.css'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  ResponsiveContainer,
+  Cell,
+  Tooltip,
+} from "recharts";
+import type { MetricSample } from "@/types/metrics";
+import { formatValue } from "../../utils/formatters";
+import styles from "./MetricCard.module.css";
 
 interface MetricCardProps {
-  name: string
-  unit: string
-  samples: MetricSample[]
+  name: string;
+  unit: string;
+  samples: MetricSample[];
 }
 
 interface TooltipPayloadEntry {
-  value: number
-  payload: { time: string; fullTime: string; value: number }
+  value: number;
+  payload: { time: string; fullTime: string; value: number };
 }
 
-function CustomTooltip({ active, payload, unit }: { active?: boolean; payload?: TooltipPayloadEntry[]; unit: string }) {
-  if (!active || !payload || payload.length === 0) return null
-  const entry = payload[0]!
+function CustomTooltip({
+  active,
+  payload,
+  unit,
+}: {
+  active?: boolean;
+  payload?: TooltipPayloadEntry[];
+  unit: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const entry = payload[0]!;
   return (
     <div className={styles.tooltip}>
-      <span className={styles.tooltipValue}>{formatValue(entry.value)} {unit}</span>
+      <span className={styles.tooltipValue}>
+        {formatValue(entry.value)} {unit}
+      </span>
       <span className={styles.tooltipTime}>{entry.payload.fullTime}</span>
     </div>
-  )
+  );
 }
 
 export function MetricCard({ name, unit, samples }: MetricCardProps) {
   const sorted = [...samples].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-  )
+  );
 
-  const currentValue = sorted.length > 0 ? sorted[sorted.length - 1]!.value : 0
+  const currentValue = sorted.length > 0 ? sorted[sorted.length - 1]!.value : 0;
 
   const chartData = sorted.map((s, i) => ({
-    time: new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    fullTime: new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    time: new Date(s.timestamp).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    fullTime: new Date(s.timestamp).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }),
     value: s.value,
     index: i,
-  }))
+  }));
 
   return (
     <div className={styles.card}>
       <div className={styles.header}>
         <span className={styles.name}>{name}</span>
         <span className={styles.currentValue}>
-          {formatValue(currentValue)} <span className={styles.unit}>{unit}</span>
+          {formatValue(currentValue)}{" "}
+          <span className={styles.unit}>{unit}</span>
         </span>
       </div>
 
@@ -53,13 +79,13 @@ export function MetricCard({ name, unit, samples }: MetricCardProps) {
             <BarChart data={chartData} barCategoryGap="20%">
               <XAxis
                 dataKey="time"
-                tick={{ fontSize: 9, fill: 'var(--color-text-muted)' }}
+                tick={{ fontSize: 9, fill: "var(--color-text-muted)" }}
                 axisLine={false}
                 tickLine={false}
               />
               <Tooltip
                 content={<CustomTooltip unit={unit} />}
-                cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
+                cursor={{ fill: "rgba(255, 255, 255, 0.05)" }}
               />
               <Bar dataKey="value" radius={[1, 1, 0, 0]}>
                 {chartData.map((entry) => (
@@ -76,12 +102,5 @@ export function MetricCard({ name, unit, samples }: MetricCardProps) {
         <div className={styles.empty}>No samples</div>
       )}
     </div>
-  )
-}
-
-function formatValue(v: number): string {
-  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}G`
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`
-  return v.toFixed(v % 1 === 0 ? 0 : 2)
+  );
 }

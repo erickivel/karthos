@@ -22,3 +22,7 @@
 .container :global(.react-flow__node-namespace) {
   overflow: visible !important;
 }
+
+.container :global(.react-flow__background-pattern circle) {
+  fill: var(--surface-divider);
+}

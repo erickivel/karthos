@@ -1,5 +1,5 @@
-import { memo, type KeyboardEvent, type MouseEvent } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { memo, type KeyboardEvent, type MouseEvent } from "react";
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import {
   Globe,
   Boxes,
@@ -12,34 +12,37 @@ import {
   Lock,
   HardDrive,
   type LucideIcon,
-} from 'lucide-react'
-import { SegmentedBar } from '@/components/shared/SegmentedBar'
-import { useAppStore } from '@/stores/useAppStore'
-import type { GraphNode, EntityKind } from '@/types/graph'
-import { topologyEntityTestId } from '../testIds'
-import styles from './EntityNode.module.css'
+} from "lucide-react";
+import { SegmentedBar } from "@/components/shared/SegmentedBar";
+import { useAppStore } from "@/stores/useAppStore";
+import type { GraphNode, EntityKind } from "@/types/graph";
+import { formatCpu, formatMem } from "../../../utils/formatters";
+import { topologyEntityTestId } from "../testIds";
+import styles from "./EntityNode.module.css";
+
+type GraphNodeData = GraphNode & Record<string, unknown>;
 
 const KIND_COLOR_VAR: Record<EntityKind, string> = {
-  cluster: 'var(--kind-cluster)',
-  namespace: 'var(--kind-namespace)',
-  node: 'var(--kind-node)',
-  service: 'var(--kind-service)',
-  workload: 'var(--kind-workload)',
-  pod: 'var(--kind-pod)',
-  container: 'var(--kind-container)',
-  ingress: 'var(--kind-ingress)',
-  endpoint: 'var(--kind-endpoint)',
-  configmap: 'var(--kind-configmap)',
-  secret: 'var(--kind-secret)',
-  pvc: 'var(--kind-pvc)',
-}
+  cluster: "var(--kind-cluster)",
+  namespace: "var(--kind-namespace)",
+  node: "var(--kind-node)",
+  service: "var(--kind-service)",
+  workload: "var(--kind-workload)",
+  pod: "var(--kind-pod)",
+  container: "var(--kind-container)",
+  ingress: "var(--kind-ingress)",
+  endpoint: "var(--kind-endpoint)",
+  configmap: "var(--kind-configmap)",
+  secret: "var(--kind-secret)",
+  pvc: "var(--kind-pvc)",
+};
 
 function getHeaderColor(kind: EntityKind, status: string): string {
-  if (status === 'error') return 'var(--color-alert)'
-  return KIND_COLOR_VAR[kind] ?? 'var(--surface-active)'
+  if (status === "error") return "var(--color-alert)";
+  return KIND_COLOR_VAR[kind] ?? "var(--surface-active)";
 }
 
-const SMALL_KINDS: EntityKind[] = ['configmap', 'secret', 'pvc']
+const SMALL_KINDS: EntityKind[] = ["configmap", "secret", "pvc"];
 
 const KIND_ICONS: Record<EntityKind, LucideIcon> = {
   cluster: Boxes,
@@ -54,77 +57,67 @@ const KIND_ICONS: Record<EntityKind, LucideIcon> = {
   configmap: FileText,
   secret: Lock,
   pvc: HardDrive,
-}
+};
 
 interface MetricBarData {
-  label: string
-  value: number
-  max: number
-  unit?: string
-}
-
-function formatCpu(cpu: number): string {
-  if (cpu >= 1000) return `${(cpu / 1000).toFixed(1)}`
-  if (cpu >= 1) return `${cpu.toFixed(1)}m`
-  return `${(cpu * 1000).toFixed(0)}µ`
-}
-
-function formatMem(mem: number): string {
-  if (mem >= 1_073_741_824) return `${(mem / 1_073_741_824).toFixed(1)}G`
-  if (mem >= 1_048_576) return `${(mem / 1_048_576).toFixed(0)}M`
-  if (mem >= 1024) return `${(mem / 1024).toFixed(0)}K`
-  return `${mem.toFixed(0)}B`
+  label: string;
+  value: number;
+  max: number;
+  unit?: string;
 }
 
 function getMetricBars(node: GraphNode): MetricBarData[] {
-  const bars: MetricBarData[] = []
-  const labels = node.labels ?? {}
+  const bars: MetricBarData[] = [];
+  const labels = node.labels ?? {};
 
-  const cpuRaw = labels['cpu_usage_millicores']
+  const cpuRaw = labels["cpu_usage_millicores"];
   if (cpuRaw) {
-    const cpu = parseFloat(cpuRaw)
-    const maxCpu = parseFloat(labels['cpu_capacity_millicores'] || '100')
+    const cpu = parseFloat(cpuRaw);
+    const maxCpu = parseFloat(labels["cpu_capacity_millicores"] || "100");
     bars.push({
-      label: 'CPU',
+      label: "CPU",
       value: cpu,
       max: maxCpu,
-      unit: 'm',
-    })
+      unit: "m",
+    });
   }
 
-  const memRaw = labels['memory_usage_bytes']
+  const memRaw = labels["memory_usage_bytes"];
   if (memRaw) {
-    const mem = parseFloat(memRaw)
-    const maxMem = parseFloat(labels['memory_capacity_bytes'] || String(256 * 1024 * 1024))
+    const mem = parseFloat(memRaw);
+    const maxMem = parseFloat(
+      labels["memory_capacity_bytes"] || String(256 * 1024 * 1024),
+    );
     bars.push({
-      label: 'MEM',
+      label: "MEM",
       value: mem,
       max: maxMem,
-    })
+    });
   }
 
-  return bars
+  return bars;
 }
 
-function EntityNodeComponent({ data }: NodeProps) {
-  const node = data as unknown as GraphNode
-  const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId)
-  const isSmall = SMALL_KINDS.includes(node.kind)
-  const hasTelemetry = node.status !== 'unknown' || Object.keys(node.labels ?? {}).length > 0
-  const IconComponent = KIND_ICONS[node.kind] ?? Box
-  const metricBars = getMetricBars(node)
-  const selectNode = () => setSelectedEntityId(node.id)
+function EntityNodeComponent({ data }: NodeProps<Node<GraphNodeData>>) {
+  const node = data;
+  const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
+  const isSmall = SMALL_KINDS.includes(node.kind);
+  const hasTelemetry =
+    node.status !== "unknown" || Object.keys(node.labels ?? {}).length > 0;
+  const IconComponent = KIND_ICONS[node.kind] ?? Box;
+  const metricBars = getMetricBars(node);
+  const selectNode = () => setSelectedEntityId(node.id);
   const handleClick = (event: MouseEvent<HTMLDivElement>) => {
-    event.stopPropagation()
-    selectNode()
-  }
+    event.stopPropagation();
+    selectNode();
+  };
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      event.stopPropagation()
-      selectNode()
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      selectNode();
     }
-  }
+  };
 
   return (
     <div
@@ -170,7 +163,9 @@ function EntityNodeComponent({ data }: NodeProps) {
               <div className={styles.metricHeader}>
                 <span className={styles.metricLabel}>{bar.label}</span>
                 <span className={styles.metricValue}>
-                  {bar.label === 'CPU' ? formatCpu(bar.value) : formatMem(bar.value)}
+                  {bar.label === "CPU"
+                    ? formatCpu(bar.value)
+                    : formatMem(bar.value)}
                 </span>
               </div>
               <SegmentedBar value={bar.value} max={bar.max} unit={bar.unit} />
@@ -183,9 +178,13 @@ function EntityNodeComponent({ data }: NodeProps) {
         <div className={styles.telemetryHint}>Awaiting telemetry data</div>
       )}
 
-      <Handle type="source" position={Position.Bottom} className={styles.handle} />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className={styles.handle}
+      />
     </div>
-  )
+  );
 }
 
-export const EntityNode = memo(EntityNodeComponent)
+export const EntityNode = memo(EntityNodeComponent);
