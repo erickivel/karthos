@@ -16,6 +16,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 )
 
@@ -392,9 +393,12 @@ func TestOTLPNormalizer_ServiceGraphEdgeLabels_AttrsNamespace(t *testing.T) {
 	)
 }
 
-func TestOTLPNormalizer_ServiceGraphEdgeLabels_NoNamespace(t *testing.T) {
-	// If neither dp attribute nor envelope resource supplies a namespace,
-	// the edge_*_id labels are omitted rather than computed with an empty ns.
+func TestOTLPNormalizer_ServiceGraphDroppedWhenClientServiceUnresolvable(t *testing.T) {
+	// When the servicegraph client service cannot be resolved to a canonical
+	// Service entity (no registry match and no fallback namespace available from
+	// the resource or data-point attributes), the datapoint must be dropped.
+	// Falling back to the emitting resource would misattribute service traffic
+	// to the collector's own node/pod.
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())
 
@@ -406,15 +410,51 @@ func TestOTLPNormalizer_ServiceGraphEdgeLabels_NoNamespace(t *testing.T) {
 
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
-	require.Len(t, samples, 1)
+	assert.Empty(t, samples, "servicegraph datapoint with unresolvable client must be dropped")
+}
 
-	s := samples[0]
-	assert.Equal(t, "service-a", s.Labels["edge_client"])
-	assert.Equal(t, "service-b", s.Labels["edge_server"])
-	_, hasClientID := s.Labels["edge_client_id"]
-	_, hasServerID := s.Labels["edge_server_id"]
-	assert.False(t, hasClientID, "edge_client_id should be omitted without namespace")
-	assert.False(t, hasServerID, "edge_server_id should be omitted without namespace")
+func TestOTLPNormalizer_ServiceGraphDroppedWhenClientAttrMissing(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("traces.service.graph.request.total", 1.0, tsNano, map[string]string{
+		"server": "service-b",
+	})
+	env := makeEnvelope(t, serviceResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	assert.Empty(t, samples, "servicegraph datapoint without client attribute must be dropped")
+}
+
+func TestOTLPNormalizer_SpanMetricsDroppedWhenServiceNameMissing(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRM("traces.span.metrics.calls", 5.0, tsNano)
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	assert.Empty(t, samples, "spanmetrics datapoint without service.name must be dropped")
+}
+
+func TestOTLPNormalizer_SpanMetricsDroppedWhenNamespaceUnknown(t *testing.T) {
+	// service.name present but neither the registry nor the resource can supply
+	// a namespace hint — the canonical Service entity can't be computed and the
+	// datapoint must be dropped rather than mis-attributed to the emitting node.
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRM("traces.span.metrics.calls", 5.0, tsNano)
+	env := makeEnvelope(t, map[string]string{
+		"service.name":  "some-service",
+		"k8s.node.name": "worker-1",
+	}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	assert.Empty(t, samples, "spanmetrics datapoint without resolvable namespace must be dropped")
 }
 
 func TestOTLPNormalizer_ServiceGraphUsesCanonicalServiceIDsFromRegistry(t *testing.T) {
@@ -509,7 +549,16 @@ func TestOTLPNormalizer_SpanMetricsUseServiceEntityOverNode(t *testing.T) {
 	)
 }
 
-func TestOTLPNormalizer_PrometheusDurationHistogramUsesNanoseconds(t *testing.T) {
+func findSample(samples []metrics.MetricSample, name string) (metrics.MetricSample, bool) {
+	for _, s := range samples {
+		if s.MetricName == name {
+			return s, true
+		}
+	}
+	return metrics.MetricSample{}, false
+}
+
+func TestOTLPNormalizer_PrometheusDurationHistogramEmitsSumCountPair(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())
 
@@ -518,13 +567,18 @@ func TestOTLPNormalizer_PrometheusDurationHistogramUsesNanoseconds(t *testing.T)
 
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
-	require.Len(t, samples, 1)
+	require.Len(t, samples, 2)
 
-	assert.Equal(t, "request_duration_nanoseconds", samples[0].MetricName)
-	assert.InDelta(t, 500_000_000.0, samples[0].Value, 1e-6)
+	sumSample, ok := findSample(samples, "request_duration_nanoseconds_sum")
+	require.True(t, ok, "expected _sum sample")
+	assert.InDelta(t, 1_500_000_000.0, sumSample.Value, 1e-6)
+
+	countSample, ok := findSample(samples, "request_duration_nanoseconds_count")
+	require.True(t, ok, "expected _count sample")
+	assert.InDelta(t, 3.0, countSample.Value, 1e-9)
 }
 
-func TestOTLPNormalizer_SpanMetricsDurationHistogramUsesMilliseconds(t *testing.T) {
+func TestOTLPNormalizer_SpanMetricsDurationHistogramEmitsSumCountPair(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())
 
@@ -533,13 +587,18 @@ func TestOTLPNormalizer_SpanMetricsDurationHistogramUsesMilliseconds(t *testing.
 
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
-	require.Len(t, samples, 1)
+	require.Len(t, samples, 2)
 
-	assert.Equal(t, "request_duration_nanoseconds", samples[0].MetricName)
-	assert.InDelta(t, 6_000_000.0, samples[0].Value, 1e-6)
+	sumSample, ok := findSample(samples, "request_duration_nanoseconds_sum")
+	require.True(t, ok)
+	assert.InDelta(t, 18_000_000.0, sumSample.Value, 1e-6)
+
+	countSample, ok := findSample(samples, "request_duration_nanoseconds_count")
+	require.True(t, ok)
+	assert.InDelta(t, 3.0, countSample.Value, 1e-9)
 }
 
-func TestOTLPNormalizer_ServiceGraphServerHistogramUsesSeconds(t *testing.T) {
+func TestOTLPNormalizer_ServiceGraphServerHistogramEmitsSumCountPair(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())
 
@@ -551,12 +610,18 @@ func TestOTLPNormalizer_ServiceGraphServerHistogramUsesSeconds(t *testing.T) {
 
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
-	require.Len(t, samples, 1)
+	require.Len(t, samples, 2)
 
-	assert.Equal(t, "edge_latency_nanoseconds", samples[0].MetricName)
-	assert.InDelta(t, 800_000_000.0, samples[0].Value, 1e-6)
-	assert.Equal(t, "service-a", samples[0].Labels["edge_client"])
-	assert.Equal(t, "service-b", samples[0].Labels["edge_server"])
+	sumSample, ok := findSample(samples, "edge_latency_nanoseconds_sum")
+	require.True(t, ok)
+	assert.InDelta(t, 2_400_000_000.0, sumSample.Value, 1e-6)
+	assert.Equal(t, "service-a", sumSample.Labels["edge_client"])
+	assert.Equal(t, "service-b", sumSample.Labels["edge_server"])
+
+	countSample, ok := findSample(samples, "edge_latency_nanoseconds_count")
+	require.True(t, ok)
+	assert.InDelta(t, 3.0, countSample.Value, 1e-9)
+	assert.Equal(t, "service-a", countSample.Labels["edge_client"])
 }
 
 func TestOTLPNormalizer_ServiceGraphFailedTotalMapsToErrorRateCounter(t *testing.T) {

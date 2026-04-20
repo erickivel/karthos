@@ -178,10 +178,25 @@ func escapeLabelValue(v string) string {
 	return v
 }
 
+// histogramDerivedMeanMetrics maps a canonical metric name to the pair of cumulative
+// counters emitted by the normalizer (see pkg/backend/ingest/normalizer.go histogram
+// path). A query for the base name is served as rate(sum)/rate(count), yielding a
+// rate-weighted mean in the metric's native units.
+var histogramDerivedMeanMetrics = map[string]struct{}{
+	"request_duration_nanoseconds": {},
+	"edge_latency_nanoseconds":     {},
+}
+
 // buildPromQL constructs a PromQL selector from a MetricQuery.
 func buildPromQL(q query.MetricQuery) string {
 	if q.MetricName == "" {
 		return ""
+	}
+
+	if _, ok := histogramDerivedMeanMetrics[q.MetricName]; ok {
+		sumSelector := metricSelector(withMetricName(q, q.MetricName+"_sum"))
+		countSelector := metricSelector(withMetricName(q, q.MetricName+"_count"))
+		return fmt.Sprintf("rate(%s[1m]) / clamp_min(rate(%s[1m]), 1)", sumSelector, countSelector)
 	}
 
 	selector := metricSelector(q)
