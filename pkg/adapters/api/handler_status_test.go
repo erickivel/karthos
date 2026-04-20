@@ -13,10 +13,52 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
+
+func TestLatestSamplePerEntity(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 4, 19, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		samples  []metrics.MetricSample
+		expected map[entities.EntityID]float64
+	}{
+		{
+			name: "keeps newest sample per entity",
+			samples: []metrics.MetricSample{
+				{EntityID: "node-a", Value: 0, Timestamp: base},
+				{EntityID: "node-a", Value: 1, Timestamp: base.Add(30 * time.Second)},
+				{EntityID: "node-b", Value: 1, Timestamp: base.Add(15 * time.Second)},
+			},
+			expected: map[entities.EntityID]float64{
+				"node-a": 1,
+				"node-b": 1,
+			},
+		},
+		{
+			name: "ignores older duplicate samples",
+			samples: []metrics.MetricSample{
+				{EntityID: "pod-a", Value: 2, Timestamp: base.Add(45 * time.Second)},
+				{EntityID: "pod-a", Value: 1, Timestamp: base},
+			},
+			expected: map[entities.EntityID]float64{
+				"pod-a": 2,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.expected, latestSamplePerEntity(tt.samples))
+		})
+	}
+}
 
 func freshGraphStore(t *testing.T) persistence.GraphStore {
 	t.Helper()
@@ -133,6 +175,69 @@ func TestStatusIncludesDiscoveryTimestamp(t *testing.T) {
 
 	data := parseResponseData(t, resp)
 	require.NotNil(t, data["last_discovery_at"])
+}
+
+func TestStatusHealthSummaryWithMetrics(t *testing.T) {
+	ms := persistence.NewInMemoryMetricStore()
+	now := time.Now().UTC()
+
+	// Write node condition metrics.
+	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "node_condition_ready", EntityID: "node-1", Value: 1, Timestamp: now},
+		{MetricName: "node_condition_ready", EntityID: "node-2", Value: 1, Timestamp: now},
+		{MetricName: "node_condition_ready", EntityID: "node-3", Value: 0, Timestamp: now},
+	}))
+	// Write pod phase metrics (OTel encoding: 1=Pending, 2=Running, 3=Succeeded, 4=Failed).
+	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "pod_phase", EntityID: "pod-1", Value: 2, Timestamp: now}, // Running
+		{MetricName: "pod_phase", EntityID: "pod-2", Value: 2, Timestamp: now}, // Running
+		{MetricName: "pod_phase", EntityID: "pod-3", Value: 1, Timestamp: now}, // Pending
+		{MetricName: "pod_phase", EntityID: "pod-4", Value: 4, Timestamp: now}, // Failed
+	}))
+
+	srv := newTestServer(t, Config{
+		MetricStore:    ms,
+		GraphStore:     freshGraphStore(t),
+		MetadataStore:  persistence.NewInMemoryMetadataStore(),
+		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
+	})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/status")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+
+	data := parseResponseData(t, resp)
+
+	hs, ok := data["health_summary"].(map[string]any)
+	require.True(t, ok, "expected health_summary in status response")
+
+	nodes := hs["nodes"].(map[string]any)
+	require.EqualValues(t, 2, nodes["healthy"])
+	require.EqualValues(t, 1, nodes["unhealthy"])
+
+	pods := hs["pods"].(map[string]any)
+	require.EqualValues(t, 2, pods["running"])
+	require.EqualValues(t, 1, pods["pending"])
+	require.EqualValues(t, 1, pods["failed"])
+
+	// Unhealthy node should cause degraded status.
+	require.Equal(t, "degraded", data["system_status"])
+}
+
+func TestStatusHealthSummaryOmittedWithoutMetricStore(t *testing.T) {
+	srv := newTestServer(t, Config{
+		GraphStore:     freshGraphStore(t),
+		MetadataStore:  persistence.NewInMemoryMetadataStore(),
+		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
+	})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/status")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+
+	data := parseResponseData(t, resp)
+	_, hasHealthSummary := data["health_summary"]
+	require.False(t, hasHealthSummary, "health_summary should be absent when metric store is nil")
 }
 
 func TestDiscoveryReturnsProfileSummary(t *testing.T) {

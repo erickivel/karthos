@@ -1,5 +1,7 @@
 package storage
 
+import "time"
+
 // StorageBackend identifies which storage technology to use.
 type StorageBackend string
 
@@ -14,7 +16,8 @@ const (
 // StorageConfig holds all storage-related configuration needed by the factory.
 type StorageConfig struct {
 	Backend     StorageBackend
-	PostgresDSN string // required when Backend == BackendExternal
-	VMURL       string // required when Backend == BackendExternal
-	RawEnabled  bool   // whether to persist raw envelopes
+	PostgresDSN string        // required when Backend == BackendExternal
+	VMURL       string        // required when Backend == BackendExternal
+	RawEnabled  bool          // whether to persist raw envelopes
+	NodeTTL     time.Duration // age out topology nodes; 0 disables
 }

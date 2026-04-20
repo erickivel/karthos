@@ -60,8 +60,22 @@ func (b *K8sStructuralTopologyBuilder) buildExposesEdges(prof *profile.ClusterPr
 			e := topology.NewEdge(svc.ID(), w.ID(), topology.RelExposes, t)
 			e.Provenance = []string{structuralProvenance}
 			edges[e.ID] = e
-			addNode(nodes, svc.ID(), entities.KindService)
-			addNode(nodes, w.ID(), entities.KindWorkload)
+			addNode(nodes, newNode(
+				svc.ID(),
+				entities.KindService,
+				svc.ClusterName,
+				svc.Namespace,
+				svc.Name,
+				svc.Labels(),
+			))
+			addNode(nodes, newNode(
+				w.ID(),
+				entities.KindWorkload,
+				w.ClusterName,
+				w.Namespace,
+				w.Name,
+				w.Labels(),
+			))
 		}
 	}
 }
@@ -69,8 +83,10 @@ func (b *K8sStructuralTopologyBuilder) buildExposesEdges(prof *profile.ClusterPr
 // buildRoutesToEdges connects Ingresses to their backend Services.
 func (b *K8sStructuralTopologyBuilder) buildRoutesToEdges(prof *profile.ClusterProfile, t time.Time, edges map[string]topology.Edge, nodes map[entities.EntityID]topology.Node) {
 	svcByNSName := make(map[string]entities.EntityID)
+	svcByID := make(map[entities.EntityID]entities.Service)
 	for _, svc := range prof.Services {
 		svcByNSName[svc.Namespace+"/"+svc.Name] = svc.ID()
+		svcByID[svc.ID()] = svc
 	}
 
 	for _, ing := range prof.Ingresses {
@@ -79,11 +95,26 @@ func (b *K8sStructuralTopologyBuilder) buildRoutesToEdges(prof *profile.ClusterP
 			if !ok {
 				continue
 			}
+			svc := svcByID[svcID]
 			e := topology.NewEdge(ing.ID(), svcID, topology.RelRoutesTo, t)
 			e.Provenance = []string{structuralProvenance}
 			edges[e.ID] = e
-			addNode(nodes, ing.ID(), entities.KindIngress)
-			addNode(nodes, svcID, entities.KindService)
+			addNode(nodes, newNode(
+				ing.ID(),
+				entities.KindIngress,
+				ing.ClusterName,
+				ing.Namespace,
+				ing.Name,
+				ing.Labels(),
+			))
+			addNode(nodes, newNode(
+				svcID,
+				entities.KindService,
+				svc.ClusterName,
+				svc.Namespace,
+				svc.Name,
+				svc.Labels(),
+			))
 		}
 	}
 }
@@ -92,14 +123,28 @@ func (b *K8sStructuralTopologyBuilder) buildRoutesToEdges(prof *profile.ClusterP
 func (b *K8sStructuralTopologyBuilder) buildUsesAndMountsEdges(prof *profile.ClusterProfile, t time.Time, edges map[string]topology.Edge, nodes map[entities.EntityID]topology.Node) {
 	for _, w := range prof.Workloads {
 		wID := w.ID()
-		addNode(nodes, wID, entities.KindWorkload)
+		addNode(nodes, newNode(
+			wID,
+			entities.KindWorkload,
+			w.ClusterName,
+			w.Namespace,
+			w.Name,
+			w.Labels(),
+		))
 
 		for _, ref := range w.ConfigMapRefs {
 			cmID := entities.ComputeEntityID(entities.KindConfigMap, b.clusterName, w.Namespace, ref)
 			e := topology.NewEdge(wID, cmID, topology.RelUses, t)
 			e.Provenance = []string{structuralProvenance}
 			edges[e.ID] = e
-			addNode(nodes, cmID, entities.KindConfigMap)
+			addNode(nodes, newNode(
+				cmID,
+				entities.KindConfigMap,
+				b.clusterName,
+				w.Namespace,
+				ref,
+				nil,
+			))
 		}
 
 		for _, ref := range w.SecretRefs {
@@ -107,7 +152,14 @@ func (b *K8sStructuralTopologyBuilder) buildUsesAndMountsEdges(prof *profile.Clu
 			e := topology.NewEdge(wID, sID, topology.RelUses, t)
 			e.Provenance = []string{structuralProvenance}
 			edges[e.ID] = e
-			addNode(nodes, sID, entities.KindSecret)
+			addNode(nodes, newNode(
+				sID,
+				entities.KindSecret,
+				b.clusterName,
+				w.Namespace,
+				ref,
+				nil,
+			))
 		}
 
 		for _, ref := range w.PVCRefs {
@@ -115,7 +167,14 @@ func (b *K8sStructuralTopologyBuilder) buildUsesAndMountsEdges(prof *profile.Clu
 			e := topology.NewEdge(wID, pID, topology.RelMounts, t)
 			e.Provenance = []string{structuralProvenance}
 			edges[e.ID] = e
-			addNode(nodes, pID, entities.KindPVC)
+			addNode(nodes, newNode(
+				pID,
+				entities.KindPVC,
+				b.clusterName,
+				w.Namespace,
+				ref,
+				nil,
+			))
 		}
 	}
 }
@@ -132,8 +191,23 @@ func selectorMatches(selector, podTemplateLabels map[string]string) bool {
 	return true
 }
 
-func addNode(nodes map[entities.EntityID]topology.Node, id entities.EntityID, kind entities.EntityKind) {
-	if _, ok := nodes[id]; !ok {
-		nodes[id] = topology.Node{ID: id, Kind: kind}
+func newNode(
+	id entities.EntityID,
+	kind entities.EntityKind,
+	cluster string,
+	namespace string,
+	name string,
+	labels map[string]string,
+) topology.Node {
+	return topology.Node{
+		ID:     id,
+		Kind:   kind,
+		Labels: buildEntityMetadata(cluster, namespace, name, labels),
+	}
+}
+
+func addNode(nodes map[entities.EntityID]topology.Node, node topology.Node) {
+	if _, ok := nodes[node.ID]; !ok {
+		nodes[node.ID] = node
 	}
 }

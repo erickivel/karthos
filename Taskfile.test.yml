@@ -8,9 +8,13 @@ vars:
   HELM_RELEASE_NAME: oksg-otel
   HELM_CHART_PATH: ./deploy/helm/oksg-otel
   TARGET_NAMESPACE: oksg-demo
+  SPARSE_NAMESPACE: oksg-sparse
   BACKEND_IMAGE_REPOSITORY: localhost:{{.KIND_REGISTRY_PORT}}/oksg-backend
   BACKEND_IMAGE_TAG: latest
   BACKEND_IMAGE_PULL_POLICY: Always
+  FRONTEND_IMAGE_REPOSITORY: localhost:{{.KIND_REGISTRY_PORT}}/oksg-frontend
+  FRONTEND_IMAGE_TAG: latest
+  FRONTEND_IMAGE_PULL_POLICY: Always
   VARIANT: base
   E2E_OUTPUT_DIR: ./bin/e2e
   PROFILE_PATH: ./bin/e2e/profile.json
@@ -79,6 +83,11 @@ tasks:
         --set storage.postgresql.enabled=true
         --set storage.victoriametrics.enabled=true
         --set postgresql.auth.password=oksg
+        --set frontend.image.repository={{.FRONTEND_IMAGE_REPOSITORY}}
+        --set frontend.image.tag={{.FRONTEND_IMAGE_TAG}}
+        --set frontend.image.pullPolicy={{.FRONTEND_IMAGE_PULL_POLICY}}
+      - kubectl rollout restart deployment/oksg-backend -n {{.KIND_NAMESPACE}}
+      - kubectl rollout restart deployment/oksg-frontend -n {{.KIND_NAMESPACE}}
 
   e2e:verify:
     desc: Verify generated collectors and storage backends are deployed
@@ -90,6 +99,7 @@ tasks:
       - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=victoria-metrics-single -n {{.KIND_NAMESPACE}} --timeout=180s
       - echo "Waiting for collector rollouts..."
       - kubectl rollout status deployment/oksg-backend -n {{.KIND_NAMESPACE}} --timeout=120s
+      - kubectl rollout status deployment/oksg-frontend -n {{.KIND_NAMESPACE}} --timeout=120s
       - kubectl rollout status deployment/otel-collector-gateway -n {{.KIND_NAMESPACE}} --timeout=120s
       - kubectl rollout status daemonset/otel-collector-agent -n {{.KIND_NAMESPACE}} --timeout=120s
       - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/name={{.HELM_RELEASE_NAME}},app.kubernetes.io/component=agent --tail=30
@@ -100,14 +110,16 @@ tasks:
     desc: Remove deployed OTel Helm release
     cmds:
       - helm uninstall {{.HELM_RELEASE_NAME}} --namespace {{.KIND_NAMESPACE}} || true
+      - kubectl delete configmap oksg-discovery-profile -n {{.KIND_NAMESPACE}} --ignore-not-found
 
   e2e:reset-apps:
-    desc: Remove deployed demo microservices
+    desc: Remove deployed demo fixtures across all e2e app namespaces
     cmds:
       - kubectl delete namespace {{.TARGET_NAMESPACE}} --ignore-not-found
+      - kubectl delete namespace {{.SPARSE_NAMESPACE}} --ignore-not-found
 
   e2e:reset-all:
-    desc: Remove both OTel collectors and demo microservices
+    desc: Remove both OTel collectors and all deployed demo fixtures
     cmds:
       - task: e2e:reset
       - task: e2e:reset-apps

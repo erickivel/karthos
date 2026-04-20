@@ -70,6 +70,24 @@ pkg/
     predictors/      predictor interfaces only
     simulation/      reserved simulation boundary
 
+web/
+  src/
+    api/             thin native fetch wrapper + domain API modules
+    hooks/           TanStack Query hooks with polling intervals
+    stores/          Zustand cross-view state (selectedEntityId, connectionStatus)
+    types/           TypeScript types matching backend API contracts
+    views/
+      ClusterOverview/  KPIs, entity breakdown, relation types
+      TopologyGraph/    React Flow canvas, dagre layout, custom nodes/edges
+      MetricsExplorer/  category tabs, segmented bar charts, raw samples
+    components/
+      Shell/          floating TopBar, Sidebar, StatusBar
+      shared/         DataChip, SegmentedBar
+    styles/           CSS custom properties theme system
+  Dockerfile.dev     development container (Vite HMR)
+  Dockerfile         production multi-stage (Vite build → nginx)
+  nginx.conf         SPA fallback + /api/* proxy
+
 deploy/
   helm/              Helm charts and release packaging
   manifests/         raw manifest placeholder
@@ -85,12 +103,24 @@ test/
 ## Common Commands
 
 ```bash
+# Backend (Go)
 task fmt
 task test
 task build
 task vet
 task lint
 task ci
+
+# Frontend (Docker-only — never run npm/node locally)
+task web:dev         # start dev container with Vite HMR (port 5173)
+task web:build       # build production Docker image
+task web:install     # install npm dependencies inside container
+task web:typecheck   # run tsc --noEmit inside container
+task web:lint        # run ESLint inside container
+task web:e2e:install # install Playwright support inside the Docker e2e runner
+task web:e2e         # run topology Playwright tests against the live frontend/backend
+task web:e2e:update  # update committed topology screenshot baselines
+task ci              # backend checks plus frontend Docker build verification
 ```
 
 ## Discovery And Deployment Workflow
@@ -99,9 +129,9 @@ task ci
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
 ./bin/discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 ./bin/discovery-job --mode=deploy --profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --api-listen-address=0.0.0.0:8080 --status-stale-seconds=300 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
+./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --api-listen-address=0.0.0.0:8080 --status-stale-seconds=300 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s --node-ttl=24h
 # With external storage:
-./bin/backend --storage-backend=external --postgres-dsn="postgres://oksg:pass@localhost:5432/oksg" --victoriametrics-url="http://localhost:8428" --raw-store-enabled=true --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s
+./bin/backend --storage-backend=external --postgres-dsn="postgres://oksg:pass@localhost:5432/oksg" --victoriametrics-url="http://localhost:8428" --raw-store-enabled=true --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s --node-ttl=24h
 ```
 
 Notes:
@@ -110,6 +140,7 @@ Notes:
 - `plan` now emits Helm values, not raw manifests
 - `deploy` uses Helm, not `kubectl apply`
 - collector runtime flags are driven from Helm values; `agent.featureGates` currently enables `receiver.kubeletstats.enableCPUUsageMetrics` to avoid deprecated kubelet CPU utilization metrics
+- `--node-ttl` / `OKSG_NODE_TTL` controls topology node aging (default `24h`). Nodes absent from snapshots for longer than this value are hidden from `GetLatest` so deleted entities stop surfacing indefinitely. Set `0` to disable.
 
 ## Helm Ownership
 
@@ -153,7 +184,7 @@ kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.i
 
 The backend exposes debug endpoints on its health port (13133):
 
-- `/debug/metrics` — all metric samples currently in the in-memory store as JSON
+- `/debug/metrics` — all metric samples currently in the in-memory store as JSON; when external VictoriaMetrics storage is enabled, use `/api/v1/metrics` or VictoriaMetrics directly instead
 - `/debug/graph` — current topology snapshot including accumulated nodes and edges as JSON
 
 Use the task shortcuts:
@@ -180,6 +211,20 @@ curl -s http://localhost:13133/debug/metrics | jq '.[0:10]'
 curl -s http://localhost:13133/debug/graph | jq '.graph.edges[0:5]'
 kill %1
 ```
+
+For external-storage e2e runs, prefer:
+
+```bash
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second" | jq '.data.samples[0:10]'
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=edge_latency_nanoseconds&edge_source_id=<source>&edge_target_id=<target>" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=error_ratio&edge_source_id=<source>&edge_target_id=<target>" | jq .
+```
+
+Notes:
+
+- `request_rate_per_second` and `error_rate_per_second` are served as 1-minute rates at query time, even though the stored canonical series are counter-derived.
+- `error_ratio` is query-derived from the served request and error rates.
+- The Metrics Explorer entity selector is driven by the latest graph snapshot, not the historical `/api/v1/entities` registry.
 
 ### Reading the graph output
 
@@ -220,7 +265,7 @@ Skips for `k8s.namespace`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset` r
 
 ## REST API (Layer 6)
 
-The backend exposes a versioned REST API on a dedicated port (default 8080) for querying graph state, metrics, entities, and system status. All list endpoints support cursor-based pagination (`page_size`, `next_token`). See [docs/api-reference.md](api-reference.md) for the complete reference.
+The backend exposes a versioned REST API on a dedicated port (default 8080) for querying graph state, metrics, entities, and backend status. All list endpoints support cursor-based pagination (`page_size`, `next_token`). See [docs/api-reference.md](api-reference.md) for the complete reference.
 
 For local e2e work, keep the local port split explicit to avoid colliding with `gateway-go` traffic generation:
 

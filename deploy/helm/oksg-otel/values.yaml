@@ -13,6 +13,7 @@ global:
 
 enabledSignals:
   - metric
+  - trace
 
 namespace:
   create: true
@@ -40,6 +41,12 @@ agent:
           - node
           - pod
           - container
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
     processors:
       k8sattributes:
         auth_type: serviceAccount
@@ -58,8 +65,15 @@ agent:
           receivers: [kubeletstats]
           processors: [k8sattributes, batch]
           exporters: [otlp]
+        traces:
+          receivers: [otlp]
+          processors: [k8sattributes, batch]
+          exporters: [otlp]
   resources: {}
-  tolerations: []
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
   nodeSelector: {}
 
 gateway:
@@ -100,6 +114,10 @@ gateway:
         - health_check
       pipelines:
         metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp]
+        traces:
           receivers: [otlp]
           processors: [memory_limiter, batch]
           exporters: [otlp]
@@ -158,6 +176,18 @@ victoria-metrics-single:
     persistentVolume:
       size: 5Gi
     retentionPeriod: 30d
+
+frontend:
+  enabled: true
+  image:
+    repository: oksg-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
 
 secrets:
   existingSecretName: ""

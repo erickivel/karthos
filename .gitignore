@@ -28,3 +28,12 @@ deploy/helm/oksg-otel/charts/
 # Superpowers plans
 docs/superpowers/
 .superpowers/
+
+# Frontend build artifacts and dependencies (should never exist locally)
+web/node_modules/
+web/dist/
+
+# Playwright
+.playwright-mcp/
+web/playwright-report/
+web/test-results/

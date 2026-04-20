@@ -1,11 +1,15 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
+	"github.com/erickivel/oksg/pkg/backend/query"
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 )
 
@@ -13,6 +17,7 @@ import (
 type StatusHandler struct {
 	metadataStore    persistence.MetadataStore
 	graphStore       persistence.GraphStore
+	metricStore      persistence.MetricStore
 	startTime        time.Time
 	hasMetricStore   bool
 	hasGraphStore    bool
@@ -109,7 +114,97 @@ func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, r *http.Request) 
 		resp["last_discovery_at"] = *lastDiscoveryAt
 	}
 
+	// Health summary from metric store.
+	if h.metricStore != nil {
+		if hs := h.computeHealthSummary(r.Context()); hs != nil {
+			resp["health_summary"] = hs
+			if hs.Nodes.Unhealthy > 0 {
+				if systemStatus == "nominal" {
+					systemStatus = "degraded"
+					resp["system_status"] = systemStatus
+				}
+				reasons = append(reasons, "unhealthy nodes detected")
+				resp["reasons"] = reasons
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type healthSummary struct {
+	Nodes nodeSummary `json:"nodes"`
+	Pods  podSummary  `json:"pods"`
+}
+
+type nodeSummary struct {
+	Healthy   int `json:"healthy"`
+	Unhealthy int `json:"unhealthy"`
+}
+
+type podSummary struct {
+	Pending   int `json:"pending"`
+	Running   int `json:"running"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+}
+
+func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary {
+	now := time.Now().UTC()
+	from := now.Add(-5 * time.Minute)
+
+	hs := &healthSummary{}
+
+	// Node health from node_condition_ready metric.
+	nodeSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
+		MetricName: "node_condition_ready",
+		From:       from,
+		To:         now,
+	})
+	if err == nil {
+		for _, v := range latestSamplePerEntity(nodeSamples) {
+			if v >= 1.0 {
+				hs.Nodes.Healthy++
+			} else {
+				hs.Nodes.Unhealthy++
+			}
+		}
+	}
+
+	// Pod phase from pod_phase metric.
+	podSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
+		MetricName: "pod_phase",
+		From:       from,
+		To:         now,
+	})
+	if err == nil {
+		for _, v := range latestSamplePerEntity(podSamples) {
+			switch int(v) {
+			case 1:
+				hs.Pods.Pending++
+			case 2:
+				hs.Pods.Running++
+			case 3:
+				hs.Pods.Succeeded++
+			case 4:
+				hs.Pods.Failed++
+			}
+		}
+	}
+
+	return hs
+}
+
+func latestSamplePerEntity(samples []metrics.MetricSample) map[entities.EntityID]float64 {
+	latest := make(map[entities.EntityID]float64, len(samples))
+	latestTS := make(map[entities.EntityID]time.Time, len(samples))
+	for _, sample := range samples {
+		if ts, ok := latestTS[sample.EntityID]; !ok || sample.Timestamp.After(ts) {
+			latest[sample.EntityID] = sample.Value
+			latestTS[sample.EntityID] = sample.Timestamp
+		}
+	}
+	return latest
 }
 
 func (h *StatusHandler) handleGetDiscovery(w http.ResponseWriter, r *http.Request) {

@@ -32,7 +32,7 @@ Applies to: `/graph/nodes`, `/graph/edges`, `/entities`, `/metrics`, `/metrics/s
 
 ### GET /api/v1/status
 
-System health, component availability, and snapshot freshness.
+Backend health, component availability, and snapshot freshness. This endpoint reflects backend stores, entity registry availability, and graph freshness; it does not report frontend deployment readiness.
 
 ```bash
 curl -s http://localhost:18081/api/v1/status | jq .
@@ -56,17 +56,23 @@ Response:
     "last_snapshot_at": "2026-04-02T15:22:12Z",
     "last_discovery_at": "2026-03-31T01:35:36Z",
     "snapshot_freshness_seconds": 12.5,
-    "data_stale": false
+    "data_stale": false,
+    "health_summary": {
+      "nodes": {"healthy": 3, "unhealthy": 0},
+      "pods": {"pending": 0, "running": 12, "succeeded": 0, "failed": 0}
+    }
   }
 }
 ```
+
+`health_summary` is present when a MetricStore is configured and `node_condition_ready` / `pod_phase` metrics are available. It aggregates the latest samples per entity from the last 5 minutes. `pod_phase` follows the OTel `k8sclusterreceiver` encoding: `1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown`.
 
 Status values:
 
 | Value | Meaning |
 |-------|---------|
 | `nominal` | All stores available AND snapshot fresh |
-| `degraded` | Stores available but snapshot stale (> `--status-stale-seconds`), or non-critical stores unavailable |
+| `degraded` | Stores available but snapshot stale (> `--status-stale-seconds`), non-critical stores unavailable, or unhealthy nodes detected |
 | `disconnected` | GraphStore or EntityRegistry unavailable |
 
 Configuration:
@@ -233,9 +239,17 @@ Response:
 
 Query metric samples with unit from catalog. Sorted by timestamp descending.
 
+Rate-like canonical metrics are served with query-time derivation:
+
+- `request_rate_per_second` -> `rate(...[1m])`
+- `error_rate_per_second` -> `rate(...[1m])`
+- `error_ratio` -> `rate(error_rate_per_second[1m]) / clamp_min(rate(request_rate_per_second[1m]), 1e-9)`
+
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
+| `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
+| `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
 | `metric_name` | string | **Required.** Canonical metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
@@ -252,13 +266,44 @@ Response:
 {
   "data": {
     "samples": [
-      {"metric_name": "cpu_usage_millicores", "entity_id": "...", "value": 250, "timestamp": "2026-03-30T10:00:00Z", "unit": "millicores"}
+      {
+        "metric_name": "request_rate_per_second",
+        "entity_id": "...",
+        "value": 7.5,
+        "timestamp": "2026-03-30T10:00:00Z",
+        "unit": "per_second",
+        "labels": {"edge_client": "service-a", "edge_server": "service-b", "source": "otlp"}
+      }
     ],
     "total": 100
   },
   "next_token": "NQ=="
 }
 ```
+
+For edge-oriented metrics, samples include an optional `edge` object plus the original edge labels:
+
+```json
+{
+  "metric_name": "edge_latency_nanoseconds",
+  "entity_id": "...",
+  "value": 12000000,
+  "timestamp": "2026-03-30T10:00:00Z",
+  "unit": "nanoseconds",
+  "edge": {
+    "source_id": "svc-a-id",
+    "target_id": "svc-b-id"
+  },
+  "labels": {
+    "edge_client": "svc-a",
+    "edge_server": "svc-b",
+    "edge_client_id": "svc-a-id",
+    "edge_server_id": "svc-b-id"
+  }
+}
+```
+
+Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint.
 
 Returns 400 if `from` or `to` is not valid RFC3339.
 
@@ -269,6 +314,8 @@ Metric samples grouped by metric name with catalog metadata (unit, category, des
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
+| `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
+| `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
 | `metric_name` | string | **Required.** Canonical metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
@@ -291,7 +338,14 @@ Response:
         "category": "resource",
         "description": "CPU usage in millicores",
         "samples": [
-          {"metric_name": "cpu_usage_millicores", "entity_id": "...", "value": 250, "timestamp": "2026-03-30T10:00:00Z", "unit": "millicores"}
+          {
+            "metric_name": "cpu_usage_millicores",
+            "entity_id": "...",
+            "value": 250,
+            "timestamp": "2026-03-30T10:00:00Z",
+            "unit": "millicores",
+            "labels": {"source": "kubeletstats"}
+          }
         ]
       }
     ],
@@ -300,13 +354,30 @@ Response:
 }
 ```
 
+When edge filters are used, series are grouped by metric name and edge identity, so two different service-to-service links produce two separate series entries even if they share the same canonical metric name.
+
 ### GET /api/v1/metrics/catalog
 
 List canonical metric definitions.
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `category` | string | Filter by category (`resource`, `traffic`, `latency`, `error`, `capacity`) |
+| `category` | string | Filter by category (`resource`, `traffic`, `latency`, `error`, `capacity`, `health`) |
+
+Response entries include a `scopes` array describing whether each canonical metric supports entity queries, edge queries, or both.
+
+Example:
+
+```bash
+curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[] | {name, scopes}'
+```
+
+```json
+{
+  "name": "request_rate_per_second",
+  "scopes": ["entity", "edge"]
+}
+```
 
 ```bash
 curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[].name'
@@ -321,7 +392,7 @@ Response:
     "metrics": [
       {"name": "cpu_usage_millicores", "unit": "millicores", "category": "resource", "description": "..."}
     ],
-    "total": 27
+    "total": 50
   }
 }
 ```

@@ -13,6 +13,9 @@ sequenceDiagram
     participant SP as SourcePlanner
     participant RV as ReleaseValuesBuilder
     participant B as backend
+    participant STI as StructuralTopologyIngestor
+    participant ER as EntityRegistry
+    participant GS as GraphStore
     participant H as Helm runner
     participant Cluster as K8s Cluster
 
@@ -31,7 +34,7 @@ sequenceDiagram
         SP->>SP: Add prometheus receiver and scrape configs
     end
     alt OTLP sources found
-        SP->>SP: Add otlp receiver and spanmetrics/servicegraph connectors
+        SP->>SP: Add otlp receiver on agent and spanmetrics/servicegraph connectors on gateway
     end
     SP-->>CLI: Plan
     CLI->>RV: Build(plan)
@@ -54,6 +57,14 @@ sequenceDiagram
     CLI->>H: helm upgrade --install
     H->>Cluster: Create or update release resources
     Cluster-->>H: Release applied
+
+    Note over Cluster,B: Backend startup
+    Cluster->>B: Mount /etc/oksg/profile.json and start pod
+    B->>STI: IngestProfile(ctx, profile)
+    STI->>ER: UpsertEntity(namespace / workload / service / pod / container / ...)
+    STI->>GS: PutSnapshot(structural topology)
+
+    Note over Cluster,B: Runtime telemetry
     Cluster->>B: Gateway forwards OTLP metrics/traces
     B-->>Cluster: Backend logs accepted raw envelopes
 ```
@@ -89,11 +100,13 @@ The source planner turns the profile into collector intent:
 - agent always includes `kubeletstats` (expanded to include volume metrics), `hostmetrics`, and `k8scluster`
 - agent adds `prometheus` only when targets were discovered
 - agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
-- agent enables `spanmetrics` and `servicegraph` connectors when OTLP traces are enabled
+- gateway enables `spanmetrics` and `servicegraph` connectors when OTLP traces are enabled
 - gateway receives OTLP from agents and OTLP-native emitters
 - gateway exports to the backend OTLP ingest service instead of the debug exporter
 - collector telemetry logging is configured for JSON stdout logging with env-controlled level
 - traces are enabled only when OTLP-capable sources advertise trace support
+
+`spanmetrics` and `servicegraph` live on the gateway rather than the per-node agent so the cluster uses one shared connector instance. That prevents the same traffic from being derived once per agent and keeps latency and service-call counts from being double-counted.
 
 Baseline vs enriched plans:
 
@@ -129,6 +142,16 @@ The Helm chart is responsible for:
 - gateway Service and Deployment
 - backend Service and Deployment
 - restart-on-config-change annotations
+
+### 5. Backend Structural Ingest
+
+The backend pod mounts the generated `profile.json` at `/etc/oksg/profile.json`
+and runs `StructuralTopologyIngestor.IngestProfile` once at startup. This
+seeds the `EntityRegistry` with every entity discovered in the profile
+(namespaces, workloads, services, pods, containers, and their supporting
+objects) and writes an initial structural snapshot to the `GraphStore`, so
+the topology API returns discovered entities even before any runtime
+telemetry arrives.
 
 ## Example Output
 

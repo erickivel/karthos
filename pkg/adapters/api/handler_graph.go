@@ -80,9 +80,10 @@ func (h *GraphHandler) enrichNode(ctx context.Context, n topology.Node) enriched
 	}
 	if h.entityRegistry != nil {
 		if entity, err := h.entityRegistry.GetEntity(ctx, n.ID); err == nil {
-			en.Name = entityName(entity)
-			en.Namespace = entityNamespace(entity)
-			en.Cluster = entityCluster(entity)
+			ref := entityRefOf(entity)
+			en.Name = ref.Name
+			en.Namespace = ref.Namespace
+			en.Cluster = ref.Cluster
 		}
 	}
 	if en.Name == "" && n.Labels != nil {
@@ -102,12 +103,13 @@ func (h *GraphHandler) resolveEntitySummary(ctx context.Context, id entities.Ent
 	if err != nil {
 		return nil
 	}
+	ref := entityRefOf(entity)
 	return &relatedEntitySummary{
 		ID:        entity.ID(),
 		Kind:      entity.Kind(),
-		Name:      entityName(entity),
-		Namespace: entityNamespace(entity),
-		Cluster:   entityCluster(entity),
+		Name:      ref.Name,
+		Namespace: ref.Namespace,
+		Cluster:   ref.Cluster,
 		Labels:    entity.Labels(),
 	}
 }
@@ -131,40 +133,25 @@ func toEnrichedEdge(e topology.Edge, related *relatedEntitySummary) enrichedEdge
 	}
 }
 
-func entityName(e entities.Entity) string {
-	switch se := e.(type) {
-	case persistence.StoredEntity:
-		return se.Name
-	case *persistence.StoredEntity:
-		return se.Name
-	}
-	if labels := e.Labels(); labels != nil {
-		return labels["name"]
-	}
-	return ""
+type entityRef struct {
+	Name      string
+	Namespace string
+	Cluster   string
 }
 
-func entityNamespace(e entities.Entity) string {
+func entityRefOf(e entities.Entity) entityRef {
 	switch se := e.(type) {
 	case persistence.StoredEntity:
-		return se.Namespace
+		return entityRef{Name: se.Name, Namespace: se.Namespace, Cluster: se.Cluster}
 	case *persistence.StoredEntity:
-		return se.Namespace
+		return entityRef{Name: se.Name, Namespace: se.Namespace, Cluster: se.Cluster}
 	}
+	var ref entityRef
 	if labels := e.Labels(); labels != nil {
-		return labels["namespace"]
+		ref.Name = labels["name"]
+		ref.Namespace = labels["namespace"]
 	}
-	return ""
-}
-
-func entityCluster(e entities.Entity) string {
-	switch se := e.(type) {
-	case persistence.StoredEntity:
-		return se.Cluster
-	case *persistence.StoredEntity:
-		return se.Cluster
-	}
-	return ""
+	return ref
 }
 
 // --- handlers ---
@@ -186,9 +173,11 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nodes, edges := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+
 	kindCounts := map[string]int{}
 	nsSet := map[string]struct{}{}
-	for _, n := range snap.Graph.Nodes {
+	for _, n := range nodes {
 		kindCounts[string(n.Kind)]++
 		if ns, ok := n.Labels["namespace"]; ok && ns != "" {
 			nsSet[ns] = struct{}{}
@@ -197,7 +186,7 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 
 	relationCounts := map[string]int{}
 	relSet := map[string]struct{}{}
-	for _, e := range snap.Graph.Edges {
+	for _, e := range edges {
 		relationCounts[string(e.Relation)]++
 		relSet[string(e.Relation)] = struct{}{}
 	}
@@ -206,15 +195,24 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 	namespaces := sortedSetKeys(nsSet)
 	relations := sortedKeys(relationCounts)
 
+	enrichedNodes := make([]enrichedNode, 0, len(nodes))
+	for _, n := range nodes {
+		enrichedNodes = append(enrichedNodes, h.enrichNode(r.Context(), n))
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":    snap.Version,
 		"from":       snap.From,
 		"to":         snap.To,
 		"created_at": snap.CreatedAt,
-		"graph":      snap.Graph,
+		"graph": map[string]any{
+			"timestamp": snap.Graph.Timestamp,
+			"nodes":     enrichedNodes,
+			"edges":     edges,
+		},
 		"summary": map[string]any{
-			"node_count":           len(snap.Graph.Nodes),
-			"edge_count":           len(snap.Graph.Edges),
+			"node_count":           len(nodes),
+			"edge_count":           len(edges),
 			"kind_counts":          kindCounts,
 			"relation_counts":      relationCounts,
 			"snapshot_age_seconds": time.Since(snap.CreatedAt).Seconds(),
@@ -244,11 +242,13 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nodes, _ := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+
 	kindFilter := entities.EntityKind(r.URL.Query().Get("kind"))
 	nsFilter := r.URL.Query().Get("namespace")
 
 	var filtered []enrichedNode
-	for _, n := range snap.Graph.Nodes {
+	for _, n := range nodes {
 		if kindFilter != "" && n.Kind != kindFilter {
 			continue
 		}
@@ -298,10 +298,12 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nodes, edges := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+
 	var found *topology.Node
-	for i := range snap.Graph.Nodes {
-		if snap.Graph.Nodes[i].ID == nodeID {
-			found = &snap.Graph.Nodes[i]
+	for i := range nodes {
+		if nodes[i].ID == nodeID {
+			found = &nodes[i]
 			break
 		}
 	}
@@ -312,17 +314,15 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 
 	enriched := h.enrichNode(r.Context(), *found)
 
-	outbound, err := h.graphStore.QueryEdges(r.Context(), query.EdgeQuery{Source: nodeID})
-	if err != nil {
-		h.logger.Warn("failed to query outbound edges", logging.Error(err))
-		writeError(w, http.StatusInternalServerError, "failed to query edges")
-		return
-	}
-	inbound, err := h.graphStore.QueryEdges(r.Context(), query.EdgeQuery{Target: nodeID})
-	if err != nil {
-		h.logger.Warn("failed to query inbound edges", logging.Error(err))
-		writeError(w, http.StatusInternalServerError, "failed to query edges")
-		return
+	var outbound []topology.Edge
+	var inbound []topology.Edge
+	for _, edge := range edges {
+		if edge.Source == nodeID {
+			outbound = append(outbound, edge)
+		}
+		if edge.Target == nodeID {
+			inbound = append(inbound, edge)
+		}
 	}
 
 	outboundEnriched := make([]enrichedEdge, 0, len(outbound))
@@ -355,25 +355,31 @@ func (h *GraphHandler) handleListEdges(w http.ResponseWriter, r *http.Request) {
 	targetFilter := entities.EntityID(r.URL.Query().Get("target"))
 	relationFilter := topology.RelationType(r.URL.Query().Get("relation"))
 
-	edges, err := h.graphStore.QueryEdges(r.Context(), query.EdgeQuery{
-		Source: sourceFilter,
-		Target: targetFilter,
-	})
+	edges, err := h.graphStore.QueryEdges(r.Context(), query.EdgeQuery{})
 	if err != nil {
 		h.logger.Warn("failed to query edges", logging.Error(err))
 		writeError(w, http.StatusInternalServerError, "failed to query edges")
 		return
 	}
 
-	if relationFilter != "" {
-		var filtered []topology.Edge
-		for _, e := range edges {
-			if e.Relation == relationFilter {
-				filtered = append(filtered, e)
-			}
-		}
-		edges = filtered
+	if snap, snapErr := h.graphStore.GetLatest(r.Context()); snapErr == nil && snap != nil {
+		_, edges = canonicalizeGraph(snap.Graph.Nodes, edges)
 	}
+
+	var filtered []topology.Edge
+	for _, e := range edges {
+		if sourceFilter != "" && e.Source != sourceFilter {
+			continue
+		}
+		if targetFilter != "" && e.Target != targetFilter {
+			continue
+		}
+		if relationFilter != "" && e.Relation != relationFilter {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	edges = filtered
 
 	if edges == nil {
 		edges = []topology.Edge{}

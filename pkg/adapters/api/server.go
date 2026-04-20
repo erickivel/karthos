@@ -66,6 +66,7 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 	statusHandler := &StatusHandler{
 		metadataStore:    cfg.MetadataStore,
 		graphStore:       cfg.GraphStore,
+		metricStore:      cfg.MetricStore,
 		startTime:        now,
 		hasMetricStore:   cfg.MetricStore != nil,
 		hasGraphStore:    cfg.GraphStore != nil,

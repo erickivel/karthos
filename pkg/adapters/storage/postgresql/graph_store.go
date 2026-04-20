@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -14,16 +15,31 @@ import (
 
 // PostgresGraphStore implements persistence.GraphStore using PostgreSQL.
 type PostgresGraphStore struct {
-	conn *Conn
+	conn    *Conn
+	nodeTTL time.Duration // 0 = no TTL filter
+}
+
+// PostgresGraphStoreOption configures a PostgresGraphStore.
+type PostgresGraphStoreOption func(*PostgresGraphStore)
+
+// WithPostgresNodeTTL filters GetLatest to nodes whose containing snapshot was
+// created within ttl. 0 disables the TTL.
+func WithPostgresNodeTTL(ttl time.Duration) PostgresGraphStoreOption {
+	return func(s *PostgresGraphStore) { s.nodeTTL = ttl }
 }
 
 // NewPostgresGraphStore creates a new PostgresGraphStore with the given connection.
-func NewPostgresGraphStore(conn *Conn) *PostgresGraphStore {
-	return &PostgresGraphStore{conn: conn}
+func NewPostgresGraphStore(conn *Conn, opts ...PostgresGraphStoreOption) *PostgresGraphStore {
+	s := &PostgresGraphStore{conn: conn}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // PutSnapshot stores a topology snapshot. Edges are upserted (accumulated)
-// using ON CONFLICT to update last_seen. Nodes are stored per-snapshot.
+// using ON CONFLICT to update last_seen. Nodes are stored per-snapshot and
+// materialized cumulatively at read time.
 func (s *PostgresGraphStore) PutSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
 	tx, err := s.conn.pool.Begin(ctx)
 	if err != nil {
@@ -87,7 +103,7 @@ func (s *PostgresGraphStore) PutSnapshot(ctx context.Context, snapshot topology.
 	return nil
 }
 
-// GetLatest returns the latest snapshot with its nodes and all accumulated edges.
+// GetLatest returns the latest snapshot with the accumulated node and edge set.
 // Returns nil, nil if no snapshot exists.
 func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot, error) {
 	// Get latest snapshot.
@@ -104,10 +120,18 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 		return nil, fmt.Errorf("pg graph get latest snapshot: %w", err)
 	}
 
-	// Get nodes for the latest snapshot.
-	nodeRows, err := s.conn.pool.Query(ctx,
-		`SELECT entity_id, kind, labels FROM topology_nodes WHERE snapshot_id = $1`, snapshotID,
-	)
+	// Get the latest version of each node across all snapshots so structural nodes
+	// remain visible after newer runtime-only snapshots are written.
+	// When nodeTTL > 0, drop nodes whose most recent containing snapshot was created
+	// before NOW() - nodeTTL so deleted entities eventually age out.
+	var nodeRows pgx.Rows
+	if s.nodeTTL > 0 {
+		sql, args := latestNodeQuery(s.nodeTTL)
+		nodeRows, err = s.conn.pool.Query(ctx, sql, args...)
+	} else {
+		sql, args := latestNodeQuery(0)
+		nodeRows, err = s.conn.pool.Query(ctx, sql, args...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("pg graph get nodes: %w", err)
 	}
@@ -163,7 +187,31 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 		return nil, fmt.Errorf("pg graph edges iteration: %w", err)
 	}
 
+	applySnapshotTimestamp(&snap)
 	return &snap, nil
+}
+
+func latestNodeQuery(ttl time.Duration) (string, []any) {
+	if ttl > 0 {
+		return `SELECT DISTINCT ON (n.entity_id) n.entity_id, n.kind, n.labels
+			 FROM topology_nodes n
+			 JOIN topology_snapshots ts ON ts.id = n.snapshot_id
+			 WHERE ts.created_at > NOW() - $1::interval
+			 ORDER BY n.entity_id, n.snapshot_id DESC`,
+			[]any{ttl.String()}
+	}
+
+	return `SELECT DISTINCT ON (entity_id) entity_id, kind, labels
+			 FROM topology_nodes
+			 ORDER BY entity_id, snapshot_id DESC`,
+		nil
+}
+
+func applySnapshotTimestamp(snap *topology.Snapshot) {
+	if snap == nil {
+		return
+	}
+	snap.Graph.Timestamp = snap.CreatedAt
 }
 
 // QueryEdges filters accumulated edges by Source and/or Target.

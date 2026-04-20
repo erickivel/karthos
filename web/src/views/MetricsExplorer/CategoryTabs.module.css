@@ -1,0 +1,27 @@
+.tabs {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.tab {
+  padding: var(--space-xs) var(--space-md);
+  border: none;
+  background: var(--surface-module);
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  font-family: var(--font-family);
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.tab:hover {
+  background: var(--surface-active);
+}
+
+.tab[data-active="true"] {
+  color: var(--color-signal);
+  background: var(--surface-active);
+}

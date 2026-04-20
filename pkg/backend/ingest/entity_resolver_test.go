@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -157,6 +158,145 @@ func TestOTLPEntityResolver_ServiceBestEffort_Deterministic(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, id1, id2)
+}
+
+func TestOTLPEntityResolver_ServiceBestEffortPrefersCanonicalNamespacedRegistryEntity(t *testing.T) {
+	registry := persistence.NewInMemoryEntityRegistry()
+	require.NoError(t, registry.UpsertEntity(context.Background(), persistence.StoredEntity{
+		EntityID:   entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "my-service"),
+		EntityKind: entities.KindService,
+		Cluster:    testCluster,
+		Namespace:  "oksg-demo",
+		Name:       "my-service",
+		Metadata: map[string]string{
+			"service.name":       "my-service",
+			"k8s.namespace.name": "oksg-demo",
+		},
+	}))
+
+	resolver := NewOTLPEntityResolverWithRegistry(testCluster, registry)
+
+	id, err := resolver.Resolve(context.Background(), map[string]string{
+		"service.name": "my-service",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "my-service"), id)
+}
+
+func TestOTLPEntityResolver_Deployment(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.deployment.name": "my-deployment",
+		"k8s.namespace.name":  "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindWorkload, testCluster, "my-namespace", "deployment", "my-deployment")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_Deployment_Deterministic(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.deployment.name": "my-deployment",
+		"k8s.namespace.name":  "my-namespace",
+	}
+
+	id1, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	id2, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+
+	assert.Equal(t, id1, id2)
+}
+
+func TestOTLPEntityResolver_StatefulSet(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.statefulset.name": "my-statefulset",
+		"k8s.namespace.name":   "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindWorkload, testCluster, "my-namespace", "statefulset", "my-statefulset")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_ReplicaSet(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.replicaset.name": "my-replicaset",
+		"k8s.namespace.name":  "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindWorkload, testCluster, "my-namespace", "replicaset", "my-replicaset")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_DaemonSet(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.daemonset.name": "my-daemonset",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindWorkload, testCluster, "my-namespace", "daemonset", "my-daemonset")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_NamespaceOnly(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.namespace.name": "my-namespace",
+		"k8s.namespace.uid":  "abc-123",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindNamespace, testCluster, "my-namespace")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_DeploymentWinsOverReplicaSet(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.deployment.name": "my-deployment",
+		"k8s.replicaset.name": "my-deployment-abc123",
+		"k8s.namespace.name":  "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindWorkload, testCluster, "my-namespace", "deployment", "my-deployment")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_PodWinsOverDeployment(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.pod.name":        "my-pod-abc123",
+		"k8s.deployment.name": "my-deployment",
+		"k8s.namespace.name":  "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindPod, testCluster, "my-namespace", "my-pod-abc123")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
 }
 
 func TestOTLPEntityResolver_EmptyResource(t *testing.T) {

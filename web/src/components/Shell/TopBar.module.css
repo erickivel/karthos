@@ -1,0 +1,72 @@
+.topBar {
+  position: fixed;
+  top: var(--space-md);
+  left: var(--space-md);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface-nav);
+  border-radius: var(--radius-lg);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.logo {
+  font-size: var(--text-headline);
+  font-weight: 700;
+  letter-spacing: var(--letter-tight);
+  color: var(--color-signal);
+}
+
+.subtitle {
+  font-size: var(--text-label);
+  font-weight: 500;
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.indicators {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.pollingDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-signal);
+  transition: background var(--transition-fast);
+}
+
+.pollingDot[data-status="connected"] {
+  background: var(--color-signal);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.pollingDot[data-status="degraded"] {
+  background: var(--color-alert);
+}
+
+.pollingDot[data-status="disconnected"] {
+  background: var(--color-text-muted);
+}
+
+.statusLabel {
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}

@@ -46,6 +46,7 @@ type enrichedSample struct {
 	Timestamp  string            `json:"timestamp"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	Unit       metrics.Unit      `json:"unit,omitempty"`
+	Edge       *edgeRef          `json:"edge,omitempty"`
 }
 
 type metricSeries struct {
@@ -54,29 +55,39 @@ type metricSeries struct {
 	Category    string           `json:"category,omitempty"`
 	Description string           `json:"description,omitempty"`
 	Samples     []enrichedSample `json:"samples"`
+	Edge        *edgeRef         `json:"edge,omitempty"`
 }
 
-func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Request) {
+type edgeRef struct {
+	SourceID entities.EntityID `json:"source_id"`
+	TargetID entities.EntityID `json:"target_id"`
+}
+
+// queryEnrichedSamples parses the common metrics query parameters, issues the
+// store query, and returns enriched+sorted (descending) samples. On HTTP-level
+// failure the handler has already written the error response and the second
+// return is false.
+func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Request) ([]enrichedSample, bool) {
 	if h.metricStore == nil {
 		writeError(w, http.StatusNotFound, "metric store not configured")
-		return
+		return nil, false
 	}
 
 	from, err := parseTimeParam(r, "from")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid 'from' parameter: expected RFC3339 format")
-		return
+		return nil, false
 	}
 	to, err := parseTimeParam(r, "to")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid 'to' parameter: expected RFC3339 format")
-		return
+		return nil, false
 	}
 
 	metricName := r.URL.Query().Get("metric_name")
 	if metricName == "" {
 		writeError(w, http.StatusBadRequest, "metric_name query parameter is required")
-		return
+		return nil, false
 	}
 
 	var entityIDs []entities.EntityID
@@ -85,17 +96,19 @@ func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Reque
 	}
 
 	q := query.MetricQuery{
-		EntityIDs:  entityIDs,
-		MetricName: metricName,
-		From:       from,
-		To:         to,
+		EntityIDs:    entityIDs,
+		MetricName:   metricName,
+		From:         from,
+		To:           to,
+		EdgeSourceID: entities.EntityID(r.URL.Query().Get("edge_source_id")),
+		EdgeTargetID: entities.EntityID(r.URL.Query().Get("edge_target_id")),
 	}
 
 	samples, err := h.metricStore.Query(r.Context(), q)
 	if err != nil {
 		h.logger.Warn("failed to query metrics", logging.Error(err))
 		writeError(w, http.StatusInternalServerError, "failed to query metrics")
-		return
+		return nil, false
 	}
 
 	enriched := make([]enrichedSample, 0, len(samples))
@@ -107,12 +120,21 @@ func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Reque
 			Timestamp:  s.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
 			Labels:     s.Labels,
 			Unit:       h.unitLookup[s.MetricName],
+			Edge:       edgeRefFromLabels(s.Labels),
 		})
 	}
 
 	slices.SortFunc(enriched, func(a, b enrichedSample) int {
 		return cmp.Compare(b.Timestamp, a.Timestamp) // descending
 	})
+	return enriched, true
+}
+
+func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Request) {
+	enriched, ok := h.queryEnrichedSamples(w, r)
+	if !ok {
+		return
+	}
 
 	total := len(enriched)
 	pag := parsePaginationParams(r)
@@ -148,59 +170,16 @@ func (h *MetricsHandler) handleGetCatalog(w http.ResponseWriter, r *http.Request
 }
 
 func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Request) {
-	if h.metricStore == nil {
-		writeError(w, http.StatusNotFound, "metric store not configured")
+	enriched, ok := h.queryEnrichedSamples(w, r)
+	if !ok {
 		return
 	}
 
-	from, err := parseTimeParam(r, "from")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid 'from' parameter: expected RFC3339 format")
-		return
-	}
-	to, err := parseTimeParam(r, "to")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid 'to' parameter: expected RFC3339 format")
-		return
-	}
-
-	metricName := r.URL.Query().Get("metric_name")
-	if metricName == "" {
-		writeError(w, http.StatusBadRequest, "metric_name query parameter is required")
-		return
-	}
-
-	var entityIDs []entities.EntityID
-	for _, id := range r.URL.Query()["entity_id"] {
-		entityIDs = append(entityIDs, entities.EntityID(id))
-	}
-
-	q := query.MetricQuery{
-		EntityIDs:  entityIDs,
-		MetricName: metricName,
-		From:       from,
-		To:         to,
-	}
-
-	samples, err := h.metricStore.Query(r.Context(), q)
-	if err != nil {
-		h.logger.Warn("failed to query metrics", logging.Error(err))
-		writeError(w, http.StatusInternalServerError, "failed to query metrics")
-		return
-	}
-
-	// Group samples by metric name.
+	// Group samples by metric name and edge identity when present.
 	groups := map[string][]enrichedSample{}
-	for _, s := range samples {
-		es := enrichedSample{
-			MetricName: s.MetricName,
-			EntityID:   s.EntityID,
-			Value:      s.Value,
-			Timestamp:  s.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
-			Labels:     s.Labels,
-			Unit:       h.unitLookup[s.MetricName],
-		}
-		groups[s.MetricName] = append(groups[s.MetricName], es)
+	for _, es := range enriched {
+		key := seriesGroupKey(es.MetricName, es.Edge)
+		groups[key] = append(groups[key], es)
 	}
 
 	// Build catalog lookup for metadata.
@@ -212,16 +191,15 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 	// Build sorted series.
 	seriesNames := sortedKeys(groups)
 	series := make([]metricSeries, 0, len(seriesNames))
-	for _, name := range seriesNames {
-		samps := groups[name]
-		slices.SortFunc(samps, func(a, b enrichedSample) int {
-			return cmp.Compare(b.Timestamp, a.Timestamp) // descending
-		})
-
+	for _, key := range seriesNames {
+		samps := groups[key]
+		// samps inherits descending order from queryEnrichedSamples.
+		name := samps[0].MetricName
 		ms := metricSeries{
 			MetricName: name,
 			Unit:       h.unitLookup[name],
 			Samples:    samps,
+			Edge:       samps[0].Edge,
 		}
 		if cm, ok := catalogMap[name]; ok {
 			ms.Category = string(cm.Category)
@@ -238,4 +216,23 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 		"series": page,
 		"total":  total,
 	}, nextToken)
+}
+
+func edgeRefFromLabels(labels map[string]string) *edgeRef {
+	if labels == nil {
+		return nil
+	}
+	source := entities.EntityID(labels["edge_client_id"])
+	target := entities.EntityID(labels["edge_server_id"])
+	if source == "" || target == "" {
+		return nil
+	}
+	return &edgeRef{SourceID: source, TargetID: target}
+}
+
+func seriesGroupKey(metricName string, edge *edgeRef) string {
+	if edge == nil {
+		return metricName
+	}
+	return metricName + "|" + string(edge.SourceID) + "|" + string(edge.TargetID)
 }

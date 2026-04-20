@@ -1,0 +1,68 @@
+.statusBar {
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-xs) var(--space-md);
+  background: var(--surface-nav);
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  z-index: 100;
+}
+
+.segment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.dot[data-status="connected"] {
+  background: var(--color-signal);
+}
+
+.dot[data-status="degraded"] {
+  background: var(--color-alert);
+}
+
+.dot[data-status="disconnected"] {
+  background: var(--color-text-muted);
+}
+
+.tag {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.label {
+  color: var(--color-text-muted);
+}
+
+.separator {
+  color: var(--surface-active);
+}
+
+@media (max-width: 860px) {
+  .statusBar {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .right {
+    margin-left: 0;
+  }
+}

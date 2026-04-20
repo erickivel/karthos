@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ops-toolbox
+  namespace: oksg-sparse
+  labels:
+    app: ops-toolbox
+spec:
+  restartPolicy: Always
+  nodeSelector:
+    kubernetes.io/hostname: oksg-test-control-plane
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  containers:
+    - name: toolbox
+      image: localhost:5001/service-b-node:latest
+      imagePullPolicy: Always
+      command: ["node", "-e", "setInterval(() => {}, 1000)"]

@@ -45,9 +45,13 @@ func NewStores(ctx context.Context, cfg StorageConfig) (*Stores, error) {
 }
 
 func newMemoryStores(cfg StorageConfig) *Stores {
+	var graphOpts []persistence.InMemoryGraphStoreOption
+	if cfg.NodeTTL > 0 {
+		graphOpts = append(graphOpts, persistence.WithInMemoryNodeTTL(cfg.NodeTTL))
+	}
 	s := &Stores{
 		MetricStore:    persistence.NewInMemoryMetricStore(),
-		GraphStore:     persistence.NewInMemoryGraphStore(),
+		GraphStore:     persistence.NewInMemoryGraphStore(graphOpts...),
 		MetadataStore:  persistence.NewInMemoryMetadataStore(),
 		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
 	}
@@ -86,9 +90,13 @@ func newExternalStores(ctx context.Context, cfg StorageConfig) (*Stores, error) 
 		return nil, fmt.Errorf("external stores vm ping: %w", err)
 	}
 
+	var pgGraphOpts []postgresql.PostgresGraphStoreOption
+	if cfg.NodeTTL > 0 {
+		pgGraphOpts = append(pgGraphOpts, postgresql.WithPostgresNodeTTL(cfg.NodeTTL))
+	}
 	s := &Stores{
 		MetricStore:    vmStore,
-		GraphStore:     postgresql.NewPostgresGraphStore(pgConn),
+		GraphStore:     postgresql.NewPostgresGraphStore(pgConn, pgGraphOpts...),
 		MetadataStore:  postgresql.NewPostgresMetadataStore(pgConn),
 		EntityRegistry: postgresql.NewPostgresEntityRegistry(pgConn),
 		closers:        []io.Closer{pgConn, vmStore},

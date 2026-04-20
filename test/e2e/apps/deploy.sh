@@ -18,10 +18,15 @@ docker build -t "${REGISTRY}/gateway-go:latest" "${VARIANT_DIR}/gateway-go"
 docker build -t "${REGISTRY}/service-a-python:latest" "${VARIANT_DIR}/service-a-python"
 docker build -t "${REGISTRY}/service-b-node:latest" "${VARIANT_DIR}/service-b-node"
 docker build -t "${REGISTRY}/oksg-backend:latest" -f "${REPO_ROOT}/deploy/images/backend/Dockerfile" "${REPO_ROOT}"
+docker build -t "${REGISTRY}/oksg-frontend:latest" "${REPO_ROOT}/web"
 
 docker push "${REGISTRY}/gateway-go:latest"
 docker push "${REGISTRY}/service-a-python:latest"
 docker push "${REGISTRY}/service-b-node:latest"
 docker push "${REGISTRY}/oksg-backend:latest"
+docker push "${REGISTRY}/oksg-frontend:latest"
 
 kubectl apply -k "${VARIANT_DIR}"
+while IFS= read -r deployment; do
+  kubectl rollout restart -n oksg-demo "${deployment}"
+done < <(kubectl get deployments -n oksg-demo -o name)

@@ -128,7 +128,18 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 		return nil, fmt.Errorf("vm query: unexpected status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return parseQueryRangeResponse(resp.Body)
+	samples, err := parseQueryRangeResponse(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range samples {
+		if samples[i].MetricName == "" {
+			samples[i].MetricName = q.MetricName
+		}
+	}
+
+	return samples, nil
 }
 
 // samplesToPrometheusText converts MetricSamples to Prometheus text exposition
@@ -167,21 +178,64 @@ func escapeLabelValue(v string) string {
 	return v
 }
 
+// histogramDerivedMeanMetrics maps a canonical metric name to the pair of cumulative
+// counters emitted by the normalizer (see pkg/backend/ingest/normalizer.go histogram
+// path). A query for the base name is served as rate(sum)/rate(count), yielding a
+// rate-weighted mean in the metric's native units.
+var histogramDerivedMeanMetrics = map[string]struct{}{
+	"request_duration_nanoseconds": {},
+	"edge_latency_nanoseconds":     {},
+}
+
 // buildPromQL constructs a PromQL selector from a MetricQuery.
 func buildPromQL(q query.MetricQuery) string {
 	if q.MetricName == "" {
 		return ""
 	}
 
-	if len(q.EntityIDs) == 0 {
-		return q.MetricName
+	if _, ok := histogramDerivedMeanMetrics[q.MetricName]; ok {
+		sumSelector := metricSelector(withMetricName(q, q.MetricName+"_sum"))
+		countSelector := metricSelector(withMetricName(q, q.MetricName+"_count"))
+		return fmt.Sprintf("rate(%s[1m]) / clamp_min(rate(%s[1m]), 1)", sumSelector, countSelector)
 	}
 
-	ids := make([]string, 0, len(q.EntityIDs))
-	for _, id := range q.EntityIDs {
-		ids = append(ids, string(id))
+	selector := metricSelector(q)
+	switch q.MetricName {
+	case "request_rate_per_second", "error_rate_per_second":
+		return fmt.Sprintf("rate(%s[1m])", selector)
+	case "error_ratio":
+		errorRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "error_rate_per_second")))
+		requestRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "request_rate_per_second")))
+		return fmt.Sprintf("%s / clamp_min(%s, 1e-9)", errorRate, requestRate)
+	default:
+		return selector
 	}
-	return fmt.Sprintf(`%s{entity_id=~"%s"}`, q.MetricName, strings.Join(ids, "|"))
+}
+
+func metricSelector(q query.MetricQuery) string {
+	var matchers []string
+	if len(q.EntityIDs) > 0 {
+		ids := make([]string, 0, len(q.EntityIDs))
+		for _, id := range q.EntityIDs {
+			ids = append(ids, string(id))
+		}
+		matchers = append(matchers, fmt.Sprintf(`entity_id=~"%s"`, strings.Join(ids, "|")))
+	}
+	if q.EdgeSourceID != "" {
+		matchers = append(matchers, fmt.Sprintf(`edge_client_id="%s"`, q.EdgeSourceID))
+	}
+	if q.EdgeTargetID != "" {
+		matchers = append(matchers, fmt.Sprintf(`edge_server_id="%s"`, q.EdgeTargetID))
+	}
+	if len(matchers) == 0 {
+		return q.MetricName
+	}
+	return fmt.Sprintf(`%s{%s}`, q.MetricName, strings.Join(matchers, ","))
+}
+
+func withMetricName(q query.MetricQuery, metricName string) query.MetricQuery {
+	q.MetricName = metricName
+	return q
 }
 
 // queryRangeResponse represents the Prometheus query_range API response.

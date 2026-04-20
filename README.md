@@ -37,7 +37,7 @@ This repository currently implements Phases 1 through 6:
 - structural topology extraction from kubeletstats resource attributes (`runs_on`, `contains` edges)
 - K8s structural topology from discovery profile (`exposes`, `routes_to`, `uses`, `mounts` edges)
 - OTLP trace-based topology extraction (`calls` edges from `peer.service` span attributes)
-- `/debug/graph` and `/debug/metrics` endpoints for runtime topology and metric inspection
+- `/debug/graph` endpoint plus `/debug/metrics` for in-memory metric inspection; use `/api/v1/metrics` when external VictoriaMetrics storage is enabled
 - durable persistence with PostgreSQL (graph, entities, metadata, raw envelopes) and VictoriaMetrics (metrics) behind generic store interfaces
 - storage factory with swappable `memory` and `external` backends
 - traffic generation tasks for exercising the demo app and observing graph construction
@@ -92,7 +92,7 @@ Current phase: `Phase 6 — Query APIs and Visualization`
 - `TraceTopologyBuilder` derives `calls` edges from OTLP trace spans with `peer.service`
 - `MultiIngestor` fans envelopes through normalization and topology extraction in parallel
 - `InMemoryGraphStore` accumulates nodes and edges across telemetry batches
-- `/debug/graph` and `/debug/metrics` HTTP endpoints for runtime inspection
+- `/debug/graph` and `/debug/metrics` HTTP endpoints for runtime inspection (`/debug/metrics` is in-memory-store oriented)
 - OTLP trace instrumentation in `gateway-go` demo app
 - Traffic generation and debug tasks (`task test:e2e:traffic`, `task test:e2e:debug:graph`)
 
@@ -120,7 +120,7 @@ Current phase: `Phase 6 — Query APIs and Visualization`
 - Entity enrichment from registry with OTLP label resolution (name, namespace, cluster)
 - Node detail with enriched inbound/outbound edges and related entity summaries
 - `/metrics/series` endpoint grouping samples by metric name with catalog metadata
-- Normalized system status (nominal/degraded/disconnected) with configurable staleness threshold
+- Normalized backend status (nominal/degraded/disconnected) with configurable staleness threshold
 - Backend CLI flags: `--api-listen-address`, `--status-stale-seconds`
 
 </details>
@@ -173,6 +173,10 @@ E2E tests require Docker, kind, and kubectl. First, set up the test cluster:
 ```bash
 task test:e2e:setup
 ```
+
+The default kind topology includes one control-plane node plus one worker
+node so the topology projection QA scenarios can assert real cross-node
+placement.
 
 #### Option 1: Run Full Scenarios (Recommended)
 
@@ -232,12 +236,37 @@ Local port convention used by the e2e helpers:
 - `18081` -> backend REST API
 - `13133` -> backend debug/health endpoints
 
+#### Frontend Topology QA with Playwright
+
+Projection-mode coverage runs against the live frontend and a port-forwarded
+backend:
+
+```bash
+# install frontend deps and Playwright support in Docker
+task web:e2e:install
+
+# start the frontend
+task web:dev
+
+# expose the backend API
+kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
+
+# run the topology suite
+task web:e2e
+
+# refresh committed screenshots when intended UI changes land
+task web:e2e:update
+```
+
+The Playwright runner expects the frontend at `http://localhost:5173` and uses
+the Vite proxy to reach the backend API at `http://localhost:18081`.
+
 #### Cleanup
 
 ```bash
-task test:e2e:reset       # remove OTel collectors only
-task test:e2e:reset-apps  # remove demo microservices only
-task test:e2e:reset-all   # remove both OTel collectors and demo apps
+task test:e2e:reset       # remove OTel collectors and the applied discovery-profile ConfigMap
+task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
+task test:e2e:reset-all   # remove both OTel collectors and all demo fixtures
 task test:e2e:teardown    # destroy entire cluster and registry
 ```
 

@@ -1,7 +1,26 @@
-from flask import Flask, jsonify, Response
 import os
+import time
+
 import requests
+from flask import Flask, Response, jsonify, request
+from opentelemetry import context as otel_context
+from opentelemetry import propagate, trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import SpanKind
 from prometheus_client import Counter, Histogram, generate_latest
+
+
+def init_tracer():
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    service_name = os.getenv("OTEL_SERVICE_NAME", "service-a-python")
+
+    provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")))
+    trace.set_tracer_provider(provider)
+    return provider
 
 
 app = Flask(__name__)
@@ -9,6 +28,8 @@ SERVICE_B_URL = os.getenv(
     "SERVICE_B_URL",
     "http://service-b-node.oksg-demo.svc.cluster.local:8082/compute",
 )
+TRACER_PROVIDER = init_tracer()
+TRACER = trace.get_tracer("service-a-python")
 
 REQUEST_COUNT = Counter(
     "http_requests_total",
@@ -21,37 +42,70 @@ REQUEST_LATENCY = Histogram(
     ["method", "path"],
 )
 
+
+@app.before_request
+def start_request_span():
+    if request.path == "/metrics":
+        return
+
+    parent_context = propagate.extract(request.headers)
+    span = TRACER.start_span(f"{request.method} {request.path}", context=parent_context, kind=SpanKind.SERVER)
+    token = otel_context.attach(trace.set_span_in_context(span, parent_context))
+    request.environ["otel.span"] = span
+    request.environ["otel.token"] = token
+    request.environ["otel.start_time"] = time.perf_counter()
+
+
+@app.after_request
+def finish_request_span(response):
+    span = request.environ.get("otel.span")
+    token = request.environ.get("otel.token")
+    started = request.environ.get("otel.start_time")
+
+    if started is not None and request.path != "/metrics":
+        REQUEST_LATENCY.labels(request.method, request.path).observe(time.perf_counter() - started)
+        REQUEST_COUNT.labels(request.method, request.path, str(response.status_code)).inc()
+
+    if span is not None:
+        span.set_attribute("http.method", request.method)
+        span.set_attribute("http.route", request.path)
+        span.set_attribute("http.status_code", response.status_code)
+        span.end()
+    if token is not None:
+        otel_context.detach(token)
+    return response
+
+
 @app.route("/process")
 def process():
-    timer = REQUEST_LATENCY.labels("GET", "/process").time()
-    timer.__enter__()
-    try:
+    with TRACER.start_as_current_span("call-service-b-node", kind=SpanKind.CLIENT) as span:
+        span.set_attribute("peer.service", "service-b-node")
+        headers = {}
+        propagate.inject(headers)
+
         try:
-            response = requests.get(SERVICE_B_URL, timeout=3)
+            response = requests.get(SERVICE_B_URL, timeout=3, headers=headers)
             downstream = response.json()
             status_code = response.status_code
         except Exception as exc:  # pragma: no cover - test app fallback
+            span.record_exception(exc)
             downstream = {"error": str(exc)}
             status_code = 502
 
-        REQUEST_COUNT.labels("GET", "/process", str(status_code)).inc()
-        return (
-            jsonify(
-                {
-                    "service": "service-a-python",
-                    "status": "processed",
-                    "downstream": downstream,
-                }
-            ),
-            status_code if status_code != 200 else 200,
-        )
-    finally:
-        timer.__exit__(None, None, None)
+    return (
+        jsonify(
+            {
+                "service": "service-a-python",
+                "status": "processed",
+                "downstream": downstream,
+            }
+        ),
+        status_code if status_code != 200 else 200,
+    )
 
 
 @app.route("/health")
 def health():
-    REQUEST_COUNT.labels("GET", "/health", "200").inc()
     return jsonify({"service": "service-a-python", "status": "ok"})
 
 
@@ -61,4 +115,7 @@ def metrics():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8081)
+    try:
+        app.run(host="0.0.0.0", port=8081)
+    finally:
+        TRACER_PROVIDER.shutdown()

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization, Layer 4 topology reconstruction, Layer 5 durable persistence with PostgreSQL and VictoriaMetrics, and Layer 6 Phase A REST API for querying graph state, metrics, entities, and system status.
+OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization, Layer 4 topology reconstruction, Layer 5 durable persistence with PostgreSQL and VictoriaMetrics, Layer 6 Phase A REST API for querying graph state, metrics, entities, and system status, and Layer 6 Phase B frontend UI (React dashboard with topology graph, metrics explorer, and cluster overview).
 
 ## Current Implemented Boundary
 
@@ -13,7 +13,7 @@ Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Agent/Gatewa
 What is real today:
 
 - `pkg/adapters/kubernetes` discovers cluster resources, Prometheus annotation-based targets, and OTLP-capable workloads
-- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics, k8scluster, spanmetrics, and servicegraph
+- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics and k8scluster on the agent plus spanmetrics and servicegraph on the gateway
 - `pkg/adapters/otlp` exposes OTLP gRPC and HTTP ingest for the backend runtime
 - `pkg/collector/configgen` converts the plan into typed Helm values
 - `pkg/collector/deployer` runs Helm lint/template/upgrade-install
@@ -29,7 +29,6 @@ What is real today:
 What is not implemented yet:
 
 - `cmd/controller` is still a placeholder
-- Layer 6 Phase B: visualization UI
 - modeling and prediction
 
 ## Layer View
@@ -79,8 +78,18 @@ Query and Control (Layer 6 Phase A)
   Entity query endpoints
   System status and discovery profile endpoints
 
+Visualization (Layer 6 Phase B)
+  React frontend in web/ (Vite + TypeScript)
+  Three views: Cluster Overview (/), Topology Graph (/topology), Metrics Explorer (/metrics)
+  React Flow graph with dagre layout, custom EntityNode components, and cable-bundle RelationEdge rendering
+  TanStack Query polling (30s graph/status, 120s discovery)
+  Zustand for cross-view state (selected entity, connection status)
+  CSS custom properties theme system (dark theme, no hardcoded colors)
+  Docker-only development (Dockerfile.dev + Vite HMR)
+  Production: multi-stage build → nginx with /api/* proxy to backend
+  Helm templates: frontend-deployment, frontend-service, frontend-configmap
+
 Future Layers
-  Layer 6 Phase B: visualization UI
   modeling and prediction
 ```
 
@@ -93,8 +102,10 @@ The source planner now configures expanded receivers beyond the baseline `kubele
 - `hostmetrics` receiver: always active; collects host-level CPU, memory, disk I/O, network I/O, and load metrics from each node
 - `k8scluster` receiver: always active; collects Kubernetes state metrics including replica counts, pod phases, and node conditions
 - `kubeletstats` expanded: now includes volume metrics in addition to pod and container stats
-- `spanmetrics` connector: enabled when OTLP traces are present; derives request rate and latency distributions from span data
-- `servicegraph` connector: enabled when OTLP traces are present; derives service-to-service call edges from spans
+- `spanmetrics` connector: enabled on the gateway when OTLP traces are present; derives request rate and latency distributions from span data
+- `servicegraph` connector: enabled on the gateway when OTLP traces are present; derives service-to-service call edges from spans
+
+Placing `spanmetrics` and `servicegraph` on the gateway keeps a single shared connector instance for cluster traffic aggregation. That avoids per-agent duplication and double-counting while still letting the agents forward raw OTLP data upstream.
 
 The Kubernetes discovery adapter now auto-detects OTLP-capable workloads via:
 
@@ -105,13 +116,13 @@ The Kubernetes discovery adapter now auto-detects OTLP-capable workloads via:
 
 The backend normalization pipeline introduced in this layer consists of:
 
-- `OTLPEntityResolver`: maps OTLP semantic convention resource attributes (`k8s.container.name`, `k8s.pod.name`, `k8s.namespace.name`, `k8s.node.name`, `service.name`) to canonical `EntityID` values. Resolution priority is container > pod > node > service. Entity IDs are deterministic, computed via SHA-256 of entity kind, cluster name, and available Kubernetes attributes.
-- `OTLPNormalizer`: maps raw OTLP metric payloads to canonical `MetricSample` values using the `OTLPToCanonicalMappings` registry. Applies unit conversion factors and resolves directional variants for disk and network metrics. Metrics with no registered mapping are silently skipped.
+- `OTLPEntityResolver`: maps OTLP semantic convention resource attributes to canonical `EntityID` values. Resolution priority is container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Workload entities (deployment, statefulset, replicaset, daemonset) are resolved from `k8s_cluster` receiver attributes (`k8s.deployment.name`, `k8s.statefulset.name`, `k8s.replicaset.name`, `k8s.daemonset.name`). Namespace-scoped metrics with no more specific entity resolve to namespace. Entity IDs are deterministic, computed via SHA-256 of entity kind, cluster name, and available Kubernetes attributes.
+- `OTLPNormalizer`: maps raw OTLP metric payloads to canonical `MetricSample` values using the `OTLPToCanonicalMappings` registry. Applies unit conversion factors and resolves directional variants for disk, network, and node condition metrics. Servicegraph connector metrics are enriched with `edge_client`/`edge_server` labels plus stable `edge_client_id`/`edge_server_id` labels for edge-aware querying. Metrics with no registered mapping are silently skipped.
 - `TraceTopologyBuilder`: extracts service-to-service topology edges from OTLP trace envelopes. Edges are identified by the `peer.service` span attribute. Deduplicates edges within a batch by edge ID; propagates `FirstSeen`/`LastSeen` from span timestamps.
 - `NormalizingIngestor`: implements the `Ingestor` interface for metric envelopes; routes them through `OTLPNormalizer` and writes resulting `MetricSample` values to `MetricStore`.
 - `BufferedTopologyIngestor`: implements the `Ingestor` interface for both metric and trace topology paths. Accumulates edges and nodes in memory and flushes one consolidated `topology.Snapshot` to `GraphStore` on a configurable interval (default 60s), reducing per-envelope snapshot writes to one per flush window.
 - `TopologyIngestor`: unbuffered topology ingestor retained for use cases that require immediate snapshot writes (e.g. structural topology at startup).
-- `InMemoryMetricStore`: thread-safe in-memory `MetricStore` implementation. Supports write and range queries filtered by entity IDs, metric name, and time window.
+- `InMemoryMetricStore`: thread-safe in-memory `MetricStore` implementation. Supports write and range queries filtered by entity IDs, edge source/target IDs, metric name, and time window.
 - `InMemoryGraphStore`: thread-safe in-memory `GraphStore` implementation. Accumulates edges across snapshots; updates `LastSeen` on re-observed edges. Supports edge queries filtered by source or target entity ID.
 
 The `--cluster-name` flag on `cmd/backend` controls the cluster name used for entity ID computation and defaults to `default` (overridable via `OKSG_CLUSTER_NAME`).

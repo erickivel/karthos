@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/metrics"
@@ -28,8 +29,9 @@ func (s *InMemoryMetricStore) Write(_ context.Context, samples []metrics.MetricS
 	return nil
 }
 
-// Query filters samples by EntityIDs (if non-empty), MetricName (if non-empty),
-// and time range (if non-zero). Returns a copy of the matching samples.
+// Query filters samples by EntityIDs (if non-empty), edge source/target IDs
+// carried in labels (if non-empty), MetricName (if non-empty), and time range
+// (if non-zero). Returns a copy of the matching samples.
 func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]metrics.MetricSample, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -53,6 +55,12 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 		if q.MetricName != "" && sample.MetricName != q.MetricName {
 			continue
 		}
+		if q.EdgeSourceID != "" && sample.Labels["edge_client_id"] != string(q.EdgeSourceID) {
+			continue
+		}
+		if q.EdgeTargetID != "" && sample.Labels["edge_server_id"] != string(q.EdgeTargetID) {
+			continue
+		}
 		if !q.From.IsZero() && sample.Timestamp.Before(q.From) {
 			continue
 		}
@@ -70,14 +78,32 @@ type InMemoryGraphStore struct {
 	snapshot *topology.Snapshot
 	edges    map[string]topology.Edge // keyed by edge ID
 	nodes    map[string]topology.Node // keyed by entity ID string
+	lastSeen map[string]time.Time     // node entity ID -> most recent PutSnapshot time
+	nodeTTL  time.Duration            // 0 = no TTL
+	nowFn    func() time.Time
+}
+
+// InMemoryGraphStoreOption configures an InMemoryGraphStore.
+type InMemoryGraphStoreOption func(*InMemoryGraphStore)
+
+// WithInMemoryNodeTTL drops nodes whose most recent sighting is older than ttl
+// when reading via GetLatest. 0 disables the TTL.
+func WithInMemoryNodeTTL(ttl time.Duration) InMemoryGraphStoreOption {
+	return func(s *InMemoryGraphStore) { s.nodeTTL = ttl }
 }
 
 // NewInMemoryGraphStore returns a new empty InMemoryGraphStore.
-func NewInMemoryGraphStore() *InMemoryGraphStore {
-	return &InMemoryGraphStore{
-		edges: make(map[string]topology.Edge),
-		nodes: make(map[string]topology.Node),
+func NewInMemoryGraphStore(opts ...InMemoryGraphStoreOption) *InMemoryGraphStore {
+	s := &InMemoryGraphStore{
+		edges:    make(map[string]topology.Edge),
+		nodes:    make(map[string]topology.Node),
+		lastSeen: make(map[string]time.Time),
+		nowFn:    func() time.Time { return time.Now().UTC() },
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // PutSnapshot replaces the current snapshot and merges its edges and nodes into
@@ -101,8 +127,10 @@ func (s *InMemoryGraphStore) PutSnapshot(_ context.Context, snapshot topology.Sn
 		}
 	}
 
+	now := s.nowFn()
 	for _, n := range snapshot.Graph.Nodes {
 		s.nodes[string(n.ID)] = n
+		s.lastSeen[string(n.ID)] = now
 	}
 
 	return nil
@@ -123,8 +151,17 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 		edges = append(edges, e)
 	}
 
+	var cutoff time.Time
+	if s.nodeTTL > 0 {
+		cutoff = s.nowFn().Add(-s.nodeTTL)
+	}
 	nodes := make([]topology.Node, 0, len(s.nodes))
-	for _, n := range s.nodes {
+	for id, n := range s.nodes {
+		if s.nodeTTL > 0 {
+			if ts, ok := s.lastSeen[id]; !ok || ts.Before(cutoff) {
+				continue
+			}
+		}
 		nodes = append(nodes, n)
 	}
 

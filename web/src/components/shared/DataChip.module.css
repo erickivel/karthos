@@ -1,0 +1,20 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-active);
+  border-radius: var(--radius);
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.chip[data-variant="signal"] {
+  color: var(--color-signal);
+}
+
+.chip[data-variant="info"] {
+  color: var(--color-info);
+}

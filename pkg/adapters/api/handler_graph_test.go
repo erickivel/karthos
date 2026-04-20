@@ -266,3 +266,109 @@ func TestListEdgesPagination(t *testing.T) {
 	require.Len(t, edges, 1)
 	require.NotEmpty(t, nextToken)
 }
+
+func TestGetGraphIncludesStructuralKindsWhenGraphContainsThem(t *testing.T) {
+	gs := persistence.NewInMemoryGraphStore()
+	now := time.Now().UTC()
+
+	serviceID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-a")
+	workloadID := entities.ComputeEntityID(entities.KindWorkload, "cluster", "default", "deployment", "app")
+	configMapID := entities.ComputeEntityID(entities.KindConfigMap, "cluster", "default", "app-config")
+	secretID := entities.ComputeEntityID(entities.KindSecret, "cluster", "default", "app-secret")
+	pvcID := entities.ComputeEntityID(entities.KindPVC, "cluster", "default", "app-pvc")
+	ingressID := entities.ComputeEntityID(entities.KindIngress, "cluster", "default", "app-ingress", "app.default.local")
+
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		From:      now,
+		To:        now,
+		CreatedAt: now,
+		Graph: topology.Graph{
+			Timestamp: now,
+			Nodes: []topology.Node{
+				{ID: serviceID, Kind: entities.KindService, Labels: map[string]string{"name": "svc-a", "namespace": "default"}},
+				{ID: workloadID, Kind: entities.KindWorkload, Labels: map[string]string{"name": "app", "namespace": "default"}},
+				{ID: configMapID, Kind: entities.KindConfigMap, Labels: map[string]string{"name": "app-config", "namespace": "default"}},
+				{ID: secretID, Kind: entities.KindSecret, Labels: map[string]string{"name": "app-secret", "namespace": "default"}},
+				{ID: pvcID, Kind: entities.KindPVC, Labels: map[string]string{"name": "app-pvc", "namespace": "default"}},
+				{ID: ingressID, Kind: entities.KindIngress, Labels: map[string]string{"name": "app-ingress", "namespace": "default"}},
+			},
+			Edges: []topology.Edge{
+				topology.NewEdge(serviceID, workloadID, topology.RelExposes, now),
+				topology.NewEdge(workloadID, configMapID, topology.RelUses, now),
+				topology.NewEdge(workloadID, secretID, topology.RelUses, now),
+				topology.NewEdge(workloadID, pvcID, topology.RelMounts, now),
+				topology.NewEdge(ingressID, serviceID, topology.RelRoutesTo, now),
+			},
+		},
+	}))
+
+	srv := newTestServer(t, Config{GraphStore: gs})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/graph")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parseResponseData(t, resp)
+	summary := data["summary"].(map[string]any)
+	kindCounts := summary["kind_counts"].(map[string]any)
+	require.EqualValues(t, 1, kindCounts["service"])
+	require.EqualValues(t, 1, kindCounts["workload"])
+	require.EqualValues(t, 1, kindCounts["configmap"])
+	require.EqualValues(t, 1, kindCounts["secret"])
+	require.EqualValues(t, 1, kindCounts["pvc"])
+	require.EqualValues(t, 1, kindCounts["ingress"])
+
+	filters := summary["available_filters"].(map[string]any)
+	require.Contains(t, filters["kinds"], "service")
+	require.Contains(t, filters["kinds"], "workload")
+	require.Contains(t, filters["kinds"], "configmap")
+	require.Contains(t, filters["kinds"], "secret")
+	require.Contains(t, filters["kinds"], "pvc")
+	require.Contains(t, filters["kinds"], "ingress")
+}
+
+func TestGetGraphCanonicalizesLegacyNamespaceLessServiceNodesAndEdges(t *testing.T) {
+	gs := persistence.NewInMemoryGraphStore()
+	now := time.Now().UTC()
+
+	canonicalGateway := entities.ComputeEntityID(entities.KindService, "cluster", "oksg-demo", "gateway-go")
+	legacyGateway := entities.ComputeEntityID(entities.KindService, "cluster", "gateway-go")
+	canonicalServiceA := entities.ComputeEntityID(entities.KindService, "cluster", "oksg-demo", "service-a")
+	legacyServiceA := entities.ComputeEntityID(entities.KindService, "cluster", "service-a")
+
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		From:      now,
+		To:        now,
+		CreatedAt: now,
+		Graph: topology.Graph{
+			Timestamp: now,
+			Nodes: []topology.Node{
+				{ID: canonicalGateway, Kind: entities.KindService, Labels: map[string]string{"name": "gateway-go", "namespace": "oksg-demo"}},
+				{ID: legacyGateway, Kind: entities.KindService, Labels: map[string]string{"name": "gateway-go"}},
+				{ID: canonicalServiceA, Kind: entities.KindService, Labels: map[string]string{"name": "service-a", "namespace": "oksg-demo"}},
+				{ID: legacyServiceA, Kind: entities.KindService, Labels: map[string]string{"name": "service-a"}},
+			},
+			Edges: []topology.Edge{
+				topology.NewEdge(legacyGateway, legacyServiceA, topology.RelCalls, now),
+			},
+		},
+	}))
+
+	srv := newTestServer(t, Config{GraphStore: gs})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/graph")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parseResponseData(t, resp)
+	graph := data["graph"].(map[string]any)
+	nodes := graph["nodes"].([]any)
+	require.Len(t, nodes, 2)
+	edges := graph["edges"].([]any)
+	require.Len(t, edges, 1)
+	edge := edges[0].(map[string]any)
+	require.Equal(t, string(canonicalGateway), edge["source"])
+	require.Equal(t, string(canonicalServiceA), edge["target"])
+}

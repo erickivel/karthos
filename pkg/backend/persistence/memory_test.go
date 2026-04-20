@@ -113,6 +113,47 @@ func TestMetricStore_TimeRangeFilter(t *testing.T) {
 	}
 }
 
+func TestMetricStore_FilterByEdgeIDs(t *testing.T) {
+	store := NewInMemoryMetricStore()
+	ctx := context.Background()
+
+	sourceA := entities.ComputeEntityID(entities.KindService, "cluster", "default", "service-a")
+	targetB := entities.ComputeEntityID(entities.KindService, "cluster", "default", "service-b")
+	targetC := entities.ComputeEntityID(entities.KindService, "cluster", "default", "service-c")
+	now := time.Now()
+	require.NoError(t, store.Write(ctx, []metrics.MetricSample{
+		{
+			MetricName: "request_rate_per_second",
+			EntityID:   svc("servicegraph"),
+			Value:      1.0,
+			Timestamp:  now,
+			Labels: map[string]string{
+				"edge_client_id": string(sourceA),
+				"edge_server_id": string(targetB),
+			},
+		},
+		{
+			MetricName: "request_rate_per_second",
+			EntityID:   svc("servicegraph"),
+			Value:      2.0,
+			Timestamp:  now,
+			Labels: map[string]string{
+				"edge_client_id": string(sourceA),
+				"edge_server_id": string(targetC),
+			},
+		},
+	}))
+
+	got, err := store.Query(ctx, query.MetricQuery{
+		MetricName:   "request_rate_per_second",
+		EdgeSourceID: sourceA,
+		EdgeTargetID: targetB,
+	})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, string(targetB), got[0].Labels["edge_server_id"])
+}
+
 // ─── GraphStore tests ─────────────────────────────────────────────────────────
 
 func TestGraphStore_PutAndGetLatest(t *testing.T) {
@@ -238,4 +279,86 @@ func TestGraphStore_NodeDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	// Same node written twice should appear once
 	assert.Len(t, got.Graph.Nodes, 1)
+}
+
+func TestGraphStore_AccumulatesNodesAcrossSnapshots(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+
+	serviceID := entities.ComputeEntityID(entities.KindService, "cluster", "demo", "gateway")
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "demo", "gateway-pod")
+
+	structural := topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{
+				{
+					ID:   serviceID,
+					Kind: entities.KindService,
+					Labels: map[string]string{
+						"name":      "gateway",
+						"namespace": "demo",
+					},
+				},
+			},
+		},
+	}
+	runtime := topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{
+				{
+					ID:   podID,
+					Kind: entities.KindPod,
+					Labels: map[string]string{
+						"name":      "gateway-pod",
+						"namespace": "demo",
+					},
+				},
+			},
+		},
+	}
+
+	require.NoError(t, store.PutSnapshot(ctx, structural))
+	require.NoError(t, store.PutSnapshot(ctx, runtime))
+
+	got, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Len(t, got.Graph.Nodes, 2)
+	assert.ElementsMatch(t, []entities.EntityID{serviceID, podID}, []entities.EntityID{
+		got.Graph.Nodes[0].ID,
+		got.Graph.Nodes[1].ID,
+	})
+}
+
+func TestGraphStore_NodeTTLAgesOutStaleNodes(t *testing.T) {
+	store := NewInMemoryGraphStore(WithInMemoryNodeTTL(1 * time.Hour))
+	ctx := context.Background()
+
+	// Advance a controllable clock.
+	base := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
+	current := base
+	store.nowFn = func() time.Time { return current }
+
+	staleID := entities.ComputeEntityID(entities.KindPod, "cluster", "demo", "old-pod")
+	freshID := entities.ComputeEntityID(entities.KindPod, "cluster", "demo", "new-pod")
+
+	// Write a snapshot containing the stale node at t=base.
+	require.NoError(t, store.PutSnapshot(ctx, topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{{ID: staleID, Kind: entities.KindPod}},
+		},
+	}))
+
+	// Advance past the TTL, then write a new snapshot with just the fresh node.
+	current = base.Add(2 * time.Hour)
+	require.NoError(t, store.PutSnapshot(ctx, topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{{ID: freshID, Kind: entities.KindPod}},
+		},
+	}))
+
+	got, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, got.Graph.Nodes, 1)
+	assert.Equal(t, freshID, got.Graph.Nodes[0].ID)
 }

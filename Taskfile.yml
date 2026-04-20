@@ -3,6 +3,8 @@ version: "3"
 includes:
   test:
     taskfile: ./Taskfile.test.yml
+  web:
+    taskfile: ./web/Taskfile.yml
 
 tasks:
   default:
@@ -81,6 +83,7 @@ tasks:
       - task: lint
       - task: test:race
       - task: build:check
+      - task: web:build
 
   clean:
     desc: Remove generated artifacts and any binaries accidentally built in repo root

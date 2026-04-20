@@ -59,6 +59,37 @@ When upgrading Go (e.g., to fix `govulncheck` findings), update **all** of these
 
 After updating, run `go mod tidy`, reinstall tools (`go install ...`), `asdf reshim golang`, then `task ci` and `task security`.
 
+## Frontend Development Rules
+
+The frontend lives in `web/`. **All frontend operations run inside Docker containers — never install or run npm/node locally.**
+
+### Commands
+
+| Command | What it does |
+|---------|-------------|
+| `task web:dev` | Start dev container with Vite HMR (port 5173) |
+| `task web:build` | Build production Docker image |
+| `task web:install` | Install npm dependencies inside container |
+| `task web:typecheck` | Run `tsc --noEmit` inside container |
+| `task web:lint` | Run ESLint inside container |
+
+### Key rules
+
+- **Never run `npm install`, `npm run`, `npx`, or any node/npm command on the host machine.** Always use Docker (`docker compose run --rm oksg-frontend <command>` or the Taskfile shortcuts).
+- Source files are volume-mounted into the dev container for HMR. Edit files on the host, the container picks up changes.
+- API requests are proxied: Vite dev server proxies `/api/*` to the backend container, nginx does the same in production.
+- The `web/` directory has its own `Taskfile.yml` included from the root.
+
+## Kubernetes Port-Forwarding
+
+When you need to access cluster services locally, use these commands:
+
+| Service | Command |
+|---------|---------|
+| OKSG Backend API | `kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080` |
+
+The backend API is then available at `http://localhost:18081/api/v1/...`.
+
 ## Documentation Maintenance Rules
 
 - Treat `docs/` as the primary implementation documentation surface.
@@ -67,3 +98,10 @@ After updating, run `go mod tidy`, reinstall tools (`go install ...`), `asdf res
 - Keep `docs/discovery-flow.md` explicit about what auto-detection does today versus what the planner accepts from externally supplied profiles.
 - Keep logging documentation in `docs/`: structured JSON logs to stdout only, `kubectl logs` as the debugging path.
 - Update example outputs in `docs/discovery-flow.md` when ClusterProfile structure changes.
+
+## Telemetry Mapping Rules
+
+- Before adding or remapping any metric, trace-derived metric, or telemetry source, verify the upstream or source-of-truth docs/spec first.
+- Record the signal contract you verified: how the signal is generated, whether it is gauge/sum/histogram and cumulative or delta, its units, and any default rate, flush, or aggregation window semantics.
+- Only after that verification should you change canonical metric mappings, unit conversions, query-time derivations, storage expectations, or UI assumptions.
+- Do not infer telemetry semantics from a metric name alone. Connectors such as `spanmetrics` and `servicegraph` can emit counters, histograms, and unit defaults that differ from what the canonical name suggests.
