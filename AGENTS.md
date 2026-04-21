@@ -103,5 +103,5 @@ The backend API is then available at `http://localhost:18081/api/v1/...`.
 
 - Before adding or remapping any metric, trace-derived metric, or telemetry source, verify the upstream or source-of-truth docs/spec first.
 - Record the signal contract you verified: how the signal is generated, whether it is gauge/sum/histogram and cumulative or delta, its units, and any default rate, flush, or aggregation window semantics.
-- Only after that verification should you change canonical metric mappings, unit conversions, query-time derivations, storage expectations, or UI assumptions.
-- Do not infer telemetry semantics from a metric name alone. Connectors such as `spanmetrics` and `servicegraph` can emit counters, histograms, and unit defaults that differ from what the canonical name suggests.
+- Only after that verification should you change the semconv metric registry, dialect translations, unit conversions, query-time derivations, storage expectations, or UI assumptions.
+- Do not infer telemetry semantics from a metric name alone. Connectors such as `spanmetrics` and `servicegraph` can emit counters, histograms, and unit defaults that differ from what the semconv name suggests.

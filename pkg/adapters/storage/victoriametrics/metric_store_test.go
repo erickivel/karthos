@@ -23,7 +23,7 @@ func TestSamplesToPrometheusText(t *testing.T) {
 	ts := time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)
 	samples := []metrics.MetricSample{
 		{
-			MetricName: "cpu_usage_millicores",
+			MetricName: "k8s.pod.cpu.usage",
 			EntityID:   entities.EntityID("abc123"),
 			Value:      42.5,
 			Timestamp:  ts,
@@ -33,7 +33,7 @@ func TestSamplesToPrometheusText(t *testing.T) {
 
 	got := string(samplesToPrometheusText(samples))
 
-	assert.Contains(t, got, "cpu_usage_millicores{")
+	assert.Contains(t, got, "k8s_pod_cpu_usage{")
 	assert.Contains(t, got, `entity_id="abc123"`)
 	assert.Contains(t, got, `source="otlp"`)
 	assert.Contains(t, got, "42.5")
@@ -76,90 +76,90 @@ func TestBuildPromQL(t *testing.T) {
 		},
 		{
 			name:     "metric name only",
-			query:    query.MetricQuery{MetricName: "cpu_usage_millicores"},
-			expected: "cpu_usage_millicores",
+			query:    query.MetricQuery{MetricName: "k8s.pod.cpu.usage"},
+			expected: "k8s_pod_cpu_usage",
 		},
 		{
 			name: "metric name with single entity ID",
 			query: query.MetricQuery{
-				MetricName: "cpu_usage_millicores",
+				MetricName: "k8s.pod.cpu.usage",
 				EntityIDs:  []entities.EntityID{"abc123"},
 			},
-			expected: `cpu_usage_millicores{entity_id=~"abc123"}`,
+			expected: `k8s_pod_cpu_usage{entity_id=~"abc123"}`,
 		},
 		{
 			name: "metric name with multiple entity IDs",
 			query: query.MetricQuery{
-				MetricName: "memory_usage_bytes",
+				MetricName: "k8s.pod.memory.working_set",
 				EntityIDs:  []entities.EntityID{"abc", "def"},
 			},
-			expected: `memory_usage_bytes{entity_id=~"abc|def"}`,
+			expected: `k8s_pod_memory_working_set{entity_id=~"abc|def"}`,
 		},
 		{
 			name: "scalar metric with edge source and target filters",
 			query: query.MetricQuery{
-				MetricName:   "error_rate_per_second",
+				MetricName:   "servicegraph.request.error.count",
 				EdgeSourceID: entities.EntityID("svc-a"),
 				EdgeTargetID: entities.EntityID("svc-b"),
 			},
-			expected: `rate(error_rate_per_second{edge_client_id="svc-a",edge_server_id="svc-b"}[1m])`,
+			expected: `rate(servicegraph_request_error_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m])`,
 		},
 		{
 			name: "request rate metric uses one minute rate window",
 			query: query.MetricQuery{
-				MetricName: "request_rate_per_second",
+				MetricName: "servicegraph.request.count",
 			},
-			expected: `rate(request_rate_per_second[1m])`,
+			expected: `rate(servicegraph_request_count[1m])`,
 		},
 		{
 			name: "request rate metric keeps entity filters inside rate query",
 			query: query.MetricQuery{
-				MetricName: "request_rate_per_second",
+				MetricName: "servicegraph.request.count",
 				EntityIDs:  []entities.EntityID{"abc123"},
 			},
-			expected: `rate(request_rate_per_second{entity_id=~"abc123"}[1m])`,
+			expected: `rate(servicegraph_request_count{entity_id=~"abc123"}[1m])`,
 		},
 		{
 			name: "request rate metric keeps edge filters inside rate query",
 			query: query.MetricQuery{
-				MetricName:   "request_rate_per_second",
+				MetricName:   "servicegraph.request.count",
 				EdgeSourceID: entities.EntityID("svc-a"),
 				EdgeTargetID: entities.EntityID("svc-b"),
 			},
-			expected: `rate(request_rate_per_second{edge_client_id="svc-a",edge_server_id="svc-b"}[1m])`,
+			expected: `rate(servicegraph_request_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m])`,
 		},
 		{
 			name: "error rate metric uses one minute rate window",
 			query: query.MetricQuery{
-				MetricName: "error_rate_per_second",
+				MetricName: "servicegraph.request.error.count",
 			},
-			expected: `rate(error_rate_per_second[1m])`,
+			expected: `rate(servicegraph_request_error_count[1m])`,
 		},
 		{
 			name: "error ratio uses request and error rate expressions",
 			query: query.MetricQuery{
-				MetricName:   "error_ratio",
+				MetricName:   "servicegraph.request.error.ratio",
 				EdgeSourceID: entities.EntityID("svc-a"),
 				EdgeTargetID: entities.EntityID("svc-b"),
 			},
-			expected: `rate(error_rate_per_second{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(request_rate_per_second{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1e-9)`,
+			expected: `rate(servicegraph_request_error_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(servicegraph_request_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1e-9)`,
 		},
 		{
-			name: "request_duration_nanoseconds derives rate-weighted mean from sum/count",
+			name: "http.server.request.duration derives rate-weighted mean from sum/count",
 			query: query.MetricQuery{
-				MetricName: "request_duration_nanoseconds",
+				MetricName: "http.server.request.duration",
 				EntityIDs:  []entities.EntityID{"svc-1"},
 			},
-			expected: `rate(request_duration_nanoseconds_sum{entity_id=~"svc-1"}[1m]) / clamp_min(rate(request_duration_nanoseconds_count{entity_id=~"svc-1"}[1m]), 1)`,
+			expected: `rate(http_server_request_duration_sum{entity_id=~"svc-1"}[1m]) / clamp_min(rate(http_server_request_duration_count{entity_id=~"svc-1"}[1m]), 1)`,
 		},
 		{
-			name: "edge_latency_nanoseconds derives rate-weighted mean from sum/count with edge filters",
+			name: "servicegraph.request.duration derives rate-weighted mean from sum/count with edge filters",
 			query: query.MetricQuery{
-				MetricName:   "edge_latency_nanoseconds",
+				MetricName:   "servicegraph.request.duration",
 				EdgeSourceID: entities.EntityID("svc-a"),
 				EdgeTargetID: entities.EntityID("svc-b"),
 			},
-			expected: `rate(edge_latency_nanoseconds_sum{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(edge_latency_nanoseconds_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1)`,
+			expected: `rate(servicegraph_request_duration_sum{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(servicegraph_request_duration_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1)`,
 		},
 	}
 
@@ -178,7 +178,7 @@ func TestParseQueryRangeResponse(t *testing.T) {
 			"resultType": "matrix",
 			"result": [{
 				"metric": {
-					"__name__": "cpu_usage_millicores",
+					"__name__": "k8s_pod_cpu_usage",
 					"entity_id": "abc123",
 					"source": "otlp"
 				},
@@ -194,7 +194,7 @@ func TestParseQueryRangeResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, samples, 2)
 
-	assert.Equal(t, "cpu_usage_millicores", samples[0].MetricName)
+	assert.Equal(t, "k8s.pod.cpu.usage", samples[0].MetricName)
 	assert.Equal(t, entities.EntityID("abc123"), samples[0].EntityID)
 	assert.Equal(t, 42.5, samples[0].Value)
 	assert.Equal(t, "otlp", samples[0].Labels["source"])

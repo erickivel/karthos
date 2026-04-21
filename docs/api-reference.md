@@ -65,7 +65,7 @@ Response:
 }
 ```
 
-`health_summary` is present when a MetricStore is configured and `node_condition_ready` / `pod_phase` metrics are available. It aggregates the latest samples per entity from the last 5 minutes. `pod_phase` follows the OTel `k8sclusterreceiver` encoding: `1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown`.
+`health_summary` is present when a MetricStore is configured and `k8s.node.condition.ready` / `k8s.pod.phase` metrics are available. It aggregates the latest samples per entity from the last 5 minutes. `k8s.pod.phase` follows the OTel `k8sclusterreceiver` encoding: `1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown`.
 
 Status values:
 
@@ -239,25 +239,26 @@ Response:
 
 Query metric samples with unit from catalog. Sorted by timestamp descending.
 
-Rate-like canonical metrics are served with query-time derivation:
+Semconv metric names are the API contract. Query-time derivations currently include:
 
-- `request_rate_per_second` -> `rate(...[1m])`
-- `error_rate_per_second` -> `rate(...[1m])`
-- `error_ratio` -> `rate(error_rate_per_second[1m]) / clamp_min(rate(request_rate_per_second[1m]), 1e-9)`
+- `http.server.request.count` / `rpc.server.request.count` / `servicegraph.request.count` -> `rate(...[1m])`
+- `servicegraph.request.error.count` -> `rate(...[1m])`
+- `servicegraph.request.error.ratio` -> `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`
+- `http.server.request.duration` / `rpc.server.duration` / `servicegraph.request.duration` -> `rate(<metric>_sum[1m]) / clamp_min(rate(<metric>_count[1m]), 1)`
 
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
 | `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
 | `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
-| `metric_name` | string | **Required.** Canonical metric name |
+| `metric_name` | string | **Required.** Semconv metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
 | `page_size` | int | Items per page (default 100) |
 | `next_token` | string | Pagination cursor |
 
 ```bash
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=cpu_usage_millicores&page_size=5" | jq .data.samples[:3]
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=5" | jq .data.samples[:3]
 ```
 
 Response:
@@ -267,7 +268,7 @@ Response:
   "data": {
     "samples": [
       {
-        "metric_name": "request_rate_per_second",
+        "metric_name": "servicegraph.request.count",
         "entity_id": "...",
         "value": 7.5,
         "timestamp": "2026-03-30T10:00:00Z",
@@ -285,7 +286,7 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 
 ```json
 {
-  "metric_name": "edge_latency_nanoseconds",
+  "metric_name": "servicegraph.request.duration",
   "entity_id": "...",
   "value": 12000000,
   "timestamp": "2026-03-30T10:00:00Z",
@@ -316,14 +317,14 @@ Metric samples grouped by metric name with catalog metadata (unit, category, des
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
 | `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
 | `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
-| `metric_name` | string | **Required.** Canonical metric name |
+| `metric_name` | string | **Required.** Semconv metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
 | `page_size` | int | Series per page (default 100) |
 | `next_token` | string | Pagination cursor |
 
 ```bash
-curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=cpu_usage_millicores" | jq .data.series[0]
+curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage" | jq .data.series[0]
 ```
 
 Response:
@@ -333,13 +334,13 @@ Response:
   "data": {
     "series": [
       {
-        "metric_name": "cpu_usage_millicores",
+        "metric_name": "k8s.pod.cpu.usage",
         "unit": "millicores",
         "category": "resource",
         "description": "CPU usage in millicores",
         "samples": [
           {
-            "metric_name": "cpu_usage_millicores",
+            "metric_name": "k8s.pod.cpu.usage",
             "entity_id": "...",
             "value": 250,
             "timestamp": "2026-03-30T10:00:00Z",
@@ -354,17 +355,17 @@ Response:
 }
 ```
 
-When edge filters are used, series are grouped by metric name and edge identity, so two different service-to-service links produce two separate series entries even if they share the same canonical metric name.
+When edge filters are used, series are grouped by metric name and edge identity, so two different service-to-service links produce two separate series entries even if they share the same semconv metric name.
 
 ### GET /api/v1/metrics/catalog
 
-List canonical metric definitions.
+List semconv-native metric definitions.
 
 | Param | Type | Description |
 |-------|------|-------------|
 | `category` | string | Filter by category (`resource`, `traffic`, `latency`, `error`, `capacity`, `health`) |
 
-Response entries include a `scopes` array describing whether each canonical metric supports entity queries, edge queries, or both.
+Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both.
 
 Example:
 
@@ -374,7 +375,7 @@ curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[] | {n
 
 ```json
 {
-  "name": "request_rate_per_second",
+  "name": "servicegraph.request.count",
   "scopes": ["entity", "edge"]
 }
 ```
@@ -390,7 +391,7 @@ Response:
 {
   "data": {
     "metrics": [
-      {"name": "cpu_usage_millicores", "unit": "millicores", "category": "resource", "description": "..."}
+      {"name": "k8s.pod.cpu.usage", "unit": "millicores", "category": "resource", "description": "..."}
     ],
     "total": 50
   }

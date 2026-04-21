@@ -10,6 +10,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
@@ -32,12 +33,12 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 		return nil, fmt.Errorf("unmarshal ResourceSpans: %w", err)
 	}
 
-	callerServiceName, ok := envelope.Resource["service.name"]
+	callerServiceName, ok := envelope.Resource[semconv.ResourceServiceName]
 	if !ok || callerServiceName == "" {
 		return nil, nil
 	}
 
-	callerID, err := b.resolveServiceID(ctx, callerServiceName, envelope.Resource["k8s.namespace.name"])
+	callerID, err := b.resolveServiceID(ctx, callerServiceName, envelope.Resource[semconv.ResourceK8sNamespaceName])
 	if err != nil {
 		return nil, err
 	}
@@ -46,19 +47,19 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 
 	for _, ss := range rs.ScopeSpans {
 		for _, span := range ss.Spans {
-			calleeServiceName := kvString(span.Attributes, "peer.service")
+			calleeServiceName := kvString(span.Attributes, semconv.AttrPeerService)
 			if calleeServiceName == "" {
 				continue
 			}
 
 			calleeResource := map[string]string{
-				"service.name": calleeServiceName,
+				semconv.ResourceServiceName: calleeServiceName,
 			}
-			if ns, hasNS := envelope.Resource["k8s.namespace.name"]; hasNS {
-				calleeResource["k8s.namespace.name"] = ns
+			if ns, hasNS := envelope.Resource[semconv.ResourceK8sNamespaceName]; hasNS {
+				calleeResource[semconv.ResourceK8sNamespaceName] = ns
 			}
 
-			calleeID, err := b.resolveServiceID(ctx, calleeServiceName, calleeResource["k8s.namespace.name"])
+			calleeID, err := b.resolveServiceID(ctx, calleeServiceName, calleeResource[semconv.ResourceK8sNamespaceName])
 			if err != nil {
 				continue
 			}
@@ -110,8 +111,8 @@ func (b *TraceTopologyBuilder) BuildNodes(ctx context.Context, envelope schema.R
 		return nil
 	}
 
-	namespace := envelope.Resource["k8s.namespace.name"]
-	callerServiceName := envelope.Resource["service.name"]
+	namespace := envelope.Resource[semconv.ResourceK8sNamespaceName]
+	callerServiceName := envelope.Resource[semconv.ResourceServiceName]
 	if callerServiceName == "" {
 		return nil
 	}
@@ -121,7 +122,7 @@ func (b *TraceTopologyBuilder) BuildNodes(ctx context.Context, envelope schema.R
 
 	for _, ss := range rs.ScopeSpans {
 		for _, span := range ss.Spans {
-			calleeServiceName := kvString(span.Attributes, "peer.service")
+			calleeServiceName := kvString(span.Attributes, semconv.AttrPeerService)
 			if calleeServiceName == "" {
 				continue
 			}
@@ -137,9 +138,9 @@ func (b *TraceTopologyBuilder) BuildNodes(ctx context.Context, envelope schema.R
 }
 
 func (b *TraceTopologyBuilder) resolveServiceID(ctx context.Context, serviceName, namespace string) (entities.EntityID, error) {
-	resource := map[string]string{"service.name": serviceName}
+	resource := map[string]string{semconv.ResourceServiceName: serviceName}
 	if namespace != "" {
-		resource["k8s.namespace.name"] = namespace
+		resource[semconv.ResourceK8sNamespaceName] = namespace
 	}
 	return b.resolver.Resolve(ctx, resource)
 }

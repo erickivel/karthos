@@ -215,15 +215,15 @@ kill %1
 For external-storage e2e runs, prefer:
 
 ```bash
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second" | jq '.data.samples[0:10]'
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=edge_latency_nanoseconds&edge_source_id=<source>&edge_target_id=<target>" | jq .
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=error_ratio&edge_source_id=<source>&edge_target_id=<target>" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq '.data.samples[0:10]'
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.duration&edge_source_id=<source>&edge_target_id=<target>" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.error.ratio&edge_source_id=<source>&edge_target_id=<target>" | jq .
 ```
 
 Notes:
 
-- `request_rate_per_second` and `error_rate_per_second` are served as 1-minute rates at query time, even though the stored canonical series are counter-derived.
-- `error_ratio` is query-derived from the served request and error rates.
+- `http.server.request.count`, `rpc.server.request.count`, `servicegraph.request.count`, and `servicegraph.request.error.count` are served as 1-minute rates at query time, even though the stored semconv series are counter-derived.
+- `servicegraph.request.error.ratio` is query-derived from the served request and error rates.
 - The Metrics Explorer entity selector is driven by the latest graph snapshot, not the historical `/api/v1/entities` registry.
 
 ### Reading the graph output
@@ -287,7 +287,7 @@ curl -s "http://localhost:18081/api/v1/graph/nodes?kind=pod&page_size=10" | jq .
 curl -s http://localhost:18081/api/v1/graph/nodes/<id> | jq '.data.edges.outbound[0].related_node'
 
 # Metric series grouped by name with catalog metadata
-curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=cpu_usage_millicores" | jq '.data.series[0]'
+curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage" | jq '.data.series[0]'
 
 # List canonical metric definitions
 curl -s http://localhost:18081/api/v1/metrics/catalog | jq

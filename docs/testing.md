@@ -110,7 +110,7 @@ Typical sequence after a scenario run:
 task test:e2e:scenario:prometheus   # deploy and wire up telemetry
 task test:e2e:traffic TRAFFIC_REQUESTS=30  # generate traffic
 task test:e2e:debug:api             # verify backend REST API access
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq .
 task test:e2e:debug:graph           # inspect topology graph snapshot
 ```
 

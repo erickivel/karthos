@@ -75,7 +75,7 @@ sequenceDiagram
 
     Note over Main: Process startup
     Main->>Main: NewOTLPEntityResolver(clusterName)
-    Main->>Main: NewOTLPNormalizer(resolver)
+    Main->>Main: NewOTLPNormalizer(resolver, dialectRegistry)
     Main->>Main: NewTraceTopologyBuilder(resolver)
     Main->>Main: NewMetricStore()
     Main->>Main: NewGraphStore()
@@ -269,15 +269,15 @@ The backend serves a scalar metrics API, so OTLP metrics are normalized into can
 
 ### Request, Error, and Duration Semantics
 
-The canonical names intentionally hide collector-specific metric names, but the semantics still come from the upstream emitters:
+The semconv names stay stable across storage and the API, but the semantics still come from the upstream emitters:
 
-- `traces.span.metrics.calls` is ingested as a counter-like canonical series under `request_rate_per_second`, then served from VictoriaMetrics as `rate(request_rate_per_second[1m])`.
-- `traces.service.graph.request.total` is treated the same way for edge traffic.
-- `traces.service.graph.request_failed_total` is ingested as a counter-like canonical series under `error_rate_per_second`, then served as `rate(error_rate_per_second[1m])`.
-- `error_ratio` is not stored directly; the API derives it at query time as `rate(error_rate_per_second[1m]) / clamp_min(rate(request_rate_per_second[1m]), 1e-9)`.
-- `http_request_duration_seconds` is normalized from seconds to nanoseconds.
-- `traces.span.metrics.duration` is normalized from milliseconds to nanoseconds unless the collector configuration is explicitly changed to export seconds.
-- `traces.service.graph.request.server` is normalized from seconds to nanoseconds and exposed as `edge_latency_nanoseconds`.
+- `traces.span.metrics.calls` translates to `rpc.server.request.count`, then the API serves it as `rate(rpc.server.request.count[1m])`.
+- `traces.service.graph.request.total` translates to `servicegraph.request.count`, then the API serves it as `rate(servicegraph.request.count[1m])`.
+- `traces.service.graph.request_failed_total` translates to `servicegraph.request.error.count`, then the API serves it as `rate(servicegraph.request.error.count[1m])`.
+- `servicegraph.request.error.ratio` is not stored directly; the API derives it at query time as `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`.
+- `http_request_duration_seconds` translates to `http.server.request.duration` and is normalized from seconds to nanoseconds.
+- `traces.span.metrics.duration` translates to `rpc.server.duration` and is normalized from milliseconds to nanoseconds unless the collector configuration is explicitly changed to export seconds.
+- `traces.service.graph.request.server` translates to `servicegraph.request.duration` and is normalized from seconds to nanoseconds.
 
 The fixed query window for request and error rates is currently 1 minute.
 
@@ -312,7 +312,7 @@ After routing, envelopes are normalized into canonical domain objects.
 Metric path:
 
 - `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. This means k8s_cluster receiver metrics for workload-scoped and namespace-scoped entities are now resolved (previously dropped as unresolvable). Entity resolution errors fail the envelope.
-- `OTLPNormalizer` maps each recognized OTLP metric name to a canonical `MetricSample` using the registered `OTLPToCanonicalMappings`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. Servicegraph connector metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Unrecognized metric names are silently skipped.
+- `OTLPNormalizer` first translates source dialects into semconv-style metric names, then maps each recognized OTLP metric name to a semconv-native `MetricSample` using the registered `OTLPSemconvMetrics`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. Servicegraph connector metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Unrecognized metric names are silently skipped.
 - `MetricStore` stores the resulting samples in memory. Supports time-range, entity-filtered, and edge-filtered queries.
 - `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds.
 - `GraphStore` accumulates edges and nodes across snapshots. Re-observed edges have their `LastSeen` updated; nodes are merged by entity ID.

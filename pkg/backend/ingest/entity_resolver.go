@@ -7,6 +7,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/oksg/pkg/core/semconv"
 )
 
 // ErrUnresolvableEntity is returned by EntityResolver when no known OTLP semantic convention
@@ -35,15 +36,15 @@ func NewOTLPEntityResolverWithRegistry(clusterName string, registry persistence.
 // replicaset, daemonset, namespace, service.
 // Returns ErrUnresolvableEntity when no known attributes are present.
 func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]string) (entities.EntityID, error) {
-	containerName, hasContainer := resource["k8s.container.name"]
-	podName, hasPod := resource["k8s.pod.name"]
-	namespace, hasNamespace := resource["k8s.namespace.name"]
-	nodeName, hasNode := resource["k8s.node.name"]
-	serviceName, hasService := resource["service.name"]
-	deploymentName, hasDeployment := resource["k8s.deployment.name"]
-	statefulSetName, hasStatefulSet := resource["k8s.statefulset.name"]
-	replicaSetName, hasReplicaSet := resource["k8s.replicaset.name"]
-	daemonSetName, hasDaemonSet := resource["k8s.daemonset.name"]
+	containerName, hasContainer := resource[semconv.ResourceK8sContainerName]
+	podName, hasPod := resource[semconv.ResourceK8sPodName]
+	namespace, hasNamespace := resource[semconv.ResourceK8sNamespaceName]
+	nodeName, hasNode := resource[semconv.ResourceK8sNodeName]
+	serviceName, hasService := resource[semconv.ResourceServiceName]
+	deploymentName, hasDeployment := resource[semconv.ResourceK8sDeploymentName]
+	statefulSetName, hasStatefulSet := resource[semconv.ResourceK8sStatefulSetName]
+	replicaSetName, hasReplicaSet := resource[semconv.ResourceK8sReplicaSetName]
+	daemonSetName, hasDaemonSet := resource[semconv.ResourceK8sDaemonSetName]
 
 	var id entities.EntityID
 	var kind entities.EntityKind
@@ -180,8 +181,8 @@ func serviceEntityName(entity entities.Entity) string {
 		return stored.Name
 	}
 	labels := entity.Labels()
-	if labels["service.name"] != "" {
-		return labels["service.name"]
+	if labels[semconv.ResourceServiceName] != "" {
+		return labels[semconv.ResourceServiceName]
 	}
 	return labels["name"]
 }
@@ -194,8 +195,8 @@ func serviceEntityNamespace(entity entities.Entity) string {
 		return stored.Namespace
 	}
 	labels := entity.Labels()
-	if labels["k8s.namespace.name"] != "" {
-		return labels["k8s.namespace.name"]
+	if labels[semconv.ResourceK8sNamespaceName] != "" {
+		return labels[semconv.ResourceK8sNamespaceName]
 	}
 	return labels["namespace"]
 }

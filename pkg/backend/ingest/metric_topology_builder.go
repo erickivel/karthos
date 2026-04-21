@@ -6,6 +6,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
@@ -31,10 +32,10 @@ func NewMetricTopologyBuilder(clusterName string) *MetricTopologyBuilder {
 // It satisfies the TopologyBuilder interface.
 func (b *MetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnvelope) ([]topology.Edge, error) {
 	res := envelope.Resource
-	podName := res["k8s.pod.name"]
-	nodeName := res["k8s.node.name"]
-	namespace := res["k8s.namespace.name"]
-	containerName := res["k8s.container.name"]
+	podName := res[semconv.ResourceK8sPodName]
+	nodeName := res[semconv.ResourceK8sNodeName]
+	namespace := res[semconv.ResourceK8sNamespaceName]
+	containerName := res[semconv.ResourceK8sContainerName]
 
 	t := envelope.Timestamp
 	if t.IsZero() {
@@ -77,10 +78,10 @@ func (b *MetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnve
 // It is called in addition to Build when both structural edges and nodes are needed.
 func (b *MetricTopologyBuilder) BuildNodes(_ context.Context, envelope schema.RawEnvelope) []topology.Node {
 	res := envelope.Resource
-	podName := res["k8s.pod.name"]
-	nodeName := res["k8s.node.name"]
-	namespace := res["k8s.namespace.name"]
-	containerName := res["k8s.container.name"]
+	podName := res[semconv.ResourceK8sPodName]
+	nodeName := res[semconv.ResourceK8sNodeName]
+	namespace := res[semconv.ResourceK8sNamespaceName]
+	containerName := res[semconv.ResourceK8sContainerName]
 
 	seen := make(map[entities.EntityID]topology.Node)
 

@@ -16,6 +16,7 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
@@ -95,7 +96,12 @@ func run(ctx context.Context, args []string) error {
 	)
 
 	resolver := ingest.NewOTLPEntityResolverWithRegistry(cfg.ClusterName, stores.EntityRegistry)
-	normalizer := ingest.NewOTLPNormalizer(resolver)
+	dialect := metrics.NewDialectRegistry(
+		metrics.PrometheusDialect,
+		metrics.SpanmetricsDialect,
+		metrics.ServicegraphDialect,
+	)
+	normalizer := ingest.NewOTLPNormalizer(resolver, dialect)
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
 

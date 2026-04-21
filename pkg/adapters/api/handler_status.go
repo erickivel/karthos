@@ -155,9 +155,9 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 
 	hs := &healthSummary{}
 
-	// Node health from node_condition_ready metric.
+	// Node health from k8s.node.condition.ready.
 	nodeSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
-		MetricName: "node_condition_ready",
+		MetricName: "k8s.node.condition.ready",
 		From:       from,
 		To:         now,
 	})
@@ -171,9 +171,9 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 		}
 	}
 
-	// Pod phase from pod_phase metric.
+	// Pod phase from k8s.pod.phase.
 	podSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
-		MetricName: "pod_phase",
+		MetricName: "k8s.pod.phase",
 		From:       from,
 		To:         now,
 	})
