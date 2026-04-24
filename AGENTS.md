@@ -98,6 +98,8 @@ The backend API is then available at `http://localhost:18081/api/v1/...`.
 - Keep `docs/discovery-flow.md` explicit about what auto-detection does today versus what the planner accepts from externally supplied profiles.
 - Keep logging documentation in `docs/`: structured JSON logs to stdout only, `kubectl logs` as the debugging path.
 - Update example outputs in `docs/discovery-flow.md` when ClusterProfile structure changes.
+- When removing a feature or code path, sweep the repo for phantom references in the same commit: tests, docs, diagrams, Taskfile entries, and scenario scripts. See `docs/development.md` → *Maintenance Rule* for the checklist.
+- For the frontend dev loop (`task web:dev` with a port-forwarded backend, and when to restart the dev container), see `docs/development.md` → *Frontend Dev Loop*.
 
 ## Telemetry Mapping Rules
 

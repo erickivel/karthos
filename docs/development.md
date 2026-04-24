@@ -170,6 +170,23 @@ When you replace a flow or interface:
 - delete obsolete templates
 - rewrite stale docs and task examples in the same change
 
+When you remove a feature or code path, sweep for phantom references in the same commit:
+
+- grep the repo for the feature name, task name, flag, file path, or API symbol
+- delete or rewrite tests that only existed to cover the removed behavior
+- delete or rewrite docs, diagrams, scenario scripts, and Taskfile entries that still reference it
+- confirm `task ci` stays green so the tree never carries half-removed features
+
+## Frontend Dev Loop
+
+`task web:dev` starts the Vite container with HMR, but the frontend still needs the backend API. In a separate terminal, port-forward the in-cluster backend so the dev server's `/api` proxy can reach it:
+
+```bash
+kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
+```
+
+The dev server reads the API base URL at startup. After you change `.env`, Vite config, or anything the container reads only on boot, stop `task web:dev` and re-run it so the changes take effect. Source file edits continue to hot-reload without a restart.
+
 ## Debugging
 
 ```bash

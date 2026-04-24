@@ -140,7 +140,7 @@ tasks:
     silent: true
 
   e2e:scenario:prometheus:
-    desc: Run Prometheus discovery scenario (full pipeline)
+    desc: Run Prometheus discovery scenario with gateway traffic (full pipeline including spanmetrics/servicegraph)
     deps: [e2e:ensure-cluster]
     vars:
       VARIANT: with-prometheus
@@ -152,6 +152,10 @@ tasks:
       - task: e2e:apply-otel
       - task: e2e:apply-profile
       - task: e2e:verify
+      - task: e2e:traffic
+        vars:
+          TRAFFIC_REQUESTS: "30"
+          TRAFFIC_INTERVAL: "0.2"
 
   e2e:scenario:fallback:
     desc: Run no-telemetry fallback scenario (full pipeline)

@@ -75,14 +75,19 @@ What each stage now does:
 
 `./test/e2e/scenarios/prometheus-available/run.sh`
 
+This scenario now includes traffic generation and servicegraph validation (previously a separate `servicegraph` scenario). The `e2e:scenario:prometheus` task runs the deploy pipeline and then sends gateway traffic automatically.
+
 Expected:
 
 - Prometheus-annotated services are detected
 - gateway-go emits OTLP traces (instrumented with OTel Go SDK, `peer.service` attributes set)
-- generated Helm values include Prometheus receiver config and spanmetrics/servicegraph connectors
+- generated Helm values include Prometheus receiver config and the gateway `spanmetrics`/`servicegraph` connectors
 - agent DaemonSet, gateway Deployment, backend Deployment, and frontend Deployment become ready
 - backend logs show accepted metric envelopes after the gateway forwards traffic
+- generated traffic flows through `gateway-go -> service-a-python` and `gateway-go -> service-b-node`
 - after traffic has flowed, `/api/v1/metrics` returns normalized samples and edge-filtered queries can resolve live call edges
+- `/api/v1/metrics` returns semconv servicegraph samples for `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
+- `servicegraph.request.error.ratio` remains query-derived and is safe to request through the same API
 - `/debug/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
 
 ## Generating Traffic
@@ -104,11 +109,13 @@ task test:e2e:traffic:watch
 task test:e2e:traffic:watch TRAFFIC_INTERVAL=1
 ```
 
+`task test:e2e:scenario:prometheus` already runs gateway traffic as the final step of the scenario. Use the standalone traffic tasks to generate additional load after the scenario has deployed.
+
 Typical sequence after a scenario run:
 
 ```bash
-task test:e2e:scenario:prometheus   # deploy and wire up telemetry
-task test:e2e:traffic TRAFFIC_REQUESTS=30  # generate traffic
+task test:e2e:scenario:prometheus   # deploy, wire up telemetry, and send initial gateway traffic
+task test:e2e:traffic TRAFFIC_REQUESTS=30  # optional: send more traffic
 task test:e2e:debug:api             # verify backend REST API access
 curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq .
 task test:e2e:debug:graph           # inspect topology graph snapshot
