@@ -208,7 +208,8 @@ export function MetricsExplorer() {
             return (
               <MetricCard
                 key={metric.name}
-                name={metric.name}
+                name={metric.display_name}
+                id={metric.name}
                 unit={metric.unit}
                 samples={series?.samples ?? []}
               />

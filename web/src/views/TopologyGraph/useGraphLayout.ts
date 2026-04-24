@@ -88,8 +88,8 @@ export function useGraphLayout(
       const h = pos?.height ?? NODE_HEIGHT_DEFAULT
       const metrics = nodeMetrics?.get(node.id)
       const labels = { ...node.labels }
-      if (metrics?.cpu !== undefined) labels['cpu_usage_millicores'] = String(metrics.cpu)
-      if (metrics?.mem !== undefined) labels['memory_usage_bytes'] = String(metrics.mem)
+      if (metrics?.cpu !== undefined) labels['k8s.pod.cpu.usage'] = String(metrics.cpu)
+      if (metrics?.mem !== undefined) labels['k8s.pod.memory.working_set'] = String(metrics.mem)
       return {
         id: node.id,
         type: 'entity' as const,

@@ -12,7 +12,7 @@ export interface NodeMetric {
 export function useNodeMetrics(): Map<string, NodeMetric> {
   const pollingEnabled = usePollingEnabled()
   const queries = useQueries({
-    queries: ['cpu_usage_millicores', 'memory_usage_bytes'].map((metric) => ({
+    queries: ['k8s.pod.cpu.usage', 'k8s.pod.memory.working_set'].map((metric) => ({
       queryKey: ['node-metrics', metric],
       queryFn: () => getSeries({ metric_name: metric }),
       refetchInterval: pollingEnabled ? 30_000 : false,

@@ -12,6 +12,7 @@ import styles from "./MetricCard.module.css";
 
 interface MetricCardProps {
   name: string;
+  id?: string;
   unit: string;
   samples: MetricSample[];
 }
@@ -42,7 +43,7 @@ function CustomTooltip({
   );
 }
 
-export function MetricCard({ name, unit, samples }: MetricCardProps) {
+export function MetricCard({ name, id, unit, samples }: MetricCardProps) {
   const sorted = [...samples].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
@@ -66,7 +67,10 @@ export function MetricCard({ name, unit, samples }: MetricCardProps) {
   return (
     <div className={styles.card}>
       <div className={styles.header}>
-        <span className={styles.name}>{name}</span>
+        <div className={styles.heading}>
+          <span className={styles.name}>{name}</span>
+          {id && <span className={styles.subtitle}>{id}</span>}
+        </div>
         <span className={styles.currentValue}>
           {formatValue(currentValue)}{" "}
           <span className={styles.unit}>{unit}</span>

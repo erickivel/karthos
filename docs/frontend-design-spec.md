@@ -227,7 +227,7 @@ The Metrics Explorer must treat catalog `scopes` as authoritative:
 
 - entity mode renders only metrics whose scopes include `entity`
 - edge mode renders only metrics whose scopes include `edge`
-- entity-only traffic metrics such as `net_rx_bytes` and `net_tx_bytes` must never be requested in edge mode
+- entity-only traffic metrics such as `k8s.pod.network.io.receive` and `k8s.pod.network.io.transmit` must never be requested in edge mode
 
 ### 5.4 Status Bar
 

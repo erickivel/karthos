@@ -14,6 +14,7 @@ export interface MetricEdgeRef {
 }
 
 export interface MetricSample {
+  /** OTel semantic-convention metric identifier in dot notation. */
   metric_name: string
   entity_id: string
   value: number
@@ -34,6 +35,7 @@ export interface MetricSeries {
 
 export interface CanonicalMetric {
   name: string
+  display_name: string
   unit: string
   category: MetricCategory
   scopes: MetricScope[]

@@ -25,25 +25,25 @@ function parseLabelNumber(
 
 /**
  * buildMetricSummary reads synthesised node labels already attached by the backend
- * and `useGraphLayout`: `cpu_usage_millicores`, `memory_usage_bytes`,
- * `pod_phase`, `node_condition_ready`, `node_condition_memory_pressure`, and
- * `node_condition_disk_pressure`. The canonical OTel-to-label mapping in
+ * and `useGraphLayout`: `k8s.pod.cpu.usage`, `k8s.pod.memory.working_set`,
+ * `k8s.pod.phase`, `k8s.node.condition.ready`, `k8s.node.condition.memory_pressure`,
+ * and `k8s.node.condition.disk_pressure`. The canonical OTel-to-label mapping in
  * `pkg/core/metrics/otel_mappings.go` is the authoritative source for these keys.
  */
 function buildMetricSummary(node: GraphNode): NodeMetricSummaryItem[] {
   const labels = node.labels ?? {};
   const items: NodeMetricSummaryItem[] = [];
 
-  const cpu = parseLabelNumber(labels, "cpu_usage_millicores");
+  const cpu = parseLabelNumber(labels, "k8s.pod.cpu.usage");
   if (cpu !== null) {
     items.push({ label: "CPU", value: `${Math.round(cpu)} m`, tone: "info" });
   }
-  const mem = parseLabelNumber(labels, "memory_usage_bytes");
+  const mem = parseLabelNumber(labels, "k8s.pod.memory.working_set");
   if (mem !== null) {
     items.push({ label: "Memory", value: formatBytes(mem), tone: "info" });
   }
 
-  const phase = parseLabelNumber(labels, "pod_phase");
+  const phase = parseLabelNumber(labels, "k8s.pod.phase");
   if (phase !== null) {
     // OTel k8sclusterreceiver encoding: 1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown.
     const name =
@@ -67,7 +67,7 @@ function buildMetricSummary(node: GraphNode): NodeMetricSummaryItem[] {
     items.push({ label: "Phase", value: name, tone });
   }
 
-  const ready = parseLabelNumber(labels, "node_condition_ready");
+  const ready = parseLabelNumber(labels, "k8s.node.condition.ready");
   if (ready !== null) {
     items.push({
       label: "Ready",
@@ -77,7 +77,7 @@ function buildMetricSummary(node: GraphNode): NodeMetricSummaryItem[] {
   }
   const memPressure = parseLabelNumber(
     labels,
-    "node_condition_memory_pressure",
+    "k8s.node.condition.memory_pressure",
   );
   if (memPressure !== null) {
     items.push({
@@ -86,7 +86,7 @@ function buildMetricSummary(node: GraphNode): NodeMetricSummaryItem[] {
       tone: memPressure >= 1 ? "alert" : "signal",
     });
   }
-  const diskPressure = parseLabelNumber(labels, "node_condition_disk_pressure");
+  const diskPressure = parseLabelNumber(labels, "k8s.node.condition.disk_pressure");
   if (diskPressure !== null) {
     items.push({
       label: "Disk Pressure",

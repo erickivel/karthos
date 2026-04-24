@@ -10,14 +10,32 @@
 .header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .name {
-  font-size: var(--text-label);
-  letter-spacing: var(--letter-wide);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--color-text);
   text-transform: uppercase;
+  letter-spacing: var(--letter-wide);
+}
+
+.subtitle {
+  font-size: var(--text-label);
+  font-family: var(--font-mono, monospace);
   color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .currentValue {

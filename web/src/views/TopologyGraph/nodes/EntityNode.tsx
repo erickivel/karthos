@@ -70,10 +70,10 @@ function getMetricBars(node: GraphNode): MetricBarData[] {
   const bars: MetricBarData[] = [];
   const labels = node.labels ?? {};
 
-  const cpuRaw = labels["cpu_usage_millicores"];
+  const cpuRaw = labels["k8s.pod.cpu.usage"];
   if (cpuRaw) {
     const cpu = parseFloat(cpuRaw);
-    const maxCpu = parseFloat(labels["cpu_capacity_millicores"] || "100");
+    const maxCpu = parseFloat(labels["k8s.node.cpu.capacity"] || "100");
     bars.push({
       label: "CPU",
       value: cpu,
@@ -82,11 +82,11 @@ function getMetricBars(node: GraphNode): MetricBarData[] {
     });
   }
 
-  const memRaw = labels["memory_usage_bytes"];
+  const memRaw = labels["k8s.pod.memory.working_set"];
   if (memRaw) {
     const mem = parseFloat(memRaw);
     const maxMem = parseFloat(
-      labels["memory_capacity_bytes"] || String(256 * 1024 * 1024),
+      labels["k8s.node.memory.capacity"] || String(256 * 1024 * 1024),
     );
     bars.push({
       label: "MEM",

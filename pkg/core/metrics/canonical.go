@@ -17,6 +17,7 @@ const (
 
 type CanonicalMetric struct {
 	Name        string         `json:"name"`
+	DisplayName string         `json:"display_name"`
 	Unit        Unit           `json:"unit"`
 	Category    MetricCategory `json:"category"`
 	Scopes      []MetricScope  `json:"scopes,omitempty"`

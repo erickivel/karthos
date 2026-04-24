@@ -12,16 +12,16 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.pod.memory.working_set":            {},
 		"system.disk.io.read":                   {},
 		"system.disk.io.write":                  {},
-		"cpu_capacity_millicores":               {},
-		"cpu_cores":                             {},
-		"cpu_clock_hz":                          {},
-		"memory_capacity_bytes":                 {},
-		"disk_capacity_bytes":                   {},
-		"net_in_bandwidth_bps":                  {},
-		"net_out_bandwidth_bps":                 {},
+		"k8s.node.cpu.capacity":                 {},
+		"k8s.node.cpu.cores":                    {},
+		"k8s.node.cpu.frequency":                {},
+		"k8s.node.memory.capacity":              {},
+		"k8s.node.disk.capacity":                {},
+		"k8s.node.network.bandwidth.receive":    {},
+		"k8s.node.network.bandwidth.transmit":   {},
 		"servicegraph.request.count":            {},
-		"net_rx_bytes":                          {},
-		"net_tx_bytes":                          {},
+		"k8s.pod.network.io.receive":            {},
+		"k8s.pod.network.io.transmit":           {},
 		"http.server.request.duration":          {},
 		"servicegraph.request.duration":         {},
 		"rpc.server.duration":                   {},
@@ -74,5 +74,11 @@ func TestDefaultCatalogMetricNamesAreUnique(t *testing.T) {
 		_, exists := seen[metric.Name]
 		require.Falsef(t, exists, "duplicate metric in catalog: %s", metric.Name)
 		seen[metric.Name] = struct{}{}
+	}
+}
+
+func TestDefaultCatalogEntriesHaveDisplayNames(t *testing.T) {
+	for _, metric := range DefaultCatalog() {
+		require.NotEmptyf(t, metric.DisplayName, "metric %s is missing DisplayName", metric.Name)
 	}
 }
