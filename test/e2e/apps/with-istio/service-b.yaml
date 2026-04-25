@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-b-node
+  namespace: oksg-demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: service-b-node
+  template:
+    metadata:
+      labels:
+        app: service-b-node
+    spec:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: service-b-node
+      containers:
+        - name: service-b-node
+          image: localhost:5001/service-b-node:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://$(HOST_IP):4318
+            - name: OTEL_SERVICE_NAME
+              value: service-b-node
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-b-node
+  namespace: oksg-demo
+spec:
+  selector:
+    app: service-b-node
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082

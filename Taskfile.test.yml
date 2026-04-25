@@ -42,9 +42,20 @@ tasks:
       - ./test/e2e/kind/teardown.sh {{.KIND_CLUSTER_NAME}}
 
   e2e:deploy:
-    desc: Build and deploy test apps to cluster (use VARIANT=base or VARIANT=with-prometheus)
+    desc: Build and deploy test apps to cluster (use VARIANT=base, VARIANT=with-prometheus, or VARIANT=with-istio)
     cmds:
       - KIND_REGISTRY_PORT={{.KIND_REGISTRY_PORT}} ./test/e2e/apps/deploy.sh {{.VARIANT}}
+
+  e2e:install-istio:
+    desc: Install minimal Istio control plane for mesh telemetry e2e scenarios
+    deps: [e2e:ensure-cluster]
+    cmds:
+      - |
+        if kubectl get namespace istio-system >/dev/null 2>&1; then
+          echo "istio-system already exists; skipping istioctl install"
+        else
+          istioctl install --set profile=minimal -y
+        fi
 
   e2e:ensure-build:
     desc: Build discovery-job into bin/ so e2e never creates binaries in repo root
@@ -147,6 +158,23 @@ tasks:
     cmds:
       - task: e2e:deploy
         vars: { VARIANT: "with-prometheus" }
+      - task: e2e:discover
+      - task: e2e:plan
+      - task: e2e:apply-otel
+      - task: e2e:apply-profile
+      - task: e2e:verify
+      - task: e2e:traffic
+        vars:
+          TRAFFIC_REQUESTS: "30"
+          TRAFFIC_INTERVAL: "0.2"
+
+  e2e:scenario:istio:
+    desc: Run Istio mesh telemetry scenario (sidecar mesh scrape plus gateway traffic)
+    deps: [e2e:ensure-cluster]
+    cmds:
+      - task: e2e:install-istio
+      - task: e2e:deploy
+        vars: { VARIANT: "with-istio" }
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
