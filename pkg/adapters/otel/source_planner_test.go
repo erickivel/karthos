@@ -43,6 +43,71 @@ func TestPlanIncludesPrometheusReceiverWhenTargetsExist(t *testing.T) {
 	require.Contains(t, plan.GatewayConfig.Receivers, "otlp")
 }
 
+func TestPlanIncludesIstioMeshScrapeJobWhenMeshSourceExists(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Name:    "istio",
+				Type:    "istio",
+				Present: true,
+				Mesh: &profile.MeshSource{
+					Flavor:             "istio",
+					Mode:               "sidecar",
+					InjectedNamespaces: []string{"oksg-demo"},
+					MetricsPort:        15020,
+					MetricsPath:        "/stats/prometheus",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Contains(t, plan.AgentConfig.Receivers, "prometheus")
+	require.Contains(t, plan.AgentConfig.Service.Pipelines["metrics"].Receivers, "prometheus")
+
+	prometheus := plan.AgentConfig.Receivers["prometheus"].(map[string]any)
+	config := prometheus["config"].(map[string]any)
+	scrapeConfigs := config["scrape_configs"].([]map[string]any)
+	require.Len(t, scrapeConfigs, 1)
+	meshJob := scrapeConfigs[0]
+	require.Equal(t, "mesh-istio", meshJob["job_name"])
+	require.Equal(t, "/stats/prometheus", meshJob["metrics_path"])
+
+	relabelConfigs := meshJob["relabel_configs"].([]map[string]any)
+	require.Contains(t, relabelConfigs, map[string]any{
+		"source_labels": []string{"__meta_kubernetes_pod_container_name"},
+		"action":        "keep",
+		"regex":         "istio-proxy",
+	})
+	require.Contains(t, relabelConfigs, map[string]any{
+		"source_labels": []string{"__meta_kubernetes_namespace"},
+		"action":        "keep",
+		"regex":         "oksg-demo",
+	})
+
+	metricRelabels := meshJob["metric_relabel_configs"].([]map[string]any)
+	require.Contains(t, metricRelabels, map[string]any{
+		"source_labels": []string{"reporter"},
+		"action":        "keep",
+		"regex":         "destination",
+	})
+	require.Contains(t, metricRelabels, map[string]any{
+		"target_label": "oksg_source",
+		"replacement":  "mesh.istio",
+	})
+	require.Contains(t, metricRelabels, map[string]any{
+		"source_labels": []string{"source_canonical_service"},
+		"target_label":  "client",
+	})
+	require.Contains(t, metricRelabels, map[string]any{
+		"source_labels": []string{"destination_canonical_service"},
+		"target_label":  "server",
+	})
+}
+
 func TestPlanFallsBackToClusterIDWhenClusterNameEmpty(t *testing.T) {
 	planner := NewSourcePlanner("oksg-system")
 

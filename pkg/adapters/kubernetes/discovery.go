@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -28,6 +29,10 @@ const (
 	otlpAnnotationTraces       = "oksg.io/otlp-traces"
 	otlpGRPCPort               = int32(4317)
 	otlpHTTPPort               = int32(4318)
+	istioSystemNamespace       = "istio-system"
+	istioSidecarWebhook        = "istio-sidecar-injector"
+	istioMetricsPort           = int32(15020)
+	istioMetricsPath           = "/stats/prometheus"
 )
 
 type HTTPProbe func(ctx context.Context, url string) bool
@@ -160,6 +165,9 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		},
 	}
 	profileResult.Sources = append(profileResult.Sources, otlpSources...)
+	if meshSource, ok := d.istioSource(ctx, namespaces.Items); ok {
+		profileResult.Sources = append(profileResult.Sources, meshSource)
+	}
 
 	profileResult.CollectionPaths = []profile.OTelCollectionPath{
 		{ReceiverType: "kubeletstats", Enabled: true},
@@ -179,8 +187,83 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		})
 		profileResult.RecommendedReceivers = append(profileResult.RecommendedReceivers, "prometheus")
 	}
+	if hasIstioSource(profileResult.Sources) {
+		profileResult.CollectionPaths = append(profileResult.CollectionPaths, profile.OTelCollectionPath{
+			ReceiverType: "prometheus/mesh-istio",
+			Enabled:      true,
+			Targets:      []string{fmt.Sprintf("pod/istio-proxy:%d%s", istioMetricsPort, istioMetricsPath)},
+		})
+		if !containsString(profileResult.RecommendedReceivers, "prometheus") {
+			profileResult.RecommendedReceivers = append(profileResult.RecommendedReceivers, "prometheus")
+		}
+	}
 
 	return profileResult, nil
+}
+
+func (d *DiscoveryAdapter) istioSource(ctx context.Context, namespaces []corev1.Namespace) (profile.ObservabilitySource, bool) {
+	hasSystemNamespace := false
+	var injected []string
+	for _, namespace := range namespaces {
+		if namespace.Name == istioSystemNamespace {
+			hasSystemNamespace = true
+		}
+		if namespace.Labels["istio-injection"] == "enabled" {
+			injected = append(injected, namespace.Name)
+		}
+	}
+	if !hasSystemNamespace {
+		return profile.ObservabilitySource{}, false
+	}
+
+	webhooks, err := d.client.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return profile.ObservabilitySource{}, false
+	}
+	if !hasMutatingWebhook(webhooks.Items, istioSidecarWebhook) {
+		return profile.ObservabilitySource{}, false
+	}
+	sort.Strings(injected)
+
+	return profile.ObservabilitySource{
+		Name:    "istio",
+		Type:    "istio",
+		Present: true,
+		Mesh: &profile.MeshSource{
+			Flavor:             "istio",
+			Mode:               "sidecar",
+			InjectedNamespaces: injected,
+			MetricsPort:        istioMetricsPort,
+			MetricsPath:        istioMetricsPath,
+		},
+	}, true
+}
+
+func hasMutatingWebhook(items []admissionv1.MutatingWebhookConfiguration, name string) bool {
+	for _, item := range items {
+		if item.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasIstioSource(sources []profile.ObservabilitySource) bool {
+	for _, source := range sources {
+		if source.Type == "istio" && source.Present && source.Mesh != nil && source.Mesh.Flavor == "istio" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *DiscoveryAdapter) prometheusTarget(ctx context.Context, service corev1.Service) (profile.PrometheusTarget, bool) {

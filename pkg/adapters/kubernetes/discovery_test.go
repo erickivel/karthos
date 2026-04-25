@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -12,6 +13,34 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestDiscoverDetectsIstioMeshSource(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   "oksg-demo",
+			Labels: map[string]string{"istio-injection": "enabled"},
+		}},
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "istio-sidecar-injector"}},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	mesh := profile.Sources[1]
+	require.Equal(t, "istio", mesh.Name)
+	require.Equal(t, "istio", mesh.Type)
+	require.True(t, mesh.Present)
+	require.NotNil(t, mesh.Mesh)
+	require.Equal(t, "istio", mesh.Mesh.Flavor)
+	require.Equal(t, "sidecar", mesh.Mesh.Mode)
+	require.Equal(t, int32(15020), mesh.Mesh.MetricsPort)
+	require.Equal(t, "/stats/prometheus", mesh.Mesh.MetricsPath)
+	require.Equal(t, []string{"oksg-demo"}, mesh.Mesh.InjectedNamespaces)
+	require.Contains(t, profile.RecommendedReceivers, "prometheus")
+}
 
 func TestDiscoverBuildsClusterProfileWithPrometheusTargets(t *testing.T) {
 	client := fake.NewClientset(

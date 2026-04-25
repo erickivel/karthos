@@ -99,10 +99,15 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 
 	pipelineReceivers := []string{"kubeletstats", "hostmetrics"}
 	prometheusTargets := prometheusTargets(clusterProfile.Sources)
-	if len(prometheusTargets) > 0 {
+	mesh := meshSource(clusterProfile.Sources)
+	scrapeConfigs := buildPrometheusScrapeConfigs(prometheusTargets)
+	if mesh != nil && mesh.Flavor == "istio" {
+		scrapeConfigs = append(scrapeConfigs, buildIstioScrapeConfig(mesh))
+	}
+	if len(scrapeConfigs) > 0 {
 		agentReceivers["prometheus"] = map[string]any{
 			"config": map[string]any{
-				"scrape_configs": buildPrometheusScrapeConfigs(prometheusTargets),
+				"scrape_configs": scrapeConfigs,
 			},
 		}
 		pipelineReceivers = append(pipelineReceivers, "prometheus")
@@ -335,6 +340,134 @@ func buildPrometheusScrapeConfigs(targets []profile.PrometheusTarget) []map[stri
 		})
 	}
 	return scrapeConfigs
+}
+
+func meshSource(sources []profile.ObservabilitySource) *profile.MeshSource {
+	for _, source := range sources {
+		if source.Type == "istio" && source.Present && source.Mesh != nil {
+			return source.Mesh
+		}
+	}
+	return nil
+}
+
+func buildIstioScrapeConfig(mesh *profile.MeshSource) map[string]any {
+	port := mesh.MetricsPort
+	if port == 0 {
+		port = 15020
+	}
+	path := mesh.MetricsPath
+	if path == "" {
+		path = "/stats/prometheus"
+	}
+
+	relabelConfigs := []map[string]any{
+		{
+			"source_labels": []string{"__meta_kubernetes_pod_container_name"},
+			"action":        "keep",
+			"regex":         "istio-proxy",
+		},
+		{
+			"source_labels": []string{"__address__"},
+			"target_label":  "__address__",
+			"regex":         "([^:]+)(?::\\d+)?",
+			"replacement":   fmt.Sprintf("$1:%d", port),
+		},
+	}
+	if len(mesh.InjectedNamespaces) > 0 {
+		relabelConfigs = append(relabelConfigs, map[string]any{
+			"source_labels": []string{"__meta_kubernetes_namespace"},
+			"action":        "keep",
+			"regex":         joinRegex(mesh.InjectedNamespaces),
+		})
+	}
+
+	return map[string]any{
+		"job_name": pathlessJobName(mesh.Flavor),
+		"kubernetes_sd_configs": []map[string]any{
+			{"role": "pod"},
+		},
+		"metrics_path":    path,
+		"relabel_configs": relabelConfigs,
+		"metric_relabel_configs": []map[string]any{
+			{
+				"source_labels": []string{"__name__"},
+				"action":        "keep",
+				"regex":         "istio_(requests_total|request_duration_milliseconds(_bucket|_sum|_count)?|request_bytes(_bucket|_sum|_count)?|response_bytes(_bucket|_sum|_count)?|request_messages_total|response_messages_total|tcp_sent_bytes_total|tcp_received_bytes_total|tcp_connections_opened_total|tcp_connections_closed_total)",
+			},
+			{
+				"source_labels": []string{"reporter"},
+				"action":        "keep",
+				"regex":         "destination",
+			},
+			{
+				"target_label": "oksg_source",
+				"replacement":  "mesh.istio",
+			},
+			{
+				"source_labels": []string{"source_canonical_service"},
+				"target_label":  "client",
+			},
+			{
+				"source_labels": []string{"source_workload_namespace"},
+				"target_label":  "client_namespace",
+			},
+			{
+				"source_labels": []string{"destination_canonical_service"},
+				"target_label":  "server",
+			},
+			{
+				"source_labels": []string{"destination_service_namespace"},
+				"target_label":  "server_namespace",
+			},
+			{
+				"source_labels": []string{"request_protocol"},
+				"target_label":  "network_protocol_name",
+			},
+			{
+				"source_labels": []string{"response_code"},
+				"target_label":  "http_response_status_code",
+			},
+			{
+				"source_labels": []string{"grpc_response_status"},
+				"target_label":  "rpc_grpc_status_code",
+			},
+			{
+				"source_labels": []string{"connection_security_policy"},
+				"target_label":  "mesh_security_policy",
+			},
+			{
+				"source_labels": []string{"source_principal"},
+				"target_label":  "mesh_peer_source_principal",
+			},
+			{
+				"source_labels": []string{"destination_principal"},
+				"target_label":  "mesh_peer_destination_principal",
+			},
+			{
+				"source_labels": []string{"response_flags"},
+				"target_label":  "mesh_envoy_response_flags",
+			},
+		},
+	}
+}
+
+func pathlessJobName(flavor string) string {
+	if flavor == "" {
+		flavor = "istio"
+	}
+	return "mesh-" + flavor
+}
+
+func joinRegex(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	out := values[0]
+	for _, value := range values[1:] {
+		out += "|" + value
+	}
+	return out
 }
 
 func otlpSignals(sources []profile.ObservabilitySource) sourceSignals {
