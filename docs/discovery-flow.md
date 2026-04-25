@@ -101,6 +101,8 @@ The source planner turns the profile into collector intent:
 - agent adds `prometheus` only when targets were discovered
 - agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
 - gateway enables `spanmetrics` and `servicegraph` connectors when OTLP traces are enabled
+- Istio mesh detection is performed in the Kubernetes discovery adapter, not a detector registry. It checks for `istio-system`, the `istio-sidecar-injector` mutating webhook, and injected namespaces, then emits an `ObservabilitySource` with `Type:"istio"` and `Mesh{Flavor:"istio", Mode:"sidecar", MetricsPort:15020, MetricsPath:"/stats/prometheus"}`.
+- when Istio is present, the source planner adds a dedicated `mesh-istio` Prometheus scrape job for `istio-proxy` containers. This path does not rely on `prometheus.io/scrape` annotations being merged onto application pods.
 - gateway receives OTLP from agents and OTLP-native emitters
 - gateway exports to the backend OTLP ingest service instead of the debug exporter
 - collector telemetry logging is configured for JSON stdout logging with env-controlled level

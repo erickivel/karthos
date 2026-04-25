@@ -90,6 +90,20 @@ Expected:
 - `servicegraph.request.error.ratio` remains query-derived and is safe to request through the same API
 - `/debug/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
 
+### Istio Mesh Available
+
+`./test/e2e/scenarios/istio-available/run.sh`
+
+Expected:
+
+- `task test:e2e:scenario:istio` installs a minimal Istio control plane if needed, deploys the `with-istio` fixture, generates gateway traffic, and applies the OKSG collector plan
+- `oksg-demo` has sidecar injection enabled, while the sparse orphan pod explicitly disables injection
+- discovery emits an `istio` source with `mesh.flavor=istio`, `mesh.mode=sidecar`, and `/stats/prometheus` on port `15020`
+- generated Helm values include a dedicated `mesh-istio` Prometheus scrape job that selects `istio-proxy` containers and stamps Prometheus-safe `oksg_source=mesh.istio`
+- application Prometheus annotations are not required for mesh metrics
+- mesh-derived samples normalize to existing servicegraph edge metrics, including `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
+- graph `calls` edges include `mesh.istio` provenance and preserve mesh metadata such as `network.protocol.name`, `mesh.security.policy`, and peer SPIFFE principals
+
 ## Generating Traffic
 
 To produce observable telemetry after a scenario is running, use the traffic tasks. They port-forward to `gateway-go` and send HTTP requests through the full call chain (`gateway-go → service-a-python → service-b-node`).

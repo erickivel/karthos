@@ -38,7 +38,7 @@ cmd/
 
 pkg/
   adapters/kubernetes/   discovery adapter (Prometheus + OTLP workload detection)
-  adapters/otel/         source planner (hostmetrics, k8s_cluster, spanmetrics, servicegraph)
+  adapters/otel/         source planner (hostmetrics, k8s_cluster, Istio mesh scrape, spanmetrics, servicegraph)
   adapters/api/          REST API server (Layer 6 Phase A query and control endpoints)
   adapters/otlp/         OTLP gRPC and HTTP server adapter
   backend/ingest/        raw-envelope conversion, signal routing, entity resolution,
@@ -239,8 +239,9 @@ curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.
 
 Notes:
 
-- `http.server.request.count`, `rpc.server.request.count`, `servicegraph.request.count`, and `servicegraph.request.error.count` are served as 1-minute rates at query time, even though the stored semconv series are counter-derived.
+- `http.server.request.count`, `rpc.server.request.count`, `servicegraph.request.count`, `servicegraph.request.error.count`, gRPC message counts, and TCP connection counts are served as 1-minute rates at query time, even though the stored semconv series are counter-derived.
 - `servicegraph.request.error.ratio` is query-derived from the served request and error rates.
+- Istio metrics enter through `metrics.IstioDialect`, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
 - The Metrics Explorer entity selector is driven by the latest graph snapshot, not the historical `/api/v1/entities` registry.
 
 ### Reading the graph output

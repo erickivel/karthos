@@ -13,7 +13,7 @@ Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Agent/Gatewa
 What is real today:
 
 - `pkg/adapters/kubernetes` discovers cluster resources, Prometheus annotation-based targets, and OTLP-capable workloads
-- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics and k8scluster on the agent plus spanmetrics and servicegraph on the gateway
+- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics and k8scluster on the agent, Istio mesh Prometheus scraping on the agent, plus spanmetrics and servicegraph on the gateway
 - `pkg/adapters/otlp` exposes OTLP gRPC and HTTP ingest for the backend runtime
 - `pkg/collector/configgen` converts the plan into typed Helm values
 - `pkg/collector/deployer` runs Helm lint/template/upgrade-install
@@ -104,6 +104,7 @@ The source planner now configures expanded receivers beyond the baseline `kubele
 - `kubeletstats` expanded: now includes volume metrics in addition to pod and container stats
 - `spanmetrics` connector: enabled on the gateway when OTLP traces are present; derives request rate and latency distributions from span data
 - `servicegraph` connector: enabled on the gateway when OTLP traces are present; derives service-to-service call edges from spans
+- `mesh-istio` Prometheus scrape job: enabled on the agent when Istio sidecar mode is detected; scrapes `istio-proxy` metrics at `/stats/prometheus`, rewrites Istio labels into `client`/`server` edge attributes, and stamps Prometheus-safe `oksg_source=mesh.istio` (normalized to `source=mesh.istio` in backend samples)
 
 Placing `spanmetrics` and `servicegraph` on the gateway keeps a single shared connector instance for cluster traffic aggregation. That avoids per-agent duplication and double-counting while still letting the agents forward raw OTLP data upstream.
 

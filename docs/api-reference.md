@@ -242,9 +242,9 @@ Query metric samples with unit from catalog. Sorted by timestamp descending.
 Semconv metric names are the API contract. Query-time derivations currently include:
 
 - `http.server.request.count` / `rpc.server.request.count` / `servicegraph.request.count` -> `rate(...[1m])`
-- `servicegraph.request.error.count` -> `rate(...[1m])`
+- `servicegraph.request.error.count`, `servicegraph.grpc.request.message.count`, `servicegraph.grpc.response.message.count`, `servicegraph.tcp.connection.open.count`, and `servicegraph.tcp.connection.close.count` -> `rate(...[1m])`
 - `servicegraph.request.error.ratio` -> `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`
-- `http.server.request.duration` / `rpc.server.duration` / `servicegraph.request.duration` -> `rate(<metric>_sum[1m]) / clamp_min(rate(<metric>_count[1m]), 1)`
+- `http.server.request.duration` / `rpc.server.duration` / `servicegraph.request.duration` / `servicegraph.request.body.size` / `servicegraph.response.body.size` -> `rate(<metric>_sum[1m]) / clamp_min(rate(<metric>_count[1m]), 1)`
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -304,7 +304,7 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 }
 ```
 
-Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint.
+Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
 
 Returns 400 if `from` or `to` is not valid RFC3339.
 

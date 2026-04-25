@@ -186,6 +186,9 @@ Run a complete scenario that deploys apps, discovers telemetry, generates OTel c
 # Prometheus discovery scenario (services with /metrics endpoints)
 task test:e2e:scenario:prometheus
 
+# Istio mesh telemetry scenario (sidecar mesh scrape)
+task test:e2e:scenario:istio
+
 # No-telemetry fallback scenario (bare services, kubeletstats only)
 task test:e2e:scenario:fallback
 ```
@@ -198,6 +201,7 @@ For debugging or custom workflows, run each step individually:
 # 1. Deploy test microservices (choose one variant)
 task test:e2e:deploy VARIANT=base            # bare services, no telemetry
 task test:e2e:deploy VARIANT=with-prometheus # services with /metrics endpoints
+task test:e2e:deploy VARIANT=with-istio      # services observed through Istio sidecars
 
 # 2. Run discovery against the cluster
 task test:e2e:discover
