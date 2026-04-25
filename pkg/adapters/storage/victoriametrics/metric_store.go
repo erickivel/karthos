@@ -181,9 +181,11 @@ func escapeLabelValue(v string) string {
 // path). A query for the base name is served as rate(sum)/rate(count), yielding a
 // rate-weighted mean in the metric's native units.
 var histogramDerivedMeanMetrics = map[string]struct{}{
-	"http.server.request.duration":  {},
-	"rpc.server.duration":           {},
-	"servicegraph.request.duration": {},
+	"http.server.request.duration":    {},
+	"rpc.server.duration":             {},
+	"servicegraph.request.duration":   {},
+	"servicegraph.request.body.size":  {},
+	"servicegraph.response.body.size": {},
 }
 
 // buildPromQL constructs a PromQL selector from a MetricQuery.
@@ -200,7 +202,14 @@ func buildPromQL(q query.MetricQuery) string {
 
 	selector := metricSelector(q)
 	switch q.MetricName {
-	case "http.server.request.count", "rpc.server.request.count", "servicegraph.request.count", "servicegraph.request.error.count":
+	case "http.server.request.count",
+		"rpc.server.request.count",
+		"servicegraph.request.count",
+		"servicegraph.request.error.count",
+		"servicegraph.grpc.request.message.count",
+		"servicegraph.grpc.response.message.count",
+		"servicegraph.tcp.connection.open.count",
+		"servicegraph.tcp.connection.close.count":
 		return fmt.Sprintf("rate(%s[1m])", selector)
 	case "servicegraph.request.error.ratio":
 		errorRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "servicegraph.request.error.count")))

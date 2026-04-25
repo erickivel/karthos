@@ -100,10 +100,12 @@ func run(ctx context.Context, args []string) error {
 		metrics.PrometheusDialect,
 		metrics.SpanmetricsDialect,
 		metrics.ServicegraphDialect,
+		metrics.IstioDialect,
 	)
 	normalizer := ingest.NewOTLPNormalizer(resolver, dialect)
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
+	meshMetricTopoBuilder := ingest.NewMeshMetricTopologyBuilder(dialect, cfg.ClusterName)
 
 	if cfg.DiscoveryProfile != "" {
 		if err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger); err != nil {
@@ -113,7 +115,7 @@ func run(ctx context.Context, args []string) error {
 
 	bufferedTopo := ingest.NewBufferedTopologyIngestor(
 		map[schema.SignalType]ingest.TopologyBuilder{
-			schema.SignalMetric: metricTopoBuilder,
+			schema.SignalMetric: ingest.NewCompositeTopologyBuilder(metricTopoBuilder, meshMetricTopoBuilder),
 			schema.SignalTrace:  traceTopoBuilder,
 		},
 		stores.GraphStore,

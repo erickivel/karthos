@@ -177,6 +177,7 @@ func newNormalizer() *ingest.OTLPNormalizer {
 		metrics.PrometheusDialect,
 		metrics.SpanmetricsDialect,
 		metrics.ServicegraphDialect,
+		metrics.IstioDialect,
 	)
 	return ingest.NewOTLPNormalizer(resolver, dialect)
 }
@@ -652,6 +653,99 @@ func TestOTLPNormalizer_ServiceGraphFailedTotalMapsToErrorRateCounter(t *testing
 	assert.Equal(t, "servicegraph.request.error.count", samples[0].MetricName)
 	assert.Equal(t, "service-a", samples[0].Labels["edge_client"])
 	assert.Equal(t, "service-b", samples[0].Labels["edge_server"])
+}
+
+func TestOTLPNormalizer_IstioRequestsUseServicegraphEdgeLabelsAndMeshMetadata(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("istio_requests_total", 42.0, tsNano, map[string]string{
+		"client":                          "gateway-go",
+		"server":                          "service-a-python",
+		"client_namespace":                "oksg-demo",
+		"server_namespace":                "oksg-demo",
+		"network.protocol.name":           "http",
+		"http.response.status_code":       "200",
+		"mesh.security.policy":            "mutual_tls",
+		"mesh.peer.source.principal":      "spiffe://cluster.local/ns/oksg-demo/sa/gateway",
+		"mesh.peer.destination.principal": "spiffe://cluster.local/ns/oksg-demo/sa/service-a",
+		"oksg.source":                     "mesh.istio",
+	})
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	s := samples[0]
+	assert.Equal(t, "servicegraph.request.count", s.MetricName)
+	assert.Equal(t, metrics.UnitPerSecond, s.Unit)
+	assert.Equal(t, "mesh.istio", s.Labels["source"])
+	assert.Equal(t, "gateway-go", s.Labels["edge_client"])
+	assert.Equal(t, "service-a-python", s.Labels["edge_server"])
+	assert.Equal(t, "http", s.Labels["network.protocol.name"])
+	assert.Equal(t, "mutual_tls", s.Labels["mesh.security.policy"])
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go")),
+		s.Labels["edge_client_id"],
+	)
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "service-a-python")),
+		s.Labels["edge_server_id"],
+	)
+}
+
+func TestOTLPNormalizer_Istio5xxRequestsAlsoEmitErrorCount(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("istio_requests_total", 3.0, tsNano, map[string]string{
+		"client":                    "gateway-go",
+		"server":                    "service-a-python",
+		"client_namespace":          "oksg-demo",
+		"server_namespace":          "oksg-demo",
+		"http.response.status_code": "503",
+		"oksg.source":               "mesh.istio",
+	})
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 2)
+
+	_, ok := findSample(samples, "servicegraph.request.count")
+	require.True(t, ok)
+	errSample, ok := findSample(samples, "servicegraph.request.error.count")
+	require.True(t, ok)
+	assert.Equal(t, "mesh.istio", errSample.Labels["source"])
+	assert.Equal(t, "503", errSample.Labels["http.response.status_code"])
+}
+
+func TestOTLPNormalizer_IstioDurationMillisecondsHistogramEmitsNanosecondSumCount(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeHistogramRMWithAttrs("istio_request_duration_milliseconds", 12.5, 5, tsNano, map[string]string{
+		"client":           "gateway-go",
+		"server":           "service-a-python",
+		"client_namespace": "oksg-demo",
+		"server_namespace": "oksg-demo",
+		"oksg.source":      "mesh.istio",
+	})
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 2)
+
+	sumSample, ok := findSample(samples, "servicegraph.request.duration_sum")
+	require.True(t, ok)
+	assert.InDelta(t, 12_500_000.0, sumSample.Value, 1e-6)
+	assert.Equal(t, metrics.UnitNanoseconds, sumSample.Unit)
+
+	countSample, ok := findSample(samples, "servicegraph.request.duration_count")
+	require.True(t, ok)
+	assert.InDelta(t, 5.0, countSample.Value, 1e-9)
 }
 
 func TestOTLPNormalizer_HistogramWithZeroCountSkipped(t *testing.T) {

@@ -24,6 +24,16 @@ func TestOTLPSemconvMetricsSpanAndServicegraphTargets(t *testing.T) {
 	require.Equal(t, UnitPerSecond, servicegraphCount.Unit)
 	require.Equal(t, MetricKindCounter, servicegraphCount.Kind)
 	require.Equal(t, 1.0, servicegraphCount.ConversionFactor)
+
+	requestBytes, ok := OTLPSemconvMetrics["servicegraph.request.body.size"]
+	require.True(t, ok, "expected servicegraph.request.body.size to be present")
+	require.Equal(t, UnitBytes, requestBytes.Unit)
+	require.Equal(t, MetricKindHistogram, requestBytes.Kind)
+
+	tcpConnections, ok := OTLPSemconvMetrics["servicegraph.tcp.connection.open.count"]
+	require.True(t, ok, "expected servicegraph.tcp.connection.open.count to be present")
+	require.Equal(t, UnitPerSecond, tcpConnections.Unit)
+	require.Equal(t, MetricKindCounter, tcpConnections.Kind)
 }
 
 func TestOTLPSemconvMetricsStoresConditionVariantsAsSemconvStyleNames(t *testing.T) {
@@ -46,6 +56,8 @@ func TestOTLPSemconvMetricsDoesNotKeepSourceDialectKeys(t *testing.T) {
 		"container_cpu_usage_seconds_total",
 		"traces.span.metrics.calls",
 		"traces.service.graph.request.total",
+		"istio_requests_total",
+		"istio_request_duration_milliseconds",
 	} {
 		_, ok := OTLPSemconvMetrics[sourceName]
 		require.False(t, ok, "expected %s to be translated by a dialect instead of stored in OTLPSemconvMetrics", sourceName)

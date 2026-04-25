@@ -68,7 +68,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 						continue
 					}
 
-					entityID, skip, err := n.resolveMetricEntity(ctx, envelope.Resource, metric.Name, dp.Attributes)
+					entityID, skip, err := n.resolveMetricEntity(ctx, envelope.Resource, metric.Name, translatedName, dp.Attributes)
 					if err != nil {
 						return nil, fmt.Errorf("resolve entity: %w", err)
 					}
@@ -77,14 +77,16 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					}
 
 					ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
-					labels := baseLabels(envelope.Source)
-					applyServiceGraphEdgeLabels(ctx, n.resolver, envelope.Resource, metric.Name, dp.Attributes, labels)
+					labels := baseLabels(envelope.Source, dp.Attributes)
+					applyMeshMetadataLabels(dp.Attributes, labels)
+					applyServiceGraphEdgeLabels(ctx, n.resolver, envelope.Resource, metric.Name, translatedName, dp.Attributes, labels)
+					factor := conversionFactor(metric.Name, mapping)
 
 					samples = append(samples,
 						metrics.MetricSample{
 							MetricName: metricName + "_sum",
 							EntityID:   entityID,
-							Value:      *dp.Sum * mapping.ConversionFactor,
+							Value:      *dp.Sum * factor,
 							Timestamp:  ts,
 							Labels:     labels,
 							Unit:       mapping.Unit,
@@ -105,14 +107,14 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 			dps := collectScalarDataPoints(metric)
 			for _, dp := range dps {
 				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
-				value := dp.Value * mapping.ConversionFactor
+				value := dp.Value * conversionFactor(metric.Name, mapping)
 
 				metricName := resolveDirectionalName(translatedName, dp.Attributes)
 				if metricName == "" {
 					continue
 				}
 
-				entityID, skip, err := n.resolveMetricEntity(ctx, envelope.Resource, metric.Name, dp.Attributes)
+				entityID, skip, err := n.resolveMetricEntity(ctx, envelope.Resource, metric.Name, translatedName, dp.Attributes)
 				if err != nil {
 					return nil, fmt.Errorf("resolve entity: %w", err)
 				}
@@ -120,8 +122,9 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					continue
 				}
 
-				labels := baseLabels(envelope.Source)
-				applyServiceGraphEdgeLabels(ctx, n.resolver, envelope.Resource, metric.Name, dp.Attributes, labels)
+				labels := baseLabels(envelope.Source, dp.Attributes)
+				applyMeshMetadataLabels(dp.Attributes, labels)
+				applyServiceGraphEdgeLabels(ctx, n.resolver, envelope.Resource, metric.Name, translatedName, dp.Attributes, labels)
 
 				samples = append(samples, metrics.MetricSample{
 					MetricName: metricName,
@@ -131,6 +134,18 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					Labels:     labels,
 					Unit:       mapping.Unit,
 				})
+				if shouldEmitIstioErrorCount(metric.Name, dp.Attributes) {
+					errorMapping := metrics.OTLPSemconvMetrics["servicegraph.request.error.count"]
+					errorLabels := cloneLabels(labels)
+					samples = append(samples, metrics.MetricSample{
+						MetricName: "servicegraph.request.error.count",
+						EntityID:   entityID,
+						Value:      dp.Value * errorMapping.ConversionFactor,
+						Timestamp:  ts,
+						Labels:     errorLabels,
+						Unit:       errorMapping.Unit,
+					})
+				}
 			}
 		}
 	}
@@ -138,7 +153,10 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 	return samples, nil
 }
 
-func baseLabels(source string) map[string]string {
+func baseLabels(source string, attrs []*commonpb.KeyValue) map[string]string {
+	if override := firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm); override != "" {
+		source = override
+	}
 	return map[string]string{semconv.LabelSource: source}
 }
 
@@ -159,10 +177,11 @@ func applyServiceGraphEdgeLabels(
 	resolver EntityResolver,
 	resource map[string]string,
 	metricName string,
+	translatedName string,
 	attrs []*commonpb.KeyValue,
 	labels map[string]string,
 ) {
-	if !strings.HasPrefix(metricName, "traces.service.graph.") {
+	if !isServiceGraphEdgeMetric(metricName, translatedName) {
 		return
 	}
 	if c := kvString(attrs, semconv.AttrClient); c != "" {
@@ -195,9 +214,10 @@ func (n *OTLPNormalizer) resolveMetricEntity(
 	ctx context.Context,
 	resource map[string]string,
 	metricName string,
+	translatedName string,
 	attrs []*commonpb.KeyValue,
 ) (entities.EntityID, bool, error) {
-	if strings.HasPrefix(metricName, "traces.service.graph.") {
+	if isServiceGraphEdgeMetric(metricName, translatedName) {
 		client := kvString(attrs, semconv.AttrClient)
 		if client == "" {
 			return "", true, nil
@@ -224,6 +244,79 @@ func (n *OTLPNormalizer) resolveMetricEntity(
 		return "", false, err
 	}
 	return id, false, nil
+}
+
+func isServiceGraphEdgeMetric(metricName, translatedName string) bool {
+	return strings.HasPrefix(metricName, "traces.service.graph.") ||
+		strings.HasPrefix(metricName, "istio_") ||
+		strings.HasPrefix(translatedName, "servicegraph.")
+}
+
+func conversionFactor(metricName string, mapping metrics.OTLPMetricMapping) float64 {
+	if metricName == "istio_request_duration_milliseconds" {
+		return 1e6
+	}
+	return mapping.ConversionFactor
+}
+
+func applyMeshMetadataLabels(attrs []*commonpb.KeyValue, labels map[string]string) {
+	for _, key := range []string{
+		semconv.AttrNetworkProtocolName,
+		semconv.AttrHTTPStatusCode,
+		semconv.AttrGRPCStatusCode,
+		semconv.AttrMeshPolicy,
+		semconv.AttrMeshSourcePrincipal,
+		semconv.AttrMeshDestinationPrincipal,
+		semconv.AttrMeshResponseFlags,
+		semconv.AttrMeshID,
+	} {
+		if value := meshAttrValue(attrs, key); value != "" {
+			labels[key] = value
+		}
+	}
+}
+
+func shouldEmitIstioErrorCount(metricName string, attrs []*commonpb.KeyValue) bool {
+	if metricName != "istio_requests_total" {
+		return false
+	}
+	status := kvString(attrs, semconv.AttrHTTPStatusCode)
+	if status == "" {
+		status = kvString(attrs, semconv.AttrHTTPStatusCodeProm)
+	}
+	return strings.HasPrefix(status, "5")
+}
+
+func meshAttrValue(attrs []*commonpb.KeyValue, canonical string) string {
+	switch canonical {
+	case semconv.AttrNetworkProtocolName:
+		return firstKVString(attrs, canonical, semconv.AttrNetworkProtocolNameProm)
+	case semconv.AttrHTTPStatusCode:
+		return firstKVString(attrs, canonical, semconv.AttrHTTPStatusCodeProm)
+	case semconv.AttrGRPCStatusCode:
+		return firstKVString(attrs, canonical, semconv.AttrGRPCStatusCodeProm)
+	case semconv.AttrMeshPolicy:
+		return firstKVString(attrs, canonical, semconv.AttrMeshPolicyProm)
+	case semconv.AttrMeshSourcePrincipal:
+		return firstKVString(attrs, canonical, semconv.AttrMeshSourcePrincipalProm)
+	case semconv.AttrMeshDestinationPrincipal:
+		return firstKVString(attrs, canonical, semconv.AttrMeshDestinationPrincipalProm)
+	case semconv.AttrMeshResponseFlags:
+		return firstKVString(attrs, canonical, semconv.AttrMeshResponseFlagsProm)
+	case semconv.AttrMeshID:
+		return firstKVString(attrs, canonical, semconv.AttrMeshIDProm)
+	default:
+		return kvString(attrs, canonical)
+	}
+}
+
+func firstKVString(attrs []*commonpb.KeyValue, keys ...string) string {
+	for _, key := range keys {
+		if value := kvString(attrs, key); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func resolveServiceMetricEntityID(

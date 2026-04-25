@@ -16,13 +16,35 @@ const (
 
 // Metric datapoint attribute keys.
 const (
-	AttrClient          = "client"
-	AttrClientNamespace = "client_namespace"
-	AttrCondition       = "condition"
-	AttrDirection       = "direction"
-	AttrPeerService     = "peer.service"
-	AttrServer          = "server"
-	AttrServerNamespace = "server_namespace"
+	AttrClient                   = "client"
+	AttrClientNamespace          = "client_namespace"
+	AttrCondition                = "condition"
+	AttrDirection                = "direction"
+	AttrGRPCStatusCode           = "rpc.grpc.status_code"
+	AttrHTTPStatusCode           = "http.response.status_code"
+	AttrMeshID                   = "mesh.id"
+	AttrMeshPolicy               = "mesh.security.policy"
+	AttrMeshResponseFlags        = "mesh.envoy.response_flags"
+	AttrMeshSourcePrincipal      = "mesh.peer.source.principal"
+	AttrMeshDestinationPrincipal = "mesh.peer.destination.principal"
+	AttrNetworkProtocolName      = "network.protocol.name"
+	AttrOKSGSource               = "oksg.source"
+	AttrPeerService              = "peer.service"
+	AttrServer                   = "server"
+	AttrServerNamespace          = "server_namespace"
+)
+
+// Prometheus-safe datapoint attribute aliases used by scrape relabel configs.
+const (
+	AttrGRPCStatusCodeProm           = "rpc_grpc_status_code"
+	AttrHTTPStatusCodeProm           = "http_response_status_code"
+	AttrMeshIDProm                   = "mesh_id"
+	AttrMeshPolicyProm               = "mesh_security_policy"
+	AttrMeshResponseFlagsProm        = "mesh_envoy_response_flags"
+	AttrMeshSourcePrincipalProm      = "mesh_peer_source_principal"
+	AttrMeshDestinationPrincipalProm = "mesh_peer_destination_principal"
+	AttrNetworkProtocolNameProm      = "network_protocol_name"
+	AttrOKSGSourceProm               = "oksg_source"
 )
 
 // Internal labels derived during normalization.
