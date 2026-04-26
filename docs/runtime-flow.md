@@ -85,7 +85,7 @@ sequenceDiagram
     Main->>Main: NewMultiIngestor(normalizingIngestor, metricTopologyIngestor)
     Main->>Main: NewTopologyIngestor(traceTopoBuilder, graphStore)
     Main->>Router: NewSignalRouter(multiIngestor, traceTopologyIngestor)
-    Main->>Builder: ingest.NewEnvelopeBuilder(now)
+    Main->>Builder: ingest.NewEnvelopeBuilder(clock)
     Main->>Server: otlp.NewServer(config, builder, router, logger)
     Main->>Server: server.Run(ctx)
     Note over Server: Listening on :4317 (gRPC), :4318 (HTTP), :13133 (health)
@@ -97,7 +97,7 @@ sequenceDiagram
     Server->>Builder: BuildMetricEnvelopes("otlp/grpc", request)
     activate Builder
     Builder->>Builder: For each ResourceMetrics: extract resource attributes, marshal payload to JSON
-    Builder->>Builder: schema.NewRawEnvelope(source, SignalMetric, attrs, payload, now)
+    Builder->>Builder: schema.NewRawEnvelope(source, SignalMetric, attrs, payload, clock())
     Builder-->>Server: []schema.RawEnvelope
     deactivate Builder
 
@@ -314,7 +314,7 @@ Metric path:
 - `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. This means k8s_cluster receiver metrics for workload-scoped and namespace-scoped entities are now resolved (previously dropped as unresolvable). Entity resolution errors fail the envelope.
 - `OTLPNormalizer` first translates source dialects into semconv-style metric names, then maps each recognized OTLP metric name to a semconv-native `MetricSample` using the registered `OTLPSemconvMetrics`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. Servicegraph connector and Istio mesh metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Istio request-duration histograms are converted from milliseconds to nanoseconds, histograms are stored as `_sum`/`_count`, and `servicegraph.request.error.ratio` remains query-derived. Unrecognized metric names are silently skipped.
 - `MetricStore` stores the resulting samples in memory. Supports time-range, entity-filtered, and edge-filtered queries.
-- `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. `MeshMetricTopologyBuilder` parses servicegraph-shaped mesh metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response metadata.
+- `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. `MeshMetricTopologyBuilder` parses servicegraph-shaped mesh metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response metadata. Mesh `calls` edges take `FirstSeen`/`LastSeen` from the metric datapoint timestamp, falling back to the envelope timestamp only when the datapoint has no timestamp.
 - `GraphStore` accumulates edges and nodes across snapshots. Re-observed edges have their `LastSeen` updated; nodes are merged by entity ID.
 
 Trace path:
@@ -326,7 +326,7 @@ Trace path:
 
 When a discovery profile is loaded at backend startup, `cmd/backend/main.go` calls `metrics.Resolve(catalog, registry, profile)` to compute the canonical-to-source `Assignment` and passes it to the normalizer via `WithAssignment(...)`.
 
-For each incoming datapoint, after dialect translation and directional name resolution, the normalizer compares the sample's `oksg_source` attribute (stamped by the agent/gateway `transform/oksg-source` processor or by Istio's Prometheus relabel rule) against `Assignment[canonical]`. If the canonical metric has an assigned source and the sample's source disagrees, the sample is dropped and the `dropped` counter — an `atomic.Uint64` to remain safe under the OTLP server's concurrent request handling — is incremented. Samples without an `oksg_source` attribute follow a legacy accept path so envelopes from external producers aren't silently dropped.
+For each incoming datapoint, after dialect translation and directional name resolution, the normalizer compares the sample's `oksg_source` attribute (stamped by the agent/gateway `transform/oksg-source` processor, by application Prometheus scrape relabeling, or by Istio's Prometheus relabel rule) against `Assignment[canonical]`. If the canonical metric has an assigned source and the sample's source disagrees, the sample is dropped and the `dropped` counter — an `atomic.Uint64` to remain safe under the OTLP server's concurrent request handling — is incremented. Samples without an `oksg_source` attribute follow a legacy accept path so envelopes from external producers aren't silently dropped.
 
 The cumulative drop count is exposed via `OTLPNormalizer.DroppedSampleCount()`. The architectural rationale is documented in `docs/architecture.md` under *Layer 3c: Source Arbitration*.
 

@@ -20,7 +20,7 @@ import (
 
 func TestMeshMetricTopologyBuilderBuildsCallsEdgeFromIstioServicegraphMetric(t *testing.T) {
 	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test")
-	env := makeMeshMetricEnvelope(t, "istio_requests_total", map[string]string{
+	env := makeMeshMetricEnvelope(t, "istio_requests_total", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":                          "gateway-go",
 		"server":                          "service-a-python",
 		"client_namespace":                "oksg-demo",
@@ -46,9 +46,29 @@ func TestMeshMetricTopologyBuilderBuildsCallsEdgeFromIstioServicegraphMetric(t *
 	assert.Equal(t, "spiffe://cluster.local/ns/oksg-demo/sa/service-a", edges[0].Metadata["mesh.peer.destination.principal"])
 }
 
+func TestMeshMetricTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing.T) {
+	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test")
+	envelopeTimestamp := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	dataPointTimestamp := envelopeTimestamp.Add(5 * time.Minute)
+	env := makeMeshMetricEnvelope(t, "istio_requests_total", envelopeTimestamp, dataPointTimestamp, map[string]string{
+		"client":           "gateway-go",
+		"server":           "service-a-python",
+		"client_namespace": "oksg-demo",
+		"server_namespace": "oksg-demo",
+		"oksg.source":      "mesh.istio",
+	})
+
+	edges, err := builder.Build(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+
+	assert.Equal(t, dataPointTimestamp, edges[0].FirstSeen)
+	assert.Equal(t, dataPointTimestamp, edges[0].LastSeen)
+}
+
 func TestMeshMetricTopologyBuilderIgnoresNonServicegraphMetrics(t *testing.T) {
 	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test")
-	env := makeMeshMetricEnvelope(t, "k8s.pod.cpu.usage", map[string]string{
+	env := makeMeshMetricEnvelope(t, "k8s.pod.cpu.usage", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":           "gateway-go",
 		"server":           "service-a-python",
 		"client_namespace": "oksg-demo",
@@ -88,7 +108,7 @@ func TestBufferedTopologyIngestor_MergesProvenanceAndMetadata(t *testing.T) {
 	assert.Equal(t, now.Add(time.Second), edge.LastSeen)
 }
 
-func makeMeshMetricEnvelope(t *testing.T, metricName string, attrs map[string]string) schema.RawEnvelope {
+func makeMeshMetricEnvelope(t *testing.T, metricName string, envelopeTimestamp, dataPointTimestamp time.Time, attrs map[string]string) schema.RawEnvelope {
 	t.Helper()
 	var kvs []*commonpb.KeyValue
 	for k, v := range attrs {
@@ -105,7 +125,7 @@ func makeMeshMetricEnvelope(t *testing.T, metricName string, attrs map[string]st
 					DataPoints: []*metricspb.NumberDataPoint{{
 						Attributes:   kvs,
 						Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: 1},
-						TimeUnixNano: uint64(time.Now().UnixNano()),
+						TimeUnixNano: uint64(dataPointTimestamp.UnixNano()),
 					}},
 				}},
 			}},
@@ -113,7 +133,7 @@ func makeMeshMetricEnvelope(t *testing.T, metricName string, attrs map[string]st
 	}
 	payload, err := protojson.Marshal(rm)
 	require.NoError(t, err)
-	env, err := schema.NewRawEnvelope("otlp/grpc", schema.SignalMetric, map[string]string{}, json.RawMessage(payload), time.Now().UTC())
+	env, err := schema.NewRawEnvelope("otlp/grpc", schema.SignalMetric, map[string]string{}, json.RawMessage(payload), envelopeTimestamp)
 	require.NoError(t, err)
 	return env
 }

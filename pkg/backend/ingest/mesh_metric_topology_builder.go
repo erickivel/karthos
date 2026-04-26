@@ -42,8 +42,8 @@ func (b *MeshMetricTopologyBuilder) Build(_ context.Context, envelope schema.Raw
 			if !isServiceGraphEdgeMetric(metric.Name, translated) {
 				continue
 			}
-			for _, attrs := range metricAttributeSets(metric) {
-				edge, ok := b.edgeFromAttributes(envelope.Timestamp, attrs)
+			for _, dp := range metricAttributeSets(metric) {
+				edge, ok := b.edgeFromAttributes(metricTimestamp(envelope.Timestamp, dp.TimeUnixNano), dp.Attributes)
 				if !ok {
 					continue
 				}
@@ -81,11 +81,11 @@ func (b *MeshMetricTopologyBuilder) BuildNodes(_ context.Context, envelope schem
 			if !isServiceGraphEdgeMetric(metric.Name, translated) {
 				continue
 			}
-			for _, attrs := range metricAttributeSets(metric) {
-				client := kvString(attrs, semconv.AttrClient)
-				server := kvString(attrs, semconv.AttrServer)
-				clientNamespace := kvString(attrs, semconv.AttrClientNamespace)
-				serverNamespace := kvString(attrs, semconv.AttrServerNamespace)
+			for _, dp := range metricAttributeSets(metric) {
+				client := kvString(dp.Attributes, semconv.AttrClient)
+				server := kvString(dp.Attributes, semconv.AttrServer)
+				clientNamespace := kvString(dp.Attributes, semconv.AttrClientNamespace)
+				serverNamespace := kvString(dp.Attributes, semconv.AttrServerNamespace)
 				if client != "" && clientNamespace != "" {
 					id := entities.ComputeEntityID(entities.KindService, b.clusterName, clientNamespace, client)
 					seen[id] = topology.Node{ID: id, Kind: entities.KindService, Labels: map[string]string{"name": client, "namespace": clientNamespace}}
@@ -126,18 +126,36 @@ func (b *MeshMetricTopologyBuilder) edgeFromAttributes(timestamp time.Time, attr
 	return edge, true
 }
 
-func metricAttributeSets(metric *metricspb.Metric) [][]*commonpb.KeyValue {
-	var attrs [][]*commonpb.KeyValue
+type metricAttributeSet struct {
+	Attributes   []*commonpb.KeyValue
+	TimeUnixNano uint64
+}
+
+func metricAttributeSets(metric *metricspb.Metric) []metricAttributeSet {
+	var sets []metricAttributeSet
 	if h := metric.GetHistogram(); h != nil {
 		for _, dp := range h.DataPoints {
-			attrs = append(attrs, dp.Attributes)
+			sets = append(sets, metricAttributeSet{
+				Attributes:   dp.Attributes,
+				TimeUnixNano: dp.TimeUnixNano,
+			})
 		}
-		return attrs
+		return sets
 	}
 	for _, dp := range collectScalarDataPoints(metric) {
-		attrs = append(attrs, dp.Attributes)
+		sets = append(sets, metricAttributeSet{
+			Attributes:   dp.Attributes,
+			TimeUnixNano: dp.TimeUnixNano,
+		})
 	}
-	return attrs
+	return sets
+}
+
+func metricTimestamp(fallback time.Time, timeUnixNano uint64) time.Time {
+	if timeUnixNano == 0 {
+		return fallback
+	}
+	return time.Unix(0, int64(timeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 }
 
 func sourceFromAttrs(attrs []*commonpb.KeyValue) string {

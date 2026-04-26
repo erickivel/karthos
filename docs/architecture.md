@@ -104,6 +104,7 @@ The source planner now configures expanded receivers beyond the baseline `kubele
 - `kubeletstats` expanded: now includes volume metrics in addition to pod and container stats
 - `spanmetrics` connector: enabled on the gateway when OTLP traces are present; derives request rate and latency distributions from span data
 - `servicegraph` connector: enabled on the gateway when OTLP traces are present; derives service-to-service call edges from spans
+- application Prometheus scrape jobs: enabled on the agent for discovered Prometheus targets; stamp `oksg_source=prometheus.app` at scrape time so app metrics participate in source arbitration
 - `mesh-istio` Prometheus scrape job: enabled on the agent when Istio sidecar mode is detected; scrapes `istio-proxy` metrics at `/stats/prometheus`, rewrites Istio labels into `client`/`server` edge attributes, and stamps Prometheus-safe `oksg_source=mesh.istio` (normalized to `source=mesh.istio` in backend samples)
 
 Placing `spanmetrics` and `servicegraph` on the gateway keeps a single shared connector instance for cluster traffic aggregation. That avoids per-agent duplication and double-counting while still letting the agents forward raw OTLP data upstream.
@@ -140,7 +141,7 @@ The arbitration pipeline lives in `pkg/core/metrics/`:
 
 Two layers consume the resolver output:
 
-- **Planner** (`pkg/adapters/otel/source_planner.go`): only deploys receivers/connectors whose source ID appears in `SelectedSources`. For example, when Istio is present and wins all `servicegraph.*` metrics, the gateway omits the `servicegraph` connector entirely. The planner also installs a `transform/oksg-source` processor on the agent and gateway pipelines that stamps `oksg_source` on every datapoint based on its receiver-determined metric-name namespace, complementing the pre-existing `oksg_source=mesh.istio` stamp produced by Istio's Prometheus relabel rule.
+- **Planner** (`pkg/adapters/otel/source_planner.go`): only deploys receivers/connectors whose source ID appears in `SelectedSources`. For example, when Istio is present and wins all `servicegraph.*` metrics, the gateway omits the `servicegraph` connector entirely. The planner also installs a `transform/oksg-source` processor on the agent and gateway pipelines that stamps `oksg_source` on every datapoint based on its receiver-determined metric-name namespace, complementing scrape-time relabel stamps for application Prometheus targets (`oksg_source=prometheus.app`) and Istio mesh telemetry (`oksg_source=mesh.istio`).
 - **Ingester** (`pkg/backend/ingest/normalizer.go`): when `WithAssignment(...)` is configured, the normalizer drops any datapoint whose `oksg_source` attribute disagrees with the assigned source for that canonical metric. Untagged samples follow a legacy accept path. The drop counter is exposed via `OTLPNormalizer.DroppedSampleCount()` for observability.
 
 This arbitration is the mechanism that prevents double-counting when the same canonical metric can be produced by multiple installed sources.

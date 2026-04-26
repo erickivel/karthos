@@ -18,7 +18,8 @@ import (
 )
 
 func TestBuildMetricEnvelopesFromOTLPRequest(t *testing.T) {
-	builder := NewEnvelopeBuilder(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))
+	now := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	builder := NewEnvelopeBuilder(func() time.Time { return now })
 
 	request := &colmetricpb.ExportMetricsServiceRequest{
 		ResourceMetrics: []*metricpb.ResourceMetrics{
@@ -48,11 +49,45 @@ func TestBuildMetricEnvelopesFromOTLPRequest(t *testing.T) {
 	require.Equal(t, "gateway", envelopes[0].Resource["service.name"])
 	require.Equal(t, "oksg-demo", envelopes[0].Resource["k8s.namespace.name"])
 	require.NotEmpty(t, envelopes[0].Payload)
-	require.Equal(t, builder.now, envelopes[0].Timestamp)
+	require.Equal(t, now, envelopes[0].Timestamp)
+}
+
+func TestBuildMetricEnvelopesUsesClockForEachRequest(t *testing.T) {
+	first := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	second := first.Add(2 * time.Minute)
+	calls := 0
+	builder := NewEnvelopeBuilder(func() time.Time {
+		calls++
+		if calls == 1 {
+			return first
+		}
+		return second
+	})
+
+	request := &colmetricpb.ExportMetricsServiceRequest{
+		ResourceMetrics: []*metricpb.ResourceMetrics{
+			{
+				Resource: &resourcepb.Resource{
+					Attributes: []*commonpb.KeyValue{
+						{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "gateway"}}},
+					},
+				},
+			},
+		},
+	}
+
+	firstEnvelopes, err := builder.BuildMetricEnvelopes("otlp/grpc", request)
+	require.NoError(t, err)
+	secondEnvelopes, err := builder.BuildMetricEnvelopes("otlp/grpc", request)
+	require.NoError(t, err)
+
+	require.Equal(t, first, firstEnvelopes[0].Timestamp)
+	require.Equal(t, second, secondEnvelopes[0].Timestamp)
 }
 
 func TestBuildTraceEnvelopesFromOTLPRequest(t *testing.T) {
-	builder := NewEnvelopeBuilder(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))
+	now := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	builder := NewEnvelopeBuilder(func() time.Time { return now })
 
 	request := &coltracepb.ExportTraceServiceRequest{
 		ResourceSpans: []*tracepb.ResourceSpans{
@@ -79,6 +114,7 @@ func TestBuildTraceEnvelopesFromOTLPRequest(t *testing.T) {
 	require.Equal(t, schema.SignalTrace, envelopes[0].SignalType)
 	require.Equal(t, "gateway", envelopes[0].Resource["service.name"])
 	require.NotEmpty(t, envelopes[0].Payload)
+	require.Equal(t, now, envelopes[0].Timestamp)
 }
 
 func TestSignalRouterRoutesBySignalType(t *testing.T) {

@@ -167,7 +167,7 @@ func run(ctx context.Context, args []string) error {
 		EnabledSignals:      cfg.EnabledSignals,
 		MetricStore:         stores.MetricStore,
 		GraphStore:          stores.GraphStore,
-	}, ingest.NewEnvelopeBuilder(contextNow()), router, logger)
+	}, ingest.NewEnvelopeBuilder(contextNow), router, logger)
 	if err != nil {
 		return err
 	}

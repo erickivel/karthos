@@ -17,14 +17,16 @@ import (
 )
 
 type EnvelopeBuilder struct {
-	now time.Time
+	clock func() time.Time
 }
 
-func NewEnvelopeBuilder(now time.Time) *EnvelopeBuilder {
-	if now.IsZero() {
-		now = time.Now().UTC()
+func NewEnvelopeBuilder(clock func() time.Time) *EnvelopeBuilder {
+	if clock == nil {
+		clock = func() time.Time {
+			return time.Now().UTC()
+		}
 	}
-	return &EnvelopeBuilder{now: now.UTC()}
+	return &EnvelopeBuilder{clock: clock}
 }
 
 func (b *EnvelopeBuilder) BuildMetricEnvelopes(source string, request *colmetricpb.ExportMetricsServiceRequest) ([]schema.RawEnvelope, error) {
@@ -39,7 +41,7 @@ func (b *EnvelopeBuilder) BuildMetricEnvelopes(source string, request *colmetric
 			return nil, err
 		}
 
-		envelope, err := schema.NewRawEnvelope(source, schema.SignalMetric, resourceAttributes(resourceMetrics.Resource), payload, b.now)
+		envelope, err := schema.NewRawEnvelope(source, schema.SignalMetric, resourceAttributes(resourceMetrics.Resource), payload, b.timestamp())
 		if err != nil {
 			return nil, err
 		}
@@ -60,13 +62,24 @@ func (b *EnvelopeBuilder) BuildTraceEnvelopes(source string, request *coltracepb
 			return nil, err
 		}
 
-		envelope, err := schema.NewRawEnvelope(source, schema.SignalTrace, resourceAttributes(resourceSpans.Resource), payload, b.now)
+		envelope, err := schema.NewRawEnvelope(source, schema.SignalTrace, resourceAttributes(resourceSpans.Resource), payload, b.timestamp())
 		if err != nil {
 			return nil, err
 		}
 		envelopes = append(envelopes, envelope)
 	}
 	return envelopes, nil
+}
+
+func (b *EnvelopeBuilder) timestamp() time.Time {
+	if b == nil || b.clock == nil {
+		return time.Now().UTC()
+	}
+	now := b.clock()
+	if now.IsZero() {
+		return time.Now().UTC()
+	}
+	return now.UTC()
 }
 
 type SignalRouter struct {

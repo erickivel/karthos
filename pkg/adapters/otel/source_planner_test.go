@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
@@ -41,6 +42,42 @@ func TestPlanIncludesPrometheusReceiverWhenTargetsExist(t *testing.T) {
 	require.Contains(t, plan.AgentConfig.Receivers, "kubeletstats")
 	require.Contains(t, plan.AgentConfig.Receivers, "prometheus")
 	require.Contains(t, plan.GatewayConfig.Receivers, "otlp")
+}
+
+func TestPlanPrometheusScrapeStampsAppSource(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Type:    "prometheus",
+				Present: true,
+				PrometheusTargets: []profile.PrometheusTarget{
+					{
+						ServiceName: "gateway-go",
+						Namespace:   "oksg-demo",
+						Port:        8080,
+						Path:        "/metrics",
+						Reachable:   true,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	prometheus := plan.AgentConfig.Receivers["prometheus"].(map[string]any)
+	config := prometheus["config"].(map[string]any)
+	scrapeConfigs := config["scrape_configs"].([]map[string]any)
+	require.Len(t, scrapeConfigs, 1)
+
+	metricRelabels := scrapeConfigs[0]["metric_relabel_configs"].([]map[string]any)
+	require.Contains(t, metricRelabels, map[string]any{
+		"target_label": "oksg_source",
+		"replacement":  metrics.SourcePrometheusApp,
+	})
 }
 
 func TestPlanIncludesIstioMeshScrapeJobWhenMeshSourceExists(t *testing.T) {

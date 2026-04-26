@@ -100,9 +100,10 @@ Expected:
 - `oksg-demo` has sidecar injection enabled, while the sparse orphan pod explicitly disables injection
 - discovery emits an `istio` source with `mesh.flavor=istio`, `mesh.mode=sidecar`, and `/stats/prometheus` on port `15020`
 - generated Helm values include a dedicated `mesh-istio` Prometheus scrape job that selects `istio-proxy` containers and stamps Prometheus-safe `oksg_source=mesh.istio`
+- generated Helm values stamp discovered application Prometheus scrape jobs with `oksg_source=prometheus.app`
 - application Prometheus annotations are not required for mesh metrics
 - mesh-derived samples normalize to existing servicegraph edge metrics, including `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
-- graph `calls` edges include `mesh.istio` provenance and preserve mesh metadata such as `network.protocol.name`, `mesh.security.policy`, and peer SPIFFE principals
+- graph `calls` edges include `mesh.istio` provenance, advance `last_seen` from metric datapoint timestamps, and preserve mesh metadata such as `network.protocol.name`, `mesh.security.policy`, and peer SPIFFE principals
 
 ## Generating Traffic
 

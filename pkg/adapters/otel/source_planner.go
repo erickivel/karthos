@@ -361,6 +361,12 @@ func buildPrometheusScrapeConfigs(targets []profile.PrometheusTarget) []map[stri
 					},
 				},
 			},
+			"metric_relabel_configs": []map[string]any{
+				{
+					"target_label": "oksg_source",
+					"replacement":  metrics.SourcePrometheusApp,
+				},
+			},
 		})
 	}
 	return scrapeConfigs
