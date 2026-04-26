@@ -23,6 +23,20 @@ func NewDialectRegistry(dialects ...Dialect) *DialectRegistry {
 	return &DialectRegistry{dialects: dialects}
 }
 
+// NewDialectRegistryFromSources collects the non-nil Dialects of the given
+// logical sources into a single DialectRegistry, preserving order. This is the
+// preferred constructor at startup so the dialect set stays in lockstep with
+// the source registry.
+func NewDialectRegistryFromSources(sources []LogicalSource) *DialectRegistry {
+	out := &DialectRegistry{}
+	for _, source := range sources {
+		if source.Dialect != nil {
+			out.dialects = append(out.dialects, source.Dialect)
+		}
+	}
+	return out
+}
+
 func (r *DialectRegistry) Translate(metricName string) string {
 	if r == nil {
 		return metricName

@@ -88,3 +88,31 @@ func TestDefaultCatalogEntriesHaveDisplayNames(t *testing.T) {
 		require.NotEmptyf(t, metric.DisplayName, "metric %s is missing DisplayName", metric.Name)
 	}
 }
+
+// servicegraph.request.error.ratio is query-derived (see metric_store.buildPromQL)
+// and never arrives as an OTLP sample, so it intentionally has no source.
+var catalogSourcelessExceptions = map[string]struct{}{
+	"servicegraph.request.error.ratio": {},
+}
+
+func TestDefaultCatalogEntriesDeclareSources(t *testing.T) {
+	for _, metric := range DefaultCatalog() {
+		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
+			continue
+		}
+		require.NotEmptyf(t, metric.Sources, "metric %s declares no Sources", metric.Name)
+	}
+}
+
+func TestDefaultCatalogSourceRefsTargetKnownSources(t *testing.T) {
+	known := make(map[string]struct{}, len(DefaultLogicalSources()))
+	for _, source := range DefaultLogicalSources() {
+		known[source.ID] = struct{}{}
+	}
+	for _, metric := range DefaultCatalog() {
+		for _, ref := range metric.Sources {
+			_, ok := known[ref.ID]
+			require.Truef(t, ok, "metric %s references unknown source %s", metric.Name, ref.ID)
+		}
+	}
+}

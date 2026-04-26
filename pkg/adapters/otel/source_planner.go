@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
@@ -73,6 +74,11 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		return nil, fmt.Errorf("cluster profile is required")
 	}
 
+	_, selected, err := metrics.Resolve(metrics.DefaultCatalog(), metrics.DefaultLogicalSources(), clusterProfile)
+	if err != nil {
+		return nil, fmt.Errorf("resolve sources: %w", err)
+	}
+
 	enabledSignals := []string{"metric"}
 	agentReceivers := map[string]any{
 		"kubeletstats": map[string]any{
@@ -98,11 +104,14 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 	}
 
 	pipelineReceivers := []string{"kubeletstats", "hostmetrics"}
-	prometheusTargets := prometheusTargets(clusterProfile.Sources)
-	mesh := meshSource(clusterProfile.Sources)
-	scrapeConfigs := buildPrometheusScrapeConfigs(prometheusTargets)
-	if mesh != nil && mesh.Flavor == "istio" {
-		scrapeConfigs = append(scrapeConfigs, buildIstioScrapeConfig(mesh))
+	var scrapeConfigs []map[string]any
+	if selected.Has(metrics.SourcePrometheusApp) {
+		scrapeConfigs = append(scrapeConfigs, buildPrometheusScrapeConfigs(prometheusTargets(clusterProfile.Sources))...)
+	}
+	if selected.Has(metrics.SourceMeshIstio) {
+		if mesh := meshSource(clusterProfile.Sources); mesh != nil {
+			scrapeConfigs = append(scrapeConfigs, buildIstioScrapeConfig(mesh))
+		}
 	}
 	if len(scrapeConfigs) > 0 {
 		agentReceivers["prometheus"] = map[string]any{
@@ -153,7 +162,8 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 				"auth_type":   "serviceAccount",
 				"passthrough": false,
 			},
-			"batch": map[string]any{},
+			oksgSourceTaggerProcessor: buildOksgSourceTagger(),
+			"batch":                   map[string]any{},
 		},
 		Exporters: map[string]any{
 			"otlp": map[string]any{
@@ -168,7 +178,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
 					Receivers:  pipelineReceivers,
-					Processors: []string{"resource", "k8sattributes", "batch"},
+					Processors: []string{"resource", "k8sattributes", oksgSourceTaggerProcessor, "batch"},
 					Exporters:  []string{"otlp"},
 				},
 			},
@@ -207,9 +217,12 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 	}
 	gatewayMetricsReceivers := []string{"otlp", "k8s_cluster"}
 	var gatewayConnectors map[string]any
-	if otlpSignals.traces {
-		gatewayConnectors = map[string]any{
-			"spanmetrics": map[string]any{
+	deploySpanmetrics := selected.Has(metrics.SourceTracesSpanmetrics)
+	deployServicegraph := selected.Has(metrics.SourceTracesServicegraph)
+	if deploySpanmetrics || deployServicegraph {
+		gatewayConnectors = map[string]any{}
+		if deploySpanmetrics {
+			gatewayConnectors["spanmetrics"] = map[string]any{
 				"histogram": map[string]any{
 					"explicit": map[string]any{
 						"buckets": []string{"100ms", "250ms", "500ms", "1s", "2s", "5s"},
@@ -220,17 +233,20 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 					{"name": "http.status_code"},
 				},
 				"exemplars": map[string]any{"enabled": true},
-			},
-			"servicegraph": map[string]any{
+			}
+			gatewayMetricsReceivers = append(gatewayMetricsReceivers, "spanmetrics")
+		}
+		if deployServicegraph {
+			gatewayConnectors["servicegraph"] = map[string]any{
 				"latency_histogram_buckets": []string{"100ms", "250ms", "500ms", "1s", "5s"},
 				"dimensions":                []string{"http.method"},
 				"store": map[string]any{
 					"ttl":       "2s",
 					"max_items": 1000,
 				},
-			},
+			}
+			gatewayMetricsReceivers = append(gatewayMetricsReceivers, "servicegraph")
 		}
-		gatewayMetricsReceivers = append(gatewayMetricsReceivers, "spanmetrics", "servicegraph")
 	}
 
 	gatewayConfig := CollectorConfig{
@@ -246,7 +262,8 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 				"limit_percentage":       75,
 				"spike_limit_percentage": 15,
 			},
-			"batch": map[string]any{},
+			oksgSourceTaggerProcessor: buildOksgSourceTagger(),
+			"batch":                   map[string]any{},
 		},
 		Connectors: gatewayConnectors,
 		Exporters: map[string]any{
@@ -268,17 +285,24 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
 					Receivers:  gatewayMetricsReceivers,
-					Processors: []string{"memory_limiter", "batch"},
+					Processors: []string{"memory_limiter", oksgSourceTaggerProcessor, "batch"},
 					Exporters:  []string{"otlp"},
 				},
 			},
 		},
 	}
 	if otlpSignals.traces {
+		traceExporters := []string{"otlp"}
+		if deploySpanmetrics {
+			traceExporters = append(traceExporters, "spanmetrics")
+		}
+		if deployServicegraph {
+			traceExporters = append(traceExporters, "servicegraph")
+		}
 		gatewayConfig.Service.Pipelines["traces"] = PipelineConfig{
 			Receivers:  []string{"otlp"},
 			Processors: []string{"memory_limiter", "batch"},
-			Exporters:  []string{"otlp", "spanmetrics", "servicegraph"},
+			Exporters:  traceExporters,
 		}
 	}
 
@@ -468,6 +492,43 @@ func joinRegex(values []string) string {
 		out += "|" + value
 	}
 	return out
+}
+
+// oksgSourceTaggerProcessor names the OTel transform processor that stamps
+// `oksg_source` onto each datapoint based on the receiver-determined metric
+// name space. The istio prometheus scrape already sets `oksg_source` via
+// metric_relabel_configs; the where clauses below skip overwriting that.
+const oksgSourceTaggerProcessor = "transform/oksg-source"
+
+// buildOksgSourceTagger emits OTTL statements that label each metric datapoint
+// with its logical source ID. The patterns are deterministic — each receiver/
+// connector owns a disjoint metric-name namespace — so name-based matching is
+// reliable and cheap. Any new receiver or connector added to the planner must
+// also extend this tagger.
+func buildOksgSourceTagger() map[string]any {
+	guard := `attributes["oksg_source"] == nil`
+	statements := []string{
+		// kubeletstats receiver: pod / container / volume / kubelet-side node metrics
+		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.(pod|container|volume)\\.") and ` + guard,
+		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set") and ` + guard,
+		// hostmetrics receiver
+		`set(attributes["oksg_source"], "` + metrics.SourceHostOS + `") where IsMatch(metric.name, "^system\\.") and ` + guard,
+		// k8s_cluster receiver: cluster-level workload + capacity + condition metrics
+		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.(replicaset|deployment|namespace|daemonset|statefulset)\\.") and ` + guard,
+		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.node\\.(condition|allocatable|cpu\\.capacity|cpu\\.cores|cpu\\.frequency|memory\\.capacity|disk\\.capacity|network\\.bandwidth)") and ` + guard,
+		// spanmetrics connector
+		`set(attributes["oksg_source"], "` + metrics.SourceTracesSpanmetrics + `") where IsMatch(metric.name, "^traces\\.span\\.metrics\\.") and ` + guard,
+		// servicegraph connector
+		`set(attributes["oksg_source"], "` + metrics.SourceTracesServicegraph + `") where IsMatch(metric.name, "^traces\\.service\\.graph\\.") and ` + guard,
+	}
+	return map[string]any{
+		"metric_statements": []map[string]any{
+			{
+				"context":    "datapoint",
+				"statements": statements,
+			},
+		},
+	}
 }
 
 func otlpSignals(sources []profile.ObservabilitySource) sourceSignals {

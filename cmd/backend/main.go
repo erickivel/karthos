@@ -96,22 +96,33 @@ func run(ctx context.Context, args []string) error {
 	)
 
 	resolver := ingest.NewOTLPEntityResolverWithRegistry(cfg.ClusterName, stores.EntityRegistry)
-	dialect := metrics.NewDialectRegistry(
-		metrics.PrometheusDialect,
-		metrics.SpanmetricsDialect,
-		metrics.ServicegraphDialect,
-		metrics.IstioDialect,
-	)
-	normalizer := ingest.NewOTLPNormalizer(resolver, dialect)
+	dialect := metrics.NewDialectRegistryFromSources(metrics.DefaultLogicalSources())
+
+	var loadedProfile *profile.ClusterProfile
+	if cfg.DiscoveryProfile != "" {
+		prof, err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger)
+		if err != nil {
+			return err
+		}
+		loadedProfile = prof
+	}
+
+	var normalizerOpts []ingest.NormalizerOption
+	if loadedProfile != nil {
+		assignment, _, err := metrics.Resolve(metrics.DefaultCatalog(), metrics.DefaultLogicalSources(), loadedProfile)
+		if err != nil {
+			return fmt.Errorf("resolve metric source assignment: %w", err)
+		}
+		normalizerOpts = append(normalizerOpts, ingest.WithAssignment(assignment))
+		logger.Info("metric source assignment loaded",
+			logging.Any("metric_count", len(assignment)),
+		)
+	}
+
+	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, normalizerOpts...)
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
 	meshMetricTopoBuilder := ingest.NewMeshMetricTopologyBuilder(dialect, cfg.ClusterName)
-
-	if cfg.DiscoveryProfile != "" {
-		if err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger); err != nil {
-			return err
-		}
-	}
 
 	bufferedTopo := ingest.NewBufferedTopologyIngestor(
 		map[schema.SignalType]ingest.TopologyBuilder{
@@ -297,29 +308,29 @@ func ingestDiscoveryProfile(
 	metadataStore persistence.MetadataStore,
 	entityRegistry persistence.EntityRegistry,
 	logger *logging.Logger,
-) error {
+) (*profile.ClusterProfile, error) {
 	data, err := os.ReadFile(cfg.DiscoveryProfile)
 	if err != nil {
-		return fmt.Errorf("read discovery profile: %w", err)
+		return nil, fmt.Errorf("read discovery profile: %w", err)
 	}
 	var prof profile.ClusterProfile
 	if err := json.Unmarshal(data, &prof); err != nil {
-		return fmt.Errorf("unmarshal discovery profile: %w", err)
+		return nil, fmt.Errorf("unmarshal discovery profile: %w", err)
 	}
 
 	if err := metadataStore.PutDiscovery(ctx, prof); err != nil {
-		return fmt.Errorf("persist discovery profile: %w", err)
+		return nil, fmt.Errorf("persist discovery profile: %w", err)
 	}
 
 	builder := ingest.NewK8sStructuralTopologyBuilder(cfg.ClusterName)
 	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore, entityRegistry, logger)
 	if err := ingestor.IngestProfile(ctx, &prof); err != nil {
-		return fmt.Errorf("ingest structural topology: %w", err)
+		return nil, fmt.Errorf("ingest structural topology: %w", err)
 	}
 
 	logger.Info("structural topology ingested from discovery profile",
 		logging.String("profile_path", cfg.DiscoveryProfile),
 		logging.String("cluster_name", prof.ClusterName),
 	)
-	return nil
+	return &prof, nil
 }

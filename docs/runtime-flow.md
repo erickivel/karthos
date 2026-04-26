@@ -322,6 +322,14 @@ Trace path:
 - `TraceTopologyBuilder` scans each span for a `peer.service` attribute. When found, it resolves both caller and callee to `EntityID` values and emits a `topology.Edge` with `RelCalls` relation. Edges are deduplicated within the batch by edge ID. `FirstSeen`/`LastSeen` are taken from span timestamps.
 - `GraphStore` accumulates edges and nodes; trace-derived `calls` edges accumulate alongside structural edges from the metric path.
 
+### 7. Source-Mismatch Drop
+
+When a discovery profile is loaded at backend startup, `cmd/backend/main.go` calls `metrics.Resolve(catalog, registry, profile)` to compute the canonical-to-source `Assignment` and passes it to the normalizer via `WithAssignment(...)`.
+
+For each incoming datapoint, after dialect translation and directional name resolution, the normalizer compares the sample's `oksg_source` attribute (stamped by the agent/gateway `transform/oksg-source` processor or by Istio's Prometheus relabel rule) against `Assignment[canonical]`. If the canonical metric has an assigned source and the sample's source disagrees, the sample is dropped and the `dropped` counter — an `atomic.Uint64` to remain safe under the OTLP server's concurrent request handling — is incremented. Samples without an `oksg_source` attribute follow a legacy accept path so envelopes from external producers aren't silently dropped.
+
+The cumulative drop count is exposed via `OTLPNormalizer.DroppedSampleCount()`. The architectural rationale is documented in `docs/architecture.md` under *Layer 3c: Source Arbitration*.
+
 ## Current Observable Behavior
 
 The easiest way to verify the runtime flow today is with `kubectl logs`.

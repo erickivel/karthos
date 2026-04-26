@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -18,20 +19,41 @@ import (
 
 // OTLPNormalizer normalizes OTLP metric envelopes into semconv MetricSamples.
 type OTLPNormalizer struct {
-	resolver EntityResolver
-	dialect  *metrics.DialectRegistry
+	resolver   EntityResolver
+	dialect    *metrics.DialectRegistry
+	assignment metrics.Assignment // optional; nil disables source enforcement
+	dropped    atomic.Uint64      // count of samples dropped due to source mismatch; concurrent-safe
+}
+
+// NormalizerOption configures optional behavior on the OTLPNormalizer.
+type NormalizerOption func(*OTLPNormalizer)
+
+// WithAssignment enables source-mismatch enforcement: a sample whose
+// oksg_source attribute disagrees with assignment[canonical] is dropped.
+// Pass an empty/nil assignment to disable enforcement (default).
+func WithAssignment(a metrics.Assignment) NormalizerOption {
+	return func(n *OTLPNormalizer) { n.assignment = a }
 }
 
 // NewOTLPNormalizer creates a new OTLPNormalizer backed by the given EntityResolver.
-func NewOTLPNormalizer(resolver EntityResolver, dialect *metrics.DialectRegistry) *OTLPNormalizer {
+func NewOTLPNormalizer(resolver EntityResolver, dialect *metrics.DialectRegistry, opts ...NormalizerOption) *OTLPNormalizer {
 	if resolver == nil {
 		panic("ingest.NewOTLPNormalizer: resolver is required")
 	}
 	if dialect == nil {
 		panic("ingest.NewOTLPNormalizer: dialect registry is required")
 	}
-	return &OTLPNormalizer{resolver: resolver, dialect: dialect}
+	n := &OTLPNormalizer{resolver: resolver, dialect: dialect}
+	for _, opt := range opts {
+		opt(n)
+	}
+	return n
 }
+
+// DroppedSampleCount returns the number of samples dropped because their
+// oksg_source did not match the assigned source for the canonical metric.
+// Useful for observability and tests. Safe for concurrent callers.
+func (n *OTLPNormalizer) DroppedSampleCount() uint64 { return n.dropped.Load() }
 
 // Normalize deserializes a protojson-encoded ResourceMetrics from the envelope payload,
 // resolves the entity, and maps each recognized metric to a canonical MetricSample.
@@ -65,6 +87,9 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					}
 					metricName := resolveDirectionalName(translatedName, dp.Attributes)
 					if metricName == "" {
+						continue
+					}
+					if n.shouldDropForSource(metricName, dp.Attributes) {
 						continue
 					}
 
@@ -113,6 +138,9 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 				if metricName == "" {
 					continue
 				}
+				if n.shouldDropForSource(metricName, dp.Attributes) {
+					continue
+				}
 
 				entityID, skip, err := n.resolveMetricEntity(ctx, envelope.Resource, metric.Name, translatedName, dp.Attributes)
 				if err != nil {
@@ -151,6 +179,31 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 	}
 
 	return samples, nil
+}
+
+// shouldDropForSource enforces the source-assignment contract: when an
+// Assignment is configured and the canonical metric has a winning source, drop
+// any datapoint whose oksg_source attribute disagrees. Samples that don't carry
+// an oksg_source attribute are accepted (legacy / partially-instrumented path).
+//
+// canonicalName is the post-resolveDirectionalName canonical metric name.
+func (n *OTLPNormalizer) shouldDropForSource(canonicalName string, attrs []*commonpb.KeyValue) bool {
+	if len(n.assignment) == 0 {
+		return false
+	}
+	expected, ok := n.assignment[canonicalName]
+	if !ok || expected == "" {
+		return false
+	}
+	actual := firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm)
+	if actual == "" {
+		return false
+	}
+	if actual == expected {
+		return false
+	}
+	n.dropped.Add(1)
+	return true
 }
 
 func baseLabels(source string, attrs []*commonpb.KeyValue) map[string]string {

@@ -375,3 +375,63 @@ func TestPlanNoConnectorsWhenTracesNotEnabled(t *testing.T) {
 	require.NotContains(t, metricsPipeline.Receivers, "spanmetrics")
 	require.NotContains(t, metricsPipeline.Receivers, "servicegraph")
 }
+
+// TestPlanSuppressesServicegraphConnectorWhenIstioWins verifies that when
+// istio is present together with OTLP traces, the planner does NOT deploy the
+// servicegraph connector (istio wins all servicegraph.* metrics) but keeps
+// spanmetrics (which has no overlapping winner).
+func TestPlanSuppressesServicegraphConnectorWhenIstioWins(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Name:    "istio",
+				Type:    "istio",
+				Present: true,
+				Mesh:    &profile.MeshSource{Flavor: "istio"},
+			},
+			{
+				Name:    "application-otlp",
+				Type:    "otlp",
+				Present: true,
+				OTLP:    &profile.OTLPSource{TracesEnabled: true},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, plan.GatewayConfig.Connectors, "spanmetrics")
+	require.NotContains(t, plan.GatewayConfig.Connectors, "servicegraph",
+		"servicegraph connector must not deploy when istio wins all its metrics")
+
+	tracesPipeline := plan.GatewayConfig.Service.Pipelines["traces"]
+	require.Contains(t, tracesPipeline.Exporters, "spanmetrics")
+	require.NotContains(t, tracesPipeline.Exporters, "servicegraph")
+
+	metricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
+	require.Contains(t, metricsPipeline.Receivers, "spanmetrics")
+	require.NotContains(t, metricsPipeline.Receivers, "servicegraph")
+}
+
+// TestPlanInstallsOksgSourceTagger verifies the agent and gateway pipelines
+// include the transform/oksg-source processor so every datapoint that lacks
+// an explicit oksg_source attribute gets one.
+func TestPlanInstallsOksgSourceTagger(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, plan.AgentConfig.Processors, oksgSourceTaggerProcessor)
+	require.Contains(t, plan.GatewayConfig.Processors, oksgSourceTaggerProcessor)
+
+	require.Contains(t, plan.AgentConfig.Service.Pipelines["metrics"].Processors, oksgSourceTaggerProcessor)
+	require.Contains(t, plan.GatewayConfig.Service.Pipelines["metrics"].Processors, oksgSourceTaggerProcessor)
+}

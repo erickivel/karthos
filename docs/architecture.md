@@ -128,6 +128,23 @@ The backend normalization pipeline introduced in this layer consists of:
 
 The `--cluster-name` flag on `cmd/backend` controls the cluster name used for entity ID computation and defaults to `default` (overridable via `OKSG_CLUSTER_NAME`).
 
+### 3c: Source Arbitration
+
+When more than one observability source can produce the same canonical metric (for example `servicegraph.request.count` from both Istio mesh telemetry and the OTel `servicegraph` connector), the system arbitrates a single winning source per metric and propagates that decision through the planner and the ingester.
+
+The arbitration pipeline lives in `pkg/core/metrics/`:
+
+- **Catalog** (`catalog.go`) — every `CanonicalMetric` declares `Sources []SourceRef{ID, Priority}` plus a `SelectionPolicy`. Smaller `Priority` wins. `PolicyPriority` is the only implemented policy; `PolicyDisjoint` and `PolicyAll` are reserved type values for future per-scope routing and multi-source aggregation.
+- **Source registry** (`sources.go`) — declares the logical sources the system understands (`kubelet`, `host-os`, `kube-cluster`, `prometheus.app`, `mesh.istio`, `traces.spanmetrics`, `traces.servicegraph`). Each entry carries an availability `Detect(*ClusterProfile)` predicate and an optional `Dialect` for raw → canonical name translation.
+- **Resolver** (`resolver.go`) — pure function: given catalog + registry + `ClusterProfile`, returns an `Assignment` (canonical metric → winning source ID) and a `SelectedSources` set (sources that won at least one metric).
+
+Two layers consume the resolver output:
+
+- **Planner** (`pkg/adapters/otel/source_planner.go`): only deploys receivers/connectors whose source ID appears in `SelectedSources`. For example, when Istio is present and wins all `servicegraph.*` metrics, the gateway omits the `servicegraph` connector entirely. The planner also installs a `transform/oksg-source` processor on the agent and gateway pipelines that stamps `oksg_source` on every datapoint based on its receiver-determined metric-name namespace, complementing the pre-existing `oksg_source=mesh.istio` stamp produced by Istio's Prometheus relabel rule.
+- **Ingester** (`pkg/backend/ingest/normalizer.go`): when `WithAssignment(...)` is configured, the normalizer drops any datapoint whose `oksg_source` attribute disagrees with the assigned source for that canonical metric. Untagged samples follow a legacy accept path. The drop counter is exposed via `OTLPNormalizer.DroppedSampleCount()` for observability.
+
+This arbitration is the mechanism that prevents double-counting when the same canonical metric can be produced by multiple installed sources.
+
 ## Layer 4: Topology Reconstruction
 
 Layer 4 merges discovered structure with runtime interaction evidence to build temporal graph nodes and edges.

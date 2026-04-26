@@ -852,3 +852,50 @@ func TestOTLPNormalizer_SumDataPointInt64(t *testing.T) {
 	assert.Equal(t, "k8s.replicaset.desired", s.MetricName)
 	assert.InDelta(t, 3.0, s.Value, 1e-9)
 }
+
+// TestOTLPNormalizer_SourceMismatchDropped verifies that when an Assignment is
+// configured, samples whose oksg_source disagrees with the assigned source are
+// dropped and counted, while matching samples pass through.
+func TestOTLPNormalizer_SourceMismatchDropped(t *testing.T) {
+	resolver := ingest.NewOTLPEntityResolver(testCluster)
+	dialect := metrics.NewDialectRegistry(
+		metrics.PrometheusDialect,
+		metrics.SpanmetricsDialect,
+		metrics.ServicegraphDialect,
+		metrics.IstioDialect,
+	)
+	// Using k8s.pod.cpu.usage as the test vehicle: it lives in OTLPSemconvMetrics
+	// so the normalizer's translation lookup succeeds. Assignment pins it to
+	// mesh.istio (synthetic — kubelet is the real catalog winner) so we can
+	// observe the kubelet-tagged sample being dropped.
+	assignment := metrics.Assignment{
+		"k8s.pod.cpu.usage": metrics.SourceMeshIstio,
+	}
+	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithAssignment(assignment))
+
+	tsNano := uint64(time.Now().UnixNano())
+
+	// Sample tagged with the wrong source: should be dropped.
+	rmKubelet := makeGaugeRMWithAttr("k8s.pod.cpu.usage", 0.5, tsNano, "oksg_source", metrics.SourceKubelet)
+	envKubelet := makeEnvelope(t, podResource(), rmKubelet)
+	samples, err := normalizer.Normalize(context.Background(), envKubelet)
+	require.NoError(t, err)
+	require.Empty(t, samples, "kubelet sample must be dropped when istio is the assigned source")
+	require.Equal(t, uint64(1), normalizer.DroppedSampleCount())
+
+	// Sample tagged with the matching source: should pass through.
+	rmIstio := makeGaugeRMWithAttr("k8s.pod.cpu.usage", 0.75, tsNano, "oksg_source", metrics.SourceMeshIstio)
+	envIstio := makeEnvelope(t, podResource(), rmIstio)
+	samples, err = normalizer.Normalize(context.Background(), envIstio)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	require.InDelta(t, 750.0, samples[0].Value, 1e-9)
+	require.Equal(t, uint64(1), normalizer.DroppedSampleCount())
+
+	// Sample without an oksg_source attribute: legacy path, accepted.
+	rmUntagged := makeGaugeRM("k8s.pod.cpu.usage", 1.0, tsNano)
+	envUntagged := makeEnvelope(t, podResource(), rmUntagged)
+	samples, err = normalizer.Normalize(context.Background(), envUntagged)
+	require.NoError(t, err)
+	require.Len(t, samples, 1, "untagged samples must be accepted (legacy / unknown-source path)")
+}
