@@ -1,10 +1,12 @@
 import { useNavigate } from "react-router-dom";
 import { useNodeDetail } from "@/hooks/useNodeDetail";
+import { useEdgeMetrics } from "@/hooks/useEdgeMetrics";
 import { useAppStore } from "@/stores/useAppStore";
 import { DataChip } from "@/components/shared/DataChip";
 import type { GraphNode } from "@/types/graph";
 import { formatBytes } from "../../utils/formatters";
 import { EdgeMetricButton } from "./EdgeMetricButton";
+import { buildEdgeMetricKey, type EdgeMetricSnapshot } from "./edgeMetrics";
 import styles from "./NodeInspector.module.css";
 
 interface NodeMetricSummaryItem {
@@ -98,6 +100,23 @@ function buildMetricSummary(node: GraphNode): NodeMetricSummaryItem[] {
   return items;
 }
 
+function MeshEdgeChips({ snapshot }: { snapshot: EdgeMetricSnapshot | undefined }) {
+  if (!snapshot) return null;
+  const hasMesh = snapshot.mtls !== undefined || snapshot.protocol;
+  if (!hasMesh) return null;
+  const tooltipParts: string[] = [];
+  if (snapshot.peerSource) tooltipParts.push(`source: ${snapshot.peerSource}`);
+  if (snapshot.peerDestination) tooltipParts.push(`destination: ${snapshot.peerDestination}`);
+  if (snapshot.source) tooltipParts.push(`from ${snapshot.source}`);
+  const title = tooltipParts.join("\n") || undefined;
+  return (
+    <span className={styles.edgeMeshChips} title={title}>
+      {snapshot.mtls && <DataChip label="mTLS" variant="signal" />}
+      {snapshot.protocol && <DataChip label={snapshot.protocol} variant="info" />}
+    </span>
+  );
+}
+
 function getDetailItems(node: GraphNode) {
   const labels = node.labels ?? {};
 
@@ -146,6 +165,7 @@ export function NodeInspector() {
   const selectedEntityId = useAppStore((s) => s.selectedEntityId);
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
   const { data } = useNodeDetail(selectedEntityId);
+  const edgeMetrics = useEdgeMetrics();
 
   if (!selectedEntityId || !data) return null;
 
@@ -238,22 +258,29 @@ export function NodeInspector() {
             Inbound ({edges.inbound.length})
           </h3>
           <div className={styles.edgeList}>
-            {edges.inbound.map((e) => (
-              <div key={e.id} className={styles.edgeItem}>
-                <button
-                  className={styles.edgePrimary}
-                  onClick={() =>
-                    e.related_node && setSelectedEntityId(e.related_node.id)
-                  }
-                >
-                  <span className={styles.edgeRelation}>{e.relation}</span>
-                  <span className={styles.edgeEntity}>
-                    {e.related_node?.name || String(e.source)}
-                  </span>
-                </button>
-                <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
-              </div>
-            ))}
+            {edges.inbound.map((e) => {
+              const snapshot =
+                e.relation === "calls" && e.related_node?.name
+                  ? edgeMetrics.get(buildEdgeMetricKey(e.related_node.name, node.name))
+                  : undefined;
+              return (
+                <div key={e.id} className={styles.edgeItem}>
+                  <button
+                    className={styles.edgePrimary}
+                    onClick={() =>
+                      e.related_node && setSelectedEntityId(e.related_node.id)
+                    }
+                  >
+                    <span className={styles.edgeRelation}>{e.relation}</span>
+                    <span className={styles.edgeEntity}>
+                      {e.related_node?.name || String(e.source)}
+                    </span>
+                    <MeshEdgeChips snapshot={snapshot} />
+                  </button>
+                  <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -264,22 +291,29 @@ export function NodeInspector() {
             Outbound ({edges.outbound.length})
           </h3>
           <div className={styles.edgeList}>
-            {edges.outbound.map((e) => (
-              <div key={e.id} className={styles.edgeItem}>
-                <button
-                  className={styles.edgePrimary}
-                  onClick={() =>
-                    e.related_node && setSelectedEntityId(e.related_node.id)
-                  }
-                >
-                  <span className={styles.edgeRelation}>{e.relation}</span>
-                  <span className={styles.edgeEntity}>
-                    {e.related_node?.name || String(e.target)}
-                  </span>
-                </button>
-                <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
-              </div>
-            ))}
+            {edges.outbound.map((e) => {
+              const snapshot =
+                e.relation === "calls" && e.related_node?.name
+                  ? edgeMetrics.get(buildEdgeMetricKey(node.name, e.related_node.name))
+                  : undefined;
+              return (
+                <div key={e.id} className={styles.edgeItem}>
+                  <button
+                    className={styles.edgePrimary}
+                    onClick={() =>
+                      e.related_node && setSelectedEntityId(e.related_node.id)
+                    }
+                  >
+                    <span className={styles.edgeRelation}>{e.relation}</span>
+                    <span className={styles.edgeEntity}>
+                      {e.related_node?.name || String(e.target)}
+                    </span>
+                    <MeshEdgeChips snapshot={snapshot} />
+                  </button>
+                  <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

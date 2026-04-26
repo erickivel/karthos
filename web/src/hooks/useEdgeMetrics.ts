@@ -41,6 +41,25 @@ function applySample(
       return
   }
 
+  const labels = sample.labels
+  if (labels) {
+    if (existing.source === undefined && labels.source) {
+      existing.source = labels.source
+    }
+    if (existing.mtls === undefined && labels['mesh.security.policy']) {
+      existing.mtls = labels['mesh.security.policy'] === 'mutual_tls'
+    }
+    if (existing.protocol === undefined && labels['network.protocol.name']) {
+      existing.protocol = labels['network.protocol.name']
+    }
+    if (existing.peerSource === undefined && labels['mesh.peer.source.principal']) {
+      existing.peerSource = labels['mesh.peer.source.principal']
+    }
+    if (existing.peerDestination === undefined && labels['mesh.peer.destination.principal']) {
+      existing.peerDestination = labels['mesh.peer.destination.principal']
+    }
+  }
+
   map.set(key, existing)
 }
 

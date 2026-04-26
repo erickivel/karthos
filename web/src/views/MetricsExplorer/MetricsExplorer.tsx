@@ -212,6 +212,7 @@ export function MetricsExplorer() {
                 id={metric.name}
                 unit={metric.unit}
                 samples={series?.samples ?? []}
+                sources={metric.sources}
               />
             )
           })}

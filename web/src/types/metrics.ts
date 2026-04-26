@@ -33,6 +33,13 @@ export interface MetricSeries {
   edge?: MetricEdgeRef
 }
 
+export interface SourceRef {
+  id: string
+  priority: number
+}
+
+export type SelectionPolicy = 'priority' | 'disjoint' | 'all'
+
 export interface CanonicalMetric {
   name: string
   display_name: string
@@ -40,6 +47,8 @@ export interface CanonicalMetric {
   category: MetricCategory
   scopes: MetricScope[]
   description: string
+  sources?: SourceRef[]
+  selection_policy?: SelectionPolicy
 }
 
 export interface MetricSamplesResponse {

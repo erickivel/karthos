@@ -38,6 +38,16 @@
   white-space: nowrap;
 }
 
+.sourceLine {
+  font-size: var(--text-label);
+  font-family: var(--font-mono, monospace);
+  color: var(--color-info);
+  cursor: help;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .currentValue {
   font-size: 1.25rem;
   font-weight: 600;
