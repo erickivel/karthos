@@ -1,26 +1,15 @@
-import { memo, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import {
-  Globe,
-  Boxes,
-  Box,
-  Server,
-  Container,
-  CircleDot,
-  ArrowRightFromLine,
-  FileText,
-  Lock,
-  HardDrive,
-  type LucideIcon,
-} from "lucide-react";
-import { SegmentedBar } from "@/components/shared/SegmentedBar";
+import { Activity } from "lucide-react";
 import { useAppStore } from "@/stores/useAppStore";
 import type { GraphNode, EntityKind } from "@/types/graph";
-import { formatCpu, formatMem } from "../../../utils/formatters";
+import type { NodeMetricValues } from "@/hooks/useNodeMetrics";
 import { topologyEntityTestId } from "../testIds";
+import { getNodeMetricSpecs, type MetricSelector } from "../nodeMetrics";
+import { NodeMetric } from "./NodeMetric";
 import styles from "./EntityNode.module.css";
 
-type GraphNodeData = GraphNode & Record<string, unknown>;
+type GraphNodeData = GraphNode & { metrics?: NodeMetricValues } & Record<string, unknown>;
 
 const KIND_COLOR_VAR: Record<EntityKind, string> = {
   cluster: "var(--kind-cluster)",
@@ -44,68 +33,74 @@ function getHeaderColor(kind: EntityKind, status: string): string {
 
 const SMALL_KINDS: EntityKind[] = ["configmap", "secret", "pvc"];
 
-const KIND_ICONS: Record<EntityKind, LucideIcon> = {
-  cluster: Boxes,
-  service: Globe,
-  workload: Boxes,
-  pod: Box,
-  node: Server,
-  namespace: Boxes,
-  container: Container,
-  ingress: ArrowRightFromLine,
-  endpoint: CircleDot,
-  configmap: FileText,
-  secret: Lock,
-  pvc: HardDrive,
-};
-
-interface MetricBarData {
-  label: string;
-  value: number;
-  max: number;
-  unit?: string;
+function getDisplayName(node: GraphNode): string {
+  return `${node.kind}_${node.name}`
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
 }
 
-function getMetricBars(node: GraphNode): MetricBarData[] {
-  const bars: MetricBarData[] = [];
+function getPrimarySignal(node: GraphNode): { label: string; value: string; tone: string } {
   const labels = node.labels ?? {};
-
-  const cpuRaw = labels["k8s.pod.cpu.usage"];
-  if (cpuRaw) {
-    const cpu = parseFloat(cpuRaw);
-    const maxCpu = parseFloat(labels["k8s.node.cpu.capacity"] || "100");
-    bars.push({
-      label: "CPU",
-      value: cpu,
-      max: maxCpu,
-      unit: "m",
-    });
+  const phase = labels["k8s.pod.phase"];
+  if (node.status === "error" || node.status === "critical") {
+    return { label: "Exception detected", value: "CRITICAL", tone: "alert" };
   }
-
-  const memRaw = labels["k8s.pod.memory.working_set"];
-  if (memRaw) {
-    const mem = parseFloat(memRaw);
-    const maxMem = parseFloat(
-      labels["k8s.node.memory.capacity"] || String(256 * 1024 * 1024),
-    );
-    bars.push({
-      label: "MEM",
-      value: mem,
-      max: maxMem,
-    });
+  if (phase === "2") return { label: "Status", value: "RUNNING", tone: "signal" };
+  if (node.kind === "service") {
+    return { label: "Endpoint", value: node.name, tone: "signal" };
   }
-
-  return bars;
+  if (node.namespace) {
+    return { label: "Namespace", value: node.namespace, tone: "info" };
+  }
+  return { label: "Status", value: node.status.toUpperCase(), tone: "muted" };
 }
 
-function EntityNodeComponent({ data }: NodeProps<Node<GraphNodeData>>) {
+function metricValue(values: NodeMetricValues, selector: MetricSelector | undefined): number | undefined {
+  if (!selector) return undefined;
+  if (typeof selector === "string") {
+    return values[selector];
+  }
+  for (const metric of selector) {
+    if (values[metric] !== undefined) return values[metric];
+  }
+  return undefined;
+}
+
+function EntityNodeComponent({
+  data,
+  sourcePosition,
+  targetPosition,
+}: NodeProps<Node<GraphNodeData>>) {
   const node = data;
+  const sourceP = sourcePosition ?? Position.Bottom;
+  const targetP = targetPosition ?? Position.Top;
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
   const isSmall = SMALL_KINDS.includes(node.kind);
+  const metrics: NodeMetricValues = node.metrics ?? {};
   const hasTelemetry =
-    node.status !== "unknown" || Object.keys(node.labels ?? {}).length > 0;
-  const IconComponent = KIND_ICONS[node.kind] ?? Box;
-  const metricBars = getMetricBars(node);
+    node.status !== "unknown" ||
+    Object.keys(node.labels ?? {}).length > 0 ||
+    Object.keys(metrics).length > 0;
+  const specs = getNodeMetricSpecs(node.kind);
+  const hasMetricData = specs.some((spec) => {
+    switch (spec.kind) {
+      case 'utilization':
+        return metricValue(metrics, spec.metric) !== undefined;
+      case 'fraction':
+        return (
+          metricValue(metrics, spec.numeratorMetric) !== undefined &&
+          (metricValue(metrics, spec.denominatorMetric) !== undefined ||
+            (spec.denominatorMetadataKey !== undefined &&
+              Number.isFinite(Number(node.labels?.[spec.denominatorMetadataKey]))))
+        );
+      case 'rate':
+        return metricValue(metrics, spec.metric) !== undefined;
+      case 'gauge':
+        return metricValue(metrics, spec.metric) !== undefined;
+    }
+  });
+  const primarySignal = getPrimarySignal(node);
   const selectNode = () => setSelectedEntityId(node.id);
   const handleClick = (event: MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -128,59 +123,49 @@ function EntityNodeComponent({ data }: NodeProps<Node<GraphNodeData>>) {
       data-entity-kind={node.kind}
       data-entity-name={node.name}
       data-entity-namespace={node.namespace}
+      style={{ "--node-accent": getHeaderColor(node.kind, node.status) } as CSSProperties}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
     >
-      <Handle type="target" position={Position.Top} className={styles.handle} />
+      <Handle type="target" position={targetP} className={styles.handle} />
 
       <div
         className={styles.header}
-        style={{ backgroundColor: getHeaderColor(node.kind, node.status) }}
+        data-tone={primarySignal.tone}
       >
-        <span className={styles.name}>{node.name}</span>
-        <IconComponent size={14} strokeWidth={1.5} className={styles.icon} />
+        <span className={styles.name}>{getDisplayName(node)}</span>
+        <Activity size={13} strokeWidth={2} className={styles.icon} />
       </div>
 
       <div className={styles.body}>
-        <div className={styles.prop}>
-          <span className={styles.propLabel}>KIND</span>
-          <span className={styles.propValue}>{node.kind}</span>
+        <div className={styles.signalBlock} data-tone={primarySignal.tone}>
+          <span className={styles.propLabel}>{primarySignal.label}</span>
+          <span className={styles.propValue}>{primarySignal.value}</span>
         </div>
-        {node.namespace && (
-          <div className={styles.prop}>
-            <span className={styles.propLabel}>NS</span>
-            <span className={styles.propValue}>{node.namespace}</span>
+
+        {hasMetricData && (
+          <div className={styles.metrics} data-topology-dynamic="metrics">
+            {specs.map((spec, idx) => (
+              <NodeMetric
+                key={`${spec.kind}-${idx}`}
+                spec={spec}
+                values={metrics}
+                metadata={node.labels}
+              />
+            ))}
           </div>
+        )}
+
+        {!hasTelemetry && (
+          <div className={styles.telemetryHint}>Awaiting telemetry data</div>
         )}
       </div>
 
-      {metricBars.length > 0 && (
-        <div className={styles.metrics} data-topology-dynamic="metrics">
-          {metricBars.map((bar) => (
-            <div key={bar.label} className={styles.metricBlock}>
-              <div className={styles.metricHeader}>
-                <span className={styles.metricLabel}>{bar.label}</span>
-                <span className={styles.metricValue}>
-                  {bar.label === "CPU"
-                    ? formatCpu(bar.value)
-                    : formatMem(bar.value)}
-                </span>
-              </div>
-              <SegmentedBar value={bar.value} max={bar.max} unit={bar.unit} />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {!hasTelemetry && (
-        <div className={styles.telemetryHint}>Awaiting telemetry data</div>
-      )}
-
       <Handle
         type="source"
-        position={Position.Bottom}
+        position={sourceP}
         className={styles.handle}
       />
     </div>

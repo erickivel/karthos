@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { HelpCircle } from 'lucide-react'
 import type { AvailableFilters } from '@/types/graph'
+import { useAppStore } from '@/stores/useAppStore'
 import { useProjectionState } from './useProjectionState'
 import { LegendPanel } from './LegendPanel'
 import { GRANULARITY_ENTRIES, MODE_ENTRIES } from './modes'
@@ -13,7 +14,16 @@ interface FilterToolbarProps {
 
 export function FilterToolbar({ filters }: FilterToolbarProps) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const { mode, granularity, setMode, setGranularity } = useProjectionState()
+  const {
+    mode,
+    granularity,
+    includeOrphans,
+    setMode,
+    setGranularity,
+    setIncludeOrphans,
+  } = useProjectionState()
+  const selectedEntityId = useAppStore((s) => s.selectedEntityId)
+  const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId)
   const [legendOpen, setLegendOpen] = useState(false)
 
   const currentKind = searchParams.get('kind') ?? ''
@@ -29,6 +39,21 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
         next.delete(key)
       }
       return next
+    })
+  }
+
+  useEffect(() => {
+    if (selectedEntityId) {
+      setLegendOpen(false)
+    }
+  }, [selectedEntityId])
+
+  const toggleLegend = () => {
+    setLegendOpen((open) => {
+      if (!open) {
+        setSelectedEntityId(null)
+      }
+      return !open
     })
   }
 
@@ -84,7 +109,10 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
         </select>
       </div>
 
-      <div className={styles.toolbarRight}>
+      <div
+        className={styles.toolbarRight}
+        data-inspector-open={Boolean(selectedEntityId || legendOpen)}
+      >
         <div
           className={styles.group}
           role="group"
@@ -129,10 +157,23 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
           ))}
         </div>
 
+        <label
+          className={styles.toggleCheckbox}
+          title="Include entities with no layer-relevant edges"
+          data-testid="topology-orphans-toggle"
+        >
+          <input
+            type="checkbox"
+            checked={includeOrphans}
+            onChange={(e) => setIncludeOrphans(e.target.checked)}
+          />
+          <span>Show orphans</span>
+        </label>
+
         <button
           type="button"
           className={`${styles.help} ${legendOpen ? styles.helpActive : ''}`}
-          onClick={() => setLegendOpen((v) => !v)}
+          onClick={toggleLegend}
           aria-pressed={legendOpen}
           aria-label="Toggle topology legend"
           title="Show legend: modes, granularity and entity colors"

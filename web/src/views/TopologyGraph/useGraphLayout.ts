@@ -1,10 +1,26 @@
 import { useMemo } from 'react'
 import dagre from '@dagrejs/dagre'
-import { MarkerType, type Node, type Edge } from '@xyflow/react'
+import { MarkerType, Position, type Node, type Edge } from '@xyflow/react'
 import type { GraphNode, GraphEdge, EntityKind, RelationType } from '@/types/graph'
-import type { NodeMetric } from '@/hooks/useNodeMetrics'
+import type { NodeMetricValues } from '@/hooks/useNodeMetrics'
 import type { EdgeMetricSnapshot, GraphEdgeMetricData } from './edgeMetrics'
 import { getEdgeMetricKeyFromNodes } from './edgeMetrics'
+import type { ProjectionMode } from './projection'
+
+interface LayoutSpec {
+  rankdir: 'TB' | 'LR'
+  ranksep: number
+  nodesep: number
+  ranker: 'network-simplex' | 'tight-tree' | 'longest-path'
+  acyclicer: 'greedy' | undefined
+}
+
+// Per-mode layout config. Adding/changing layout per layer is one entry.
+const LAYOUT_SPECS: Record<ProjectionMode, LayoutSpec> = {
+  ownership: { rankdir: 'TB', ranksep: 100, nodesep: 40, ranker: 'tight-tree', acyclicer: 'greedy' },
+  infrastructure: { rankdir: 'TB', ranksep: 100, nodesep: 40, ranker: 'tight-tree', acyclicer: 'greedy' },
+  traffic: { rankdir: 'LR', ranksep: 170, nodesep: 86, ranker: 'tight-tree', acyclicer: 'greedy' },
+}
 
 const DIRECTED_RELATIONS: RelationType[] = ['calls', 'runs_on', 'routes_to', 'exposes']
 
@@ -13,6 +29,10 @@ const NODE_HEIGHT_DEFAULT = 170
 const NODE_HEIGHT_SMALL = 90
 const NS_PADDING = 30
 const NS_PILL_OFFSET = 24
+const GROUP_GRID_GAP_X = 28
+const GROUP_GRID_GAP_Y = 30
+const GROUP_GRID_MAX_COLUMNS = 4
+const GROUP_GAP_X = 160
 
 const SMALL_KINDS: EntityKind[] = ['configmap', 'secret', 'pvc']
 
@@ -30,26 +50,26 @@ export interface LayoutInput {
 
 export function useGraphLayout(
   input: LayoutInput,
-  nodeMetrics?: Map<string, NodeMetric>,
+  mode: ProjectionMode,
+  nodeMetrics?: Map<string, NodeMetricValues>,
   edgeMetrics?: Map<string, EdgeMetricSnapshot>,
 ): LayoutResult {
   const { nodes: graphNodes, edges: graphEdges, groupOf, parentKind } = input
+  const layoutSpec = LAYOUT_SPECS[mode]
 
   return useMemo(() => {
     if (graphNodes.length === 0) return { nodes: [], edges: [] }
 
     // Parent containers are entities whose kind matches parentKind AND that are
-    // referenced as a parent in groupOf. Unreferenced parent-kind nodes are
-    // hidden entirely (they have nothing to group and should not render as
-    // loose entity nodes). Everything else is a content node.
+    // referenced as a parent in groupOf. Unreferenced parent-kind nodes render
+    // as normal cards, which keeps infrastructure overview useful when only
+    // Kubernetes node entities are visible.
     const parentIdSet = new Set(groupOf.values())
     const parentNodes = graphNodes.filter(
       (n) => n.kind === parentKind && parentIdSet.has(n.id),
     )
     const parentIds = new Set(parentNodes.map((n) => n.id))
-    const contentNodes = graphNodes.filter(
-      (n) => !parentIds.has(n.id) && n.kind !== parentKind,
-    )
+    const contentNodes = graphNodes.filter((n) => !parentIds.has(n.id))
     const contentNodeMap = new Map(contentNodes.map((node) => [node.id, node]))
 
     // Drop edges that touch a parent-container node (containers don't render
@@ -60,7 +80,13 @@ export function useGraphLayout(
 
     const g = new dagre.graphlib.Graph({ compound: true })
     g.setDefaultEdgeLabel(() => ({}))
-    g.setGraph({ rankdir: 'TB', ranksep: 80, nodesep: 40 })
+    g.setGraph({
+      rankdir: layoutSpec.rankdir,
+      ranksep: layoutSpec.ranksep,
+      nodesep: layoutSpec.nodesep,
+      ranker: layoutSpec.ranker,
+      ...(layoutSpec.acyclicer ? { acyclicer: layoutSpec.acyclicer } : {}),
+    })
 
     for (const parent of parentNodes) {
       g.setNode(`group:${parent.id}`, {})
@@ -83,20 +109,26 @@ export function useGraphLayout(
 
     dagre.layout(g)
 
-    const positionedContent: Node[] = contentNodes.map((node) => {
+    const sourcePos = layoutSpec.rankdir === 'LR' ? Position.Right : Position.Bottom
+    const targetPos = layoutSpec.rankdir === 'LR' ? Position.Left : Position.Top
+
+    let positionedContent: Node[] = contentNodes.map((node) => {
       const pos = g.node(node.id)
       const h = pos?.height ?? NODE_HEIGHT_DEFAULT
-      const metrics = nodeMetrics?.get(node.id)
-      const labels = { ...node.labels }
-      if (metrics?.cpu !== undefined) labels['k8s.pod.cpu.usage'] = String(metrics.cpu)
-      if (metrics?.mem !== undefined) labels['k8s.pod.memory.working_set'] = String(metrics.mem)
+      const metrics = nodeMetrics?.get(node.id) ?? {}
       return {
         id: node.id,
         type: 'entity' as const,
         position: { x: (pos?.x ?? 0) - NODE_WIDTH / 2, y: (pos?.y ?? 0) - h / 2 },
-        data: { ...node, labels } as Record<string, unknown>,
+        sourcePosition: sourcePos,
+        targetPosition: targetPos,
+        data: { ...node, metrics } as Record<string, unknown>,
       }
     })
+
+    if (parentKind === 'node') {
+      positionedContent = packNodeGroupChildren(positionedContent, groupOf, parentIds, g)
+    }
 
     const parentBounds = new Map<
       string,
@@ -162,6 +194,7 @@ export function useGraphLayout(
           source: edge.source,
           target: edge.target,
           type: 'relation' as const,
+          zIndex: edge.relation === 'calls' ? 12 : 6,
           data: {
             ...edge,
             sourceName: sourceNode?.name,
@@ -179,5 +212,60 @@ export function useGraphLayout(
       })
 
     return { nodes, edges }
-  }, [graphNodes, graphEdges, groupOf, parentKind, nodeMetrics, edgeMetrics])
+  }, [graphNodes, graphEdges, groupOf, parentKind, nodeMetrics, edgeMetrics, layoutSpec])
+}
+
+function packNodeGroupChildren(
+  positionedContent: Node[],
+  groupOf: Map<string, string>,
+  parentIds: Set<string>,
+  g: dagre.graphlib.Graph,
+): Node[] {
+  const childrenByParent = new Map<string, Node[]>()
+  for (const node of positionedContent) {
+    const parentId = groupOf.get(node.id)
+    if (!parentId || !parentIds.has(parentId)) continue
+    const siblings = childrenByParent.get(parentId) ?? []
+    siblings.push(node)
+    childrenByParent.set(parentId, siblings)
+  }
+
+  if (childrenByParent.size === 0) return positionedContent
+
+  const nextPositions = new Map<string, { x: number; y: number }>()
+  const groups = [...childrenByParent.entries()]
+    .map(([parentId, siblings]) => ({
+      parentId,
+      siblings,
+      minX: Math.min(...siblings.map((node) => node.position.x)),
+      minY: Math.min(...siblings.map((node) => node.position.y)),
+    }))
+    .sort((a, b) => a.minX - b.minX || a.minY - b.minY || a.parentId.localeCompare(b.parentId))
+
+  let cursorX = Math.min(...groups.map((group) => group.minX))
+  const originY = Math.min(...groups.map((group) => group.minY))
+
+  for (const group of groups) {
+    const siblings = group.siblings
+    siblings.sort((a, b) => String(a.data.name ?? a.id).localeCompare(String(b.data.name ?? b.id)))
+    const columns = Math.min(GROUP_GRID_MAX_COLUMNS, Math.ceil(Math.sqrt(siblings.length)))
+    const groupWidth = columns * NODE_WIDTH + Math.max(0, columns - 1) * GROUP_GRID_GAP_X
+
+    siblings.forEach((node, index) => {
+      const dagreNode = g.node(node.id)
+      const height = dagreNode?.height ?? NODE_HEIGHT_DEFAULT
+      const col = index % columns
+      const row = Math.floor(index / columns)
+      nextPositions.set(node.id, {
+        x: cursorX + col * (NODE_WIDTH + GROUP_GRID_GAP_X),
+        y: originY + row * (height + GROUP_GRID_GAP_Y),
+      })
+    })
+    cursorX += groupWidth + GROUP_GAP_X
+  }
+
+  return positionedContent.map((node) => {
+    const position = nextPositions.get(node.id)
+    return position ? { ...node, position } : node
+  })
 }

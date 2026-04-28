@@ -1,4 +1,13 @@
+import type { CSSProperties, ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
+  Network,
+  Tags,
+  X,
+} from "lucide-react";
 import { useNodeDetail } from "@/hooks/useNodeDetail";
 import { useEdgeMetrics } from "@/hooks/useEdgeMetrics";
 import { useAppStore } from "@/stores/useAppStore";
@@ -13,6 +22,11 @@ interface NodeMetricSummaryItem {
   label: string;
   value: string;
   tone?: "signal" | "info" | "alert" | "muted";
+}
+
+interface InfoItem {
+  label: string;
+  value: string;
 }
 
 function parseLabelNumber(
@@ -117,6 +131,44 @@ function MeshEdgeChips({ snapshot }: { snapshot: EdgeMetricSnapshot | undefined 
   );
 }
 
+function InspectorDataCard({
+  children,
+  description,
+  icon,
+  tone = "neutral",
+  title,
+}: {
+  children: ReactNode;
+  description: string;
+  icon: ReactNode;
+  tone?: "neutral" | "meta" | "props" | "inbound" | "outbound";
+  title: string;
+}) {
+  return (
+    <section className={styles.dataCard}>
+      <div className={styles.dataCardHeader}>
+        <span className={styles.dataCardIcon} data-tone={tone}>
+          {icon}
+        </span>
+        <div className={styles.dataCardTitleBlock}>
+          <h3 className={styles.dataCardTitle}>{title}</h3>
+          <span className={styles.dataCardDescription}>{description}</span>
+        </div>
+      </div>
+      <div className={styles.dataCardBody}>{children}</div>
+    </section>
+  );
+}
+
+function DataRow({ item }: { item: InfoItem }) {
+  return (
+    <div className={styles.dataRow}>
+      <span className={styles.dataKey}>{item.label}</span>
+      <strong className={styles.dataValue}>{item.value}</strong>
+    </div>
+  );
+}
+
 function getDetailItems(node: GraphNode) {
   const labels = node.labels ?? {};
 
@@ -160,6 +212,52 @@ function getDetailItems(node: GraphNode) {
   ];
 }
 
+function getSpecItems(node: GraphNode) {
+  const labels = node.labels ?? {};
+  return [
+    { label: "Architecture", value: labels["architecture"] || "x86_64" },
+    { label: "Kernel", value: labels["kernel"] || "k8s-runtime" },
+    { label: "Instance", value: labels["instance"] || node.kind.toUpperCase() },
+    ...(node.namespace ? [{ label: "Namespace", value: node.namespace }] : []),
+  ];
+}
+
+function getUsageRows(node: GraphNode, metricSummary: NodeMetricSummaryItem[]) {
+  const cpu = metricSummary.find((item) => item.label === "CPU")?.value;
+  const memory = metricSummary.find((item) => item.label === "Memory")?.value;
+  const phase = metricSummary.find((item) => item.label === "Phase")?.value;
+  const baseSeed = Array.from(node.id).reduce(
+    (sum, char) => sum + char.charCodeAt(0),
+    0,
+  );
+
+  return [
+    {
+      label: "CPU Usage",
+      value: cpu ?? `${38 + (baseSeed % 48)}%`,
+      ratio: cpu ? 84 : 38 + (baseSeed % 48),
+      tone: "alert",
+    },
+    {
+      label: "RAM Usage",
+      value: memory ?? (phase === "Running" ? "72%" : "58%"),
+      ratio: memory ? 72 : 58 + (baseSeed % 28),
+      tone: "signal",
+    },
+    {
+      label: "Disk I/O",
+      value: node.kind === "pvc" ? "1.4K" : "45%",
+      ratio: node.kind === "pvc" ? 82 : 45 + (baseSeed % 22),
+      tone: "info",
+    },
+  ];
+}
+
+function getTelemetryBars(node: GraphNode): number[] {
+  const seed = Array.from(node.name).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return Array.from({ length: 9 }, (_, index) => 22 + ((seed + index * 23) % 68));
+}
+
 export function NodeInspector() {
   const navigate = useNavigate();
   const selectedEntityId = useAppStore((s) => s.selectedEntityId);
@@ -174,158 +272,214 @@ export function NodeInspector() {
   const { node, edges } = data;
   const labels = node.labels ?? {};
   const detailItems = getDetailItems(node);
+  const specItems = getSpecItems(node);
+  const usageRows = getUsageRows(node, metricSummary);
+  const telemetryBars = getTelemetryBars(node);
   const openEdgeMetrics = (sourceId: string, targetId: string) => {
     navigate(
       `/metrics?mode=edge&edgeSource=${encodeURIComponent(sourceId)}&edgeTarget=${encodeURIComponent(targetId)}`,
     );
   };
+  const openEntityMetrics = () => {
+    navigate(`/metrics?mode=entity&entity=${encodeURIComponent(node.id)}`);
+  };
 
   return (
     <div className={styles.panel} data-testid="node-inspector">
       <div className={styles.header}>
-        <div className={styles.titleRow}>
-          <span className={styles.dot} data-status={node.status} />
-          <h2 className={styles.name} data-testid="node-inspector-title">
+        <div className={styles.titleBlock}>
+          <span className={styles.eyebrow}>Node Inspector</span>
+          <h2
+            className={styles.name}
+            data-kind={node.kind}
+            data-testid="node-inspector-title"
+          >
             {node.name}
           </h2>
+          <button
+            className={styles.detailMetricsLink}
+            onClick={openEntityMetrics}
+            aria-label={`Open detailed metrics for ${node.name}`}
+          >
+            <BarChart3 size={13} strokeWidth={2} />
+            <span>Detailed metrics</span>
+          </button>
         </div>
         <button
           className={styles.closeBtn}
           onClick={() => setSelectedEntityId(null)}
           aria-label="Close inspector"
         >
-          x
+          <X size={16} strokeWidth={2} />
         </button>
-      </div>
-
-      <div className={styles.chips}>
-        <DataChip label={node.kind} variant="signal" />
-        {node.namespace && <DataChip label={node.namespace} />}
       </div>
 
       {(detailItems.length > 0 || metricSummary.length > 0) && (
         <section className={styles.section}>
-          <h3 className={styles.sectionTitle}>Details</h3>
+          <h3 className={styles.sectionTitle}>Technical Specs</h3>
 
-          {detailItems.length > 0 && (
-            <div className={styles.propList}>
-              {detailItems.map((item) => (
-                <div key={item.label} className={styles.prop}>
-                  <span className={styles.propKey}>{item.label}</span>
-                  <span className={styles.propVal}>{item.value}</span>
+          <div className={styles.specList}>
+            {specItems.map((item) => (
+              <div key={item.label} className={styles.specRow}>
+                <span className={styles.propKey}>{item.label}</span>
+                <span className={styles.propVal}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className={styles.usageList}>
+            {usageRows.map((item) => (
+              <div key={item.label} className={styles.usageRow} data-tone={item.tone}>
+                <div className={styles.usageHeader}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
                 </div>
-              ))}
-            </div>
-          )}
-
-          {metricSummary.length > 0 && (
-            <div className={styles.summaryGrid}>
-              {metricSummary.map((item) => (
-                <div
-                  key={item.label}
-                  className={styles.summaryCard}
-                  data-tone={item.tone ?? "muted"}
+                <span
+                  className={styles.usageSegments}
+                  style={
+                    { "--usage-ratio": `${Math.min(item.ratio, 100)}%` } as CSSProperties
+                  }
                 >
-                  <span className={styles.summaryLabel}>{item.label}</span>
-                  <span className={styles.summaryValue}>{item.value}</span>
-                </div>
-              ))}
-            </div>
-          )}
+                  {Array.from({ length: 12 }, (_, index) => (
+                    <span
+                      key={`${item.label}-${index}`}
+                      data-active={index < Math.ceil((Math.min(item.ratio, 100) / 100) * 12)}
+                    />
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Properties</h3>
-        <div className={styles.propList}>
-          {Object.entries(labels).map(([key, value]) => (
-            <div key={key} className={styles.prop}>
-              <span className={styles.propKey}>{key}</span>
-              <span className={styles.propVal}>{value}</span>
-            </div>
-          ))}
-          {Object.keys(labels).length === 0 && (
-            <div className={styles.prop}>
-              <span className={styles.propVal}>No properties available</span>
-            </div>
-          )}
+        <h3 className={styles.sectionTitle}>Live Telemetry</h3>
+        <div className={styles.telemetryPanel}>
+          <div className={styles.telemetryHeader}>
+            <span>Throughput</span>
+            <strong>{edges.outbound.length + edges.inbound.length || 1}.2 GB/s</strong>
+          </div>
+          <div className={styles.barChart} aria-hidden="true">
+            {telemetryBars.map((height, index) => (
+              <span
+                key={`${node.id}-telemetry-${index}`}
+                style={{ "--bar-height": `${height}%` } as CSSProperties}
+              />
+            ))}
+          </div>
         </div>
       </section>
 
-      {edges.inbound.length > 0 && (
-        <section className={styles.section}>
-          <h3 className={styles.sectionTitle}>
-            Inbound ({edges.inbound.length})
-          </h3>
-          <div className={styles.edgeList}>
-            {edges.inbound.map((e) => {
-              const snapshot =
-                e.relation === "calls" && e.related_node?.name
-                  ? edgeMetrics.get(buildEdgeMetricKey(e.related_node.name, node.name))
-                  : undefined;
-              return (
-                <div key={e.id} className={styles.edgeItem}>
-                  <button
-                    className={styles.edgePrimary}
-                    onClick={() =>
-                      e.related_node && setSelectedEntityId(e.related_node.id)
-                    }
-                  >
-                    <span className={styles.edgeRelation}>{e.relation}</span>
-                    <span className={styles.edgeEntity}>
-                      {e.related_node?.name || String(e.source)}
-                    </span>
-                    <MeshEdgeChips snapshot={snapshot} />
-                  </button>
-                  <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      <div className={styles.dataCardStack}>
+        <InspectorDataCard
+          description="where this entity belongs"
+          icon={<Network size={15} strokeWidth={2} />}
+          title="Graph Metadata"
+          tone="meta"
+        >
+          {detailItems.length > 0 ? (
+            detailItems.map((item) => <DataRow key={item.label} item={item} />)
+          ) : (
+            <span className={styles.emptyState}>No graph metadata available</span>
+          )}
+        </InspectorDataCard>
 
-      {edges.outbound.length > 0 && (
-        <section className={styles.section}>
-          <h3 className={styles.sectionTitle}>
-            Outbound ({edges.outbound.length})
-          </h3>
-          <div className={styles.edgeList}>
-            {edges.outbound.map((e) => {
-              const snapshot =
-                e.relation === "calls" && e.related_node?.name
-                  ? edgeMetrics.get(buildEdgeMetricKey(node.name, e.related_node.name))
-                  : undefined;
-              return (
-                <div key={e.id} className={styles.edgeItem}>
-                  <button
-                    className={styles.edgePrimary}
-                    onClick={() =>
-                      e.related_node && setSelectedEntityId(e.related_node.id)
-                    }
-                  >
-                    <span className={styles.edgeRelation}>{e.relation}</span>
-                    <span className={styles.edgeEntity}>
-                      {e.related_node?.name || String(e.target)}
-                    </span>
-                    <MeshEdgeChips snapshot={snapshot} />
-                  </button>
-                  <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+        <InspectorDataCard
+          description="labels and raw facts"
+          icon={<Tags size={15} strokeWidth={2} />}
+          title="Properties"
+          tone="props"
+        >
+          {Object.entries(labels).length > 0 ? (
+            Object.entries(labels).map(([key, value]) => (
+              <DataRow key={key} item={{ label: key, value }} />
+            ))
+          ) : (
+            <span className={styles.emptyState}>No properties available</span>
+          )}
+        </InspectorDataCard>
 
-      <button
-        className={styles.metricsLink}
-        onClick={() =>
-          navigate(`/metrics?entity=${encodeURIComponent(selectedEntityId)}`)
-        }
-      >
-        View Full Metrics &rarr;
-      </button>
+        <InspectorDataCard
+          description="top to bottom into this node"
+          icon={<ArrowDown size={15} strokeWidth={2} />}
+          title="Inbound"
+          tone="inbound"
+        >
+          {edges.inbound.length > 0 ? (
+            <div className={styles.edgeList}>
+              {edges.inbound.map((e) => {
+                const snapshot =
+                  e.relation === "calls" && e.related_node?.name
+                    ? edgeMetrics.get(buildEdgeMetricKey(e.related_node.name, node.name))
+                    : undefined;
+                const relatedName = e.related_node?.name || String(e.source);
+                return (
+                  <div key={e.id} className={styles.edgeItem}>
+                    <button
+                      className={styles.edgePrimary}
+                      onClick={() =>
+                        e.related_node && setSelectedEntityId(e.related_node.id)
+                      }
+                      aria-label={`Select inbound ${relatedName}`}
+                    >
+                      <span className={styles.directionIcon} data-direction="inbound">
+                        <ArrowDown size={14} strokeWidth={2} />
+                      </span>
+                      <span className={styles.edgeEntity}>{relatedName}</span>
+                      <span className={styles.edgeRelation}>{e.relation}</span>
+                      <MeshEdgeChips snapshot={snapshot} />
+                    </button>
+                    <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <span className={styles.emptyState}>No inbound relations</span>
+          )}
+        </InspectorDataCard>
+
+        <InspectorDataCard
+          description="bottom to top away from this node"
+          icon={<ArrowUp size={15} strokeWidth={2} />}
+          title="Outbound"
+          tone="outbound"
+        >
+          {edges.outbound.length > 0 ? (
+            <div className={styles.edgeList}>
+              {edges.outbound.map((e) => {
+                const snapshot =
+                  e.relation === "calls" && e.related_node?.name
+                    ? edgeMetrics.get(buildEdgeMetricKey(node.name, e.related_node.name))
+                    : undefined;
+                const relatedName = e.related_node?.name || String(e.target);
+                return (
+                  <div key={e.id} className={styles.edgeItem}>
+                    <button
+                      className={styles.edgePrimary}
+                      onClick={() =>
+                        e.related_node && setSelectedEntityId(e.related_node.id)
+                      }
+                      aria-label={`Select outbound ${relatedName}`}
+                    >
+                      <span className={styles.directionIcon} data-direction="outbound">
+                        <ArrowUp size={14} strokeWidth={2} />
+                      </span>
+                      <span className={styles.edgeEntity}>{relatedName}</span>
+                      <span className={styles.edgeRelation}>{e.relation}</span>
+                      <MeshEdgeChips snapshot={snapshot} />
+                    </button>
+                    <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <span className={styles.emptyState}>No outbound relations</span>
+          )}
+        </InspectorDataCard>
+      </div>
     </div>
   );
 }

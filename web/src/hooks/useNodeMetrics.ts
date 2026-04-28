@@ -1,18 +1,26 @@
 import { useMemo } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { getSeries } from '@/api/metrics'
+import { collectAllMetricNames } from '@/views/TopologyGraph/nodeMetrics'
 import { usePollingEnabled } from './usePollingEnabled'
 
-export interface NodeMetric {
-  cpu?: number
-  mem?: number
-}
+// Per-entity metric snapshot keyed by metric name.
+export type NodeMetricValues = Record<string, number>
 
-/** Fetches latest CPU and memory values for all entities, returns a map by entity_id. */
-export function useNodeMetrics(): Map<string, NodeMetric> {
+/**
+ * Fetches the latest value of every metric named by NODE_METRICS for every
+ * entity that has a sample. Returns a Map<entityId, Record<metric, value>>
+ * so EntityNode can look up values by (kind → spec → metric name).
+ *
+ * The query list is derived from NODE_METRICS — adding a new metric there
+ * automatically extends the fetch.
+ */
+export function useNodeMetrics(): Map<string, NodeMetricValues> {
   const pollingEnabled = usePollingEnabled()
+  const metricNames = useMemo(() => collectAllMetricNames(), [])
+
   const queries = useQueries({
-    queries: ['k8s.pod.cpu.usage', 'k8s.pod.memory.working_set'].map((metric) => ({
+    queries: metricNames.map((metric) => ({
       queryKey: ['node-metrics', metric],
       queryFn: () => getSeries({ metric_name: metric }),
       refetchInterval: pollingEnabled ? 30_000 : false,
@@ -21,37 +29,24 @@ export function useNodeMetrics(): Map<string, NodeMetric> {
   })
 
   return useMemo(() => {
-    const map = new Map<string, NodeMetric>()
-    const [cpuResult, memResult] = queries
-
-    // Process CPU samples — get latest per entity
-    if (cpuResult?.data) {
-      for (const series of cpuResult.data.series) {
+    const map = new Map<string, NodeMetricValues>()
+    for (let i = 0; i < metricNames.length; i++) {
+      const metric = metricNames[i]
+      const result = queries[i]
+      if (!metric || !result?.data) continue
+      for (const series of result.data.series) {
         for (const sample of series.samples) {
-          const existing = map.get(sample.entity_id)
-          if (!existing) {
-            map.set(sample.entity_id, { cpu: sample.value })
-          } else if (existing.cpu === undefined) {
-            existing.cpu = sample.value
+          let entry = map.get(sample.entity_id)
+          if (!entry) {
+            entry = {}
+            map.set(sample.entity_id, entry)
+          }
+          if (entry[metric] === undefined) {
+            entry[metric] = sample.value
           }
         }
       }
     }
-
-    // Process memory samples — get latest per entity
-    if (memResult?.data) {
-      for (const series of memResult.data.series) {
-        for (const sample of series.samples) {
-          const existing = map.get(sample.entity_id)
-          if (!existing) {
-            map.set(sample.entity_id, { mem: sample.value })
-          } else if (existing.mem === undefined) {
-            existing.mem = sample.value
-          }
-        }
-      }
-    }
-
     return map
-  }, [queries])
+  }, [queries, metricNames])
 }

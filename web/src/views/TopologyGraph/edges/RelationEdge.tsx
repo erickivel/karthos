@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import { getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 import type { GraphEdge, RelationType } from "@/types/graph";
 import { formatLatency } from "../../../utils/formatters";
@@ -100,7 +100,7 @@ function RelationEdgeComponent(props: EdgeProps) {
   const normalX = -dy / length;
   const normalY = dx / length;
 
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  const [edgePath, fallbackLabelX, fallbackLabelY] = getSmoothStepPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
     targetX: props.targetX,
@@ -109,6 +109,26 @@ function RelationEdgeComponent(props: EdgeProps) {
     targetPosition: props.targetPosition,
     borderRadius: 8,
   });
+
+  // True midpoint of the rendered SVG path, computed via getPointAtLength.
+  // Falls back to xyflow's labelX/Y until the path mounts.
+  const measureRef = useRef<SVGPathElement>(null);
+  const [midpoint, setMidpoint] = useState<{ x: number; y: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = measureRef.current;
+    if (!el) return;
+    const total = el.getTotalLength();
+    if (total === 0) return;
+    const pt = el.getPointAtLength(total / 2);
+    setMidpoint((prev) => {
+      if (prev && Math.abs(prev.x - pt.x) < 0.5 && Math.abs(prev.y - pt.y) < 0.5) {
+        return prev;
+      }
+      return { x: pt.x, y: pt.y };
+    });
+  }, [edgePath]);
+  const labelX = midpoint?.x ?? fallbackLabelX;
+  const labelY = midpoint?.y ?? fallbackLabelY;
 
   const cableOffsets = getCableOffsets(
     metricState?.cableCount ?? 1,
@@ -119,6 +139,7 @@ function RelationEdgeComponent(props: EdgeProps) {
   return (
     <>
       <path
+        ref={measureRef}
         d={edgePath}
         fill="none"
         stroke="var(--surface-active)"
