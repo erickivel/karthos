@@ -8,8 +8,10 @@ import { topologyEntityTestId } from "../testIds";
 import { getNodeMetricSpecs, type MetricSelector } from "../nodeMetrics";
 import { NodeMetric } from "./NodeMetric";
 import styles from "./EntityNode.module.css";
+import { namespaceColor } from "../namespaceColor";
+import type { ProjectionMode } from "../projection";
 
-type GraphNodeData = GraphNode & { metrics?: NodeMetricValues } & Record<string, unknown>;
+type GraphNodeData = GraphNode & { metrics?: NodeMetricValues; mode?: ProjectionMode } & Record<string, unknown>;
 
 const KIND_COLOR_VAR: Record<EntityKind, string> = {
   cluster: "var(--kind-cluster)",
@@ -129,6 +131,14 @@ function EntityNodeComponent({
       role="button"
       tabIndex={0}
     >
+      {node.kind === 'pod' && node.mode === 'infrastructure' && node.namespace && (
+        <span
+          className={styles.namespaceStripe}
+          style={{ background: namespaceColor(node.namespace) }}
+          data-namespace-color={namespaceColor(node.namespace)}
+          aria-hidden="true"
+        />
+      )}
       <Handle type="target" position={targetP} className={styles.handle} />
 
       <div
