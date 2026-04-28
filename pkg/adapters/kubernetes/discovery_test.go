@@ -275,6 +275,45 @@ func TestDiscoverExtractsPodTemplateLabelsAndRefs(t *testing.T) {
 	require.Equal(t, []string{"data-pvc"}, w.PVCRefs)
 }
 
+func TestDiscoverSkipsTerminatingPods(t *testing.T) {
+	now := metav1.Now()
+	client := fake.NewClientset(
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "service-b-node", Namespace: "oksg-demo"},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: int32Ptr(1),
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "service-b-node"}},
+				},
+			},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "service-b-node-old",
+				Namespace:         "oksg-demo",
+				Labels:            map[string]string{"app": "service-b-node"},
+				DeletionTimestamp: &now,
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "service-b-node-current",
+				Namespace: "oksg-demo",
+				Labels:    map[string]string{"app": "service-b-node"},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+	require.Len(t, profile.Pods, 1)
+	require.Equal(t, "service-b-node-current", profile.Pods[0].Name)
+	require.NotEmpty(t, profile.Pods[0].WorkloadID)
+}
+
 func TestDiscoverExtractsIngresses(t *testing.T) {
 	client := fake.NewClientset(
 		&networkingv1.Ingress{

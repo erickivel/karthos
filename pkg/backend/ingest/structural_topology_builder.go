@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/erickivel/oksg/pkg/core/entities"
@@ -30,6 +31,7 @@ func (b *K8sStructuralTopologyBuilder) BuildStructural(_ context.Context, prof *
 	b.buildExposesEdges(prof, now, edgeMap, nodeMap)
 	b.buildRoutesToEdges(prof, now, edgeMap, nodeMap)
 	b.buildUsesAndMountsEdges(prof, now, edgeMap, nodeMap)
+	b.buildWorkloadPodContainment(prof, now, edgeMap, nodeMap)
 
 	edges := make([]topology.Edge, 0, len(edgeMap))
 	for _, e := range edgeMap {
@@ -68,15 +70,39 @@ func (b *K8sStructuralTopologyBuilder) buildExposesEdges(prof *profile.ClusterPr
 				svc.Name,
 				svc.Labels(),
 			))
-			addNode(nodes, newNode(
-				w.ID(),
-				entities.KindWorkload,
-				w.ClusterName,
-				w.Namespace,
-				w.Name,
-				w.Labels(),
-			))
+			addNode(nodes, workloadNode(w))
 		}
+	}
+}
+
+// buildWorkloadPodContainment connects discovered workload controllers to their
+// pods so runtime/detail projections can expand traffic participants to pods.
+func (b *K8sStructuralTopologyBuilder) buildWorkloadPodContainment(prof *profile.ClusterProfile, t time.Time, edges map[string]topology.Edge, nodes map[entities.EntityID]topology.Node) {
+	workloadByID := make(map[entities.EntityID]entities.Workload)
+	for _, w := range prof.Workloads {
+		workloadByID[w.ID()] = w
+	}
+
+	for _, p := range prof.Pods {
+		if p.WorkloadID == "" {
+			continue
+		}
+		w, ok := workloadByID[p.WorkloadID]
+		if !ok {
+			continue
+		}
+		e := topology.NewEdge(w.ID(), p.ID(), topology.RelContains, t)
+		e.Provenance = []string{structuralProvenance}
+		edges[e.ID] = e
+		addNode(nodes, workloadNode(w))
+		addNode(nodes, newNode(
+			p.ID(),
+			entities.KindPod,
+			p.ClusterName,
+			p.Namespace,
+			p.Name,
+			p.Labels(),
+		))
 	}
 }
 
@@ -123,14 +149,7 @@ func (b *K8sStructuralTopologyBuilder) buildRoutesToEdges(prof *profile.ClusterP
 func (b *K8sStructuralTopologyBuilder) buildUsesAndMountsEdges(prof *profile.ClusterProfile, t time.Time, edges map[string]topology.Edge, nodes map[entities.EntityID]topology.Node) {
 	for _, w := range prof.Workloads {
 		wID := w.ID()
-		addNode(nodes, newNode(
-			wID,
-			entities.KindWorkload,
-			w.ClusterName,
-			w.Namespace,
-			w.Name,
-			w.Labels(),
-		))
+		addNode(nodes, workloadNode(w))
 
 		for _, ref := range w.ConfigMapRefs {
 			cmID := entities.ComputeEntityID(entities.KindConfigMap, b.clusterName, w.Namespace, ref)
@@ -210,4 +229,26 @@ func addNode(nodes map[entities.EntityID]topology.Node, node topology.Node) {
 	if _, ok := nodes[node.ID]; !ok {
 		nodes[node.ID] = node
 	}
+}
+
+func workloadNode(w entities.Workload) topology.Node {
+	return newNode(
+		w.ID(),
+		entities.KindWorkload,
+		w.ClusterName,
+		w.Namespace,
+		w.Name,
+		workloadLabels(w),
+	)
+}
+
+func workloadLabels(w entities.Workload) map[string]string {
+	labels := w.Labels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	if w.Replicas > 0 {
+		labels["k8s.workload.replicas"] = strconv.FormatInt(int64(w.Replicas), 10)
+	}
+	return labels
 }

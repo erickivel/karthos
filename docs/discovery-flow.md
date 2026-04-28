@@ -21,7 +21,7 @@ sequenceDiagram
 
     User->>CLI: discovery-job --mode=discover
     CLI->>DA: Discover(ctx)
-    DA->>K8s: List Nodes, Namespaces, Deployments, Services
+    DA->>K8s: List Nodes, Namespaces, Deployments, Pods, Services
     DA->>DA: Detect prometheus annotations and optional reachability
     DA->>DA: Detect OTLP-capable services (oksg.io/otlp-traces annotation or ports 4317/4318)
     DA-->>CLI: ClusterProfile
@@ -76,7 +76,7 @@ sequenceDiagram
 The discovery adapter queries Kubernetes and produces a `ClusterProfile` with:
 
 - cluster ID
-- discovered nodes, namespaces, workloads, and services
+- discovered nodes, namespaces, workloads, pods, and services
 - detected observability sources
 - recommended collection paths and receivers
 
@@ -154,6 +154,16 @@ seeds the `EntityRegistry` with every entity discovered in the profile
 objects) and writes an initial structural snapshot to the `GraphStore`, so
 the topology API returns discovered entities even before any runtime
 telemetry arrives.
+
+Workloads carry the discovered desired replica count as graph metadata under
+`k8s.workload.replicas`. Pods discovered from Kubernetes are linked back to
+their owning workload when their owner reference or workload pod-template
+selector can be matched. That structural `contains` edge lets runtime and
+traffic topology views expand workload cards into their participating pods
+without guessing from metric samples alone.
+
+Pods that are terminating, succeeded, or failed are skipped during discovery so
+rolling demo deployments do not seed stale pod cards into the structural graph.
 
 ## Example Output
 

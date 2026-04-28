@@ -216,6 +216,23 @@ func TestOTLPNormalizer_MemoryMetric(t *testing.T) {
 	assert.InDelta(t, 1048576.0, s.Value, 1e-9)
 }
 
+func TestOTLPNormalizer_VolumeMetricPreservesVolumeLabelsAndResolvesPVC(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttr("k8s.volume.capacity", 1024, tsNano, "k8s.persistentvolumeclaim.name", "bundle-cache")
+	env := makeEnvelope(t, podResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	s := samples[0]
+	assert.Equal(t, "k8s.volume.capacity", s.MetricName)
+	assert.Equal(t, entities.ComputeEntityID(entities.KindPVC, testCluster, "default", "bundle-cache"), s.EntityID)
+	assert.Equal(t, "bundle-cache", s.Labels["k8s.persistentvolumeclaim.name"])
+}
+
 func TestOTLPNormalizer_DiskDirection(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())

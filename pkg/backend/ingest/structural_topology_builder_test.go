@@ -146,6 +146,27 @@ func TestStructuralBuilder_WorkloadMountsPVC(t *testing.T) {
 	require.Len(t, nodes, 2) // workload + pvc
 }
 
+func TestStructuralBuilder_WorkloadContainsMatchingPods(t *testing.T) {
+	w := workloadWithPodLabels("test", "demo", "gateway-go", map[string]string{"app": "gateway-go"})
+	pod := entities.NewPod("test", "demo", "gateway-go-abc", map[string]string{"app": "gateway-go"})
+	pod.WorkloadID = w.ID()
+
+	prof := &profile.ClusterProfile{
+		ClusterName: "test",
+		Workloads:   []entities.Workload{w},
+		Pods:        []entities.Pod{pod},
+	}
+
+	builder := NewK8sStructuralTopologyBuilder("test")
+	edges, nodes, err := builder.BuildStructural(context.Background(), prof)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, topology.RelContains, edges[0].Relation)
+	require.Equal(t, w.ID(), edges[0].Source)
+	require.Equal(t, pod.ID(), edges[0].Target)
+	require.Len(t, nodes, 2)
+}
+
 func TestStructuralBuilder_EmptyProfileProducesNothing(t *testing.T) {
 	prof := &profile.ClusterProfile{ClusterName: "test"}
 

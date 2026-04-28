@@ -103,7 +103,7 @@ func (i *StructuralTopologyIngestor) upsertStructuralEntities(ctx context.Contex
 			workload.ClusterName,
 			workload.Namespace,
 			workload.Name,
-			workload.Labels(),
+			workloadLabels(workload),
 		)); err != nil {
 			return err
 		}
@@ -114,6 +114,19 @@ func (i *StructuralTopologyIngestor) upsertStructuralEntities(ctx context.Contex
 			return err
 		}
 		if err := upsertRefs(entities.KindPVC, prof.ClusterName, workload.Namespace, workload.PVCRefs); err != nil {
+			return err
+		}
+	}
+
+	for _, pod := range prof.Pods {
+		if err := upsert(newStoredEntity(
+			pod.ID(),
+			entities.KindPod,
+			pod.ClusterName,
+			pod.Namespace,
+			pod.Name,
+			pod.Labels(),
+		)); err != nil {
 			return err
 		}
 	}

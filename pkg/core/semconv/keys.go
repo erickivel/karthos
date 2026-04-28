@@ -22,6 +22,8 @@ const (
 	AttrDirection                = "direction"
 	AttrGRPCStatusCode           = "rpc.grpc.status_code"
 	AttrHTTPStatusCode           = "http.response.status_code"
+	AttrK8sPVCName               = "k8s.persistentvolumeclaim.name"
+	AttrK8sVolumeName            = "k8s.volume.name"
 	AttrMeshID                   = "mesh.id"
 	AttrMeshPolicy               = "mesh.security.policy"
 	AttrMeshResponseFlags        = "mesh.envoy.response_flags"

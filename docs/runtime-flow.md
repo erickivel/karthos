@@ -266,6 +266,7 @@ The backend serves a scalar metrics API, so OTLP metrics are normalized into can
 - Gauge and Sum datapoints are copied as scalar samples, then multiplied by the configured conversion factor.
 - Histogram datapoints are normalized as average values using `sum / count`. Datapoints with `count == 0` are skipped.
 - Servicegraph-derived metrics preserve `edge_client`, `edge_server`, `edge_client_id`, and `edge_server_id` labels so edge queries can join runtime telemetry back onto topology edges.
+- Pod-volume metrics preserve selected topology labels such as `k8s.volume.name`, `k8s.persistentvolumeclaim.name`, `k8s.pod.name`, and `k8s.namespace.name`. When a volume datapoint carries a resolvable PVC identity, the normalizer stores the sample against the PVC entity. Otherwise it remains pod-scoped, and topology cards must not render PVC storage from that sample.
 
 ### Request, Error, and Duration Semantics
 
@@ -311,7 +312,7 @@ After routing, envelopes are normalized into canonical domain objects.
 
 Metric path:
 
-- `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. This means k8s_cluster receiver metrics for workload-scoped and namespace-scoped entities are now resolved (previously dropped as unresolvable). Entity resolution errors fail the envelope.
+- `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label use the PVC identity before the generic resource fallback. This means k8s_cluster receiver metrics for workload-scoped and namespace-scoped entities are now resolved (previously dropped as unresolvable). Entity resolution errors fail the envelope.
 - `OTLPNormalizer` first translates source dialects into semconv-style metric names, then maps each recognized OTLP metric name to a semconv-native `MetricSample` using the registered `OTLPSemconvMetrics`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. Servicegraph connector and Istio mesh metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Istio request-duration histograms are converted from milliseconds to nanoseconds, histograms are stored as `_sum`/`_count`, and `servicegraph.request.error.ratio` remains query-derived. Unrecognized metric names are silently skipped.
 - `MetricStore` stores the resulting samples in memory. Supports time-range, entity-filtered, and edge-filtered queries.
 - `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. `MeshMetricTopologyBuilder` parses servicegraph-shaped mesh metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response metadata. Mesh `calls` edges take `FirstSeen`/`LastSeen` from the metric datapoint timestamp, falling back to the envelope timestamp only when the datapoint has no timestamp.
@@ -423,8 +424,9 @@ OKSG Backend
   - Structural topology (at startup, if --discovery-profile provided)
     └── StructuralTopologyIngestor(K8sStructuralTopologyBuilder) → GraphStore
           edges: exposes (service→workload), routes_to (ingress→service),
-                 uses (workload→configmap/secret), mounts (workload→pvc)
-          nodes: workload, service, ingress, configmap, secret, pvc
+                 uses (workload→configmap/secret), mounts (workload→pvc),
+                 contains (workload→pod when discovery can resolve ownership)
+          nodes: workload, service, ingress, configmap, secret, pvc, pod
 
 REST API Server (:8080) — all list endpoints support cursor-based pagination
   - /api/v1/status         → system_status (nominal/degraded/disconnected), freshness

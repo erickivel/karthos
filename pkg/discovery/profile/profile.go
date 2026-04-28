@@ -13,6 +13,7 @@ type ClusterProfile struct {
 	Nodes                []entities.Node       `json:"nodes,omitempty"`
 	Namespaces           []entities.Namespace  `json:"namespaces,omitempty"`
 	Workloads            []entities.Workload   `json:"workloads,omitempty"`
+	Pods                 []entities.Pod        `json:"pods,omitempty"`
 	Services             []entities.Service    `json:"services,omitempty"`
 	Ingresses            []entities.Ingress    `json:"ingresses,omitempty"`
 	Sources              []ObservabilitySource `json:"sources,omitempty"`

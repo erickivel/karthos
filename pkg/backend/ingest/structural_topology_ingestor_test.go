@@ -61,10 +61,18 @@ func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
 		Workloads: []entities.Workload{
 			func() entities.Workload {
 				w := workloadWithPodLabels("test", "demo", "gateway-go", map[string]string{"app": "gateway-go"})
+				w.Replicas = 3
 				w.ConfigMapRefs = []string{"gateway-config"}
 				w.SecretRefs = []string{"gateway-secret"}
 				w.PVCRefs = []string{"gateway-cache"}
 				return w
+			}(),
+		},
+		Pods: []entities.Pod{
+			func() entities.Pod {
+				p := entities.NewPod("test", "demo", "gateway-go-abc", map[string]string{"app": "gateway-go"})
+				p.WorkloadID = entities.NewWorkload("test", "demo", "gateway-go", entities.WorkloadDeployment, nil).ID()
+				return p
 			}(),
 		},
 		Ingresses: []entities.Ingress{
@@ -98,6 +106,7 @@ func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
 	configMapID := entities.ComputeEntityID(entities.KindConfigMap, "test", "demo", "gateway-config")
 	secretID := entities.ComputeEntityID(entities.KindSecret, "test", "demo", "gateway-secret")
 	pvcID := entities.ComputeEntityID(entities.KindPVC, "test", "demo", "gateway-cache")
+	podID := prof.Pods[0].ID()
 
 	assertEntity(workloadID, entities.KindWorkload, "gateway-go", "demo")
 	assertEntity(serviceID, entities.KindService, "gateway-go", "demo")
@@ -105,4 +114,10 @@ func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
 	assertEntity(configMapID, entities.KindConfigMap, "gateway-config", "demo")
 	assertEntity(secretID, entities.KindSecret, "gateway-secret", "demo")
 	assertEntity(pvcID, entities.KindPVC, "gateway-cache", "demo")
+	assertEntity(podID, entities.KindPod, "gateway-go-abc", "demo")
+
+	workloadEntity, err := entityRegistry.GetEntity(context.Background(), workloadID)
+	require.NoError(t, err)
+	storedWorkload := workloadEntity.(persistence.StoredEntity)
+	require.Equal(t, "3", storedWorkload.Metadata["k8s.workload.replicas"])
 }

@@ -94,6 +94,11 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		return nil, fmt.Errorf("list deployments: %w", err)
 	}
 
+	pods, err := d.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list pods: %w", err)
+	}
+
 	services, err := d.client.CoreV1().Services("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
@@ -130,6 +135,18 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		workload.PodTemplateLabels = cloneStringMap(deployment.Spec.Template.Labels)
 		extractWorkloadRefs(&workload, deployment.Spec.Template.Spec)
 		profileResult.Workloads = append(profileResult.Workloads, workload)
+	}
+
+	for _, pod := range sortPods(pods.Items) {
+		if len(d.targetNamespaces) > 0 && !d.isTargetNamespace(pod.Namespace) {
+			continue
+		}
+		if isTerminatingPod(pod) {
+			continue
+		}
+		entityPod := entities.NewPod(d.clusterName, pod.Namespace, pod.Name, pod.Labels)
+		entityPod.WorkloadID = matchPodWorkloadID(entityPod, profileResult.Workloads)
+		profileResult.Pods = append(profileResult.Pods, entityPod)
 	}
 
 	for _, ing := range sortIngresses(ingresses.Items) {
@@ -368,6 +385,45 @@ func sortServices(items []corev1.Service) []corev1.Service {
 		return sorted[i].Namespace < sorted[j].Namespace
 	})
 	return sorted
+}
+
+func sortPods(items []corev1.Pod) []corev1.Pod {
+	sorted := append([]corev1.Pod(nil), items...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Namespace == sorted[j].Namespace {
+			return sorted[i].Name < sorted[j].Name
+		}
+		return sorted[i].Namespace < sorted[j].Namespace
+	})
+	return sorted
+}
+
+func isTerminatingPod(pod corev1.Pod) bool {
+	return pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+}
+
+func matchPodWorkloadID(pod entities.Pod, workloads []entities.Workload) entities.EntityID {
+	for _, workload := range workloads {
+		if pod.Namespace != workload.Namespace {
+			continue
+		}
+		if selectorMatches(workload.PodTemplateLabels, pod.Labels()) {
+			return workload.ID()
+		}
+	}
+	return ""
+}
+
+func selectorMatches(selector, labels map[string]string) bool {
+	if len(selector) == 0 {
+		return false
+	}
+	for key, value := range selector {
+		if labels[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *DiscoveryAdapter) isTargetNamespace(ns string) bool {

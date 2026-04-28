@@ -210,7 +210,9 @@ func baseLabels(source string, attrs []*commonpb.KeyValue) map[string]string {
 	if override := firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm); override != "" {
 		source = override
 	}
-	return map[string]string{semconv.LabelSource: source}
+	labels := map[string]string{semconv.LabelSource: source}
+	preserveTopologyMetricLabels(attrs, labels)
+	return labels
 }
 
 func cloneLabels(in map[string]string) map[string]string {
@@ -292,11 +294,27 @@ func (n *OTLPNormalizer) resolveMetricEntity(
 		return "", true, nil
 	}
 
+	if isVolumeMetric(translatedName) {
+		namespace := resource[semconv.ResourceK8sNamespaceName]
+		claimName := firstKVString(attrs, semconv.AttrK8sPVCName, "persistentvolumeclaim", "persistentvolumeclaim_name")
+		if namespace != "" && claimName != "" {
+			clusterName := resource[semconv.ResourceK8sClusterName]
+			if otlpResolver, ok := n.resolver.(*OTLPEntityResolver); ok && otlpResolver.clusterName != "" {
+				clusterName = otlpResolver.clusterName
+			}
+			return entities.ComputeEntityID(entities.KindPVC, clusterName, namespace, claimName), false, nil
+		}
+	}
+
 	id, err := n.resolver.Resolve(ctx, resource)
 	if err != nil {
 		return "", false, err
 	}
 	return id, false, nil
+}
+
+func isVolumeMetric(metricName string) bool {
+	return strings.HasPrefix(metricName, "k8s.volume.")
 }
 
 func isServiceGraphEdgeMetric(metricName, translatedName string) bool {
@@ -324,6 +342,19 @@ func applyMeshMetadataLabels(attrs []*commonpb.KeyValue, labels map[string]strin
 		semconv.AttrMeshID,
 	} {
 		if value := meshAttrValue(attrs, key); value != "" {
+			labels[key] = value
+		}
+	}
+}
+
+func preserveTopologyMetricLabels(attrs []*commonpb.KeyValue, labels map[string]string) {
+	for _, key := range []string{
+		semconv.AttrK8sPVCName,
+		semconv.AttrK8sVolumeName,
+		semconv.ResourceK8sPodName,
+		semconv.ResourceK8sNamespaceName,
+	} {
+		if value := kvString(attrs, key); value != "" {
 			labels[key] = value
 		}
 	}
