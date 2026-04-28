@@ -78,7 +78,7 @@ web/
     types/           TypeScript types matching backend API contracts
     views/
       ClusterOverview/  KPIs, entity breakdown, relation types
-      TopologyGraph/    React Flow canvas, dagre layout, custom nodes/edges
+      TopologyGraph/    React Flow canvas, ELK.js layout strategies, custom nodes/edges
       MetricsExplorer/  category tabs, segmented bar charts, raw samples
     components/
       Shell/          floating TopBar, Sidebar, StatusBar
@@ -186,6 +186,16 @@ kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
 ```
 
 The dev server reads the API base URL at startup. After you change `.env`, Vite config, or anything the container reads only on boot, stop `task web:dev` and re-run it so the changes take effect. Source file edits continue to hot-reload without a restart.
+
+### Topology layout strategies
+
+`web/src/views/TopologyGraph/layouts/` holds one strategy per projection mode. Each implements the `LayoutStrategy` interface (`layouts/types.ts`) and returns `Promise<LayoutResult>` — ELK.js is async, unlike the previous dagre layout. Per-mode algorithms:
+
+- **Ownership** — ELK `layered` top-down. Namespace as compound parent.
+- **Infrastructure** — ELK `layered` between K8s nodes, `rectpacking` inside each node so pods pack tightly. Pods carry a 4 px namespace-color left stripe (the `namespaceColor` helper in `web/src/views/TopologyGraph/namespaceColor.ts`).
+- **Traffic** — ELK `layered` left-to-right with greedy cycle breaking. Granularity is overridden in `projection.ts` so traffic L2/L3 collapse to overview (pod-level traffic edges multiply by replica count and produce unreadable hairballs).
+
+`useGraphLayout` is a thin async dispatcher that picks the strategy by mode and threads `mode` into each entity node's `data` so renderers (e.g. the namespace stripe in `EntityNode.tsx`) can branch on it.
 
 ## Debugging
 

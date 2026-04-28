@@ -81,7 +81,7 @@ Query and Control (Layer 6 Phase A)
 Visualization (Layer 6 Phase B)
   React frontend in web/ (Vite + TypeScript)
   Three views: Cluster Overview (/), Topology Graph (/topology), Metrics Explorer (/metrics)
-  React Flow graph with dagre layout, custom EntityNode components, and cable-bundle RelationEdge rendering
+  React Flow graph with ELK.js per-mode layout strategies, custom EntityNode components, and cable-bundle RelationEdge rendering
   TanStack Query polling (30s graph/status, 120s discovery)
   Zustand for cross-view state (selected entity, connection status)
   CSS custom properties theme system (dark theme, no hardcoded colors)
