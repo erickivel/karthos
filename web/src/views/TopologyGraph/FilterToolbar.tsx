@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { HelpCircle } from 'lucide-react'
 import type { AvailableFilters } from '@/types/graph'
@@ -6,6 +6,7 @@ import { useAppStore } from '@/stores/useAppStore'
 import { useProjectionState } from './useProjectionState'
 import { LegendPanel } from './LegendPanel'
 import { GRANULARITY_ENTRIES, MODE_ENTRIES } from './modes'
+import { namespaceColor } from './namespaceColor'
 import styles from './FilterToolbar.module.css'
 
 interface FilterToolbarProps {
@@ -41,6 +42,11 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
       return next
     })
   }
+
+  const legendNamespaces = useMemo(() => {
+    if (mode !== 'infrastructure') return []
+    return (filters?.namespaces ?? []).slice().sort()
+  }, [mode, filters?.namespaces])
 
   useEffect(() => {
     if (selectedEntityId) {
@@ -107,6 +113,18 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
             </option>
           ))}
         </select>
+
+        {legendNamespaces.length > 0 && (
+          <div className={styles.legend} data-testid="namespace-legend">
+            <span className={styles.legendTitle}>Namespaces</span>
+            {legendNamespaces.map((ns) => (
+              <span key={ns} className={styles.legendItem}>
+                <span className={styles.legendSwatch} style={{ background: namespaceColor(ns) }} />
+                {ns}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div

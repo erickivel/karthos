@@ -194,3 +194,32 @@
     margin-top: 0;
   }
 }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-top: 1px solid var(--surface-nav);
+  font-size: 12px;
+}
+
+.legendTitle {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-primary);
+}
+
+.legendSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
