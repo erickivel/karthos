@@ -28,7 +28,7 @@ function edge(id: string, source: string, target: string, relation: GraphEdge['r
 }
 
 describe('topology projection', () => {
-  it('keeps workload pods in traffic runtime when workloads contain pods', () => {
+  it('collapses pods to overview in traffic runtime', () => {
     const result = project(
       [
         node('svc', 'service', 'gateway'),
@@ -45,12 +45,7 @@ describe('topology projection', () => {
       'runtime',
     )
 
-    expect(result.nodes.map((n) => n.id).sort()).toEqual([
-      'pod-a',
-      'pod-b',
-      'svc',
-      'workload',
-    ])
+    expect(result.nodes.map((n) => n.id).sort()).toEqual(['svc', 'workload'])
   })
 
   it('keeps infrastructure detailed host groups compact by excluding containers', () => {

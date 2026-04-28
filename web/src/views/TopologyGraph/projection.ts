@@ -83,11 +83,14 @@ export function visibleKindsFor(
   mode: ProjectionMode,
   granularity: Granularity,
 ): Set<EntityKind> {
-  const base = new Set(VISIBLE_KINDS_BY_GRANULARITY[granularity])
-  if (mode === 'infrastructure' && granularity === 'detailed') {
-    // Host-node grouping gets unreadable when every container is flattened
-    // beside its pod. Keep infrastructure focused on schedulable runtime
-    // objects; container detail remains available through ownership L3.
+  // Mode override: traffic at runtime/detailed silently behaves as overview.
+  // Pod-level call edges produce unreadable hairballs (every edge multiplied
+  // by replica count); collapse to service/workload granularity.
+  const effective: Granularity =
+    mode === 'traffic' && granularity !== 'overview' ? 'overview' : granularity
+
+  const base = new Set(VISIBLE_KINDS_BY_GRANULARITY[effective])
+  if (mode === 'infrastructure' && effective === 'detailed') {
     base.delete('container')
   }
   const allowed = LAYER_SPECS[mode].kinds
