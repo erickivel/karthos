@@ -30,3 +30,9 @@ kubectl apply -k "${VARIANT_DIR}"
 while IFS= read -r deployment; do
   kubectl rollout restart -n oksg-demo "${deployment}"
 done < <(kubectl get deployments -n oksg-demo -o name)
+
+while IFS= read -r deployment; do
+  kubectl rollout status -n oksg-demo "${deployment}" --timeout=120s
+done < <(kubectl get deployments -n oksg-demo -o name)
+
+kubectl wait --for=condition=ready pod -n oksg-demo --all --timeout=120s

@@ -69,6 +69,10 @@ What each stage now does:
   checks Helm status, pod readiness including the frontend rollout, and recent agent/gateway/backend logs
 - generated values can also carry collector `featureGates`; the default agent e2e flow enables `receiver.kubeletstats.enableCPUUsageMetrics` to reduce known kubeletstats deprecation noise
 
+`test:e2e:deploy` waits for the demo app Deployments and pods before discovery
+runs. This keeps discovery profiles from capturing terminating rollout pods
+that would later appear as duplicate topology cards.
+
 ## Scenario Expectations
 
 ### Prometheus Available
@@ -188,7 +192,17 @@ Coverage currently includes:
 - projection mode grouping behavior
 - granularity transitions and selection persistence
 - sparse/orphan pod handling
+- infrastructure overview rendering Kubernetes nodes as metric cards
+- compact infrastructure runtime pod packing inside node groups
+- traffic cards rendering servicegraph request rates
 - screenshot baselines for all `mode x granularity` combinations
+
+Topology metric assertions should stay entity-scoped. Pod CPU and memory are
+valid on pod cards, servicegraph request rates are valid on service and ingress
+traffic cards, node allocatable CPU and memory are valid on Kubernetes node
+cards, and workload readiness uses `k8s.deployment.available` over discovered
+`k8s.workload.replicas` metadata. PVC storage should only be asserted when the
+backend exposes paired PVC-resolved volume capacity and available samples.
 
 ### No Telemetry Fallback
 
