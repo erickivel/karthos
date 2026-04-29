@@ -15,12 +15,12 @@ describe('MetricsExplorer model', () => {
         description: 'rate',
       },
       {
-        name: 'k8s.pod.network.io.receive',
-        display_name: 'Pod Network Bytes In',
+        name: 'k8s.pod.cpu.usage',
+        display_name: 'Pod CPU Usage',
         unit: 'bytes',
-        category: 'traffic',
+        category: 'resource',
         scopes: ['entity'],
-        description: 'rx bytes',
+        description: 'cpu',
       },
     ]
 

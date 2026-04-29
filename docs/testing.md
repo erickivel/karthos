@@ -93,6 +93,7 @@ Expected:
 - `/api/v1/metrics` returns semconv servicegraph samples for `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
 - `servicegraph.request.error.ratio` remains query-derived and is safe to request through the same API
 - `/debug/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
+- Traffic topology mode intentionally stays aggregated at service/workload readability even when the granularity control is set to runtime or detailed; pod replica cards are not expected in Traffic mode
 
 ### Istio Mesh Available
 

@@ -45,7 +45,6 @@ export const NODE_METRICS: Record<EntityKind, NodeMetricSpec[]> = {
     {
       kind: 'utilization',
       metric: 'k8s.pod.cpu.usage',
-      capacityMetric: 'k8s.node.cpu.capacity',
       capacityFallback: 1000,
       label: 'CPU',
       format: 'cpu',
@@ -53,7 +52,6 @@ export const NODE_METRICS: Record<EntityKind, NodeMetricSpec[]> = {
     {
       kind: 'utilization',
       metric: 'k8s.pod.memory.working_set',
-      capacityMetric: 'k8s.node.memory.capacity',
       capacityFallback: 256 * 1024 * 1024,
       label: 'MEM',
       format: 'memory',

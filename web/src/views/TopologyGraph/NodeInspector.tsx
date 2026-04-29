@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowDown,
@@ -39,13 +39,7 @@ function parseLabelNumber(
   return Number.isFinite(v) ? v : null;
 }
 
-/**
- * buildMetricSummary reads synthesised node labels already attached by the backend
- * and `useGraphLayout`: `k8s.pod.cpu.usage`, `k8s.pod.memory.working_set`,
- * `k8s.pod.phase`, `k8s.node.condition.ready`, `k8s.node.condition.memory_pressure`,
- * and `k8s.node.condition.disk_pressure`. The canonical OTel-to-label mapping in
- * `pkg/core/metrics/otel_mappings.go` is the authoritative source for these keys.
- */
+// Reads only metric labels already attached by the backend or graph layout.
 function buildMetricSummary(node: GraphNode): NodeMetricSummaryItem[] {
   const labels = node.labels ?? {};
   const items: NodeMetricSummaryItem[] = [];
@@ -215,47 +209,13 @@ function getDetailItems(node: GraphNode) {
 function getSpecItems(node: GraphNode) {
   const labels = node.labels ?? {};
   return [
-    { label: "Architecture", value: labels["architecture"] || "x86_64" },
-    { label: "Kernel", value: labels["kernel"] || "k8s-runtime" },
-    { label: "Instance", value: labels["instance"] || node.kind.toUpperCase() },
+    ...(labels["architecture"]
+      ? [{ label: "Architecture", value: labels["architecture"] }]
+      : []),
+    ...(labels["kernel"] ? [{ label: "Kernel", value: labels["kernel"] }] : []),
+    ...(labels["instance"] ? [{ label: "Instance", value: labels["instance"] }] : []),
     ...(node.namespace ? [{ label: "Namespace", value: node.namespace }] : []),
   ];
-}
-
-function getUsageRows(node: GraphNode, metricSummary: NodeMetricSummaryItem[]) {
-  const cpu = metricSummary.find((item) => item.label === "CPU")?.value;
-  const memory = metricSummary.find((item) => item.label === "Memory")?.value;
-  const phase = metricSummary.find((item) => item.label === "Phase")?.value;
-  const baseSeed = Array.from(node.id).reduce(
-    (sum, char) => sum + char.charCodeAt(0),
-    0,
-  );
-
-  return [
-    {
-      label: "CPU Usage",
-      value: cpu ?? `${38 + (baseSeed % 48)}%`,
-      ratio: cpu ? 84 : 38 + (baseSeed % 48),
-      tone: "alert",
-    },
-    {
-      label: "RAM Usage",
-      value: memory ?? (phase === "Running" ? "72%" : "58%"),
-      ratio: memory ? 72 : 58 + (baseSeed % 28),
-      tone: "signal",
-    },
-    {
-      label: "Disk I/O",
-      value: node.kind === "pvc" ? "1.4K" : "45%",
-      ratio: node.kind === "pvc" ? 82 : 45 + (baseSeed % 22),
-      tone: "info",
-    },
-  ];
-}
-
-function getTelemetryBars(node: GraphNode): number[] {
-  const seed = Array.from(node.name).reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  return Array.from({ length: 9 }, (_, index) => 22 + ((seed + index * 23) % 68));
 }
 
 export function NodeInspector() {
@@ -273,8 +233,6 @@ export function NodeInspector() {
   const labels = node.labels ?? {};
   const detailItems = getDetailItems(node);
   const specItems = getSpecItems(node);
-  const usageRows = getUsageRows(node, metricSummary);
-  const telemetryBars = getTelemetryBars(node);
   const openEdgeMetrics = (sourceId: string, targetId: string) => {
     navigate(
       `/metrics?mode=edge&edgeSource=${encodeURIComponent(sourceId)}&edgeTarget=${encodeURIComponent(targetId)}`,
@@ -314,7 +272,7 @@ export function NodeInspector() {
         </button>
       </div>
 
-      {(detailItems.length > 0 || metricSummary.length > 0) && (
+      {specItems.length > 0 && (
         <section className={styles.section}>
           <h3 className={styles.sectionTitle}>Technical Specs</h3>
 
@@ -326,48 +284,28 @@ export function NodeInspector() {
               </div>
             ))}
           </div>
-
-          <div className={styles.usageList}>
-            {usageRows.map((item) => (
-              <div key={item.label} className={styles.usageRow} data-tone={item.tone}>
-                <div className={styles.usageHeader}>
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
-                </div>
-                <span
-                  className={styles.usageSegments}
-                  style={
-                    { "--usage-ratio": `${Math.min(item.ratio, 100)}%` } as CSSProperties
-                  }
-                >
-                  {Array.from({ length: 12 }, (_, index) => (
-                    <span
-                      key={`${item.label}-${index}`}
-                      data-active={index < Math.ceil((Math.min(item.ratio, 100) / 100) * 12)}
-                    />
-                  ))}
-                </span>
-              </div>
-            ))}
-          </div>
         </section>
       )}
 
       <section className={styles.section}>
         <h3 className={styles.sectionTitle}>Live Telemetry</h3>
         <div className={styles.telemetryPanel}>
-          <div className={styles.telemetryHeader}>
-            <span>Throughput</span>
-            <strong>{edges.outbound.length + edges.inbound.length || 1}.2 GB/s</strong>
-          </div>
-          <div className={styles.barChart} aria-hidden="true">
-            {telemetryBars.map((height, index) => (
-              <span
-                key={`${node.id}-telemetry-${index}`}
-                style={{ "--bar-height": `${height}%` } as CSSProperties}
-              />
-            ))}
-          </div>
+          {metricSummary.length > 0 ? (
+            <div className={styles.telemetryList}>
+              {metricSummary.map((item) => (
+                <div
+                  key={item.label}
+                  className={styles.telemetryRow}
+                  data-tone={item.tone ?? "muted"}
+                >
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <span className={styles.emptyState}>No live telemetry for this entity</span>
+          )}
         </div>
       </section>
 

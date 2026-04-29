@@ -180,6 +180,22 @@ func TestStatusIncludesDiscoveryTimestamp(t *testing.T) {
 func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 	ms := persistence.NewInMemoryMetricStore()
 	now := time.Now().UTC()
+	gs := persistence.NewInMemoryGraphStore()
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		Version:   schema.CurrentVersion,
+		CreatedAt: now,
+		Graph: topology.Graph{
+			Timestamp: now,
+			Nodes: []topology.Node{
+				{ID: "pod-1", Kind: entities.KindPod, Labels: map[string]string{"phase": "Running"}},
+				{ID: "pod-2", Kind: entities.KindPod, Labels: map[string]string{"status": "running"}},
+				{ID: "pod-3", Kind: entities.KindPod, Labels: map[string]string{"phase": "Pending"}},
+				{ID: "pod-4", Kind: entities.KindPod, Labels: map[string]string{"phase": "Failed"}},
+				{ID: "pod-5", Kind: entities.KindPod, Labels: map[string]string{"phase": "Unknown"}},
+				{ID: "pod-6", Kind: entities.KindPod, Labels: map[string]string{"app": "without-phase"}},
+			},
+		},
+	}))
 
 	// Write node condition metrics.
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
@@ -187,17 +203,10 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 		{MetricName: "k8s.node.condition.ready", EntityID: "node-2", Value: 1, Timestamp: now},
 		{MetricName: "k8s.node.condition.ready", EntityID: "node-3", Value: 0, Timestamp: now},
 	}))
-	// Write pod phase metrics (OTel encoding: 1=Pending, 2=Running, 3=Succeeded, 4=Failed).
-	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "k8s.pod.phase", EntityID: "pod-1", Value: 2, Timestamp: now}, // Running
-		{MetricName: "k8s.pod.phase", EntityID: "pod-2", Value: 2, Timestamp: now}, // Running
-		{MetricName: "k8s.pod.phase", EntityID: "pod-3", Value: 1, Timestamp: now}, // Pending
-		{MetricName: "k8s.pod.phase", EntityID: "pod-4", Value: 4, Timestamp: now}, // Failed
-	}))
 
 	srv := newTestServer(t, Config{
 		MetricStore:    ms,
-		GraphStore:     freshGraphStore(t),
+		GraphStore:     gs,
 		MetadataStore:  persistence.NewInMemoryMetadataStore(),
 		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
 	})
@@ -219,6 +228,7 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 	require.EqualValues(t, 2, pods["running"])
 	require.EqualValues(t, 1, pods["pending"])
 	require.EqualValues(t, 1, pods["failed"])
+	require.EqualValues(t, 2, pods["unknown"])
 
 	// Unhealthy node should cause degraded status.
 	require.Equal(t, "degraded", data["system_status"])

@@ -108,7 +108,6 @@ func TestResolveDefaultCatalogAgainstFullProfile(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, SourceMeshIstio, assignment["servicegraph.request.count"])
-	require.Equal(t, SourceMeshIstio, assignment["k8s.pod.network.io.receive"])
 	require.Equal(t, SourceKubelet, assignment["k8s.pod.cpu.usage"])
 	require.Equal(t, SourcePrometheusApp, assignment["http.server.request.count"])
 	require.Equal(t, SourceTracesSpanmetrics, assignment["rpc.server.duration"])

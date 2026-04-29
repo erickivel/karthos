@@ -12,16 +12,7 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.pod.memory.working_set":               {},
 		"system.disk.io.read":                      {},
 		"system.disk.io.write":                     {},
-		"k8s.node.cpu.capacity":                    {},
-		"k8s.node.cpu.cores":                       {},
-		"k8s.node.cpu.frequency":                   {},
-		"k8s.node.memory.capacity":                 {},
-		"k8s.node.disk.capacity":                   {},
-		"k8s.node.network.bandwidth.receive":       {},
-		"k8s.node.network.bandwidth.transmit":      {},
 		"servicegraph.request.count":               {},
-		"k8s.pod.network.io.receive":               {},
-		"k8s.pod.network.io.transmit":              {},
 		"http.server.request.duration":             {},
 		"servicegraph.request.duration":            {},
 		"rpc.server.duration":                      {},
@@ -52,7 +43,6 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"system.cpu.load_average.15m":              {},
 		"system.paging.usage":                      {},
 		"system.paging.operations":                 {},
-		"k8s.pod.phase":                            {},
 		"k8s.namespace.phase":                      {},
 		"k8s.node.condition.ready":                 {},
 		"k8s.node.condition.memory_pressure":       {},
@@ -71,6 +61,36 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	}
 
 	require.Empty(t, required)
+}
+
+func TestDefaultCatalogExcludesUnsupportedMetrics(t *testing.T) {
+	unsupported := map[string]struct{}{
+		"k8s.node.cpu.capacity":               {},
+		"k8s.node.cpu.cores":                  {},
+		"k8s.node.cpu.frequency":              {},
+		"k8s.node.memory.capacity":            {},
+		"k8s.node.disk.capacity":              {},
+		"k8s.node.network.bandwidth.receive":  {},
+		"k8s.node.network.bandwidth.transmit": {},
+		"k8s.pod.network.io.receive":          {},
+		"k8s.pod.network.io.transmit":         {},
+		"k8s.pod.phase":                       {},
+	}
+
+	for _, metric := range DefaultCatalog() {
+		_, exists := unsupported[metric.Name]
+		require.Falsef(t, exists, "unsupported metric should not be cataloged: %s", metric.Name)
+	}
+}
+
+func TestDefaultCatalogMetricsHaveIngestOrQuerySupport(t *testing.T) {
+	for _, metric := range DefaultCatalog() {
+		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
+			continue
+		}
+		_, mapped := OTLPSemconvMetrics[metric.Name]
+		require.Truef(t, mapped, "catalog metric %s has no OTLP mapping or query-derived exception", metric.Name)
+	}
 }
 
 func TestDefaultCatalogMetricNamesAreUnique(t *testing.T) {

@@ -76,6 +76,4 @@ var IstioDialect = DialectMap{
 	"istio_response_messages_total":       "servicegraph.grpc.response.message.count",
 	"istio_tcp_connections_opened_total":  "servicegraph.tcp.connection.open.count",
 	"istio_tcp_connections_closed_total":  "servicegraph.tcp.connection.close.count",
-	"istio_tcp_sent_bytes_total":          "k8s.pod.network.io.transmit",
-	"istio_tcp_received_bytes_total":      "k8s.pod.network.io.receive",
 }

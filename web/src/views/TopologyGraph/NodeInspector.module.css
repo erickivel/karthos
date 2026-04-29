@@ -149,61 +149,6 @@
   background: rgb(255 255 255 / 4%);
 }
 
-.usageList {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.usageRow {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.usageHeader {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  color: #d9dde3;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-}
-
-.usageHeader strong {
-  color: #ffffff;
-  font-size: 0.74rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.usageSegments {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 2px;
-  height: 6px;
-}
-
-.usageSegments span {
-  background: rgb(255 255 255 / 9%);
-}
-
-.usageSegments span[data-active="true"] {
-  background: var(--usage-color, var(--color-info));
-}
-
-.usageRow[data-tone="signal"] {
-  --usage-color: var(--color-signal);
-}
-
-.usageRow[data-tone="info"] {
-  --usage-color: var(--color-info);
-}
-
-.usageRow[data-tone="alert"] {
-  --usage-color: #ef4444;
-}
-
 .prop {
   display: flex;
   gap: 8px;
@@ -233,7 +178,13 @@
   background: #232729;
 }
 
-.telemetryHeader {
+.telemetryList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.telemetryRow {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -241,29 +192,22 @@
   font-size: 0.82rem;
 }
 
-.telemetryHeader strong {
+.telemetryRow strong {
   color: var(--color-signal);
   font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
 }
 
-.barChart {
-  display: flex;
-  align-items: end;
-  gap: 5px;
-  height: 90px;
-  padding-top: 20px;
+.telemetryRow[data-tone="alert"] strong {
+  color: #ef4444;
 }
 
-.barChart span {
-  width: 100%;
-  height: var(--bar-height);
-  min-height: 10px;
-  background: var(--color-signal);
+.telemetryRow[data-tone="info"] strong {
+  color: var(--color-info);
 }
 
-.barChart span:nth-child(-n + 4) {
-  background: color-mix(in srgb, var(--color-signal) 48%, #26383c);
+.telemetryRow[data-tone="muted"] strong {
+  color: var(--color-text-muted);
 }
 
 .dataCardStack {

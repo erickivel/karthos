@@ -38,6 +38,6 @@ func TestBuiltInDialectsTranslateKnownMetrics(t *testing.T) {
 	require.Equal(t, "servicegraph.grpc.response.message.count", registry.Translate("istio_response_messages_total"))
 	require.Equal(t, "servicegraph.tcp.connection.open.count", registry.Translate("istio_tcp_connections_opened_total"))
 	require.Equal(t, "servicegraph.tcp.connection.close.count", registry.Translate("istio_tcp_connections_closed_total"))
-	require.Equal(t, "k8s.pod.network.io.transmit", registry.Translate("istio_tcp_sent_bytes_total"))
-	require.Equal(t, "k8s.pod.network.io.receive", registry.Translate("istio_tcp_received_bytes_total"))
+	require.Equal(t, "istio_tcp_sent_bytes_total", registry.Translate("istio_tcp_sent_bytes_total"))
+	require.Equal(t, "istio_tcp_received_bytes_total", registry.Translate("istio_tcp_received_bytes_total"))
 }

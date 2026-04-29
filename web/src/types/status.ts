@@ -10,6 +10,7 @@ export interface HealthSummary {
     running: number
     pending: number
     failed: number
+    unknown: number
   }
 }
 

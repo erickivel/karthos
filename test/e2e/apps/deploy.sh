@@ -35,4 +35,6 @@ while IFS= read -r deployment; do
   kubectl rollout status -n oksg-demo "${deployment}" --timeout=120s
 done < <(kubectl get deployments -n oksg-demo -o name)
 
-kubectl wait --for=condition=ready pod -n oksg-demo --all --timeout=120s
+if kubectl get pod ops-toolbox -n oksg-sparse >/dev/null 2>&1; then
+  kubectl wait --for=condition=ready pod/ops-toolbox -n oksg-sparse --timeout=120s
+fi

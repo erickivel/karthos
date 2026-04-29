@@ -50,7 +50,6 @@ var OTLPSemconvMetrics = map[string]OTLPMetricMapping{
 	"k8s.replicaset.desired":                   {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.deployment.desired":                   {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.deployment.available":                 {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
-	"k8s.pod.phase":                            {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.namespace.phase":                      {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.node.condition":                       {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.node.condition.ready":                 {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
