@@ -78,7 +78,7 @@ web/
     types/           TypeScript types matching backend API contracts
     views/
       ClusterOverview/  KPIs, entity breakdown, relation types
-      TopologyGraph/    React Flow canvas, ELK.js layout strategies, custom nodes/edges
+      TopologyGraph/    React Flow canvas, Dagre/custom layout strategies, custom nodes/edges
       MetricsExplorer/  category tabs, segmented bar charts, raw samples
     components/
       Shell/          floating TopBar, Sidebar, StatusBar
@@ -189,13 +189,24 @@ The dev server reads the API base URL at startup. After you change `.env`, Vite 
 
 ### Topology layout strategies
 
-`web/src/views/TopologyGraph/layouts/` holds one strategy per projection mode. Each implements the `LayoutStrategy` interface (`layouts/types.ts`) and returns `Promise<LayoutResult>` — ELK.js is async, unlike the previous dagre layout. Per-mode algorithms:
+`web/src/views/TopologyGraph/layouts/` holds one strategy per projection mode. Each implements the synchronous `LayoutStrategy` interface (`layouts/types.ts`). Keep strategies synchronous unless the layout engine is genuinely async; do not wrap synchronous layouts in `useEffect` + `setState`, because React Query metric maps can change identity and create route churn. Per-mode algorithms:
 
-- **Ownership** — ELK `layered` top-down. Namespace as compound parent.
-- **Infrastructure** — ELK `layered` between K8s nodes, `rectpacking` inside each node so pods pack tightly. Pods carry a 4 px namespace-color left stripe (the `namespaceColor` helper in `web/src/views/TopologyGraph/namespaceColor.ts`).
-- **Traffic** — ELK `layered` left-to-right with greedy cycle breaking. Granularity is overridden in `projection.ts` so traffic L2/L3 collapse to overview (pod-level traffic edges multiply by replica count and produce unreadable hairballs).
+- **Ownership** — deterministic top-down hierarchy. Namespace groups are laid out side by side, and each independent component inside a namespace computes dynamic ranks from ownership relations. Roots start at the top, and each structural target is placed at least one rank below its source, so direct workload children (pods, ConfigMaps, Secrets, and PVCs) can share the next layer. Ownership intentionally excludes runtime `calls` edges; it keeps Kubernetes structural relations (`routes_to`, `exposes`, `contains`, `uses`, `mounts`) so the tree remains a static ownership/declaration view.
+- **Infrastructure** — Dagre left-to-right between K8s nodes, with a lightweight grid packer inside each node group so pods stay compact without pulling in a heavier layout engine. Pods carry a 4 px namespace-color left stripe (the `namespaceColor` helper in `web/src/views/TopologyGraph/namespaceColor.ts`).
+- **Traffic** — Dagre left-to-right with greedy cycle breaking and tuned rank/node spacing. Granularity is overridden in `projection.ts` so traffic L2/L3 collapse to overview (pod-level traffic edges multiply by replica count and produce unreadable hairballs).
 
-`useGraphLayout` is a thin async dispatcher that picks the strategy by mode and threads `mode` into each entity node's `data` so renderers (e.g. the namespace stripe in `EntityNode.tsx`) can branch on it.
+`useGraphLayout` is a thin synchronous dispatcher that picks the strategy by mode and threads `mode` into each entity node's `data` so renderers (e.g. the namespace stripe in `EntityNode.tsx`) can branch on it. For ownership, pure helpers split namespace components, build relation-derived component models, assign dynamic rank positions, and mark edges for ownership routing. React Flow's live source/target handle coordinates are the source of truth for rendered edge endpoints; do not route hierarchy edges from stale layout-box estimates. For traffic and infrastructure, the shared Dagre adapter computes node placement while React Flow renders relation geometry from normal source/target handles.
+
+### Topology layout QA
+
+Before visual topology QA, make sure the data path is live:
+
+```bash
+curl -fsS http://localhost:18081/api/v1/status | jq '.data.system_status'
+curl -fsS http://localhost:5173/api/v1/status | jq '.data.system_status'
+```
+
+Both should return `nominal`, and the app footer should say `BACKEND_OK`. Do not validate screenshots while the footer shows `BACKEND_OFFLINE`, `DISCONNECTED`, or proxy failures. Use Browser Use screenshots as the primary visual signal for custom SVG edges; DOM edge counts can be misleading because React Flow/custom edge internals are not always exposed in accessibility snapshots. Always verify that navigation into `/topology` does not freeze and that ownership, traffic, and infrastructure each render nodes plus visible edges.
 
 ## Debugging
 

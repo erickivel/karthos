@@ -117,9 +117,10 @@ export function TopologyGraph() {
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
           fitView
-          fitViewOptions={{ padding: 0.26 }}
+          fitViewOptions={{ padding: 0.14 }}
           minZoom={0.1}
           maxZoom={2}
+          onlyRenderVisibleElements={false}
           proOptions={{ hideAttribution: true }}
         >
           <Background

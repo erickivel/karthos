@@ -28,8 +28,16 @@ const KIND_COLOR_VAR: Record<EntityKind, string> = {
   pvc: "var(--kind-pvc)",
 };
 
-function getHeaderColor(kind: EntityKind, status: string): string {
+function getHeaderColor(
+  kind: EntityKind,
+  status: string,
+  mode: ProjectionMode | undefined,
+  namespace: string | undefined,
+): string {
   if (status === "error") return "var(--color-alert)";
+  if (kind === "pod" && mode === "infrastructure" && namespace) {
+    return namespaceColor(namespace);
+  }
   return KIND_COLOR_VAR[kind] ?? "var(--surface-active)";
 }
 
@@ -125,20 +133,17 @@ function EntityNodeComponent({
       data-entity-kind={node.kind}
       data-entity-name={node.name}
       data-entity-namespace={node.namespace}
-      style={{ "--node-accent": getHeaderColor(node.kind, node.status) } as CSSProperties}
+      style={{ "--node-accent": getHeaderColor(node.kind, node.status, node.mode, node.namespace) } as CSSProperties}
+      data-namespace-color={
+        node.kind === 'pod' && node.mode === 'infrastructure' && node.namespace
+          ? namespaceColor(node.namespace)
+          : undefined
+      }
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
     >
-      {node.kind === 'pod' && node.mode === 'infrastructure' && node.namespace && (
-        <span
-          className={styles.namespaceStripe}
-          style={{ background: namespaceColor(node.namespace) }}
-          data-namespace-color={namespaceColor(node.namespace)}
-          aria-hidden="true"
-        />
-      )}
       <Handle type="target" position={targetP} className={styles.handle} />
 
       <div

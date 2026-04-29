@@ -190,13 +190,3 @@
   border: none;
 }
 
-.namespaceStripe {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  border-top-left-radius: inherit;
-  border-bottom-left-radius: inherit;
-  pointer-events: none;
-}

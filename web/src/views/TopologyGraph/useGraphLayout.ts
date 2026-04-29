@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import type { GraphNode, GraphEdge, EntityKind } from '@/types/graph'
 import type { NodeMetricValues } from '@/hooks/useNodeMetrics'
@@ -28,30 +28,14 @@ export function useGraphLayout(
   nodeMetrics?: Map<string, NodeMetricValues>,
   edgeMetrics?: Map<string, EdgeMetricSnapshot>,
 ): { nodes: Node[]; edges: Edge[] } {
-  const [result, setResult] = useState<{ nodes: Node[]; edges: Edge[] }>({
-    nodes: [],
-    edges: [],
-  })
-
-  useEffect(() => {
-    let cancelled = false
+  return useMemo(() => {
     const strategy = STRATEGIES[mode]
-    strategy
-      .layout(input, { mode, nodeMetrics, edgeMetrics })
-      .then((laid) => {
-        if (!cancelled) setResult(laid)
-      })
-      .catch((err) => {
-        // ELK can throw on malformed input. Render empty rather than crashing the view.
-        if (!cancelled) {
-          console.error('[topology] layout failed', err)
-          setResult({ nodes: [], edges: [] })
-        }
-      })
-    return () => {
-      cancelled = true
+    try {
+      return strategy.layout(input, { mode, nodeMetrics, edgeMetrics })
+    } catch (err) {
+      // Layout engines can throw on malformed input. Render empty rather than crashing the view.
+      console.error('[topology] layout failed', err)
+      return { nodes: [], edges: [] }
     }
   }, [input, mode, nodeMetrics, edgeMetrics])
-
-  return result
 }

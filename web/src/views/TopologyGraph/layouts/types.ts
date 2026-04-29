@@ -23,7 +23,7 @@ export interface LayoutResult {
 }
 
 export interface LayoutStrategy {
-  layout(input: LayoutInput, deps: LayoutDeps): Promise<LayoutResult>
+  layout(input: LayoutInput, deps: LayoutDeps): LayoutResult
 }
 
 export const NODE_WIDTH = 240

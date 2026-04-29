@@ -5,6 +5,17 @@ import { formatLatency } from "../../../utils/formatters";
 import type { GraphEdgeMetricData } from "../edgeMetrics";
 import styles from "./RelationEdge.module.css";
 
+interface RoutedPoint {
+  x: number;
+  y: number;
+}
+
+type RelationEdgeData = GraphEdge &
+  GraphEdgeMetricData & {
+    routePoints?: RoutedPoint[];
+    routeStyle?: "ownership";
+  };
+
 function getEdgeColor(relation: RelationType): string {
   switch (relation) {
     case "calls":
@@ -87,20 +98,90 @@ function getMetricState(edge: GraphEdge & GraphEdgeMetricData) {
   };
 }
 
+function getRoundedRoutePath(points: RoutedPoint[], radius = 10): string {
+  const deduped = points.filter((point, index) => {
+    const previous = points[index - 1];
+    return !previous || previous.x !== point.x || previous.y !== point.y;
+  });
+
+  if (deduped.length < 2) return "";
+
+  const first = deduped[0]!;
+  const commands = [`M ${first.x} ${first.y}`];
+  for (let index = 1; index < deduped.length - 1; index++) {
+    const previous = deduped[index - 1]!;
+    const current = deduped[index]!;
+    const next = deduped[index + 1]!;
+    const incoming = {
+      x: current.x - previous.x,
+      y: current.y - previous.y,
+    };
+    const outgoing = {
+      x: next.x - current.x,
+      y: next.y - current.y,
+    };
+    const incomingLength = Math.hypot(incoming.x, incoming.y);
+    const outgoingLength = Math.hypot(outgoing.x, outgoing.y);
+    const isCorner =
+      incomingLength > 0 &&
+      outgoingLength > 0 &&
+      Math.abs(incoming.x * outgoing.x + incoming.y * outgoing.y) < 0.01;
+
+    if (!isCorner) {
+      commands.push(`L ${current.x} ${current.y}`);
+      continue;
+    }
+
+    const cornerRadius = Math.min(radius, incomingLength / 2, outgoingLength / 2);
+    const before = {
+      x: current.x - (incoming.x / incomingLength) * cornerRadius,
+      y: current.y - (incoming.y / incomingLength) * cornerRadius,
+    };
+    const after = {
+      x: current.x + (outgoing.x / outgoingLength) * cornerRadius,
+      y: current.y + (outgoing.y / outgoingLength) * cornerRadius,
+    };
+
+    commands.push(`L ${before.x} ${before.y}`);
+    commands.push(`Q ${current.x} ${current.y} ${after.x} ${after.y}`);
+  }
+
+  const last = deduped[deduped.length - 1]!;
+  commands.push(`L ${last.x} ${last.y}`);
+  return commands.join(" ");
+}
+
+function getOwnershipRoutePoints(
+  edge: RelationEdgeData | undefined,
+  routePoints: RoutedPoint[] | null,
+  props: EdgeProps,
+): RoutedPoint[] | null {
+  if (edge?.routeStyle !== "ownership") return null;
+
+  if (routePoints) {
+    return routePoints;
+  }
+
+  const source = { x: props.sourceX, y: props.sourceY };
+  const target = { x: props.targetX, y: props.targetY };
+  const midY = (source.y + target.y) / 2;
+  return [source, { x: source.x, y: midY }, { x: target.x, y: midY }, target];
+}
+
 function RelationEdgeComponent(props: EdgeProps) {
-  const edge = props.data as unknown as
-    | (GraphEdge & GraphEdgeMetricData)
-    | undefined;
+  const edge = props.data as unknown as RelationEdgeData | undefined;
   const relation = edge?.relation ?? "calls";
   const directed = DIRECTED_RELATIONS.includes(relation);
   const metricState = edge ? getMetricState(edge) : null;
+  const routePoints =
+    edge?.routePoints && edge.routePoints.length >= 2 ? edge.routePoints : null;
   const dx = props.targetX - props.sourceX;
   const dy = props.targetY - props.sourceY;
   const length = Math.hypot(dx, dy) || 1;
   const normalX = -dy / length;
   const normalY = dx / length;
 
-  const [edgePath, fallbackLabelX, fallbackLabelY] = getSmoothStepPath({
+  const [smoothPath, fallbackLabelX, fallbackLabelY] = getSmoothStepPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
     targetX: props.targetX,
@@ -109,6 +190,10 @@ function RelationEdgeComponent(props: EdgeProps) {
     targetPosition: props.targetPosition,
     borderRadius: 8,
   });
+  const ownershipRoutePoints = getOwnershipRoutePoints(edge, routePoints, props);
+  const edgePath = ownershipRoutePoints
+    ? getRoundedRoutePath(ownershipRoutePoints)
+    : smoothPath;
 
   // True midpoint of the rendered SVG path, computed via getPointAtLength.
   // Falls back to xyflow's labelX/Y until the path mounts.
@@ -176,6 +261,7 @@ function RelationEdgeComponent(props: EdgeProps) {
         width={136}
         height={36}
         className={styles.labelWrapper}
+        data-testid={`topology-edge-${relation}`}
       >
         <div className={styles.label}>
           <span>

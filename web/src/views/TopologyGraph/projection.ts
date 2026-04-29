@@ -1,3 +1,22 @@
+// Topology projection: turns the raw graph into a per-mode subgraph.
+//
+// LOAD-BEARING DECISIONS — DO NOT REVERT WITHOUT READING THESE FIRST.
+//
+// 1. Ownership relations include the structural wiring relations
+//    (`exposes`, `routes_to`) on top of strictly structural ones
+//    (`contains`, `mounts`, `uses`). If you narrow ownership by removing
+//    any of those five, Ingress / call-only services / similar entities
+//    lose every layer-relevant edge, drop out of `computeParticipants`,
+//    and disappear from the view. Do NOT add `calls` here — that's a
+//    runtime traffic relation and belongs to the Traffic layer only.
+//
+// 2. Layer `relations` plays a dual role:
+//    a) decides which entities qualify as direct participants
+//       (see `computeParticipants` below);
+//    b) decides which edges are rendered between visible entities
+//       (see the `spec.relations.has(...)` filter in `project()`).
+//    Adding a relation here changes BOTH of those — that's deliberate.
+//
 import type {
   EntityKind,
   GraphEdge,
@@ -54,7 +73,24 @@ export const LAYER_SPECS: Record<ProjectionMode, LayerSpec> = {
       'service',
       'ingress',
     ]),
-    relations: new Set<RelationType>(['contains', 'mounts', 'uses']),
+    // Ownership shows the Kubernetes object graph: structural relations
+    // (`contains`, `mounts`, `uses`) plus the structural wiring relations
+    // (`exposes`, `routes_to`) that connect Ingress→Service→Workload. Without
+    // the wiring relations, Ingress / call-only services appear as orphans
+    // and get filtered out by `computeParticipants`.
+    //
+    // DO NOT add `calls` to this set. `calls` is a runtime traffic relation
+    // and belongs to the Traffic layer only. Adding it here pollutes the
+    // ownership view with traffic edges that don't represent K8s ownership.
+    // (Removing one of `contains`/`mounts`/`uses`/`exposes`/`routes_to`
+    // would re-introduce the missing-entities regression — keep all five.)
+    relations: new Set<RelationType>([
+      'contains',
+      'mounts',
+      'uses',
+      'exposes',
+      'routes_to',
+    ]),
     // Anything with a namespace, or namespaces themselves, intrinsically
     // belongs to the ownership layer.
     intrinsic: (e) => e.kind === 'namespace' || Boolean(e.namespace),
@@ -201,8 +237,17 @@ export function project(
   visibleNodes = sortEntities(visibleNodes)
 
   const visibleIds = new Set(visibleNodes.map((n) => n.id))
+  // Both endpoints must be visible AND the relation must be in this layer's
+  // relation set. The relation filter is what keeps `calls` (a Traffic-only
+  // relation) out of the Ownership view even when both call-endpoint
+  // services are visible via structural relations. Without it, removing
+  // `calls` from `ownership.relations` only changes participant detection;
+  // calls edges between already-visible services still render.
   const visibleEdgesUnsorted = edges.filter(
-    (e) => visibleIds.has(e.source) && visibleIds.has(e.target),
+    (e) =>
+      visibleIds.has(e.source) &&
+      visibleIds.has(e.target) &&
+      spec.relations.has(e.relation),
   )
   const nameById = new Map(visibleNodes.map((n) => [n.id, n.name]))
   const visibleEdges = sortEdges(visibleEdgesUnsorted, (id) => nameById.get(id) ?? id)

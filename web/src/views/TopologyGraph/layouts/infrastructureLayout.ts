@@ -1,21 +1,17 @@
 import type { LayoutStrategy } from './types'
-import { runLayered } from './ownershipLayout'
+import { runDagreLayout, type DagreLayoutSpec } from './dagreLayout'
 
-const TOP_LEVEL_OPTIONS: Record<string, string> = {
-  'elk.algorithm': 'layered',
-  'elk.direction': 'RIGHT',
-  'elk.spacing.nodeNode': '80',
-}
-
-const PARENT_OPTIONS: Record<string, string> = {
-  'elk.algorithm': 'rectpacking',
-  'elk.rectpacking.strategy': 'CURRENT_POSITION',
-  'elk.spacing.nodeNode': '12',
-  'elk.aspectRatio': '1.6',
+const DAGRE_SPEC: DagreLayoutSpec = {
+  rankdir: 'LR',
+  ranksep: 165,
+  nodesep: 115,
+  ranker: 'tight-tree',
+  acyclicer: 'greedy',
+  packNodeGroups: true,
 }
 
 export const infrastructureLayout: LayoutStrategy = {
-  async layout(input, deps) {
-    return runLayered(input, deps, TOP_LEVEL_OPTIONS, 'RIGHT', PARENT_OPTIONS)
+  layout(input, deps) {
+    return runDagreLayout(input, deps, DAGRE_SPEC)
   },
 }
