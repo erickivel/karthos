@@ -12,23 +12,27 @@ Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Agent/Gatewa
 
 What is real today:
 
-- `pkg/adapters/kubernetes` discovers cluster resources, Prometheus annotation-based targets, and OTLP-capable workloads
-- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics and k8scluster on the agent, Istio mesh Prometheus scraping on the agent, plus spanmetrics and servicegraph on the gateway
+- `pkg/adapters/kubernetes` discovers cluster resources, Prometheus annotation-based targets, OTLP-capable workloads, and Istio sidecar mesh deployments
+- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics and k8scluster on the agent, Istio mesh Prometheus scraping on the agent, plus spanmetrics and servicegraph on the gateway, and the `transform/oksg-source` processor that stamps `oksg.source` for arbitration
 - `pkg/adapters/otlp` exposes OTLP gRPC and HTTP ingest for the backend runtime
 - `pkg/collector/configgen` converts the plan into typed Helm values
 - `pkg/collector/deployer` runs Helm lint/template/upgrade-install
-- `pkg/backend/ingest` converts OTLP telemetry into raw envelopes, routes them by signal type, normalizes them into canonical entities and metrics, and extracts structural topology edges from metric resource attributes
+- `pkg/core/metrics` holds the canonical metric catalog, per-source dialect maps, the logical source registry, and the priority-based resolver that picks one winning producer per metric (see [metrics-pipeline.md](metrics-pipeline.md))
+- `pkg/core/semconv` centralizes OTLP semantic-convention attribute keys used across ingest, topology builders, and arbitration
+- `pkg/backend/ingest` converts OTLP telemetry into raw envelopes, routes them by signal type, normalizes them into canonical entities and metrics, and extracts structural and mesh topology edges from metric resource attributes and datapoint labels
 - `pkg/backend/persistence` defines store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) with in-memory implementations for tests
 - `pkg/adapters/storage` provides a factory that wires either in-memory or external (PostgreSQL + VictoriaMetrics) backends based on config
 - `pkg/adapters/storage/postgresql` implements `GraphStore`, `MetadataStore`, `RawStore`, and `EntityRegistry` using `pgx/v5`
 - `pkg/adapters/storage/victoriametrics` implements `MetricStore` using VictoriaMetrics' Prometheus-compatible HTTP API
 - `pkg/adapters/api` provides the Layer 6 Phase A REST API server for querying graph state, metrics, entities, and system status
-- `cmd/backend` runs the backend OTLP ingest, normalization, and REST API services with configurable storage backend
+- `cmd/backend` runs the backend OTLP ingest, normalization, REST API, and a periodic discovery-refresh loop that reseeds structural topology before TTL aging removes it
 - `cmd/discovery-job` orchestrates discover, plan, and deploy modes
+- `web/` is the React frontend (Vite + TypeScript) with three views — Cluster Overview, Topology Graph, and Metrics Explorer — packaged in the same Helm chart as the backend
 
 What is not implemented yet:
 
 - `cmd/controller` is still a placeholder
+- `pkg/adapters/autoinstrumentation`, `pkg/adapters/istio`, `pkg/adapters/obi`, and `pkg/adapters/prometheus` are reserved adapter boundaries (`doc.go` only) for future OTel operator, Istio-specific, eBPF/OBI, and Prometheus / OpenMetrics integrations
 - modeling and prediction
 
 ## Layer View
@@ -160,6 +164,28 @@ Layer 4 merges discovered structure with runtime interaction evidence to build t
 
 It also implements the optional `NodeBuilder` interface, returning `topology.Node` values for each entity kind it resolves (namespace, node, pod, container).
 
+### Mesh Edges from Servicegraph-Shaped Metrics
+
+`MeshMetricTopologyBuilder` reads OTLP metric envelopes whose datapoints
+carry servicegraph edge attributes (`client`, `server`, optional `*_namespace`
+labels) — this is the post-relabel shape produced by the agent's `mesh-istio`
+scrape job. It derives `calls` edges with `mesh.istio` provenance, the
+canonical service entity IDs of caller and callee, and preserves mesh
+metadata (`network.protocol.name`, `mesh.security.policy`,
+`mesh.peer.source.principal`, `mesh.peer.destination.principal`,
+`mesh.envoy.response_flags`, `http.response.status_code`,
+`rpc.grpc.status_code`). `FirstSeen`/`LastSeen` come from the metric
+datapoint timestamp, falling back to the envelope timestamp only when the
+datapoint timestamp is missing.
+
+### CompositeTopologyBuilder
+
+`CompositeTopologyBuilder` chains topology builders so the metric path can
+fan a single envelope through `MetricTopologyBuilder` (structural edges and
+nodes) and `MeshMetricTopologyBuilder` (mesh `calls` edges) without coupling
+the ingestor to either implementation. It also forwards `BuildNodes` for any
+inner builder that satisfies the `NodeBuilder` interface.
+
 ### MultiIngestor Fan-out
 
 `MultiIngestor` implements the `Ingestor` interface and fans metric envelopes out to multiple downstream ingestors in order. All ingestors receive every envelope; the first error is returned. In `cmd/backend`, the metric signal path uses:
@@ -183,7 +209,7 @@ MultiIngestor
 - `uses`: workload → configmap/secret (from pod spec volumes, envFrom, and env valueFrom)
 - `mounts`: workload → PVC (from pod spec PVC volume claims)
 
-All edges carry provenance `"k8s-api"` and confidence 1.0. The builder is invoked at backend startup via the `--discovery-profile` flag, which loads a ClusterProfile JSON file and seeds the graph store with structural edges.
+All edges carry provenance `"k8s-api"` and confidence 1.0. The builder is invoked at backend startup via the `--discovery-profile` flag, which loads a ClusterProfile JSON file and seeds the graph store with structural edges. The backend then re-runs the structural ingestion every `OKSG_DISCOVERY_REFRESH_INTERVAL` (default 10m) so that workload, ingress, configmap, secret, and pvc nodes — which are produced **only** by the structural path, never by OTLP — do not age out under `OKSG_NODE_TTL`. The strict inequality `discovery_refresh_interval < node_ttl` is invariant: violating it makes structural-only kinds disappear from `/api/v1/graph` after the TTL window.
 
 The discovery adapter has been extended to capture:
 

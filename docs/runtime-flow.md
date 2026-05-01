@@ -137,8 +137,12 @@ sequenceDiagram
 | `pkg/backend/ingest/buffered_topology_ingestor.go` | `BufferedTopologyIngestor` | Implements `Ingestor`; accumulates edges/nodes from metric and trace builders, flushes consolidated snapshots to `GraphStore` on a timer |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `MultiIngestor` | Implements `Ingestor`; fans envelopes to multiple downstream ingestors in order |
 | `pkg/backend/ingest/metric_topology_builder.go` | `MetricTopologyBuilder` | Extracts structural `runs_on`/`contains` edges and nodes from metric resource attributes |
+| `pkg/backend/ingest/mesh_metric_topology_builder.go` | `MeshMetricTopologyBuilder` | Derives `calls` edges from servicegraph-shaped mesh metrics with `mesh.istio` provenance |
+| `pkg/backend/ingest/composite_topology_builder.go` | `CompositeTopologyBuilder` | Chains topology builders so the metric path runs structural + mesh builders together |
 | `pkg/backend/ingest/structural_topology_builder.go` | `K8sStructuralTopologyBuilder` | Derives `exposes`/`routes_to`/`uses`/`mounts` edges from ClusterProfile |
 | `pkg/backend/ingest/structural_topology_ingestor.go` | `StructuralTopologyIngestor` | Ingests K8s structural topology from ClusterProfile into GraphStore |
+| `pkg/core/metrics/{catalog,sources,dialect,resolver}.go` | Metrics pipeline | Catalog, source registry, dialect translation, and priority-based source arbitration |
+| `pkg/core/semconv/keys.go` | Attribute keys | OTLP semantic-convention attribute key constants shared across ingest and topology |
 | `pkg/backend/persistence/memory.go` | `MetricStore` | Thread-safe in-memory `MetricStore`; supports write and time-range queries |
 | `pkg/backend/persistence/memory.go` | `GraphStore` | Thread-safe in-memory `GraphStore`; accumulates edges and nodes, updates `LastSeen` on re-observation |
 | `pkg/adapters/storage/victoriametrics/` | `VMMetricStore` | `MetricStore` backed by VictoriaMetrics HTTP API (Prometheus text import + PromQL query) |
@@ -378,11 +382,14 @@ Implemented in the current slice:
 - Storage factory (`storage.NewStores`): wires memory or external (PG+VM) backends from config
 - PostgreSQL adapter: `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry` via `pgx/v5`
 - VictoriaMetrics adapter: `MetricStore` via Prometheus text import and PromQL query
-- REST API server (Layer 6 Phase A): versioned query endpoints for graph, metrics, entities, and system status on dedicated port 8080
+- REST API server (Layer 6 Phase A): versioned query endpoints for graph, metrics, entities, metric catalog, and system status on dedicated port 8080
+- Layer 6 Phase B: React frontend (`web/`) with Cluster Overview, Topology Graph (Ownership / Infrastructure / Traffic projection modes with three granularity levels and dagre per-mode layouts), and Metrics Explorer; deployed alongside the backend through the same Helm chart with nginx terminating `/api/*` proxy
+- Source arbitration: `metrics.Resolve` at startup picks one winning producer per canonical metric and feeds both the planner (which receivers/connectors to install) and the normalizer (which samples to drop on `oksg.source` mismatch). See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
+- Mesh `calls` edges: `MeshMetricTopologyBuilder` reads servicegraph-shaped Istio metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response-flag metadata
+- Periodic discovery refresh (`runDiscoveryRefreshLoop` in `cmd/backend/main.go`) re-runs the structural topology ingester on `OKSG_DISCOVERY_REFRESH_INTERVAL` (default 10m) so workload / ingress / configmap / secret / pvc nodes survive `OKSG_NODE_TTL` aging
 
 Not implemented yet:
 
-- Layer 6 Phase B: visualization UI
 - controller-driven runtime management
 - prediction, simulation, or model-ready feature generation
 

@@ -29,21 +29,26 @@ The long-term architecture is organized into six layers:
 This repository currently implements Phases 1 through 6:
 
 - canonical entities, metrics, raw telemetry envelopes, and topology contracts
-- discovery profile contracts extended with Prometheus target detection and recommended OTel receivers
+- discovery profile contracts with Prometheus target detection, OTLP-capable workload detection, and Istio sidecar mesh detection
 - Kubernetes discovery and OTel collector planning entrypoints
-- Helm values generation and Helm-managed deployment for agent, gateway, and backend
+- Helm values generation and Helm-managed deployment for agent, gateway, backend, and frontend
 - OTLP gRPC/HTTP ingest in the backend with raw-envelope conversion and signal routing
-- semantic normalization with entity resolution and canonical metric mapping
+- semconv-first metric pipeline: catalog (`pkg/core/metrics`), per-source dialects, logical source registry, and a resolver that arbitrates one winning producer per canonical metric
+- agent and gateway pipelines tagged with `oksg_source` so the backend can drop double-counted samples when more than one producer is installed
+- Istio mesh telemetry: a dedicated `mesh-istio` Prometheus scrape job, label rewriting onto servicegraph edge attributes, and an `MeshMetricTopologyBuilder` that emits `calls` edges with `mesh.istio` provenance plus protocol/mTLS/principal labels
 - structural topology extraction from kubeletstats resource attributes (`runs_on`, `contains` edges)
-- K8s structural topology from discovery profile (`exposes`, `routes_to`, `uses`, `mounts` edges)
+- K8s structural topology from discovery profile (`exposes`, `routes_to`, `uses`, `mounts` edges) seeded once at startup and refreshed on `OKSG_DISCOVERY_REFRESH_INTERVAL`
 - OTLP trace-based topology extraction (`calls` edges from `peer.service` span attributes)
 - `/debug/graph` endpoint plus `/debug/metrics` for in-memory metric inspection; use `/api/v1/metrics` when external VictoriaMetrics storage is enabled
 - durable persistence with PostgreSQL (graph, entities, metadata, raw envelopes) and VictoriaMetrics (metrics) behind generic store interfaces
 - storage factory with swappable `memory` and `external` backends
 - traffic generation tasks for exercising the demo app and observing graph construction
-- REST API with enriched graph nodes, entity management, metric series, and system status
+- REST API with enriched graph nodes, entity management, metric series, metric catalog, and system status
+- query-time derivations: rate windows for counter-derived metrics, ratio for `servicegraph.request.error.ratio`, sum/count averaging for histograms
 - cursor-based pagination on all list endpoints
-- configurable staleness threshold for system health status
+- React frontend (Vite + TypeScript) with Cluster Overview, Topology Graph, and Metrics Explorer views
+- topology projection modes (Ownership, Infrastructure, Traffic) with three granularity levels and dagre per-mode layout strategies
+- configurable staleness threshold for system health status, with health summary derived from node readiness samples and topology pod state
 
 ## Project Status
 
@@ -290,6 +295,9 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 - [Architecture](docs/architecture.md) — System layers, components, and design principles
 - [Discovery Flow](docs/discovery-flow.md) — Sequence diagrams and pipeline details
 - [Runtime Flow](docs/runtime-flow.md) — Post-deploy telemetry flow through agent, gateway, and backend ingest
+- [Metrics Pipeline](docs/metrics-pipeline.md) — Catalog, dialects, source registry, and source arbitration
+- [API Reference](docs/api-reference.md) — REST API routes, query params, and response shapes
+- [Frontend Design Spec](docs/frontend-design-spec.md) — Frontend stack, views, design system, projection modes
 - [Testing](docs/testing.md) — Unit tests and e2e testing with kind
 - [Development](docs/development.md) — Project structure and contribution guide
 
@@ -297,45 +305,71 @@ Detailed documentation is available in the [`docs/`](docs/) folder:
 
 ```text
 cmd/
-  backend/         Backend OTLP ingest runtime entrypoint
-  controller/      Future controller/operator entrypoint
+  backend/         Backend OTLP ingest, normalization, REST API runtime
+  controller/      Future controller/operator entrypoint (placeholder)
   discovery-job/   Discovery, planning, and deploy entrypoint
   schema-gen/      JSON Schema generation helper
 
 pkg/
   adapters/        Technology-specific integration boundaries
-    kubernetes/    Kubernetes discovery adapter
-    otel/          OTel source planner
+    api/           REST API server (handlers, response envelope, pagination)
+    autoinstrumentation/ Reserved for OTel operator / auto-instrumentation
+    istio/         Reserved for Istio-specific source adapters
+    kubernetes/    Kubernetes discovery adapter (Prometheus + OTLP + Istio detection)
+    obi/           Reserved for eBPF / OBI telemetry ingestion
+    otel/          OTel source planner and Helm values builder
     otlp/          OTLP gRPC/HTTP server adapter
+    prometheus/    Reserved for Prometheus / OpenMetrics source adapters
     storage/       Storage factory and config (memory or external)
     storage/postgresql/      PostgreSQL stores (pgx/v5)
     storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
   backend/         Ingest, query, and persistence contracts
-    ingest/        Envelope building, routing, normalization, topology
+    ingest/        Envelope building, routing, normalization, topology builders
+                   (entity_resolver, normalizer, metric/trace/mesh/structural
+                    topology builders, composite + multi ingestor)
     persistence/   Store interfaces and in-memory implementations
     query/         Graph and metrics query contracts
   collector/       Collection-plane contracts and config generation
-  core/            Canonical entities, metrics, topology, schema, and registry
-  discovery/       Detection and cluster profile contracts
+  core/            Canonical entities, metrics, topology, schema, semconv keys
+    entities/      Canonical entity kinds and IDs
+    metrics/       Catalog, dialect, source registry, resolver, OTLP mappings
+    schema/        Raw envelopes, validation, schema versions
+    semconv/       OTLP semantic-convention attribute keys
+    topology/      Graph, node, edge, snapshot types
+  discovery/       Cluster profile and detector contracts
+    detectors/     Source-detector interface
+    profile/       ClusterProfile and ObservabilitySource types
   modeling/        Deferred prediction and simulation contracts
 
+web/                 React frontend (Vite + TypeScript)
+  src/api/           Native fetch wrapper and per-domain API modules
+  src/hooks/         TanStack Query polling hooks
+  src/stores/        Zustand cross-view state
+  src/views/
+    ClusterOverview/ KPIs, entity breakdown, relation types, runtime health
+    TopologyGraph/   React Flow canvas, dagre layout strategies, projection modes
+    MetricsExplorer/ Category tabs, metric cards, raw samples table
+  Dockerfile.dev     Development container (Vite HMR)
+  Dockerfile         Production multi-stage (Vite build → nginx)
+
 deploy/
-  helm/            Helm chart and release packaging
-  manifests/       Raw manifest placeholder
-  examples/        Example deployment placeholder
+  helm/oksg-otel/  Helm chart for agent, gateway, backend, frontend, optional storage subcharts
 
 docs/
-  architecture.md  System architecture overview
-  discovery-flow.md Pipeline sequence diagrams
-  runtime-flow.md  Post-deploy runtime telemetry flow
-  testing.md       Testing guide
-  development.md   Development guide
+  architecture.md       System architecture overview
+  discovery-flow.md     Discovery pipeline sequence diagrams
+  runtime-flow.md       Post-deploy runtime telemetry flow
+  metrics-pipeline.md   Catalog, dialects, source registry, resolver
+  api-reference.md      REST API reference
+  frontend-design-spec.md Frontend design and implementation
+  testing.md            Testing guide
+  development.md        Development guide
 
 test/
   e2e/
     kind/          kind cluster setup and teardown scripts
-    apps/          example microservices and deploy helper
-    scenarios/     Prometheus and fallback validation flows
+    apps/          example microservices: base, with-prometheus, with-istio
+    scenarios/     prometheus-available, istio-available, no-telemetry validation flows
 ```
 
 ## License

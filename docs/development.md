@@ -37,33 +37,44 @@ cmd/
   schema-gen/      schema helper
 
 pkg/
-  adapters/kubernetes/   discovery adapter (Prometheus + OTLP workload detection)
-  adapters/otel/         source planner (hostmetrics, k8s_cluster, Istio mesh scrape, spanmetrics, servicegraph)
-  adapters/api/          REST API server (Layer 6 Phase A query and control endpoints)
+  adapters/api/          REST API server (handlers + response envelope + pagination)
+  adapters/autoinstrumentation/ reserved boundary for OTel operator integration (doc.go only)
+  adapters/istio/        reserved boundary for Istio-specific source adapters (doc.go only)
+  adapters/kubernetes/   discovery adapter (Prometheus + OTLP + Istio mesh detection)
+  adapters/obi/          reserved boundary for eBPF / OBI ingestion (doc.go only)
+  adapters/otel/         source planner; Helm values builder; transform/oksg-source processor
   adapters/otlp/         OTLP gRPC and HTTP server adapter
-  backend/ingest/        raw-envelope conversion, signal routing, entity resolution,
-                         OTLP normalization, topology building, and multi-ingestor fan-out
-                         (entity_resolver.go, normalizer.go, topology_builder.go,
-                          metric_topology_builder.go, normalizing_ingestor.go,
-                          plus existing otlp.go, ingest.go, semantic.go)
-  backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
-                         RawStore, EntityRegistry) and in-memory implementations
-  backend/query/         graph and metrics query contracts
+  adapters/prometheus/   reserved boundary for Prometheus / OpenMetrics adapters (doc.go only)
   adapters/storage/      storage factory and config (memory or external backends)
   adapters/storage/postgresql/     PostgreSQL implementations (pgx/v5)
   adapters/storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
+  backend/ingest/        envelope build, signal routing, entity resolution,
+                         OTLP normalization, structural / mesh / trace topology
+                         builders, composite + multi ingestor, metadata helpers
+                         (entity_resolver.go, normalizer.go, topology_builder.go,
+                          metric_topology_builder.go, mesh_metric_topology_builder.go,
+                          composite_topology_builder.go, structural_topology_builder.go,
+                          structural_topology_ingestor.go, normalizing_ingestor.go,
+                          buffered_topology_ingestor.go, multi_ingestor_test.go,
+                          plus otlp.go, ingest.go, semantic.go, metadata.go)
+  backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
+                         RawStore, EntityRegistry) and in-memory implementations
+  backend/query/         graph and metrics query contracts
   collector/configgen/   Helm values builder
   collector/deployer/    Helm runner
+  core/entities/         canonical graph-facing entities and stable IDs
+  core/featurestore/     reserved for future model-ready features
   core/logging/          shared JSON stdout logger
-  discovery/profile/     ClusterProfile types
-
-  core/
-    entities/        canonical graph-facing entities and stable IDs
-    metrics/         canonical metric definitions, units, and samples
-    topology/        graph nodes, edges, relations, and snapshots
-    registry/        canonical metric registry contracts
-    featurestore/    reserved for future model-ready features
-    schema/          raw telemetry envelopes, validation, schema versions
+  core/metrics/          canonical catalog, dialect maps, source registry,
+                         resolver, OTLP semconv mappings, units
+                         (catalog.go, sources.go, dialect.go, resolver.go,
+                          otel_mappings.go, canonical.go, sample.go, unit.go)
+  core/registry/         canonical metric registry contracts
+  core/schema/           raw telemetry envelopes, validation, schema versions
+  core/semconv/          OTLP semantic-convention attribute key constants
+  core/topology/         graph nodes, edges, relations, and snapshots
+  discovery/detectors/   Detector interface (Name, Detect → ObservabilitySource)
+  discovery/profile/     ClusterProfile, ObservabilitySource, Mesh types
 
   modeling/
     scenarios/       reserved scenario definitions
@@ -72,18 +83,28 @@ pkg/
 
 web/
   src/
-    api/             thin native fetch wrapper + domain API modules
-    hooks/           TanStack Query hooks with polling intervals
+    api/             thin native fetch wrapper + per-domain API modules
+    hooks/           TanStack Query polling hooks (graph, status, metrics, edge metrics, node metrics)
     stores/          Zustand cross-view state (selectedEntityId, connectionStatus)
     types/           TypeScript types matching backend API contracts
     views/
-      ClusterOverview/  KPIs, entity breakdown, relation types
-      TopologyGraph/    React Flow canvas, Dagre/custom layout strategies, custom nodes/edges
-      MetricsExplorer/  category tabs, segmented bar charts, raw samples
+      ClusterOverview/  KPI row, entity breakdown, relation types, runtime health summary, discovery sources
+      TopologyGraph/    React Flow canvas + Ownership / Infrastructure / Traffic projections
+        layouts/         dagre layout strategies (ownership, infrastructure, traffic) plus shared
+                         dagreLayout.ts and sccCondensation.ts helpers
+        nodes/           EntityNode, NamespaceNode, NodeMetric (live metric chip)
+        edges/           RelationEdge (cable-bundle SVG edge with traffic-aware width)
+        FilterToolbar.tsx, LegendPanel.tsx, NodeInspector.tsx, EdgeMetricButton.tsx
+        projection.ts    LAYER_SPECS + project() — per-mode kinds/relations + edge filtering
+        useGraphLayout.ts synchronous layout dispatcher keyed by ProjectionMode
+        useProjectionState.ts URL-search-param-backed mode/granularity/orphans state
+        modes.ts         ProjectionMode and Granularity catalog used by the toolbar
+        namespaceColor.ts deterministic namespace color palette
+      MetricsExplorer/  category tabs, entity/edge selector, MetricCard charts, raw samples table
     components/
       Shell/          floating TopBar, Sidebar, StatusBar
-      shared/         DataChip, SegmentedBar
-    styles/           CSS custom properties theme system
+      shared/         DataChip, SegmentedBar, KpiCard
+    styles/           CSS custom properties theme system (dark theme)
   Dockerfile.dev     development container (Vite HMR)
   Dockerfile         production multi-stage (Vite build → nginx)
   nginx.conf         SPA fallback + /api/* proxy

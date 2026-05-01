@@ -113,7 +113,24 @@ The source planner turns the profile into collector intent:
 Baseline vs enriched plans:
 
 - a **baseline** plan (no Prometheus targets, no OTLP sources) enables only `kubeletstats`, `hostmetrics`, and `k8scluster`
-- an **enriched** plan adds `prometheus`, `otlp`, `spanmetrics`, and/or `servicegraph` based on what was discovered
+- an **enriched** plan adds `prometheus`, `otlp`, `spanmetrics`, `servicegraph`, and/or the `mesh-istio` scrape job based on what was discovered
+
+Source detection contract: the `Detector` interface in
+`pkg/discovery/detectors` describes a `Name()` plus a `Detect(ctx)
+ObservabilitySource` method, kept as a forward-compatible boundary for
+adapter packages under `pkg/adapters/{istio,prometheus,obi,
+autoinstrumentation}`. Today the Kubernetes adapter performs all in-tree
+detection inline; the detector interface is the contract those adapter
+packages will implement when they ship.
+
+Source arbitration: at backend startup, `cmd/backend/main.go` calls
+`metrics.Resolve(catalog, registry, profile)` to compute one winning
+producer per canonical metric (see [metrics-pipeline.md](metrics-pipeline.md)).
+The same call seeds:
+
+- the planner's "deploy this receiver/connector?" decisions through
+  `SelectedSources`
+- the normalizer's source-mismatch drop filter through `Assignment`
 
 ### 3. Release Values Generation
 

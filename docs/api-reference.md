@@ -176,7 +176,7 @@ Response:
 }
 ```
 
-Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. `status` is `"unknown"` (health derivation planned).
+Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` defaults to `"unknown"`; aggregate runtime health is exposed through `/api/v1/status.health_summary` (see above), which combines node readiness samples with the latest topology pod state.
 
 ### GET /api/v1/graph/nodes/{id}
 

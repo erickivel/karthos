@@ -24,6 +24,8 @@ All implementation details live in `docs/`. Use and update these files when impl
 | [docs/testing.md](docs/testing.md) | Unit tests, e2e model, scenarios, traffic generation | Changing test infrastructure, task names, or Helm install flow |
 | [docs/api-reference.md](docs/api-reference.md) | REST API routes, query params, request/response examples | Adding, removing, or changing API endpoints |
 | [docs/development.md](docs/development.md) | Project structure, tech stack, common commands, Helm ownership | Adding packages, changing structure, or modifying workflows |
+| [docs/metrics-pipeline.md](docs/metrics-pipeline.md) | Catalog, dialect, source registry, resolver, source arbitration end-to-end | Changing canonical metrics, dialects, sources, or arbitration rules |
+| [docs/frontend-design-spec.md](docs/frontend-design-spec.md) | Frontend tech stack, views, design system, projection modes, layout strategies | Changing frontend views, projection logic, layout strategies, or theme tokens |
 
 ## After-Change Checklist
 
@@ -56,6 +58,8 @@ When upgrading Go (e.g., to fix `govulncheck` findings), update **all** of these
 | `test/e2e/apps/base/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
 | `test/e2e/apps/with-prometheus/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
 | `test/e2e/apps/with-prometheus/gateway-go/go.mod` | `go X.Y.Z` directive |
+| `test/e2e/apps/with-istio/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
+| `test/e2e/apps/with-istio/gateway-go/go.mod` | `go X.Y.Z` directive |
 
 After updating, run `go mod tidy`, reinstall tools (`go install ...`), `asdf reshim golang`, then `task ci` and `task security`.
 
