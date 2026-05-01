@@ -1,6 +1,5 @@
 # Development Guide
 
-This guide focuses on the current implementation shape rather than future-only layouts.
 
 ## Prerequisites
 

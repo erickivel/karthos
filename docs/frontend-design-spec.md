@@ -1,23 +1,8 @@
 # Frontend Design Specification — OKSG Visualizer
 
-**Layer:** 6B — Control, Query, and Visualization (UI)
-**Status:** Implemented. This document mixes design-system intent with the
-shape of the current `web/` codebase. Sections 1–4 describe the unchanged
-design intent. Sections 5 (views), 6 (data layer), 7 (deployment), and 8
-(project structure) describe what is actually shipped today; deviations from
-the original mockups (e.g. cable-bundle edge styling, Recharts) are called
-out inline.
-
----
-
-## 1. Purpose
-
-The OKSG frontend is a read-only observability dashboard that renders the topology graph and metrics produced by the OKSG backend. It serves two audiences:
-
-- **Primary — Operators/SREs:** Monitor a live Kubernetes cluster, spot issues quickly, navigate the graph to understand dependencies and locate root causes.
-- **Secondary — TCC/academic reviewers:** Evaluate the architecture by seeing the system graph and metrics foundation in action as proof the observability-to-graph pipeline works end to end.
-
-The frontend is purely observational. No cluster mutations, no control-plane operations.
+The OKSG frontend is a read-only observability dashboard that renders the
+topology graph and metrics produced by the OKSG backend. No cluster
+mutations, no control-plane operations.
 
 ---
 
@@ -435,40 +420,38 @@ No additional UI frameworks or CSS frameworks.
 
 ---
 
-## 10. Implementation Notes vs Original Design
+## 10. Working Rules
 
-The shipped frontend follows Sections 1–9 closely; differences worth flagging:
+Constraints that have caused regressions if ignored:
 
-- **Layout engine:** topology layouts use `@dagrejs/dagre` per mode under
-  `web/src/views/TopologyGraph/layouts/`. An ELK.js swap was prototyped on
-  the development branch and rolled back in favor of dagre — keep this in
-  mind when reading older commit messages or design specs that reference
-  ELK.
-- **Layout strategies are synchronous.** `useGraphLayout` is a thin
-  `useMemo` dispatcher keyed by `ProjectionMode`. Do not convert it to
-  `useEffect` + `setState`; React Query metric maps can change identity and
-  create route churn through async layout. The `LayoutStrategy` interface
-  in `layouts/types.ts` is the contract every strategy implements.
-- **Catalog scopes are authoritative.** Metrics Explorer renders entity-mode
-  cards only when the catalog entry's `scopes` includes `entity`, and edge-
-  mode cards only when it includes `edge`. Pod-network metrics that have no
-  ingest path are deliberately not in the catalog and therefore not shown.
+- **Layout strategies are synchronous.** `useGraphLayout` is a `useMemo`
+  dispatcher keyed by `ProjectionMode`; do not convert it to `useEffect` +
+  `setState`. The `LayoutStrategy` interface in `layouts/types.ts` is the
+  contract every strategy implements.
+- **Layout engine is dagre.** Topology layouts live under
+  `web/src/views/TopologyGraph/layouts/` and use `@dagrejs/dagre` per mode.
+- **Catalog scopes are authoritative.** Metrics Explorer renders entity
+  cards only when the catalog entry's `scopes` includes `entity`, and edge
+  cards only when it includes `edge`.
 - **Health summary.** Cluster Overview's runtime health row reads
-  `/api/v1/status.health_summary`. Node health uses
-  `k8s.node.condition.ready`; pod health is derived from the latest topology
-  snapshot's pod labels (`phase`, `status`, `k8s.pod.phase`) with an
-  explicit `unknown` bucket for missing or unrecognized state — the UI does
-  not infer phase from absence of telemetry.
-- **Node Inspector.** The previously fabricated CPU/RAM bars and the
-  fake-data sparkline were removed; the inspector renders only the live
-  metric summary attached to graph nodes (CPU, memory, phase, etc.) plus
-  inbound/outbound relations and the "View Full Metrics →" link.
-- **Charts.** Recharts is still on the dependency list and used for
-  Metrics Explorer chart cards; the segmented-bar style described in
-  Section 5.3 is approximated with Recharts bar charts and tonal opacity
-  rather than a custom segment renderer.
-- **Status bar.** `BACKEND_OK` / `BACKEND_OFFLINE` / `DISCONNECTED`
-  states are derived from the `/api/v1/status` poll plus a fetch-failure
-  fallback. Operators and screenshot QA must verify `BACKEND_OK` before
-  judging topology output — offline screenshots are not valid layout
-  evidence.
+  `/api/v1/status.health_summary`: node health from
+  `k8s.node.condition.ready`, pod health from the latest topology snapshot's
+  pod labels (`phase`, `status`, `k8s.pod.phase`) with an explicit `unknown`
+  bucket. The UI does not infer phase from absence of telemetry.
+- **Node Inspector** renders only live metric labels attached to graph
+  nodes (CPU, memory, phase, etc.) plus inbound/outbound relations and the
+  "View Full Metrics →" link. No fabricated bars or sparklines.
+- **Status bar.** `BACKEND_OK` / `BACKEND_OFFLINE` / `DISCONNECTED` are
+  derived from the `/api/v1/status` poll and fetch-failure fallback.
+  Topology screenshots are only valid evidence when the footer reads
+  `BACKEND_OK`.
+- **Topology projection layer relations** (`projection.ts → LAYER_SPECS`):
+  - Ownership relations must include `contains`, `mounts`, `uses`,
+    `exposes`, and `routes_to`. Removing any one of them filters Ingress
+    or call-only services out of `computeParticipants` and they vanish.
+  - Do **NOT** add `calls` to ownership; `calls` belongs to Traffic only.
+  - Traffic relations: `calls`, `routes_to`, `exposes`. Infrastructure:
+    `runs_on`, `mounts`. Don't blend them.
+  - The edge filter in `project()` MUST check
+    `spec.relations.has(e.relation)` in addition to endpoint visibility,
+    or stale relations leak into the wrong layer.

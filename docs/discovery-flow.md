@@ -1,6 +1,10 @@
 # Discovery Flow
 
-This document describes the currently implemented discovery-driven collector flow.
+The discover → plan → deploy pipeline that turns a Kubernetes cluster into
+a typed Helm release for the OTel collection plane. For runtime telemetry
+after deployment, see [runtime-flow.md](runtime-flow.md). For the metrics
+catalog and source arbitration that the planner and ingester both consume,
+see [metrics-pipeline.md](metrics-pipeline.md).
 
 ## Sequence Diagram
 
@@ -147,7 +151,7 @@ Those values contain:
 
 ### 4. Helm Deployment
 
-The deployer now performs:
+The deployer performs:
 
 1. `helm lint`
 2. optional `helm template`

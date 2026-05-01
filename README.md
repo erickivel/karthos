@@ -1,156 +1,46 @@
 # OKSG — Observability-Driven Kubernetes System Graph
 
-OKSG is a Kubernetes-native observability-to-graph platform that reconstructs a live, explorable system graph from cluster discovery data and OpenTelemetry-centered telemetry collection.
+OKSG turns OpenTelemetry-driven cluster discovery and runtime telemetry into a
+live, queryable system graph: services, workloads, pods, nodes, and the
+relations between them, with metrics attached to nodes and edges.
 
 ## What It Does
 
-The project is designed to:
+- discovers Kubernetes resources, Prometheus targets, OTLP-capable workloads, and Istio sidecar mesh
+- plans an OTel collection pipeline (agent + gateway + backend) and renders Helm values
+- ingests OTLP metrics and traces, normalizes producer-specific names to a semconv-first canonical catalog, and arbitrates one winning producer per metric to prevent double-counting
+- reconstructs a topology graph from kubeletstats resource attributes (`runs_on`, `contains`), the discovery profile (`exposes`, `routes_to`, `uses`, `mounts`), trace `peer.service` attributes (`calls`), and Istio mesh metrics (`calls` with mesh provenance)
+- persists graph, entities, metadata, and metrics behind swappable in-memory or external (PostgreSQL + VictoriaMetrics) backends
+- exposes a versioned REST API and a React frontend with three views (Cluster Overview, Topology Graph, Metrics Explorer)
 
-- discover services, workloads, pods, nodes, and related cluster resources
-- plan and assemble OpenTelemetry Collector configurations from discovered telemetry capabilities
-- ingest runtime metrics and interaction signals
-- normalize heterogeneous observability data into stable internal contracts
-- reconstruct a time-aware topology graph with metrics attached to nodes and edges
-- preserve a modular boundary for later prediction, simulation, and reporting features
+## Components
 
-Phase 1 established the contracts and schemas. Phase 2 added discovery-driven collection planning, Phase 3 implements the end-to-end OpenTelemetry collection plane with a real backend OTLP ingest runtime, Phase 4 adds topology reconstruction from runtime telemetry with debug endpoints for graph and metrics inspection, Phase 5 adds durable persistence with PostgreSQL and VictoriaMetrics behind swappable storage interfaces, and Phase 6 exposes a REST API layer with enriched graph queries, entity management, metric series, and system status endpoints.
-
-## Architecture Overview
-
-The long-term architecture is organized into six layers:
-
-1. Cluster Integration Layer
-2. Collection Plane
-3. Semantic Processing Layer
-4. Persistence Layer
-5. Modeling and Prediction Layer
-6. Control and API Layer
-
-This repository currently implements Phases 1 through 6:
-
-- canonical entities, metrics, raw telemetry envelopes, and topology contracts
-- discovery profile contracts with Prometheus target detection, OTLP-capable workload detection, and Istio sidecar mesh detection
-- Kubernetes discovery and OTel collector planning entrypoints
-- Helm values generation and Helm-managed deployment for agent, gateway, backend, and frontend
-- OTLP gRPC/HTTP ingest in the backend with raw-envelope conversion and signal routing
-- semconv-first metric pipeline: catalog (`pkg/core/metrics`), per-source dialects, logical source registry, and a resolver that arbitrates one winning producer per canonical metric
-- agent and gateway pipelines tagged with `oksg_source` so the backend can drop double-counted samples when more than one producer is installed
-- Istio mesh telemetry: a dedicated `mesh-istio` Prometheus scrape job, label rewriting onto servicegraph edge attributes, and an `MeshMetricTopologyBuilder` that emits `calls` edges with `mesh.istio` provenance plus protocol/mTLS/principal labels
-- structural topology extraction from kubeletstats resource attributes (`runs_on`, `contains` edges)
-- K8s structural topology from discovery profile (`exposes`, `routes_to`, `uses`, `mounts` edges) seeded once at startup and refreshed on `OKSG_DISCOVERY_REFRESH_INTERVAL`
-- OTLP trace-based topology extraction (`calls` edges from `peer.service` span attributes)
-- `/debug/graph` endpoint plus `/debug/metrics` for in-memory metric inspection; use `/api/v1/metrics` when external VictoriaMetrics storage is enabled
-- durable persistence with PostgreSQL (graph, entities, metadata, raw envelopes) and VictoriaMetrics (metrics) behind generic store interfaces
-- storage factory with swappable `memory` and `external` backends
-- traffic generation tasks for exercising the demo app and observing graph construction
-- REST API with enriched graph nodes, entity management, metric series, metric catalog, and system status
-- query-time derivations: rate windows for counter-derived metrics, ratio for `servicegraph.request.error.ratio`, sum/count averaging for histograms
-- cursor-based pagination on all list endpoints
-- React frontend (Vite + TypeScript) with Cluster Overview, Topology Graph, and Metrics Explorer views
-- topology projection modes (Ownership, Infrastructure, Traffic) with three granularity levels and dagre per-mode layout strategies
-- configurable staleness threshold for system health status, with health summary derived from node readiness samples and topology pod state
-
-## Project Status
-
-Current phase: `Phase 6 — Query APIs and Visualization`
-
-<details>
-<summary>Phase 1 — Foundation and Contracts (Completed)</summary>
-
-- Canonical entities with deterministic IDs
-- Canonical metric catalog and registry contracts
-- Raw telemetry envelope schema and validation
-- Topology, graph, and snapshot contracts
-- Discovery profile, adapter, collector, query, and persistence interfaces
-- JSON Schema generation and CI pipeline
-
-</details>
-
-<details>
-<summary>Phase 2 — Discovery-Driven OTel Collection (Completed Slice)</summary>
-
-- kind-based test cluster setup with a local registry
-- Example microservice variants for `base` and `with-prometheus`
-- `k8s-discovery-adapter` for cluster structure and Prometheus endpoint detection
-- `otel-source-planner` for collector config generation
-- Typed Helm values generation for the collector release
-- Scenario coverage for Prometheus discovery and no-telemetry fallback
-
-</details>
-
-<details>
-<summary>Phase 3 — OpenTelemetry Collection Plane Implementation (Completed)</summary>
-
-- Helm-managed deployment of agent, gateway, and backend
-- Backend OTLP ingest over gRPC and HTTP
-- Raw-envelope conversion and signal routing in `pkg/backend/ingest`
-- End-to-end telemetry verification through structured backend logs
-- Runtime flow documentation for the deployed collection plane
-
-</details>
-
-<details>
-<summary>Phase 4 — Topology Reconstruction (Completed)</summary>
-
-- Semantic normalization with `OTLPEntityResolver` and `MetricNormalizer`
-- `MetricTopologyBuilder` derives `runs_on` and `contains` edges from kubeletstats resource attributes
-- `TraceTopologyBuilder` derives `calls` edges from OTLP trace spans with `peer.service`
-- `MultiIngestor` fans envelopes through normalization and topology extraction in parallel
-- `InMemoryGraphStore` accumulates nodes and edges across telemetry batches
-- `/debug/graph` and `/debug/metrics` HTTP endpoints for runtime inspection (`/debug/metrics` is in-memory-store oriented)
-- OTLP trace instrumentation in `gateway-go` demo app
-- Traffic generation and debug tasks (`task test:e2e:traffic`, `task test:e2e:debug:graph`)
-
-</details>
-
-<details>
-<summary>Phase 5 — Persistence (Completed)</summary>
-
-- Generic store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) in `pkg/backend/persistence/`
-- In-memory implementations for all interfaces (tests and default mode)
-- Storage factory with `memory` (default) and `external` backends
-- PostgreSQL adapter for graph topology, entity registry, metadata, and raw envelopes via `pgx/v5`
-- VictoriaMetrics adapter for time-series metrics via Prometheus HTTP API
-- Backend CLI flags: `--storage-backend`, `--postgres-dsn`, `--victoriametrics-url`, `--raw-store-enabled`
-- Helm chart storage configuration with DSN secret and VM URL
-
-</details>
-
-<details>
-<summary>Phase 6 — Query APIs and Visualization (Current)</summary>
-
-- REST API server with enriched graph, entity, metric, and status endpoints
-- Cursor-based pagination on all list endpoints (default page_size=100, max=1000)
-- Graph summary with kind_counts, relation_counts, available_filters, snapshot_age
-- Entity enrichment from registry with OTLP label resolution (name, namespace, cluster)
-- Node detail with enriched inbound/outbound edges and related entity summaries
-- `/metrics/series` endpoint grouping samples by metric name with catalog metadata
-- Normalized backend status (nominal/degraded/disconnected) with configurable staleness threshold
-- Backend CLI flags: `--api-listen-address`, `--status-stale-seconds`
-
-</details>
-
-Planned roadmap:
-
-1. Foundation and Contracts (done)
-2. Cluster Integration and Discovery (done)
-3. Collection Plane Implementation (done)
-4. Semantic Processing and Topology Reconstruction (done)
-5. Persistence (done)
-6. Query APIs and Visualization (current)
-7. Future evolution toward prediction and simulation
+| Path | Role |
+|------|------|
+| `cmd/discovery-job` | Discover, plan, and deploy CLI |
+| `cmd/backend` | OTLP ingest, normalization, topology builders, REST API, discovery-refresh loop |
+| `cmd/schema-gen` | JSON Schema generation helper |
+| `pkg/adapters/kubernetes` | Discovery adapter (Prometheus + OTLP + Istio detection) |
+| `pkg/adapters/otel` | Source planner and Helm values builder |
+| `pkg/adapters/otlp` | OTLP gRPC/HTTP server adapter |
+| `pkg/adapters/api` | REST API server, handlers, response envelope, pagination |
+| `pkg/adapters/storage` | Storage factory; `postgresql/` and `victoriametrics/` external backends |
+| `pkg/backend/ingest` | Envelope builder, signal router, normalizer, topology builders, ingestors |
+| `pkg/backend/persistence` | Store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) and in-memory implementations |
+| `pkg/core/metrics` | Canonical catalog, per-source dialects, logical source registry, resolver, OTLP mappings |
+| `pkg/core/semconv` | OTLP semantic-convention attribute key constants |
+| `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
+| `pkg/discovery/{profile,detectors}` | ClusterProfile and detector contracts |
+| `web/` | React frontend (Vite + TypeScript) |
+| `deploy/helm/oksg-otel` | Helm chart packaging agent, gateway, backend, frontend, and optional storage subcharts |
+| `test/e2e/{apps,scenarios,kind}` | Demo fixtures (`base`, `with-prometheus`, `with-istio`) and scenario scripts |
 
 ## Prerequisites
 
 - Go `1.26+`
 - [Task](https://taskfile.dev/)
-
-Optional tooling:
-
-- `golangci-lint`
-- `kind`
-- `kubectl`
-- `docker`
+- Docker, kind, kubectl, helm (for e2e)
+- `golangci-lint` (optional)
 
 ## Getting Started
 
@@ -171,207 +61,70 @@ task test:race     # run with race detector
 task test:coverage # generate coverage report
 ```
 
-### E2E Testing with kind
-
-E2E tests require Docker, kind, and kubectl. First, set up the test cluster:
+### E2E with kind
 
 ```bash
-task test:e2e:setup
+task test:e2e:setup                       # one control-plane + one worker node
+
+task test:e2e:scenario:prometheus         # Prometheus discovery + servicegraph traces
+task test:e2e:scenario:istio              # Istio sidecar mesh scrape
+task test:e2e:scenario:fallback           # bare services, kubeletstats only
 ```
 
-The default kind topology includes one control-plane node plus one worker
-node so the topology projection QA scenarios can assert real cross-node
-placement.
+Step-by-step (`deploy → discover → plan → apply-otel → verify`) is documented
+in [docs/testing.md](docs/testing.md).
 
-#### Option 1: Run Full Scenarios (Recommended)
-
-Run a complete scenario that deploys apps, discovers telemetry, generates OTel configs, and verifies:
+After deploying, generate traffic and inspect:
 
 ```bash
-# Prometheus discovery scenario (services with /metrics endpoints)
-task test:e2e:scenario:prometheus
-
-# Istio mesh telemetry scenario (sidecar mesh scrape)
-task test:e2e:scenario:istio
-
-# No-telemetry fallback scenario (bare services, kubeletstats only)
-task test:e2e:scenario:fallback
-```
-
-#### Option 2: Step-by-Step Execution
-
-For debugging or custom workflows, run each step individually:
-
-```bash
-# 1. Deploy test microservices (choose one variant)
-task test:e2e:deploy VARIANT=base            # bare services, no telemetry
-task test:e2e:deploy VARIANT=with-prometheus # services with /metrics endpoints
-task test:e2e:deploy VARIANT=with-istio      # services observed through Istio sidecars
-
-# 2. Run discovery against the cluster
-task test:e2e:discover
-
-# 3. Generate OTel Helm values from discovery
-task test:e2e:plan
-
-# 4. Apply the generated Helm release to the cluster
-task test:e2e:apply-otel
-
-# 5. Verify agent, gateway, and backend are running
-task test:e2e:verify
-```
-
-#### Traffic Generation and Debug
-
-After deploying, generate traffic and inspect the resulting topology graph:
-
-```bash
-# Send requests to gateway-go to generate observable traffic
 task test:e2e:traffic
-
-# Verify the backend REST API on its dedicated local port
-task test:e2e:debug:api
-
-# Inspect the topology graph built from runtime telemetry
-task test:e2e:debug:graph
-
-# Inspect metric samples stored in the backend
-task test:e2e:debug:metrics
+task test:e2e:debug:api       # backend REST API
+task test:e2e:debug:graph     # topology snapshot
+task test:e2e:debug:metrics   # in-memory metric samples
 ```
 
-Local port convention used by the e2e helpers:
+Local port convention:
 
-- `18080` -> `gateway-go` traffic generation
-- `18081` -> backend REST API
-- `13133` -> backend debug/health endpoints
+- `18080` → `gateway-go` traffic generation
+- `18081` → backend REST API
+- `13133` → backend debug/health
 
-#### Frontend Topology QA with Playwright
-
-Projection-mode coverage runs against the live frontend and a port-forwarded
-backend:
+### Frontend topology QA (Playwright)
 
 ```bash
-# install frontend deps and Playwright support in Docker
 task web:e2e:install
-
-# start the frontend
 task web:dev
-
-# expose the backend API
 kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
-
-# run the topology suite
 task web:e2e
-
-# refresh committed screenshots when intended UI changes land
-task web:e2e:update
+task web:e2e:update          # refresh committed screenshot baselines
 ```
 
-The Playwright runner expects the frontend at `http://localhost:5173` and uses
-the Vite proxy to reach the backend API at `http://localhost:18081`.
+The runner expects the frontend at `http://localhost:5173`; the Vite proxy
+forwards `/api/*` to `http://localhost:18081`.
 
-#### Cleanup
-
-```bash
-task test:e2e:reset       # remove OTel collectors and the applied discovery-profile ConfigMap
-task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
-task test:e2e:reset-all   # remove both OTel collectors and all demo fixtures
-task test:e2e:teardown    # destroy entire cluster and registry
-```
-
-#### Shell Scripts (Alternative)
-
-You can also run the validation scripts directly:
+### Cleanup
 
 ```bash
-./test/e2e/scenarios/prometheus-available/run.sh
-./test/e2e/scenarios/no-telemetry/run.sh
+task test:e2e:reset           # remove OTel collectors and discovery-profile ConfigMap
+task test:e2e:reset-apps      # remove demo fixtures
+task test:e2e:reset-all       # both
+task test:e2e:teardown        # destroy cluster and registry
 ```
 
 ## Documentation
 
-Detailed documentation is available in the [`docs/`](docs/) folder:
-
-- [Architecture](docs/architecture.md) — System layers, components, and design principles
-- [Discovery Flow](docs/discovery-flow.md) — Sequence diagrams and pipeline details
-- [Runtime Flow](docs/runtime-flow.md) — Post-deploy telemetry flow through agent, gateway, and backend ingest
-- [Metrics Pipeline](docs/metrics-pipeline.md) — Catalog, dialects, source registry, and source arbitration
-- [API Reference](docs/api-reference.md) — REST API routes, query params, and response shapes
-- [Frontend Design Spec](docs/frontend-design-spec.md) — Frontend stack, views, design system, projection modes
-- [Testing](docs/testing.md) — Unit tests and e2e testing with kind
-- [Development](docs/development.md) — Project structure and contribution guide
-
-## Repository Layout
-
-```text
-cmd/
-  backend/         Backend OTLP ingest, normalization, REST API runtime
-  controller/      Future controller/operator entrypoint (placeholder)
-  discovery-job/   Discovery, planning, and deploy entrypoint
-  schema-gen/      JSON Schema generation helper
-
-pkg/
-  adapters/        Technology-specific integration boundaries
-    api/           REST API server (handlers, response envelope, pagination)
-    autoinstrumentation/ Reserved for OTel operator / auto-instrumentation
-    istio/         Reserved for Istio-specific source adapters
-    kubernetes/    Kubernetes discovery adapter (Prometheus + OTLP + Istio detection)
-    obi/           Reserved for eBPF / OBI telemetry ingestion
-    otel/          OTel source planner and Helm values builder
-    otlp/          OTLP gRPC/HTTP server adapter
-    prometheus/    Reserved for Prometheus / OpenMetrics source adapters
-    storage/       Storage factory and config (memory or external)
-    storage/postgresql/      PostgreSQL stores (pgx/v5)
-    storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
-  backend/         Ingest, query, and persistence contracts
-    ingest/        Envelope building, routing, normalization, topology builders
-                   (entity_resolver, normalizer, metric/trace/mesh/structural
-                    topology builders, composite + multi ingestor)
-    persistence/   Store interfaces and in-memory implementations
-    query/         Graph and metrics query contracts
-  collector/       Collection-plane contracts and config generation
-  core/            Canonical entities, metrics, topology, schema, semconv keys
-    entities/      Canonical entity kinds and IDs
-    metrics/       Catalog, dialect, source registry, resolver, OTLP mappings
-    schema/        Raw envelopes, validation, schema versions
-    semconv/       OTLP semantic-convention attribute keys
-    topology/      Graph, node, edge, snapshot types
-  discovery/       Cluster profile and detector contracts
-    detectors/     Source-detector interface
-    profile/       ClusterProfile and ObservabilitySource types
-  modeling/        Deferred prediction and simulation contracts
-
-web/                 React frontend (Vite + TypeScript)
-  src/api/           Native fetch wrapper and per-domain API modules
-  src/hooks/         TanStack Query polling hooks
-  src/stores/        Zustand cross-view state
-  src/views/
-    ClusterOverview/ KPIs, entity breakdown, relation types, runtime health
-    TopologyGraph/   React Flow canvas, dagre layout strategies, projection modes
-    MetricsExplorer/ Category tabs, metric cards, raw samples table
-  Dockerfile.dev     Development container (Vite HMR)
-  Dockerfile         Production multi-stage (Vite build → nginx)
-
-deploy/
-  helm/oksg-otel/  Helm chart for agent, gateway, backend, frontend, optional storage subcharts
-
-docs/
-  architecture.md       System architecture overview
-  discovery-flow.md     Discovery pipeline sequence diagrams
-  runtime-flow.md       Post-deploy runtime telemetry flow
-  metrics-pipeline.md   Catalog, dialects, source registry, resolver
-  api-reference.md      REST API reference
-  frontend-design-spec.md Frontend design and implementation
-  testing.md            Testing guide
-  development.md        Development guide
-
-test/
-  e2e/
-    kind/          kind cluster setup and teardown scripts
-    apps/          example microservices: base, with-prometheus, with-istio
-    scenarios/     prometheus-available, istio-available, no-telemetry validation flows
-```
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/architecture.md) | Layers, components, deployment model, logging policy |
+| [Discovery Flow](docs/discovery-flow.md) | Discovery to release-values flow with sequence diagrams |
+| [Runtime Flow](docs/runtime-flow.md) | Post-deploy telemetry path through agent, gateway, backend |
+| [Metrics Pipeline](docs/metrics-pipeline.md) | Catalog, dialects, source registry, resolver |
+| [API Reference](docs/api-reference.md) | REST API routes, query params, response shapes |
+| [Frontend Design Spec](docs/frontend-design-spec.md) | Frontend stack, design system, projection modes |
+| [Testing](docs/testing.md) | Unit tests, e2e scenarios, traffic generation |
+| [Development](docs/development.md) | Project structure, common commands, frontend dev loop |
 
 ## License
 
-License is intentionally left undecided at this stage and should be finalized explicitly later.
+License is intentionally left undecided at this stage and should be finalized
+explicitly later.

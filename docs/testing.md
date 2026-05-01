@@ -27,14 +27,10 @@ Key coverage areas:
 
 ## E2E Model
 
-The current e2e architecture is intentionally still:
-
 - `kind` for the cluster
 - `test/e2e/apps` for demo workloads
 - `Taskfile.test.yml` for orchestration
 - `test/e2e/scenarios/*/run.sh` for scenario validation
-
-This slice does not replace the e2e architecture with KUTTL or Helm tests.
 
 ## Prerequisites
 
@@ -54,10 +50,10 @@ task test:e2e:apply-otel
 task test:e2e:verify
 ```
 
-`task test:e2e:setup` now provisions one control-plane node and one worker
+`task test:e2e:setup` provisions one control-plane node and one worker
 node so topology QA can validate cross-node placement in the live cluster.
 
-What each stage now does:
+What each stage does:
 
 - `test:e2e:discover`
   writes `bin/e2e/profile.json`
@@ -79,7 +75,7 @@ that would later appear as duplicate topology cards.
 
 `./test/e2e/scenarios/prometheus-available/run.sh`
 
-This scenario now includes traffic generation and servicegraph validation (previously a separate `servicegraph` scenario). The `e2e:scenario:prometheus` task runs the deploy pipeline and then sends gateway traffic automatically.
+This scenario covers Prometheus discovery, deploy, and traffic generation. The `e2e:scenario:prometheus` task runs the deploy pipeline and then sends gateway traffic automatically.
 
 Expected:
 

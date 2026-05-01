@@ -1,11 +1,10 @@
 # Runtime Flow
 
-This document describes the currently implemented runtime telemetry flow after the OpenTelemetry collection plane has already been deployed to the cluster.
-
-It complements [`discovery-flow.md`](./discovery-flow.md):
-
-- `discovery-flow.md` explains how OKSG discovers the cluster and deploys the collection plane
-- `runtime-flow.md` explains what happens after agent, gateway, and backend are running
+What happens after the OTel collection plane is deployed: agent collection,
+gateway forwarding, backend OTLP ingest, normalization, and topology
+accumulation. For the discover/plan/deploy upstream of this, see
+[`discovery-flow.md`](./discovery-flow.md). For the metrics catalog /
+dialect / source arbitration, see [`metrics-pipeline.md`](./metrics-pipeline.md).
 
 ## Sequence Diagram
 
@@ -238,7 +237,7 @@ What it does today:
 
 Operational notes:
 
-- the gateway is deployed as a single Deployment replica in the current slice
+- the gateway is deployed as a single Deployment replica
 - its job is collection and forwarding only; it does not perform semantic normalization or persistence
 
 ### 3. Backend OTLP Ingest
@@ -250,7 +249,7 @@ What it does today:
 - listens for OTLP gRPC on port `4317`
 - listens for OTLP HTTP on port `4318`
 - serves health checks on port `13133`
-- serves the REST API on port `8080` (Layer 6 Phase A query and control endpoints)
+- serves the REST API on port `8080`
 - accepts enabled signal classes from the deployed plan
 - parses incoming OTLP metrics and traces
 - hands accepted payloads to the normalization pipeline
@@ -316,7 +315,7 @@ After routing, envelopes are normalized into canonical domain objects.
 
 Metric path:
 
-- `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label use the PVC identity before the generic resource fallback. This means k8s_cluster receiver metrics for workload-scoped and namespace-scoped entities are now resolved (previously dropped as unresolvable). Entity resolution errors fail the envelope.
+- `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label use the PVC identity before the generic resource fallback. Entity resolution errors fail the envelope.
 - `OTLPNormalizer` first translates source dialects into semconv-style metric names, then maps each recognized OTLP metric name to a semconv-native `MetricSample` using the registered `OTLPSemconvMetrics`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. Servicegraph connector and Istio mesh metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Istio request-duration histograms are converted from milliseconds to nanoseconds, histograms are stored as `_sum`/`_count`, and `servicegraph.request.error.ratio` remains query-derived. Unrecognized metric names are silently skipped.
 - `MetricStore` stores the resulting samples in memory. Supports time-range, entity-filtered, and edge-filtered queries.
 - `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. `MeshMetricTopologyBuilder` parses servicegraph-shaped mesh metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response metadata. Mesh `calls` edges take `FirstSeen`/`LastSeen` from the metric datapoint timestamp, falling back to the envelope timestamp only when the datapoint has no timestamp.
@@ -333,65 +332,7 @@ When a discovery profile is loaded at backend startup, `cmd/backend/main.go` cal
 
 For each incoming datapoint, after dialect translation and directional name resolution, the normalizer compares the sample's `oksg_source` attribute (stamped by the agent/gateway `transform/oksg-source` processor, by application Prometheus scrape relabeling, or by Istio's Prometheus relabel rule) against `Assignment[canonical]`. If the canonical metric has an assigned source and the sample's source disagrees, the sample is dropped and the `dropped` counter — an `atomic.Uint64` to remain safe under the OTLP server's concurrent request handling — is incremented. Samples without an `oksg_source` attribute follow a legacy accept path so envelopes from external producers aren't silently dropped.
 
-The cumulative drop count is exposed via `OTLPNormalizer.DroppedSampleCount()`. The architectural rationale is documented in `docs/architecture.md` under *Layer 3c: Source Arbitration*.
-
-## Current Observable Behavior
-
-The easiest way to verify the runtime flow today is with `kubectl logs`.
-
-Expected operator-visible behavior:
-
-- agent logs show receiver startup and scrape discovery
-- gateway logs show OTLP receiver startup and successful forwarding behavior
-- backend logs show startup confirmation of the normalization pipeline configuration
-- metric envelopes are normalized to canonical `MetricSample` values and written to the in-memory store
-- trace envelopes are processed by `TraceTopologyBuilder`; detected service edges are written to the in-memory graph store
-
-Example backend startup log:
-
-```json
-{
-  "component": "backend",
-  "level": "info",
-  "msg": "normalization pipeline configured",
-  "cluster_name": "kind-test"
-}
-```
-
-## Implemented Vs Deferred
-
-Implemented in the current slice:
-
-- agent collection from `kubeletstats`, `hostmetrics`, and `k8scluster`
-- conditional Prometheus scraping
-- conditional OTLP receive paths
-- `spanmetrics` and `servicegraph` connectors when OTLP traces are present
-- gateway OTLP fan-in and export
-- backend OTLP ingest over gRPC and HTTP
-- raw envelope construction
-- signal-type routing
-- `OTLPEntityResolver`: deterministic entity ID computation from OTLP resource attributes
-- `OTLPNormalizer`: canonical metric mapping with unit conversion
-- `TraceTopologyBuilder`: service-to-service edge extraction from trace spans
-- `NormalizingIngestor` and `TopologyIngestor`: full normalization pipeline
-- `MultiIngestor`: fan-out for metric signal path (normalization + structural topology extraction)
-- `MetricTopologyBuilder`: structural edges (`runs_on`, `contains`) and nodes from metric resource attributes
-- `K8sStructuralTopologyBuilder`: structural edges (`exposes`, `routes_to`, `uses`, `mounts`) from discovery profile
-- `StructuralTopologyIngestor`: ingests K8s structural topology from ClusterProfile into GraphStore at startup
-- `MetricStore` and `GraphStore`: thread-safe in-memory persistence with node accumulation
-- Storage factory (`storage.NewStores`): wires memory or external (PG+VM) backends from config
-- PostgreSQL adapter: `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry` via `pgx/v5`
-- VictoriaMetrics adapter: `MetricStore` via Prometheus text import and PromQL query
-- REST API server (Layer 6 Phase A): versioned query endpoints for graph, metrics, entities, metric catalog, and system status on dedicated port 8080
-- Layer 6 Phase B: React frontend (`web/`) with Cluster Overview, Topology Graph (Ownership / Infrastructure / Traffic projection modes with three granularity levels and dagre per-mode layouts), and Metrics Explorer; deployed alongside the backend through the same Helm chart with nginx terminating `/api/*` proxy
-- Source arbitration: `metrics.Resolve` at startup picks one winning producer per canonical metric and feeds both the planner (which receivers/connectors to install) and the normalizer (which samples to drop on `oksg.source` mismatch). See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
-- Mesh `calls` edges: `MeshMetricTopologyBuilder` reads servicegraph-shaped Istio metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response-flag metadata
-- Periodic discovery refresh (`runDiscoveryRefreshLoop` in `cmd/backend/main.go`) re-runs the structural topology ingester on `OKSG_DISCOVERY_REFRESH_INTERVAL` (default 10m) so workload / ingress / configmap / secret / pvc nodes survive `OKSG_NODE_TTL` aging
-
-Not implemented yet:
-
-- controller-driven runtime management
-- prediction, simulation, or model-ready feature generation
+The cumulative drop count is exposed via `OTLPNormalizer.DroppedSampleCount()`. See [metrics-pipeline.md](metrics-pipeline.md) for the catalog/registry/resolver contract.
 
 ## Runtime View
 

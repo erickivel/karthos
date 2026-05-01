@@ -367,7 +367,7 @@ List semconv-native metric definitions.
 
 Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both, and a `sources` array describing which logical sources can produce the metric and at what priority.
 
-The `sources` array drives runtime arbitration: at backend startup the resolver picks the highest-priority (smallest `priority` value) source whose detector returns true for the cluster's discovery profile. The planner only deploys receivers for selected sources; the ingester drops samples whose `oksg_source` attribute disagrees with the assigned source. See `docs/architecture.md` *Layer 3c: Source Arbitration* for the full pipeline.
+The `sources` array drives runtime arbitration: at backend startup the resolver picks the highest-priority (smallest `priority` value) source whose detector returns true for the cluster's discovery profile. The planner only deploys receivers for selected sources; the ingester drops samples whose `oksg_source` attribute disagrees with the assigned source. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
 
 `selection_policy` defaults to `"priority"` (omitted from the response when default). The values `"disjoint"` and `"all"` are reserved for future per-scope routing and multi-source aggregation; the resolver returns an error if it encounters them.
 
