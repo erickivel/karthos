@@ -123,7 +123,7 @@ func TestMetricStore_FilterByEdgeIDs(t *testing.T) {
 	now := time.Now()
 	require.NoError(t, store.Write(ctx, []metrics.MetricSample{
 		{
-			MetricName: "request_rate_per_second",
+			MetricName: "servicegraph.request.count",
 			EntityID:   svc("servicegraph"),
 			Value:      1.0,
 			Timestamp:  now,
@@ -133,7 +133,7 @@ func TestMetricStore_FilterByEdgeIDs(t *testing.T) {
 			},
 		},
 		{
-			MetricName: "request_rate_per_second",
+			MetricName: "servicegraph.request.count",
 			EntityID:   svc("servicegraph"),
 			Value:      2.0,
 			Timestamp:  now,
@@ -145,7 +145,7 @@ func TestMetricStore_FilterByEdgeIDs(t *testing.T) {
 	}))
 
 	got, err := store.Query(ctx, query.MetricQuery{
-		MetricName:   "request_rate_per_second",
+		MetricName:   "servicegraph.request.count",
 		EdgeSourceID: sourceA,
 		EdgeTargetID: targetB,
 	})

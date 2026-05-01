@@ -59,13 +59,13 @@ Response:
     "data_stale": false,
     "health_summary": {
       "nodes": {"healthy": 3, "unhealthy": 0},
-      "pods": {"pending": 0, "running": 12, "succeeded": 0, "failed": 0}
+      "pods": {"pending": 0, "running": 12, "succeeded": 0, "failed": 0, "unknown": 2}
     }
   }
 }
 ```
 
-`health_summary` is present when a MetricStore is configured and `node_condition_ready` / `pod_phase` metrics are available. It aggregates the latest samples per entity from the last 5 minutes. `pod_phase` follows the OTel `k8sclusterreceiver` encoding: `1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown`.
+`health_summary` is present when a MetricStore is configured. Node health uses the latest `k8s.node.condition.ready` samples from the last 5 minutes. Pod health is derived from current topology pod nodes and their `phase`, `status`, or `k8s.pod.phase` labels when available; pods with unknown or missing state are counted in the `unknown` bucket instead of being inferred from missing telemetry.
 
 Status values:
 
@@ -176,7 +176,7 @@ Response:
 }
 ```
 
-Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. `status` is `"unknown"` (health derivation planned).
+Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` defaults to `"unknown"`; aggregate runtime health is exposed through `/api/v1/status.health_summary` (see above), which combines node readiness samples with the latest topology pod state.
 
 ### GET /api/v1/graph/nodes/{id}
 
@@ -239,25 +239,26 @@ Response:
 
 Query metric samples with unit from catalog. Sorted by timestamp descending.
 
-Rate-like canonical metrics are served with query-time derivation:
+Semconv metric names are the API contract. Query-time derivations currently include:
 
-- `request_rate_per_second` -> `rate(...[1m])`
-- `error_rate_per_second` -> `rate(...[1m])`
-- `error_ratio` -> `rate(error_rate_per_second[1m]) / clamp_min(rate(request_rate_per_second[1m]), 1e-9)`
+- `http.server.request.count` / `rpc.server.request.count` / `servicegraph.request.count` -> `rate(...[1m])`
+- `servicegraph.request.error.count`, `servicegraph.grpc.request.message.count`, `servicegraph.grpc.response.message.count`, `servicegraph.tcp.connection.open.count`, and `servicegraph.tcp.connection.close.count` -> `rate(...[1m])`
+- `servicegraph.request.error.ratio` -> `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`
+- `http.server.request.duration` / `rpc.server.duration` / `servicegraph.request.duration` / `servicegraph.request.body.size` / `servicegraph.response.body.size` -> `rate(<metric>_sum[1m]) / clamp_min(rate(<metric>_count[1m]), 1)`
 
 | Param | Type | Description |
 |-------|------|-------------|
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
 | `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
 | `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
-| `metric_name` | string | **Required.** Canonical metric name |
+| `metric_name` | string | **Required.** Semconv metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
 | `page_size` | int | Items per page (default 100) |
 | `next_token` | string | Pagination cursor |
 
 ```bash
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=cpu_usage_millicores&page_size=5" | jq .data.samples[:3]
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=5" | jq .data.samples[:3]
 ```
 
 Response:
@@ -267,7 +268,7 @@ Response:
   "data": {
     "samples": [
       {
-        "metric_name": "request_rate_per_second",
+        "metric_name": "servicegraph.request.count",
         "entity_id": "...",
         "value": 7.5,
         "timestamp": "2026-03-30T10:00:00Z",
@@ -285,7 +286,7 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 
 ```json
 {
-  "metric_name": "edge_latency_nanoseconds",
+  "metric_name": "servicegraph.request.duration",
   "entity_id": "...",
   "value": 12000000,
   "timestamp": "2026-03-30T10:00:00Z",
@@ -303,7 +304,7 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 }
 ```
 
-Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint.
+Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
 
 Returns 400 if `from` or `to` is not valid RFC3339.
 
@@ -316,14 +317,14 @@ Metric samples grouped by metric name with catalog metadata (unit, category, des
 | `entity_id` | string (repeatable) | Filter by one or more entity IDs |
 | `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
 | `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
-| `metric_name` | string | **Required.** Canonical metric name |
+| `metric_name` | string | **Required.** Semconv metric name |
 | `from` | string (RFC3339) | Start of time range |
 | `to` | string (RFC3339) | End of time range |
 | `page_size` | int | Series per page (default 100) |
 | `next_token` | string | Pagination cursor |
 
 ```bash
-curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=cpu_usage_millicores" | jq .data.series[0]
+curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage" | jq .data.series[0]
 ```
 
 Response:
@@ -333,13 +334,13 @@ Response:
   "data": {
     "series": [
       {
-        "metric_name": "cpu_usage_millicores",
+        "metric_name": "k8s.pod.cpu.usage",
         "unit": "millicores",
         "category": "resource",
         "description": "CPU usage in millicores",
         "samples": [
           {
-            "metric_name": "cpu_usage_millicores",
+            "metric_name": "k8s.pod.cpu.usage",
             "entity_id": "...",
             "value": 250,
             "timestamp": "2026-03-30T10:00:00Z",
@@ -354,28 +355,36 @@ Response:
 }
 ```
 
-When edge filters are used, series are grouped by metric name and edge identity, so two different service-to-service links produce two separate series entries even if they share the same canonical metric name.
+When edge filters are used, series are grouped by metric name and edge identity, so two different service-to-service links produce two separate series entries even if they share the same semconv metric name.
 
 ### GET /api/v1/metrics/catalog
 
-List canonical metric definitions.
+List semconv-native metric definitions.
 
 | Param | Type | Description |
 |-------|------|-------------|
 | `category` | string | Filter by category (`resource`, `traffic`, `latency`, `error`, `capacity`, `health`) |
 
-Response entries include a `scopes` array describing whether each canonical metric supports entity queries, edge queries, or both.
+Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both, and a `sources` array describing which logical sources can produce the metric and at what priority.
+
+The `sources` array drives runtime arbitration: at backend startup the resolver picks the highest-priority (smallest `priority` value) source whose detector returns true for the cluster's discovery profile. The planner only deploys receivers for selected sources; the ingester drops samples whose `oksg_source` attribute disagrees with the assigned source. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
+
+`selection_policy` defaults to `"priority"` (omitted from the response when default). The values `"disjoint"` and `"all"` are reserved for future per-scope routing and multi-source aggregation; the resolver returns an error if it encounters them.
 
 Example:
 
 ```bash
-curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[] | {name, scopes}'
+curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[] | {name, scopes, sources}'
 ```
 
 ```json
 {
-  "name": "request_rate_per_second",
-  "scopes": ["entity", "edge"]
+  "name": "servicegraph.request.count",
+  "scopes": ["entity", "edge"],
+  "sources": [
+    {"id": "mesh.istio", "priority": 1},
+    {"id": "traces.servicegraph", "priority": 2}
+  ]
 }
 ```
 
@@ -390,7 +399,7 @@ Response:
 {
   "data": {
     "metrics": [
-      {"name": "cpu_usage_millicores", "unit": "millicores", "category": "resource", "description": "..."}
+      {"name": "k8s.pod.cpu.usage", "unit": "millicores", "category": "resource", "description": "..."}
     ],
     "total": 50
   }

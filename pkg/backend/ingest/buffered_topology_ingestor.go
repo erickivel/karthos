@@ -84,8 +84,8 @@ func (b *BufferedTopologyIngestor) Ingest(ctx context.Context, envelope schema.R
 				existing.LastSeen = e.LastSeen
 			}
 			existing.Confidence = e.Confidence
-			existing.Provenance = e.Provenance
-			existing.Metadata = e.Metadata
+			existing.Provenance = mergeStringSlices(existing.Provenance, e.Provenance)
+			existing.Metadata = mergeStringMaps(existing.Metadata, e.Metadata)
 			b.edges[e.ID] = existing
 		} else {
 			b.edges[e.ID] = e

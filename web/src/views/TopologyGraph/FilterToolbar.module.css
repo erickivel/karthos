@@ -26,6 +26,11 @@
   background: var(--surface-nav);
   border-radius: var(--radius-lg);
   margin-top: calc(40px + var(--space-sm));
+  transition: right var(--transition-normal);
+}
+
+.toolbarRight[data-inspector-open="true"] {
+  right: 420px;
 }
 
 .toolbarRight .group {
@@ -153,6 +158,25 @@
   color: var(--color-signal);
 }
 
+.toggleCheckbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-primary);
+  background: var(--surface-module);
+  border-radius: var(--radius);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggleCheckbox input {
+  accent-color: var(--color-signal);
+  cursor: pointer;
+}
+
 @media (max-width: 860px) {
   .toolbar {
     left: 50%;
@@ -169,4 +193,33 @@
     width: min(220px, calc(100% - (2 * var(--space-md))));
     margin-top: 0;
   }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-top: 1px solid var(--surface-nav);
+  font-size: 12px;
+}
+
+.legendTitle {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-primary);
+}
+
+.legendSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }

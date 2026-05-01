@@ -8,56 +8,52 @@ import (
 
 func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	required := map[string]struct{}{
-		"cpu_usage_millicores":            {},
-		"memory_usage_bytes":              {},
-		"disk_read_bytes":                 {},
-		"disk_write_bytes":                {},
-		"cpu_capacity_millicores":         {},
-		"cpu_cores":                       {},
-		"cpu_clock_hz":                    {},
-		"memory_capacity_bytes":           {},
-		"disk_capacity_bytes":             {},
-		"net_in_bandwidth_bps":            {},
-		"net_out_bandwidth_bps":           {},
-		"request_rate_per_second":         {},
-		"net_rx_bytes":                    {},
-		"net_tx_bytes":                    {},
-		"request_duration_nanoseconds":    {},
-		"edge_latency_nanoseconds":        {},
-		"error_rate_per_second":           {},
-		"error_ratio":                     {},
-		"cpu_request_millicores":          {},
-		"cpu_limit_millicores":            {},
-		"memory_request_bytes":            {},
-		"memory_limit_bytes":              {},
-		"replica_count":                   {},
-		"disk_read_bps":                   {},
-		"disk_write_bps":                  {},
-		"net_rx_bps":                      {},
-		"net_tx_bps":                      {},
-		"volume_available_bytes":          {},
-		"volume_capacity_bytes":           {},
-		"volume_inodes_free":              {},
-		"volume_inodes_used":              {},
-		"filesystem_usage_bytes":          {},
-		"filesystem_utilization":          {},
-		"cpu_load_average_1m":             {},
-		"cpu_load_average_5m":             {},
-		"cpu_load_average_15m":            {},
-		"paging_usage_bytes":              {},
-		"paging_operations_per_second":    {},
-		"pod_phase":                       {},
-		"namespace_phase":                 {},
-		"node_condition_ready":            {},
-		"node_condition_memory_pressure":  {},
-		"node_condition_disk_pressure":    {},
-		"node_allocatable_cpu_millicores": {},
-		"node_allocatable_memory_bytes":   {},
-		"deployment_available":            {},
-		"daemonset_desired_nodes":         {},
-		"daemonset_ready_nodes":           {},
-		"statefulset_desired_pods":        {},
-		"statefulset_ready_pods":          {},
+		"k8s.pod.cpu.usage":                        {},
+		"k8s.pod.memory.working_set":               {},
+		"system.disk.io.read":                      {},
+		"system.disk.io.write":                     {},
+		"servicegraph.request.count":               {},
+		"http.server.request.duration":             {},
+		"servicegraph.request.duration":            {},
+		"rpc.server.duration":                      {},
+		"rpc.server.request.count":                 {},
+		"servicegraph.request.error.count":         {},
+		"servicegraph.request.error.ratio":         {},
+		"servicegraph.request.body.size":           {},
+		"servicegraph.response.body.size":          {},
+		"servicegraph.grpc.request.message.count":  {},
+		"servicegraph.grpc.response.message.count": {},
+		"servicegraph.tcp.connection.open.count":   {},
+		"servicegraph.tcp.connection.close.count":  {},
+		"k8s.container.cpu.request":                {},
+		"k8s.container.cpu.limit":                  {},
+		"k8s.container.memory.request":             {},
+		"k8s.container.memory.limit":               {},
+		"k8s.replicaset.desired":                   {},
+		"system.network.io.receive":                {},
+		"system.network.io.transmit":               {},
+		"k8s.volume.available":                     {},
+		"k8s.volume.capacity":                      {},
+		"k8s.volume.inodes.free":                   {},
+		"k8s.volume.inodes.used":                   {},
+		"system.filesystem.usage":                  {},
+		"system.filesystem.utilization":            {},
+		"system.cpu.load_average.1m":               {},
+		"system.cpu.load_average.5m":               {},
+		"system.cpu.load_average.15m":              {},
+		"system.paging.usage":                      {},
+		"system.paging.operations":                 {},
+		"k8s.namespace.phase":                      {},
+		"k8s.node.condition.ready":                 {},
+		"k8s.node.condition.memory_pressure":       {},
+		"k8s.node.condition.disk_pressure":         {},
+		"k8s.node.allocatable_cpu":                 {},
+		"k8s.node.allocatable_memory":              {},
+		"k8s.deployment.available":                 {},
+		"k8s.daemonset.desired_scheduled_nodes":    {},
+		"k8s.daemonset.ready_nodes":                {},
+		"k8s.statefulset.desired_pods":             {},
+		"k8s.statefulset.ready_pods":               {},
 	}
 
 	for _, metric := range DefaultCatalog() {
@@ -67,6 +63,36 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	require.Empty(t, required)
 }
 
+func TestDefaultCatalogExcludesUnsupportedMetrics(t *testing.T) {
+	unsupported := map[string]struct{}{
+		"k8s.node.cpu.capacity":               {},
+		"k8s.node.cpu.cores":                  {},
+		"k8s.node.cpu.frequency":              {},
+		"k8s.node.memory.capacity":            {},
+		"k8s.node.disk.capacity":              {},
+		"k8s.node.network.bandwidth.receive":  {},
+		"k8s.node.network.bandwidth.transmit": {},
+		"k8s.pod.network.io.receive":          {},
+		"k8s.pod.network.io.transmit":         {},
+		"k8s.pod.phase":                       {},
+	}
+
+	for _, metric := range DefaultCatalog() {
+		_, exists := unsupported[metric.Name]
+		require.Falsef(t, exists, "unsupported metric should not be cataloged: %s", metric.Name)
+	}
+}
+
+func TestDefaultCatalogMetricsHaveIngestOrQuerySupport(t *testing.T) {
+	for _, metric := range DefaultCatalog() {
+		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
+			continue
+		}
+		_, mapped := OTLPSemconvMetrics[metric.Name]
+		require.Truef(t, mapped, "catalog metric %s has no OTLP mapping or query-derived exception", metric.Name)
+	}
+}
+
 func TestDefaultCatalogMetricNamesAreUnique(t *testing.T) {
 	seen := make(map[string]struct{})
 
@@ -74,5 +100,39 @@ func TestDefaultCatalogMetricNamesAreUnique(t *testing.T) {
 		_, exists := seen[metric.Name]
 		require.Falsef(t, exists, "duplicate metric in catalog: %s", metric.Name)
 		seen[metric.Name] = struct{}{}
+	}
+}
+
+func TestDefaultCatalogEntriesHaveDisplayNames(t *testing.T) {
+	for _, metric := range DefaultCatalog() {
+		require.NotEmptyf(t, metric.DisplayName, "metric %s is missing DisplayName", metric.Name)
+	}
+}
+
+// servicegraph.request.error.ratio is query-derived (see metric_store.buildPromQL)
+// and never arrives as an OTLP sample, so it intentionally has no source.
+var catalogSourcelessExceptions = map[string]struct{}{
+	"servicegraph.request.error.ratio": {},
+}
+
+func TestDefaultCatalogEntriesDeclareSources(t *testing.T) {
+	for _, metric := range DefaultCatalog() {
+		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
+			continue
+		}
+		require.NotEmptyf(t, metric.Sources, "metric %s declares no Sources", metric.Name)
+	}
+}
+
+func TestDefaultCatalogSourceRefsTargetKnownSources(t *testing.T) {
+	known := make(map[string]struct{}, len(DefaultLogicalSources()))
+	for _, source := range DefaultLogicalSources() {
+		known[source.ID] = struct{}{}
+	}
+	for _, metric := range DefaultCatalog() {
+		for _, ref := range metric.Sources {
+			_, ok := known[ref.ID]
+			require.Truef(t, ok, "metric %s references unknown source %s", metric.Name, ref.ID)
+		}
 	}
 }

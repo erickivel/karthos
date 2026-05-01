@@ -1,6 +1,10 @@
 # Discovery Flow
 
-This document describes the currently implemented discovery-driven collector flow.
+The discover → plan → deploy pipeline that turns a Kubernetes cluster into
+a typed Helm release for the OTel collection plane. For runtime telemetry
+after deployment, see [runtime-flow.md](runtime-flow.md). For the metrics
+catalog and source arbitration that the planner and ingester both consume,
+see [metrics-pipeline.md](metrics-pipeline.md).
 
 ## Sequence Diagram
 
@@ -21,7 +25,7 @@ sequenceDiagram
 
     User->>CLI: discovery-job --mode=discover
     CLI->>DA: Discover(ctx)
-    DA->>K8s: List Nodes, Namespaces, Deployments, Services
+    DA->>K8s: List Nodes, Namespaces, Deployments, Pods, Services
     DA->>DA: Detect prometheus annotations and optional reachability
     DA->>DA: Detect OTLP-capable services (oksg.io/otlp-traces annotation or ports 4317/4318)
     DA-->>CLI: ClusterProfile
@@ -76,7 +80,7 @@ sequenceDiagram
 The discovery adapter queries Kubernetes and produces a `ClusterProfile` with:
 
 - cluster ID
-- discovered nodes, namespaces, workloads, and services
+- discovered nodes, namespaces, workloads, pods, and services
 - detected observability sources
 - recommended collection paths and receivers
 
@@ -101,6 +105,8 @@ The source planner turns the profile into collector intent:
 - agent adds `prometheus` only when targets were discovered
 - agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
 - gateway enables `spanmetrics` and `servicegraph` connectors when OTLP traces are enabled
+- Istio mesh detection is performed in the Kubernetes discovery adapter, not a detector registry. It checks for `istio-system`, the `istio-sidecar-injector` mutating webhook, and injected namespaces, then emits an `ObservabilitySource` with `Type:"istio"` and `Mesh{Flavor:"istio", Mode:"sidecar", MetricsPort:15020, MetricsPath:"/stats/prometheus"}`.
+- when Istio is present, the source planner adds a dedicated `mesh-istio` Prometheus scrape job for `istio-proxy` containers. This path does not rely on `prometheus.io/scrape` annotations being merged onto application pods.
 - gateway receives OTLP from agents and OTLP-native emitters
 - gateway exports to the backend OTLP ingest service instead of the debug exporter
 - collector telemetry logging is configured for JSON stdout logging with env-controlled level
@@ -111,7 +117,24 @@ The source planner turns the profile into collector intent:
 Baseline vs enriched plans:
 
 - a **baseline** plan (no Prometheus targets, no OTLP sources) enables only `kubeletstats`, `hostmetrics`, and `k8scluster`
-- an **enriched** plan adds `prometheus`, `otlp`, `spanmetrics`, and/or `servicegraph` based on what was discovered
+- an **enriched** plan adds `prometheus`, `otlp`, `spanmetrics`, `servicegraph`, and/or the `mesh-istio` scrape job based on what was discovered
+
+Source detection contract: the `Detector` interface in
+`pkg/discovery/detectors` describes a `Name()` plus a `Detect(ctx)
+ObservabilitySource` method, kept as a forward-compatible boundary for
+adapter packages under `pkg/adapters/{istio,prometheus,obi,
+autoinstrumentation}`. Today the Kubernetes adapter performs all in-tree
+detection inline; the detector interface is the contract those adapter
+packages will implement when they ship.
+
+Source arbitration: at backend startup, `cmd/backend/main.go` calls
+`metrics.Resolve(catalog, registry, profile)` to compute one winning
+producer per canonical metric (see [metrics-pipeline.md](metrics-pipeline.md)).
+The same call seeds:
+
+- the planner's "deploy this receiver/connector?" decisions through
+  `SelectedSources`
+- the normalizer's source-mismatch drop filter through `Assignment`
 
 ### 3. Release Values Generation
 
@@ -128,7 +151,7 @@ Those values contain:
 
 ### 4. Helm Deployment
 
-The deployer now performs:
+The deployer performs:
 
 1. `helm lint`
 2. optional `helm template`
@@ -152,6 +175,16 @@ seeds the `EntityRegistry` with every entity discovered in the profile
 objects) and writes an initial structural snapshot to the `GraphStore`, so
 the topology API returns discovered entities even before any runtime
 telemetry arrives.
+
+Workloads carry the discovered desired replica count as graph metadata under
+`k8s.workload.replicas`. Pods discovered from Kubernetes are linked back to
+their owning workload when their owner reference or workload pod-template
+selector can be matched. That structural `contains` edge lets runtime and
+traffic topology views expand workload cards into their participating pods
+without guessing from metric samples alone.
+
+Pods that are terminating, succeeded, or failed are skipped during discovery so
+rolling demo deployments do not seed stale pod cards into the structural graph.
 
 ## Example Output
 

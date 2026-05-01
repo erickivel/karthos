@@ -9,10 +9,10 @@ import {
 } from '@/views/TopologyGraph/edgeMetrics'
 
 const EDGE_METRIC_NAMES = [
-  'request_rate_per_second',
-  'edge_latency_nanoseconds',
-  'error_rate_per_second',
-  'error_ratio',
+  'servicegraph.request.count',
+  'servicegraph.request.duration',
+  'servicegraph.request.error.count',
+  'servicegraph.request.error.ratio',
 ] as const
 
 function applySample(
@@ -25,20 +25,39 @@ function applySample(
   const existing = map.get(key) ?? {}
 
   switch (sample.metric_name) {
-    case 'request_rate_per_second':
+    case 'servicegraph.request.count':
       if (existing.requestRate === undefined) existing.requestRate = sample.value
       break
-    case 'edge_latency_nanoseconds':
+    case 'servicegraph.request.duration':
       if (existing.latencyNs === undefined) existing.latencyNs = sample.value
       break
-    case 'error_rate_per_second':
+    case 'servicegraph.request.error.count':
       if (existing.errorRate === undefined) existing.errorRate = sample.value
       break
-    case 'error_ratio':
+    case 'servicegraph.request.error.ratio':
       if (existing.errorRatio === undefined) existing.errorRatio = sample.value
       break
     default:
       return
+  }
+
+  const labels = sample.labels
+  if (labels) {
+    if (existing.source === undefined && labels.source) {
+      existing.source = labels.source
+    }
+    if (existing.mtls === undefined && labels['mesh.security.policy']) {
+      existing.mtls = labels['mesh.security.policy'] === 'mutual_tls'
+    }
+    if (existing.protocol === undefined && labels['network.protocol.name']) {
+      existing.protocol = labels['network.protocol.name']
+    }
+    if (existing.peerSource === undefined && labels['mesh.peer.source.principal']) {
+      existing.peerSource = labels['mesh.peer.source.principal']
+    }
+    if (existing.peerDestination === undefined && labels['mesh.peer.destination.principal']) {
+      existing.peerDestination = labels['mesh.peer.destination.principal']
+    }
   }
 
   map.set(key, existing)

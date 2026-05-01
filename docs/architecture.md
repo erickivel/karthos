@@ -1,367 +1,242 @@
 # Architecture Overview
 
-OKSG transforms discovered observability signals into a canonical graph-oriented foundation. The currently implemented slice covers discovery-driven OpenTelemetry collection plane assembly, backend OTLP ingest, Layer 3 semantic normalization, Layer 4 topology reconstruction, Layer 5 durable persistence with PostgreSQL and VictoriaMetrics, Layer 6 Phase A REST API for querying graph state, metrics, entities, and system status, and Layer 6 Phase B frontend UI (React dashboard with topology graph, metrics explorer, and cluster overview).
-
-## Current Implemented Boundary
-
-The implemented control flow is:
+OKSG turns Kubernetes discovery and OpenTelemetry-driven runtime telemetry
+into a queryable system graph. Control flow:
 
 ```text
-Kubernetes API -> ClusterProfile -> SourcePlanner -> Helm Values -> Agent/Gateway/Backend Helm Release
+Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Helm Values -> Helm Release
+                                                                        |
+                                                                        v
+                                          Backend (OTLP ingest, normalization, topology, REST API)
+                                                                        |
+                                                                        v
+                                                              React frontend (web/)
 ```
 
-What is real today:
+## Components
 
-- `pkg/adapters/kubernetes` discovers cluster resources, Prometheus annotation-based targets, and OTLP-capable workloads
-- `pkg/adapters/otel` plans collector behavior from the discovery profile, including hostmetrics and k8scluster on the agent plus spanmetrics and servicegraph on the gateway
-- `pkg/adapters/otlp` exposes OTLP gRPC and HTTP ingest for the backend runtime
-- `pkg/collector/configgen` converts the plan into typed Helm values
-- `pkg/collector/deployer` runs Helm lint/template/upgrade-install
-- `pkg/backend/ingest` converts OTLP telemetry into raw envelopes, routes them by signal type, normalizes them into canonical entities and metrics, and extracts structural topology edges from metric resource attributes
-- `pkg/backend/persistence` defines store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) with in-memory implementations for tests
-- `pkg/adapters/storage` provides a factory that wires either in-memory or external (PostgreSQL + VictoriaMetrics) backends based on config
-- `pkg/adapters/storage/postgresql` implements `GraphStore`, `MetadataStore`, `RawStore`, and `EntityRegistry` using `pgx/v5`
-- `pkg/adapters/storage/victoriametrics` implements `MetricStore` using VictoriaMetrics' Prometheus-compatible HTTP API
-- `pkg/adapters/api` provides the Layer 6 Phase A REST API server for querying graph state, metrics, entities, and system status
-- `cmd/backend` runs the backend OTLP ingest, normalization, and REST API services with configurable storage backend
-- `cmd/discovery-job` orchestrates discover, plan, and deploy modes
+| Path | Role |
+|------|------|
+| `pkg/adapters/kubernetes` | Discovery adapter — Prometheus targets, OTLP-capable workloads, Istio sidecar mesh |
+| `pkg/adapters/otel` | Source planner; Helm values builder; `transform/oksg-source` processor |
+| `pkg/adapters/otlp` | OTLP gRPC + HTTP ingest server |
+| `pkg/adapters/api` | Versioned REST API server (handlers, response envelope, pagination) |
+| `pkg/adapters/storage` | Storage factory; `postgresql/` and `victoriametrics/` external implementations |
+| `pkg/collector/{configgen,deployer}` | Collector config → typed Helm values → `helm lint/template/upgrade-install` |
+| `pkg/backend/ingest` | Envelope build, signal routing, normalization, topology builders, ingestors |
+| `pkg/backend/persistence` | Store interfaces and in-memory implementations |
+| `pkg/core/metrics` | Catalog, dialect, source registry, resolver — see [metrics-pipeline.md](metrics-pipeline.md) |
+| `pkg/core/semconv` | Shared OTLP semantic-convention attribute key constants |
+| `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
+| `pkg/discovery/{profile,detectors}` | `ClusterProfile`, `ObservabilitySource`, detector contract |
+| `cmd/discovery-job` | `discover` / `plan` / `deploy` CLI |
+| `cmd/backend` | OTLP ingest, normalization, REST API, structural-topology refresh loop |
+| `web/` | React frontend (Vite + TypeScript) — Cluster Overview, Topology Graph, Metrics Explorer |
+| `deploy/helm/oksg-otel` | Helm chart packaging agent, gateway, backend, frontend, optional storage subcharts |
 
-What is not implemented yet:
+`pkg/adapters/{autoinstrumentation,istio,obi,prometheus}` are reserved
+adapter boundaries (`doc.go` only) for future integrations.
 
-- `cmd/controller` is still a placeholder
-- modeling and prediction
+## Collection Plane
 
-## Layer View
+The source planner emits collector intent that the values builder turns into
+typed Helm values. Receivers and connectors:
 
-```text
-Cluster Integration
-  Kubernetes discovery adapter
+- `kubeletstats` (always; pod, container, volume metrics)
+- `hostmetrics` (always; per-node CPU, memory, disk, network, load)
+- `k8scluster` (always; replica counts, pod phases, node conditions)
+- `prometheus` (when discovered targets exist; scrape jobs stamp `oksg_source=prometheus.app`)
+- `mesh-istio` Prometheus job (when sidecar mode is detected; scrapes `istio-proxy:15020/stats/prometheus`, rewrites Istio labels into servicegraph `client`/`server` edge attributes, stamps `oksg_source=mesh.istio`)
+- `otlp` receivers (when discovery finds workloads with `oksg.io/otlp-traces: "true"` or ports `4317`/`4318`)
+- `spanmetrics` connector (gateway, when traces are present; cluster-wide single instance to avoid double-counting)
+- `servicegraph` connector (gateway, when traces are present; only deployed when no higher-priority source — typically Istio — already produces the edge metric)
 
-Collection Planning
-  Source planner
-  Collector config assembly
+The agent and gateway pipelines run a `transform/oksg-source` processor that
+stamps `oksg.source` on every datapoint based on its receiver-determined
+metric-name namespace. Together with scrape-time relabel stamps
+(`oksg_source=prometheus.app` / `mesh.istio`) this gives the backend a
+reliable signal for source arbitration.
 
-Collection Runtime
-  Agent collector (Layer 3a expanded receivers)
-  Gateway collector
-  Backend OTLP ingest service
+## Semantic Normalization
 
-Deployment Packaging
-  Helm values builder
-  Helm chart
-  Helm release installer
+The backend ingest pipeline:
 
-Semantic Normalization (Layer 3)
-  Entity resolver
-  OTLP metric normalizer
-  Trace topology builder
-  In-memory metric and graph stores
+| Component | File | Role |
+|-----------|------|------|
+| `OTLPEntityResolver` | `pkg/backend/ingest/entity_resolver.go` | Maps OTLP resource attributes to deterministic `EntityID` (SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label resolve to the PVC entity before the generic fallback. |
+| `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Applies dialect translation, then `OTLPSemconvMetrics` for canonical name + unit + datapoint kind. Resolves directional variants for disk, network, node-condition. Histograms are stored as `_sum`/`_count`. Servicegraph and Istio-mesh datapoints are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` IDs. Mesh metrics also preserve `mesh.*` metadata. With `WithAssignment`, samples whose `oksg.source` mismatches the resolved producer are dropped (counter exposed via `DroppedSampleCount()`). |
+| `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | `runs_on` (pod→node), `contains` (namespace→pod, pod→container) plus topology nodes for those entity kinds, all from resource attributes. |
+| `MeshMetricTopologyBuilder` | `pkg/backend/ingest/mesh_metric_topology_builder.go` | `calls` edges with `mesh.istio` provenance from servicegraph-shaped Istio metrics, preserving protocol, mTLS, principal, response-flag, and HTTP/gRPC status labels. Uses datapoint timestamp for `FirstSeen`/`LastSeen`. |
+| `TraceTopologyBuilder` | `pkg/backend/ingest/topology_builder.go` | `calls` edges from OTLP spans where `peer.service` is set; deduplicated within a batch by edge ID. |
+| `K8sStructuralTopologyBuilder` | `pkg/backend/ingest/structural_topology_builder.go` | `exposes`, `routes_to`, `uses`, `mounts` from `ClusterProfile` (provenance `k8s-api`, confidence 1.0). |
+| `CompositeTopologyBuilder` | `pkg/backend/ingest/composite_topology_builder.go` | Chains topology builders so the metric path runs structural and mesh together. |
+| `MultiIngestor` | `pkg/backend/ingest/normalizing_ingestor.go` | Fans an envelope to `NormalizingIngestor → MetricStore` and `BufferedTopologyIngestor → GraphStore`. |
+| `BufferedTopologyIngestor` | `pkg/backend/ingest/buffered_topology_ingestor.go` | Accumulates edges/nodes from metric and trace builders; flushes one consolidated snapshot to `GraphStore` per flush window (default `OKSG_TOPOLOGY_FLUSH_INTERVAL=60s`). |
+| `StructuralTopologyIngestor` | `pkg/backend/ingest/structural_topology_ingestor.go` | Unbuffered ingest path used to seed the graph from a `ClusterProfile` at startup. |
 
-Topology Reconstruction (Layer 4)
-  Metric topology builder (structural edges from resource attributes)
-  Trace topology builder (service-to-service call edges from spans)
-  K8s structural topology builder (exposes, routes_to, uses, mounts from discovery profile)
-  Multi-ingestor fan-out for metric signal path
-  Graph node accumulation in GraphStore
+The `--cluster-name` flag (or `OKSG_CLUSTER_NAME`) controls the cluster name
+component of every entity ID; default `default`.
 
-Persistence (Layer 5)
-  Generic store interfaces (MetricStore, GraphStore, MetadataStore, RawStore, EntityRegistry)
-  Storage factory with memory and external backends
-  PostgreSQL adapter (graph, entities, metadata, raw envelopes) via pgx/v5
-  VictoriaMetrics adapter (time-series metrics) via Prometheus HTTP API
-  Helm chart storage configuration (backend, DSN secret, VM URL)
+## Source Arbitration
 
-Query and Control (Layer 6 Phase A)
-  REST API server on dedicated port (8080)
-  Graph query endpoints (full graph, nodes, edges, node detail)
-  Metrics query and catalog endpoints
-  Entity query endpoints
-  System status and discovery profile endpoints
+When more than one available source declares the same canonical metric (e.g.
+`servicegraph.request.count` from both Istio mesh and the OTel `servicegraph`
+connector), `metrics.Resolve(catalog, registry, profile)` picks one winner
+per metric using `PolicyPriority` (lowest `Priority` value wins). Output:
 
-Visualization (Layer 6 Phase B)
-  React frontend in web/ (Vite + TypeScript)
-  Three views: Cluster Overview (/), Topology Graph (/topology), Metrics Explorer (/metrics)
-  React Flow graph with dagre layout, custom EntityNode components, and cable-bundle RelationEdge rendering
-  TanStack Query polling (30s graph/status, 120s discovery)
-  Zustand for cross-view state (selected entity, connection status)
-  CSS custom properties theme system (dark theme, no hardcoded colors)
-  Docker-only development (Dockerfile.dev + Vite HMR)
-  Production: multi-stage build → nginx with /api/* proxy to backend
-  Helm templates: frontend-deployment, frontend-service, frontend-configmap
+- `Assignment` (canonical metric → winning source ID) — drives the
+  normalizer's source-mismatch drop filter via `OTLPNormalizer.WithAssignment`
+- `SelectedSources` — drives the planner's "deploy this receiver/connector?"
+  decision
 
-Future Layers
-  modeling and prediction
-```
+Full pipeline in [metrics-pipeline.md](metrics-pipeline.md).
 
-## Layer 3: Semantic Normalization
+## Topology Reconstruction
 
-### 3a: Collection Plane Expansion
-
-The source planner now configures expanded receivers beyond the baseline `kubeletstats`:
-
-- `hostmetrics` receiver: always active; collects host-level CPU, memory, disk I/O, network I/O, and load metrics from each node
-- `k8scluster` receiver: always active; collects Kubernetes state metrics including replica counts, pod phases, and node conditions
-- `kubeletstats` expanded: now includes volume metrics in addition to pod and container stats
-- `spanmetrics` connector: enabled on the gateway when OTLP traces are present; derives request rate and latency distributions from span data
-- `servicegraph` connector: enabled on the gateway when OTLP traces are present; derives service-to-service call edges from spans
-
-Placing `spanmetrics` and `servicegraph` on the gateway keeps a single shared connector instance for cluster traffic aggregation. That avoids per-agent duplication and double-counting while still letting the agents forward raw OTLP data upstream.
-
-The Kubernetes discovery adapter now auto-detects OTLP-capable workloads via:
-
-- annotation `oksg.io/otlp-traces: "true"` on services
-- ports 4317 (gRPC) or 4318 (HTTP) present in service specs
-
-### 3b: Semantic Normalization Runtime
-
-The backend normalization pipeline introduced in this layer consists of:
-
-- `OTLPEntityResolver`: maps OTLP semantic convention resource attributes to canonical `EntityID` values. Resolution priority is container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Workload entities (deployment, statefulset, replicaset, daemonset) are resolved from `k8s_cluster` receiver attributes (`k8s.deployment.name`, `k8s.statefulset.name`, `k8s.replicaset.name`, `k8s.daemonset.name`). Namespace-scoped metrics with no more specific entity resolve to namespace. Entity IDs are deterministic, computed via SHA-256 of entity kind, cluster name, and available Kubernetes attributes.
-- `OTLPNormalizer`: maps raw OTLP metric payloads to canonical `MetricSample` values using the `OTLPToCanonicalMappings` registry. Applies unit conversion factors and resolves directional variants for disk, network, and node condition metrics. Servicegraph connector metrics are enriched with `edge_client`/`edge_server` labels plus stable `edge_client_id`/`edge_server_id` labels for edge-aware querying. Metrics with no registered mapping are silently skipped.
-- `TraceTopologyBuilder`: extracts service-to-service topology edges from OTLP trace envelopes. Edges are identified by the `peer.service` span attribute. Deduplicates edges within a batch by edge ID; propagates `FirstSeen`/`LastSeen` from span timestamps.
-- `NormalizingIngestor`: implements the `Ingestor` interface for metric envelopes; routes them through `OTLPNormalizer` and writes resulting `MetricSample` values to `MetricStore`.
-- `BufferedTopologyIngestor`: implements the `Ingestor` interface for both metric and trace topology paths. Accumulates edges and nodes in memory and flushes one consolidated `topology.Snapshot` to `GraphStore` on a configurable interval (default 60s), reducing per-envelope snapshot writes to one per flush window.
-- `TopologyIngestor`: unbuffered topology ingestor retained for use cases that require immediate snapshot writes (e.g. structural topology at startup).
-- `InMemoryMetricStore`: thread-safe in-memory `MetricStore` implementation. Supports write and range queries filtered by entity IDs, edge source/target IDs, metric name, and time window.
-- `InMemoryGraphStore`: thread-safe in-memory `GraphStore` implementation. Accumulates edges across snapshots; updates `LastSeen` on re-observed edges. Supports edge queries filtered by source or target entity ID.
-
-The `--cluster-name` flag on `cmd/backend` controls the cluster name used for entity ID computation and defaults to `default` (overridable via `OKSG_CLUSTER_NAME`).
-
-## Layer 4: Topology Reconstruction
-
-Layer 4 merges discovered structure with runtime interaction evidence to build temporal graph nodes and edges.
-
-### Structural Edges from Metric Resource Attributes
-
-`MetricTopologyBuilder` extracts structural edges from OTLP metric envelope resource attributes without parsing the metric payload itself. It derives:
-
-- `runs_on`: pod → node (from `k8s.pod.name` + `k8s.node.name` + `k8s.namespace.name`)
-- `contains` (namespace → pod): from `k8s.namespace.name` + `k8s.pod.name`
-- `contains` (pod → container): from `k8s.pod.name` + `k8s.container.name`
-
-It also implements the optional `NodeBuilder` interface, returning `topology.Node` values for each entity kind it resolves (namespace, node, pod, container).
-
-### MultiIngestor Fan-out
-
-`MultiIngestor` implements the `Ingestor` interface and fans metric envelopes out to multiple downstream ingestors in order. All ingestors receive every envelope; the first error is returned. In `cmd/backend`, the metric signal path uses:
-
-```
-MultiIngestor
-  ├── NormalizingIngestor  → MetricStore
-  └── BufferedTopologyIngestor → GraphStore (flushed periodically)
-```
-
-### Graph Node Accumulation
-
-`InMemoryGraphStore` now accumulates `topology.Node` values by entity ID alongside edges. Nodes are merged from each `PutSnapshot` call; `GetLatest` returns accumulated nodes and edges together. This allows the graph to reflect the full entity population across multiple telemetry batches.
-
-### K8s Structural Topology from Discovery Profile
-
-`K8sStructuralTopologyBuilder` derives topology edges from Kubernetes structural data in a `ClusterProfile`, complementing the runtime edges from metrics and traces. It produces:
-
-- `exposes`: service → workload (matched via service selector against workload pod template labels)
-- `routes_to`: ingress → service (from ingress rule backend references)
-- `uses`: workload → configmap/secret (from pod spec volumes, envFrom, and env valueFrom)
-- `mounts`: workload → PVC (from pod spec PVC volume claims)
-
-All edges carry provenance `"k8s-api"` and confidence 1.0. The builder is invoked at backend startup via the `--discovery-profile` flag, which loads a ClusterProfile JSON file and seeds the graph store with structural edges.
-
-The discovery adapter has been extended to capture:
-
-- Ingress resources with backend service references
-- Deployment pod template labels (for accurate service selector matching)
-- ConfigMap, Secret, and PVC references from deployment pod specs
-
-New entity kinds: `configmap`, `secret`, `pvc`. New relation types: `exposes`, `uses`, `mounts` (plus the previously reserved `routes_to`).
-
-### Standard Tier Graph Model
-
-The graph model follows the "Standard" tier from the architecture spec:
+Edge model (Standard tier):
 
 | Source | Relation | Target | Data Source |
 |--------|----------|--------|-------------|
-| pod | runs_on | node | kubeletstats resource attributes |
-| namespace | contains | pod | kubeletstats resource attributes |
-| pod | contains | container | kubeletstats resource attributes |
-| service | calls | service | OTLP trace spans (peer.service) |
-| service | exposes | workload | K8s API (service selector matching) |
-| ingress | routes_to | service | K8s API (ingress rules) |
-| workload | uses | configmap/secret | K8s API (pod spec references) |
-| workload | mounts | pvc | K8s API (pod spec volumes) |
+| pod | `runs_on` | node | kubeletstats resource attributes |
+| namespace | `contains` | pod | kubeletstats resource attributes |
+| pod | `contains` | container | kubeletstats resource attributes |
+| service | `calls` | service | OTLP trace spans (`peer.service`) or Istio mesh metrics |
+| service | `exposes` | workload | K8s API (service selector matching) |
+| ingress | `routes_to` | service | K8s API (ingress rules) |
+| workload | `uses` | configmap/secret | K8s API (pod spec references) |
+| workload | `mounts` | pvc | K8s API (pod spec volumes) |
 
-### Runtime Inspection
+Workload, ingress, configmap, secret, and PVC nodes are produced **only** by
+the structural path, never by OTLP. The backend therefore re-runs the
+structural ingester every `OKSG_DISCOVERY_REFRESH_INTERVAL` (default `10m`).
+Invariant: `discovery_refresh_interval < node_ttl` (default `OKSG_NODE_TTL=24h`).
+Violating it makes structural-only kinds disappear from `/api/v1/graph`
+after the TTL window.
 
-The backend exposes a `/debug/graph` endpoint on the health port (13133) that returns the current topology snapshot as JSON, including both `nodes` and `edges`. Use `task test:e2e:debug:graph` to inspect it.
+`InMemoryGraphStore` accumulates nodes and edges across snapshots and
+updates `LastSeen` on re-observed edges. The Postgres `GraphStore` mirrors
+this with `ON CONFLICT DO UPDATE SET last_seen = GREATEST(...)`.
 
-## Layer 5: Persistence
+## Persistence
 
-Layer 5 makes telemetry and topology data durable by replacing in-memory stores with external backends while keeping technology-specific code behind generic interfaces.
-
-### Interface-First Design
-
-All persistence logic flows through technology-agnostic interfaces in `pkg/backend/persistence/`:
+Store interfaces (`pkg/backend/persistence/`):
 
 | Interface | Responsibility |
-|-----------|---------------|
-| `MetricStore` | Write and query canonical time-series metric samples |
-| `GraphStore` | Store topology snapshots (nodes per snapshot, accumulated edges) |
-| `MetadataStore` | Store and retrieve cluster discovery profiles |
-| `RawStore` | Write and query raw telemetry envelopes (optional) |
-| `EntityRegistry` | Upsert and query canonical entity records |
+|-----------|----------------|
+| `MetricStore` | Write and query canonical metric samples |
+| `GraphStore` | Topology snapshots (nodes per snapshot, accumulated edges) |
+| `MetadataStore` | Cluster discovery profiles |
+| `RawStore` | Raw telemetry envelopes (optional) |
+| `EntityRegistry` | Canonical entity records |
 
-Each interface has an in-memory implementation for unit tests and an external implementation for production.
+`pkg/adapters/storage/factory.go` returns `Stores` based on
+`StorageConfig.Backend`:
 
-### Storage Factory
+- `memory` (default) — in-memory implementations, no external deps
+- `external` — PostgreSQL (graph, metadata, raw, entities) + VictoriaMetrics (metrics)
 
-`pkg/adapters/storage/factory.go` provides a `NewStores()` factory that creates the appropriate implementations based on `StorageConfig.Backend`:
+PostgreSQL uses `pgx/v5`; schema migrations run on startup via
+`CREATE TABLE IF NOT EXISTS`. VictoriaMetrics uses the Prometheus-compatible
+HTTP API (`/api/v1/import/prometheus` for write, `/api/v1/query_range` for
+read) — no snappy/protobuf dependencies.
 
-- `memory` (default): all in-memory implementations, no external dependencies
-- `external`: PostgreSQL for graph/entities/metadata/raw, VictoriaMetrics for metrics
+Backend storage flags:
 
-The factory validates required config (DSN, VM URL), creates connection pools, runs schema migrations, and registers closers for cleanup.
+| Flag | Env Var | Default |
+|------|---------|---------|
+| `--storage-backend` | `OKSG_STORAGE_BACKEND` | `memory` |
+| `--postgres-dsn` | `OKSG_POSTGRES_DSN` | `""` |
+| `--victoriametrics-url` | `OKSG_VICTORIAMETRICS_URL` | `""` |
+| `--raw-store-enabled` | `OKSG_RAW_STORE_ENABLED` | `false` |
+| `--topology-flush-interval` | `OKSG_TOPOLOGY_FLUSH_INTERVAL` | `60s` |
+| `--node-ttl` | `OKSG_NODE_TTL` | `24h` |
 
-### PostgreSQL Adapter
+## REST API
 
-`pkg/adapters/storage/postgresql/` implements four store interfaces using `pgx/v5`:
-
-- **GraphStore**: topology snapshots in `topology_snapshots` + `topology_nodes` tables; accumulated edges in `topology_edges` with `ON CONFLICT DO UPDATE SET last_seen = GREATEST(...)` to mirror in-memory merge semantics
-- **MetadataStore**: cluster profiles stored as JSONB in `cluster_profiles`, latest retrieved by `created_at DESC`
-- **RawStore**: raw envelopes batch-inserted with `ON CONFLICT DO NOTHING`
-- **EntityRegistry**: entities upserted with label and last_seen updates on conflict
-
-Schema migrations run on startup via `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`.
-
-### VictoriaMetrics Adapter
-
-`pkg/adapters/storage/victoriametrics/` implements `MetricStore` using VictoriaMetrics' Prometheus-compatible HTTP API:
-
-- **Write**: converts `[]MetricSample` to Prometheus text format, POSTs to `/api/v1/import/prometheus`
-- **Query**: builds PromQL from `MetricQuery`, GETs `/api/v1/query_range`, parses JSON response
-
-Uses only `net/http` — no snappy/protobuf dependencies.
-
-### Backend Configuration
-
-The backend (`cmd/backend`) supports storage config via CLI flags:
-
-| Flag | Env Var | Default | Description |
-|------|---------|---------|-------------|
-| `--storage-backend` | `OKSG_STORAGE_BACKEND` | `memory` | Storage backend to use |
-| `--postgres-dsn` | `OKSG_POSTGRES_DSN` | `""` | PostgreSQL connection string |
-| `--victoriametrics-url` | `OKSG_VICTORIAMETRICS_URL` | `""` | VictoriaMetrics base URL |
-| `--raw-store-enabled` | `OKSG_RAW_STORE_ENABLED` | `false` | Enable raw envelope storage |
-| `--topology-flush-interval` | `OKSG_TOPOLOGY_FLUSH_INTERVAL` | `60s` | Topology snapshot flush interval |
-
-### Helm Storage Configuration
-
-The Helm chart includes PostgreSQL (Bitnami) and VictoriaMetrics (single-node) as optional subchart dependencies, gated by condition flags. When enabled, the subcharts deploy and manage the databases; the DSN and VM URL are auto-derived from the subchart service names.
-
-```yaml
-storage:
-  backend: memory           # "memory" or "external"
-  rawStoreEnabled: false
-  postgresql:
-    enabled: false           # deploy Bitnami PostgreSQL subchart
-    dsn: ""                  # override: use explicit DSN instead of subchart
-  victoriametrics:
-    enabled: false           # deploy VictoriaMetrics subchart
-    url: ""                  # override: use explicit URL instead of subchart
-
-# Subchart value overrides
-postgresql:
-  auth:
-    database: oksg
-    username: oksg
-    password: oksg
-
-victoria-metrics-single:
-  server:
-    persistentVolume:
-      size: 5Gi
-    retentionPeriod: 30d
-```
-
-When `storage.backend=external`, the chart creates a `storage-secret` with the PostgreSQL DSN and passes all storage env vars to the backend deployment. The DSN and VM URL are auto-derived from subchart service names unless explicitly overridden via `storage.postgresql.dsn` or `storage.victoriametrics.url`.
-
-After modifying `Chart.yaml` dependencies, run `helm dependency build deploy/helm/oksg-otel/` to download the subchart tarballs.
-
-## Layer 6: REST API
-
-The REST API server runs on a dedicated port (default 8080) within the backend binary, separate from OTLP ingest (4317/4318) and health check (13133) ports.
-
-The API package (`pkg/adapters/api/`) depends only on persistence interfaces -- it never imports concrete storage implementations. The storage backend can be swapped without touching API code. Graph handlers cross-reference the EntityRegistry to enrich node responses with display-friendly metadata (name, namespace, cluster, status).
-
-### Endpoints
-
-All endpoints are versioned under `/api/v1/` and return JSON with a consistent envelope. List endpoints support cursor-based pagination (`page_size`, `next_token`).
+Versioned under `/api/v1`, served on a dedicated port (default `8080`),
+separate from OTLP (`4317`/`4318`) and health (`13133`). The API package
+depends only on persistence interfaces — never on concrete storage
+implementations.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/status` | System status (nominal/degraded/disconnected), freshness, components |
-| GET | `/api/v1/discovery` | Discovery profile summary with entity counts |
+| GET | `/api/v1/status` | System status (nominal/degraded/disconnected), freshness, components, runtime health summary |
+| GET | `/api/v1/discovery` | Discovery profile summary |
 | GET | `/api/v1/graph` | Full topology snapshot with kind/relation counts and available filters |
-| GET | `/api/v1/graph/nodes` | Enriched graph nodes (filter: `kind`, `namespace`) with pagination |
-| GET | `/api/v1/graph/nodes/{id}` | Single node with enriched edges including related entity summaries |
-| GET | `/api/v1/graph/edges` | Edges (filter: `source`, `target`, `relation`) with pagination |
-| GET | `/api/v1/metrics` | Metric samples with unit (filter: `entity_id`, `metric_name`, `from`, `to`) |
+| GET | `/api/v1/graph/nodes` | Enriched graph nodes (filter: `kind`, `namespace`) |
+| GET | `/api/v1/graph/nodes/{id}` | Node with enriched inbound/outbound edges |
+| GET | `/api/v1/graph/edges` | Edges (filter: `source`, `target`, `relation`) |
+| GET | `/api/v1/metrics` | Metric samples (filter: `entity_id`, `metric_name`, `edge_*_id`, `from`, `to`) |
 | GET | `/api/v1/metrics/series` | Samples grouped by metric name with catalog metadata |
 | GET | `/api/v1/metrics/catalog` | Canonical metric definitions (filter: `category`) |
-| GET | `/api/v1/entities` | Entity list (filter: `kind`, `namespace`) with pagination |
-| GET | `/api/v1/entities/{id}` | Get single entity by ID |
+| GET | `/api/v1/entities` | Entity list (filter: `kind`, `namespace`) |
+| GET | `/api/v1/entities/{id}` | Single entity |
 
-### Configuration
+All list endpoints support cursor-based pagination (`page_size`,
+`next_token`). Query-time derivations (rate windows for counter-derived
+metrics, sum/count averaging for histograms, the
+`servicegraph.request.error.ratio` formula) are documented in
+[api-reference.md](api-reference.md) and [runtime-flow.md](runtime-flow.md).
 
-| Flag | Env Var | Default | Description |
-|------|---------|---------|-------------|
-| `--api-listen-address` | `OKSG_BACKEND_API_LISTEN_ADDRESS` | `0.0.0.0:8080` | REST API listen address |
-| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `300` | Snapshot staleness threshold |
+REST API flags:
+
+| Flag | Env Var | Default |
+|------|---------|---------|
+| `--api-listen-address` | `OKSG_BACKEND_API_LISTEN_ADDRESS` | `0.0.0.0:8080` |
+| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `300` |
+
+## Frontend
+
+`web/` is a React + Vite + TypeScript SPA served by nginx with `/api/*`
+reverse-proxied to `oksg-backend:8080`. Three views:
+
+- `/` Cluster Overview — KPI row, entity breakdown, relation types, runtime health summary, discovery sources
+- `/topology` Topology Graph — React Flow canvas with three projection modes (Ownership, Infrastructure, Traffic) and three granularity levels; dagre per-mode layout strategies under `web/src/views/TopologyGraph/layouts/`
+- `/metrics` Metrics Explorer — category tabs, entity/edge selector, time range, MetricCard charts, raw samples
+
+State: TanStack Query for polling, Zustand for cross-view selection.
+Theming: CSS custom properties only — no hardcoded hex in components.
+
+Design system, projection-mode rules, and layout details:
+[frontend-design-spec.md](frontend-design-spec.md).
 
 ## Deployment Model
 
-The Helm chart in `deploy/helm/oksg-otel` owns the Kubernetes resource shape:
+The Helm chart in `deploy/helm/oksg-otel/` owns Kubernetes resource shape
+(namespace, agent ConfigMap + ServiceAccount + RBAC + DaemonSet, gateway
+ConfigMap + ServiceAccount + Service + Deployment, backend Service +
+Deployment, frontend Service + Deployment + ConfigMap, optional storage
+subcharts). The planner produces collector configuration embedded into
+release values; the chart renders final resources. Do not reintroduce ad
+hoc manifest rendering in Go.
 
-- namespace creation
-- agent ConfigMap
-- gateway ConfigMap
-- agent ServiceAccount and RBAC
-- agent DaemonSet
-- gateway ServiceAccount
-- gateway Service
-- gateway Deployment
-- backend Service
-- backend Deployment
-
-The planner no longer renders Kubernetes objects directly. It produces collector configuration that is embedded into release values, and Helm renders the final resources.
+PostgreSQL (Bitnami) and VictoriaMetrics (single-node) are subchart
+dependencies, gated by `storage.postgresql.enabled` /
+`storage.victoriametrics.enabled`. When `storage.backend=external` and the
+subcharts are enabled, the chart auto-derives DSN and VM URL from the
+subchart service names; explicit overrides go in `storage.postgresql.dsn`
+and `storage.victoriametrics.url`. After modifying `Chart.yaml`
+dependencies, run `helm dependency build deploy/helm/oksg-otel/`.
 
 ## Configuration Model
 
-Configuration is split intentionally:
-
-- Helm values:
-  operator-facing deployment settings such as release name, image settings, namespace, enabled signal classes, OTLP endpoints, and log levels
-- ConfigMaps:
-  structured collector configuration for agent and gateway
-- Secrets:
-  reserved for credentials and sensitive settings
-- Env vars:
-  runtime toggles and pod or node metadata only
+- **Helm values** — operator-facing deployment settings: image, namespace, enabled signal classes, OTLP endpoints, log levels
+- **ConfigMaps** — structured collector configuration for agent and gateway
+- **Secrets** — credentials and sensitive settings
+- **Env vars** — runtime toggles and pod/node metadata only
 
 ## Logging Policy
 
-OKSG-owned runtime components use structured JSON logs to stdout only.
+OKSG-owned components log structured JSON to stdout only. Required fields:
+`ts`, `level`, `component`, `msg`. Common context: `cluster`, `namespace`,
+`mode`, `error`. Debugging path: `kubectl logs`. OTel collector workloads
+are also configured for stdout JSON; level is set per component through
+Helm values.
 
-- required fields: `ts`, `level`, `component`, `msg`
-- common context when available: `cluster`, `namespace`, `mode`, `error`
-- debugging path: `kubectl logs`
-
-OTel collector workloads are also configured for stdout-based logging, with per-component log level controlled through Helm values.
-
-The backend OTLP ingest runtime logs structured lines for pipeline startup and per-request events; end-to-end verification uses `kubectl logs`.
-
-## Design Principles Still In Force
+## Design Principles
 
 1. Keep the design minimal and easy to change.
-2. Preserve explicit contracts between discovery, planning, deployment, and future graph layers.
+2. Preserve explicit contracts between discovery, planning, deployment, and graph layers.
 3. Let discovery decide what to collect, not how Kubernetes YAML is shaped.
 4. Keep technology-specific adapters isolated from domain packages.
 5. Remove stale deployment paths and outdated docs when replacing them.

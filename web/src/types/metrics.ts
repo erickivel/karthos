@@ -14,6 +14,7 @@ export interface MetricEdgeRef {
 }
 
 export interface MetricSample {
+  /** OTel semantic-convention metric identifier in dot notation. */
   metric_name: string
   entity_id: string
   value: number
@@ -32,12 +33,22 @@ export interface MetricSeries {
   edge?: MetricEdgeRef
 }
 
+export interface SourceRef {
+  id: string
+  priority: number
+}
+
+export type SelectionPolicy = 'priority' | 'disjoint' | 'all'
+
 export interface CanonicalMetric {
   name: string
+  display_name: string
   unit: string
   category: MetricCategory
   scopes: MetricScope[]
   description: string
+  sources?: SourceRef[]
+  selection_policy?: SelectionPolicy
 }
 
 export interface MetricSamplesResponse {

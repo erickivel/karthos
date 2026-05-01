@@ -2,7 +2,7 @@
   min-width: 200px;
   min-height: 80px;
   background: color-mix(in srgb, var(--kind-namespace) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--kind-namespace) 35%, transparent);
+  border: 1px solid rgb(255 255 255 / 8%);
   border-radius: var(--radius-lg);
   position: relative;
 }
@@ -42,7 +42,6 @@
 
 .nodeVariant {
   background: color-mix(in srgb, var(--kind-node) 6%, transparent);
-  border-color: color-mix(in srgb, var(--kind-node) 35%, transparent);
 }
 
 .pillNode {

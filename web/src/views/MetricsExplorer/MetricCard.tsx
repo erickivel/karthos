@@ -6,14 +6,16 @@ import {
   Cell,
   Tooltip,
 } from "recharts";
-import type { MetricSample } from "@/types/metrics";
+import type { MetricSample, SourceRef } from "@/types/metrics";
 import { formatValue } from "../../utils/formatters";
 import styles from "./MetricCard.module.css";
 
 interface MetricCardProps {
   name: string;
+  id?: string;
   unit: string;
   samples: MetricSample[];
+  sources?: SourceRef[];
 }
 
 interface TooltipPayloadEntry {
@@ -42,12 +44,16 @@ function CustomTooltip({
   );
 }
 
-export function MetricCard({ name, unit, samples }: MetricCardProps) {
+export function MetricCard({ name, id, unit, samples, sources }: MetricCardProps) {
   const sorted = [...samples].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
   );
 
   const currentValue = sorted.length > 0 ? sorted[sorted.length - 1]!.value : 0;
+  const activeSource = sorted.length > 0 ? sorted[sorted.length - 1]!.labels?.source : undefined;
+  const sourcePriorityTooltip = sources && sources.length > 0
+    ? `priority: ${[...sources].sort((a, b) => a.priority - b.priority).map((s) => s.id).join(' → ')}`
+    : undefined;
 
   const chartData = sorted.map((s, i) => ({
     time: new Date(s.timestamp).toLocaleTimeString([], {
@@ -66,7 +72,18 @@ export function MetricCard({ name, unit, samples }: MetricCardProps) {
   return (
     <div className={styles.card}>
       <div className={styles.header}>
-        <span className={styles.name}>{name}</span>
+        <div className={styles.heading}>
+          <span className={styles.name}>{name}</span>
+          {id && <span className={styles.subtitle}>{id}</span>}
+          {activeSource && (
+            <span
+              className={styles.sourceLine}
+              title={sourcePriorityTooltip}
+            >
+              from {activeSource}
+            </span>
+          )}
+        </div>
         <span className={styles.currentValue}>
           {formatValue(currentValue)}{" "}
           <span className={styles.unit}>{unit}</span>

@@ -1,9 +1,24 @@
 .card {
-  background: var(--surface-module);
-  border-radius: var(--radius);
-  width: 240px;
+  position: relative;
+  background: #242832;
+  border: none;
+  border-radius: 10px;
+  width: 250px;
   overflow: hidden;
-  transition: opacity var(--transition-fast);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 32%);
+  color: var(--color-text-primary);
+  font-family: "Courier New", ui-monospace, SFMono-Regular, Menlo, monospace;
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.card:hover,
+.card:focus-visible {
+  box-shadow: 0 16px 32px rgb(0 0 0 / 42%);
+  transform: translateY(-1px);
+  outline: none;
 }
 
 .card[data-small="true"] {
@@ -11,56 +26,73 @@
 }
 
 .card[data-no-telemetry="true"] {
-  opacity: 0.5;
-  outline: 1px dashed var(--surface-active);
+  opacity: 0.72;
+  outline: 1px dashed color-mix(in srgb, var(--color-text-muted) 45%, transparent);
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: var(--space-sm) var(--space-md);
+  padding: 12px 14px 10px;
+  background: var(--node-accent, var(--surface-active));
+  color: #05090d;
+}
+
+.header[data-tone="alert"] {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 5%), transparent),
+    color-mix(in srgb, var(--color-alert) 86%, #272a31);
 }
 
 .name {
-  font-size: var(--text-body);
-  font-weight: 600;
-  color: var(--surface-base);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: currentColor;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .icon {
-  color: var(--surface-base);
-  opacity: 0.7;
+  color: currentColor;
+  opacity: 0.72;
   flex-shrink: 0;
 }
 
 .body {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: var(--space-sm) var(--space-md);
+  gap: 13px;
+  padding: 16px 14px 14px;
 }
 
-.prop {
+.signalBlock {
   display: flex;
-  gap: var(--space-xs);
-  align-items: center;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.signalBlock[data-tone="alert"] {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-alert) 72%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-alert) 12%, transparent);
 }
 
 .propLabel {
-  font-size: var(--text-label);
-  letter-spacing: var(--letter-wide);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  min-width: 32px;
 }
 
 .propValue {
-  font-size: var(--text-body);
-  color: var(--color-text-primary);
+  font-size: 0.83rem;
+  color: var(--node-accent, var(--color-text-primary));
+  font-weight: 700;
+  letter-spacing: 0.05em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -70,15 +102,13 @@
 .metrics {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md) var(--space-md);
-  border-top: 1px solid var(--surface-active);
+  gap: 12px;
 }
 
 .metricBlock {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 7px;
 }
 
 .metricHeader {
@@ -88,24 +118,69 @@
 }
 
 .metricLabel {
-  font-size: var(--text-label);
-  letter-spacing: var(--letter-wide);
+  font-size: 0.62rem;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
 
 .metricValue {
-  font-size: var(--text-body);
+  font-size: 0.82rem;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--node-accent, var(--color-info));
   font-variant-numeric: tabular-nums;
 }
 
+.metricSegments {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 2px;
+  height: 5px;
+}
+
+.metricSegments span {
+  min-width: 0;
+  background: rgb(255 255 255 / 10%);
+}
+
+.metricSegments span[data-active="true"] {
+  background: var(--node-accent, var(--color-info));
+}
+
+.metricSegments[data-tone="signal"] span[data-active="true"] {
+  background: var(--color-signal);
+}
+
+.metricSegments[data-tone="warn"] span[data-active="true"] {
+  background: var(--color-warn);
+}
+
+.metricSegments[data-tone="alert"] span[data-active="true"] {
+  background: var(--color-alert);
+}
+
+.sparkline {
+  display: flex;
+  align-items: end;
+  gap: 4px;
+  height: 32px;
+  margin-top: 2px;
+}
+
+.sparkline span {
+  width: 100%;
+  height: var(--bar-height);
+  min-height: 5px;
+  background: var(--node-accent, var(--color-info));
+  opacity: 0.82;
+}
+
 .telemetryHint {
-  padding: 2px var(--space-sm) var(--space-xs);
-  font-size: var(--text-label);
+  padding-top: 2px;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--color-text-muted);
-  font-style: italic;
 }
 
 .handle {
@@ -114,3 +189,4 @@
   background: var(--surface-active);
   border: none;
 }
+

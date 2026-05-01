@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
@@ -147,6 +148,7 @@ type podSummary struct {
 	Running   int `json:"running"`
 	Succeeded int `json:"succeeded"`
 	Failed    int `json:"failed"`
+	Unknown   int `json:"unknown"`
 }
 
 func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary {
@@ -155,9 +157,9 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 
 	hs := &healthSummary{}
 
-	// Node health from node_condition_ready metric.
+	// Node health from k8s.node.condition.ready.
 	nodeSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
-		MetricName: "node_condition_ready",
+		MetricName: "k8s.node.condition.ready",
 		From:       from,
 		To:         now,
 	})
@@ -171,28 +173,48 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 		}
 	}
 
-	// Pod phase from pod_phase metric.
-	podSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
-		MetricName: "pod_phase",
-		From:       from,
-		To:         now,
-	})
-	if err == nil {
-		for _, v := range latestSamplePerEntity(podSamples) {
-			switch int(v) {
-			case 1:
-				hs.Pods.Pending++
-			case 2:
-				hs.Pods.Running++
-			case 3:
-				hs.Pods.Succeeded++
-			case 4:
-				hs.Pods.Failed++
+	if h.graphStore != nil {
+		if snap, err := h.graphStore.GetLatest(ctx); err == nil && snap != nil {
+			for _, node := range snap.Graph.Nodes {
+				if node.Kind != entities.KindPod {
+					continue
+				}
+				switch podPhaseFromLabels(node.Labels) {
+				case "pending":
+					hs.Pods.Pending++
+				case "running":
+					hs.Pods.Running++
+				case "succeeded":
+					hs.Pods.Succeeded++
+				case "failed":
+					hs.Pods.Failed++
+				case "unknown":
+					hs.Pods.Unknown++
+				}
 			}
 		}
 	}
 
 	return hs
+}
+
+func podPhaseFromLabels(labels map[string]string) string {
+	for _, key := range []string{"phase", "status", "k8s.pod.phase"} {
+		phase := strings.ToLower(strings.TrimSpace(labels[key]))
+		switch phase {
+		case "1", "pending":
+			return "pending"
+		case "2", "running":
+			return "running"
+		case "3", "succeeded", "complete", "completed":
+			return "succeeded"
+		case "4", "failed", "error":
+			return "failed"
+		case "5", "unknown":
+			return "unknown"
+		}
+	}
+	return "unknown"
 }
 
 func latestSamplePerEntity(samples []metrics.MetricSample) map[entities.EntityID]float64 {

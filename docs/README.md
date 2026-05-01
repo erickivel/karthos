@@ -1,16 +1,21 @@
 # OKSG Documentation
 
-This folder documents the currently implemented OKSG slice: Kubernetes discovery, source planning, Helm values generation, Helm-managed deployment of the OpenTelemetry collection plane, and the current runtime telemetry flow through agent, gateway, and backend ingest.
+Implementation documentation for OKSG. Treat these files as the source of
+truth: when code changes invalidate text, commands, diagrams, or examples,
+update them in the same change.
 
 ## Contents
 
 | Document | Description |
 |----------|-------------|
-| [Architecture](architecture.md) | Current layers, implemented boundaries, Helm deployment model, logging policy |
-| [Discovery Flow](discovery-flow.md) | Discovery to release-values flow and Helm render/install sequence |
-| [Runtime Flow](runtime-flow.md) | Post-deploy telemetry flow through agent, gateway, backend ingest, and raw-envelope routing |
-| [Testing](testing.md) | Unit tests, kind-based e2e tasks, and scenario validation |
-| [Development](development.md) | Project structure, common workflows, chart layout, and maintenance rules |
+| [Architecture](architecture.md) | Layers, component boundaries, Helm deployment model, logging policy |
+| [Discovery Flow](discovery-flow.md) | Discovery → release-values → Helm install sequence |
+| [Runtime Flow](runtime-flow.md) | Post-deploy telemetry path through agent, gateway, backend ingest |
+| [Metrics Pipeline](metrics-pipeline.md) | Catalog, dialect translation, source registry, resolver |
+| [API Reference](api-reference.md) | REST API endpoints, query params, response shapes |
+| [Frontend Design Spec](frontend-design-spec.md) | Frontend stack, design system, projection modes |
+| [Testing](testing.md) | Unit tests, kind-based e2e tasks, scenario validation |
+| [Development](development.md) | Project structure, common commands, frontend dev loop |
 
 ## Quick Links
 
@@ -20,23 +25,17 @@ This folder documents the currently implemented OKSG slice: Kubernetes discovery
 - [test/e2e/apps](../test/e2e/apps/)
 - [test/e2e/scenarios](../test/e2e/scenarios/)
 
-## Current Status
-
-- The current slice includes discovery-driven collector planning plus the first deployed collection-plane runtime.
-- `cmd/discovery-job` orchestrates discovery, planning, and deploy operations.
-- `cmd/backend` is now a real OTLP ingest runtime.
-- `cmd/controller` remains a placeholder.
-- OTel resources are packaged through the Helm chart in `deploy/helm/oksg-otel`.
-
 ## Flow At A Glance
 
 ```text
 Kubernetes Cluster
-       |
-       v
-Discovery Adapter -> ClusterProfile -> Source Planner -> Helm Values -> Helm Release -> Runtime Flow
+      |
+      v
+Discovery Adapter -> ClusterProfile -> Resolver -> Source Planner -> Helm Values -> Helm Release
+                                          |
+                                          v
+                       Backend (OTLP ingest -> Normalizer -> Topology builders -> Stores -> REST API)
+                                          |
+                                          v
+                              React frontend (/, /topology, /metrics)
 ```
-
-## Documentation Rule
-
-Keep these docs aligned with the real implementation. When code changes make text, commands, diagrams, or examples stale, update or remove the stale docs in the same change.

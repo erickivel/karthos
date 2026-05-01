@@ -32,7 +32,7 @@ export function TopologyGraph() {
   const edgeMetrics = useEdgeMetrics();
   const [searchParams] = useSearchParams();
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
-  const { mode, granularity } = useProjectionState();
+  const { mode, granularity, includeOrphans } = useProjectionState();
 
   const kindFilter = searchParams.get("kind");
   const namespaceFilter = searchParams.get("namespace");
@@ -53,10 +53,25 @@ export function TopologyGraph() {
       );
     }
     if (namespaceFilter) {
+      const namespacedNodeIds = new Set(
+        nodes
+          .filter(
+            (n) =>
+              n.namespace === namespaceFilter ||
+              (n.kind === "namespace" && n.name === namespaceFilter),
+          )
+          .map((n) => n.id),
+      );
+      const namespaceHostNodeIds = new Set(
+        edges
+          .filter((e) => e.relation === "runs_on" && namespacedNodeIds.has(e.source))
+          .map((e) => e.target),
+      );
       nodes = nodes.filter(
         (n) =>
           n.namespace === namespaceFilter ||
-          (n.kind === "namespace" && n.name === namespaceFilter),
+          (n.kind === "namespace" && n.name === namespaceFilter) ||
+          (n.kind === "node" && namespaceHostNodeIds.has(n.id)),
       );
     }
 
@@ -71,11 +86,14 @@ export function TopologyGraph() {
   }, [snapshot, kindFilter, namespaceFilter, relationFilter]);
 
   const projection = useMemo(
-    () => project(filteredGraph.nodes, filteredGraph.edges, mode, granularity),
-    [filteredGraph, mode, granularity],
+    () =>
+      project(filteredGraph.nodes, filteredGraph.edges, mode, granularity, {
+        includeOrphans,
+      }),
+    [filteredGraph, mode, granularity, includeOrphans],
   );
 
-  const { nodes, edges } = useGraphLayout(projection, nodeMetrics, edgeMetrics);
+  const { nodes, edges } = useGraphLayout(projection, mode, nodeMetrics, edgeMetrics);
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
@@ -99,8 +117,10 @@ export function TopologyGraph() {
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
           fitView
+          fitViewOptions={{ padding: 0.14 }}
           minZoom={0.1}
           maxZoom={2}
+          onlyRenderVisibleElements={false}
           proOptions={{ hideAttribution: true }}
         >
           <Background

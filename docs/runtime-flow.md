@@ -1,11 +1,10 @@
 # Runtime Flow
 
-This document describes the currently implemented runtime telemetry flow after the OpenTelemetry collection plane has already been deployed to the cluster.
-
-It complements [`discovery-flow.md`](./discovery-flow.md):
-
-- `discovery-flow.md` explains how OKSG discovers the cluster and deploys the collection plane
-- `runtime-flow.md` explains what happens after agent, gateway, and backend are running
+What happens after the OTel collection plane is deployed: agent collection,
+gateway forwarding, backend OTLP ingest, normalization, and topology
+accumulation. For the discover/plan/deploy upstream of this, see
+[`discovery-flow.md`](./discovery-flow.md). For the metrics catalog /
+dialect / source arbitration, see [`metrics-pipeline.md`](./metrics-pipeline.md).
 
 ## Sequence Diagram
 
@@ -75,7 +74,7 @@ sequenceDiagram
 
     Note over Main: Process startup
     Main->>Main: NewOTLPEntityResolver(clusterName)
-    Main->>Main: NewOTLPNormalizer(resolver)
+    Main->>Main: NewOTLPNormalizer(resolver, dialectRegistry)
     Main->>Main: NewTraceTopologyBuilder(resolver)
     Main->>Main: NewMetricStore()
     Main->>Main: NewGraphStore()
@@ -85,7 +84,7 @@ sequenceDiagram
     Main->>Main: NewMultiIngestor(normalizingIngestor, metricTopologyIngestor)
     Main->>Main: NewTopologyIngestor(traceTopoBuilder, graphStore)
     Main->>Router: NewSignalRouter(multiIngestor, traceTopologyIngestor)
-    Main->>Builder: ingest.NewEnvelopeBuilder(now)
+    Main->>Builder: ingest.NewEnvelopeBuilder(clock)
     Main->>Server: otlp.NewServer(config, builder, router, logger)
     Main->>Server: server.Run(ctx)
     Note over Server: Listening on :4317 (gRPC), :4318 (HTTP), :13133 (health)
@@ -97,7 +96,7 @@ sequenceDiagram
     Server->>Builder: BuildMetricEnvelopes("otlp/grpc", request)
     activate Builder
     Builder->>Builder: For each ResourceMetrics: extract resource attributes, marshal payload to JSON
-    Builder->>Builder: schema.NewRawEnvelope(source, SignalMetric, attrs, payload, now)
+    Builder->>Builder: schema.NewRawEnvelope(source, SignalMetric, attrs, payload, clock())
     Builder-->>Server: []schema.RawEnvelope
     deactivate Builder
 
@@ -137,8 +136,12 @@ sequenceDiagram
 | `pkg/backend/ingest/buffered_topology_ingestor.go` | `BufferedTopologyIngestor` | Implements `Ingestor`; accumulates edges/nodes from metric and trace builders, flushes consolidated snapshots to `GraphStore` on a timer |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `MultiIngestor` | Implements `Ingestor`; fans envelopes to multiple downstream ingestors in order |
 | `pkg/backend/ingest/metric_topology_builder.go` | `MetricTopologyBuilder` | Extracts structural `runs_on`/`contains` edges and nodes from metric resource attributes |
+| `pkg/backend/ingest/mesh_metric_topology_builder.go` | `MeshMetricTopologyBuilder` | Derives `calls` edges from servicegraph-shaped mesh metrics with `mesh.istio` provenance |
+| `pkg/backend/ingest/composite_topology_builder.go` | `CompositeTopologyBuilder` | Chains topology builders so the metric path runs structural + mesh builders together |
 | `pkg/backend/ingest/structural_topology_builder.go` | `K8sStructuralTopologyBuilder` | Derives `exposes`/`routes_to`/`uses`/`mounts` edges from ClusterProfile |
 | `pkg/backend/ingest/structural_topology_ingestor.go` | `StructuralTopologyIngestor` | Ingests K8s structural topology from ClusterProfile into GraphStore |
+| `pkg/core/metrics/{catalog,sources,dialect,resolver}.go` | Metrics pipeline | Catalog, source registry, dialect translation, and priority-based source arbitration |
+| `pkg/core/semconv/keys.go` | Attribute keys | OTLP semantic-convention attribute key constants shared across ingest and topology |
 | `pkg/backend/persistence/memory.go` | `MetricStore` | Thread-safe in-memory `MetricStore`; supports write and time-range queries |
 | `pkg/backend/persistence/memory.go` | `GraphStore` | Thread-safe in-memory `GraphStore`; accumulates edges and nodes, updates `LastSeen` on re-observation |
 | `pkg/adapters/storage/victoriametrics/` | `VMMetricStore` | `MetricStore` backed by VictoriaMetrics HTTP API (Prometheus text import + PromQL query) |
@@ -234,7 +237,7 @@ What it does today:
 
 Operational notes:
 
-- the gateway is deployed as a single Deployment replica in the current slice
+- the gateway is deployed as a single Deployment replica
 - its job is collection and forwarding only; it does not perform semantic normalization or persistence
 
 ### 3. Backend OTLP Ingest
@@ -246,7 +249,7 @@ What it does today:
 - listens for OTLP gRPC on port `4317`
 - listens for OTLP HTTP on port `4318`
 - serves health checks on port `13133`
-- serves the REST API on port `8080` (Layer 6 Phase A query and control endpoints)
+- serves the REST API on port `8080`
 - accepts enabled signal classes from the deployed plan
 - parses incoming OTLP metrics and traces
 - hands accepted payloads to the normalization pipeline
@@ -266,18 +269,19 @@ The backend serves a scalar metrics API, so OTLP metrics are normalized into can
 - Gauge and Sum datapoints are copied as scalar samples, then multiplied by the configured conversion factor.
 - Histogram datapoints are normalized as average values using `sum / count`. Datapoints with `count == 0` are skipped.
 - Servicegraph-derived metrics preserve `edge_client`, `edge_server`, `edge_client_id`, and `edge_server_id` labels so edge queries can join runtime telemetry back onto topology edges.
+- Pod-volume metrics preserve selected topology labels such as `k8s.volume.name`, `k8s.persistentvolumeclaim.name`, `k8s.pod.name`, and `k8s.namespace.name`. When a volume datapoint carries a resolvable PVC identity, the normalizer stores the sample against the PVC entity. Otherwise it remains pod-scoped, and topology cards must not render PVC storage from that sample.
 
 ### Request, Error, and Duration Semantics
 
-The canonical names intentionally hide collector-specific metric names, but the semantics still come from the upstream emitters:
+The semconv names stay stable across storage and the API, but the semantics still come from the upstream emitters:
 
-- `traces.span.metrics.calls` is ingested as a counter-like canonical series under `request_rate_per_second`, then served from VictoriaMetrics as `rate(request_rate_per_second[1m])`.
-- `traces.service.graph.request.total` is treated the same way for edge traffic.
-- `traces.service.graph.request_failed_total` is ingested as a counter-like canonical series under `error_rate_per_second`, then served as `rate(error_rate_per_second[1m])`.
-- `error_ratio` is not stored directly; the API derives it at query time as `rate(error_rate_per_second[1m]) / clamp_min(rate(request_rate_per_second[1m]), 1e-9)`.
-- `http_request_duration_seconds` is normalized from seconds to nanoseconds.
-- `traces.span.metrics.duration` is normalized from milliseconds to nanoseconds unless the collector configuration is explicitly changed to export seconds.
-- `traces.service.graph.request.server` is normalized from seconds to nanoseconds and exposed as `edge_latency_nanoseconds`.
+- `traces.span.metrics.calls` translates to `rpc.server.request.count`, then the API serves it as `rate(rpc.server.request.count[1m])`.
+- `traces.service.graph.request.total` translates to `servicegraph.request.count`, then the API serves it as `rate(servicegraph.request.count[1m])`.
+- `traces.service.graph.request_failed_total` translates to `servicegraph.request.error.count`, then the API serves it as `rate(servicegraph.request.error.count[1m])`.
+- `servicegraph.request.error.ratio` is not stored directly; the API derives it at query time as `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`.
+- `http_request_duration_seconds` translates to `http.server.request.duration` and is normalized from seconds to nanoseconds.
+- `traces.span.metrics.duration` translates to `rpc.server.duration` and is normalized from milliseconds to nanoseconds unless the collector configuration is explicitly changed to export seconds.
+- `traces.service.graph.request.server` translates to `servicegraph.request.duration` and is normalized from seconds to nanoseconds.
 
 The fixed query window for request and error rates is currently 1 minute.
 
@@ -311,10 +315,10 @@ After routing, envelopes are normalized into canonical domain objects.
 
 Metric path:
 
-- `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. This means k8s_cluster receiver metrics for workload-scoped and namespace-scoped entities are now resolved (previously dropped as unresolvable). Entity resolution errors fail the envelope.
-- `OTLPNormalizer` maps each recognized OTLP metric name to a canonical `MetricSample` using the registered `OTLPToCanonicalMappings`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. Servicegraph connector metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Unrecognized metric names are silently skipped.
+- `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label use the PVC identity before the generic resource fallback. Entity resolution errors fail the envelope.
+- `OTLPNormalizer` first translates source dialects into semconv-style metric names, then maps each recognized OTLP metric name to a semconv-native `MetricSample` using the registered `OTLPSemconvMetrics`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. Servicegraph connector and Istio mesh metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Istio request-duration histograms are converted from milliseconds to nanoseconds, histograms are stored as `_sum`/`_count`, and `servicegraph.request.error.ratio` remains query-derived. Unrecognized metric names are silently skipped.
 - `MetricStore` stores the resulting samples in memory. Supports time-range, entity-filtered, and edge-filtered queries.
-- `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds.
+- `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. `MeshMetricTopologyBuilder` parses servicegraph-shaped mesh metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response metadata. Mesh `calls` edges take `FirstSeen`/`LastSeen` from the metric datapoint timestamp, falling back to the envelope timestamp only when the datapoint has no timestamp.
 - `GraphStore` accumulates edges and nodes across snapshots. Re-observed edges have their `LastSeen` updated; nodes are merged by entity ID.
 
 Trace path:
@@ -322,60 +326,13 @@ Trace path:
 - `TraceTopologyBuilder` scans each span for a `peer.service` attribute. When found, it resolves both caller and callee to `EntityID` values and emits a `topology.Edge` with `RelCalls` relation. Edges are deduplicated within the batch by edge ID. `FirstSeen`/`LastSeen` are taken from span timestamps.
 - `GraphStore` accumulates edges and nodes; trace-derived `calls` edges accumulate alongside structural edges from the metric path.
 
-## Current Observable Behavior
+### 7. Source-Mismatch Drop
 
-The easiest way to verify the runtime flow today is with `kubectl logs`.
+When a discovery profile is loaded at backend startup, `cmd/backend/main.go` calls `metrics.Resolve(catalog, registry, profile)` to compute the canonical-to-source `Assignment` and passes it to the normalizer via `WithAssignment(...)`.
 
-Expected operator-visible behavior:
+For each incoming datapoint, after dialect translation and directional name resolution, the normalizer compares the sample's `oksg_source` attribute (stamped by the agent/gateway `transform/oksg-source` processor, by application Prometheus scrape relabeling, or by Istio's Prometheus relabel rule) against `Assignment[canonical]`. If the canonical metric has an assigned source and the sample's source disagrees, the sample is dropped and the `dropped` counter — an `atomic.Uint64` to remain safe under the OTLP server's concurrent request handling — is incremented. Samples without an `oksg_source` attribute follow a legacy accept path so envelopes from external producers aren't silently dropped.
 
-- agent logs show receiver startup and scrape discovery
-- gateway logs show OTLP receiver startup and successful forwarding behavior
-- backend logs show startup confirmation of the normalization pipeline configuration
-- metric envelopes are normalized to canonical `MetricSample` values and written to the in-memory store
-- trace envelopes are processed by `TraceTopologyBuilder`; detected service edges are written to the in-memory graph store
-
-Example backend startup log:
-
-```json
-{
-  "component": "backend",
-  "level": "info",
-  "msg": "normalization pipeline configured",
-  "cluster_name": "kind-test"
-}
-```
-
-## Implemented Vs Deferred
-
-Implemented in the current slice:
-
-- agent collection from `kubeletstats`, `hostmetrics`, and `k8scluster`
-- conditional Prometheus scraping
-- conditional OTLP receive paths
-- `spanmetrics` and `servicegraph` connectors when OTLP traces are present
-- gateway OTLP fan-in and export
-- backend OTLP ingest over gRPC and HTTP
-- raw envelope construction
-- signal-type routing
-- `OTLPEntityResolver`: deterministic entity ID computation from OTLP resource attributes
-- `OTLPNormalizer`: canonical metric mapping with unit conversion
-- `TraceTopologyBuilder`: service-to-service edge extraction from trace spans
-- `NormalizingIngestor` and `TopologyIngestor`: full normalization pipeline
-- `MultiIngestor`: fan-out for metric signal path (normalization + structural topology extraction)
-- `MetricTopologyBuilder`: structural edges (`runs_on`, `contains`) and nodes from metric resource attributes
-- `K8sStructuralTopologyBuilder`: structural edges (`exposes`, `routes_to`, `uses`, `mounts`) from discovery profile
-- `StructuralTopologyIngestor`: ingests K8s structural topology from ClusterProfile into GraphStore at startup
-- `MetricStore` and `GraphStore`: thread-safe in-memory persistence with node accumulation
-- Storage factory (`storage.NewStores`): wires memory or external (PG+VM) backends from config
-- PostgreSQL adapter: `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry` via `pgx/v5`
-- VictoriaMetrics adapter: `MetricStore` via Prometheus text import and PromQL query
-- REST API server (Layer 6 Phase A): versioned query endpoints for graph, metrics, entities, and system status on dedicated port 8080
-
-Not implemented yet:
-
-- Layer 6 Phase B: visualization UI
-- controller-driven runtime management
-- prediction, simulation, or model-ready feature generation
+The cumulative drop count is exposed via `OTLPNormalizer.DroppedSampleCount()`. See [metrics-pipeline.md](metrics-pipeline.md) for the catalog/registry/resolver contract.
 
 ## Runtime View
 
@@ -415,8 +372,9 @@ OKSG Backend
   - Structural topology (at startup, if --discovery-profile provided)
     └── StructuralTopologyIngestor(K8sStructuralTopologyBuilder) → GraphStore
           edges: exposes (service→workload), routes_to (ingress→service),
-                 uses (workload→configmap/secret), mounts (workload→pvc)
-          nodes: workload, service, ingress, configmap, secret, pvc
+                 uses (workload→configmap/secret), mounts (workload→pvc),
+                 contains (workload→pod when discovery can resolve ownership)
+          nodes: workload, service, ingress, configmap, secret, pvc, pod
 
 REST API Server (:8080) — all list endpoints support cursor-based pagination
   - /api/v1/status         → system_status (nominal/degraded/disconnected), freshness

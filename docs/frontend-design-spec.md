@@ -1,19 +1,8 @@
 # Frontend Design Specification — OKSG Visualizer
 
-**Date:** 2026-03-30
-**Layer:** 6B — Control, Query, and Visualization (UI)
-**Status:** Approved design, pending implementation
-
----
-
-## 1. Purpose
-
-The OKSG frontend is a read-only observability dashboard that renders the topology graph and metrics produced by the OKSG backend. It serves two audiences:
-
-- **Primary — Operators/SREs:** Monitor a live Kubernetes cluster, spot issues quickly, navigate the graph to understand dependencies and locate root causes.
-- **Secondary — TCC/academic reviewers:** Evaluate the architecture by seeing the system graph and metrics foundation in action as proof the observability-to-graph pipeline works end to end.
-
-The frontend is purely observational. No cluster mutations, no control-plane operations.
+The OKSG frontend is a read-only observability dashboard that renders the
+topology graph and metrics produced by the OKSG backend. No cluster
+mutations, no control-plane operations.
 
 ---
 
@@ -129,14 +118,43 @@ The landing page. Operators see cluster health at a glance. TCC reviewers see pr
 
 ### 5.2 Topology Graph (`/topology`)
 
-The core view. Interactive system graph rendered with React Flow.
+The core view. Interactive system graph rendered with React Flow on top of a
+dagre layout engine (`@dagrejs/dagre`). The full graph is too dense to be
+useful flat, so the view is filtered through one of three **projection
+modes** with three **granularity** levels. Both are URL-backed via
+`useProjectionState`, so links into the topology view round-trip mode and
+granularity.
 
-**Layout:**
-- Full-bleed graph canvas with **dotted grid background** (subtle dots at regular intervals using `var(--surface-active)` on `var(--surface-module)`) providing spatial reference during pan/zoom
-- Floating filter toolbar (top): Kind, Namespace, Relation type dropdowns
-- Minimap (bottom-left)
-- Zoom controls (bottom-right)
-- Floating Node Inspector panel (right, 280px, conditional — appears on node click)
+**Projection modes** (`web/src/views/TopologyGraph/projection.ts` →
+`LAYER_SPECS`):
+
+| Mode | Visible kinds | Layer-relevant relations | Layout strategy |
+|------|---------------|-------------------------|-----------------|
+| Ownership | namespace, workload, pod, container, configmap, secret, pvc, service, ingress | `contains`, `mounts`, `uses`, `exposes`, `routes_to` | top-down hierarchy, namespace groups side-by-side, dynamic ranks via `runLayered` |
+| Infrastructure | node, namespace, service, workload, ingress, pod, container | `runs_on`, `mounts` | dagre LR between K8s nodes + grid pack inside node groups, namespace stripe on pods |
+| Traffic | namespace, service, workload, ingress | `calls`, `routes_to`, `exposes` | dagre LR with greedy cycle breaking; granularity is forced to `overview` (collapsing pod-level edges) |
+
+**Granularity** (`Granularity = 'overview' | 'runtime' | 'detailed'`):
+
+- `overview` — namespace, node, service, workload, ingress
+- `runtime` — overview + pod
+- `detailed` — runtime + container, configmap, secret, pvc
+
+The Traffic mode intentionally caps at `overview` because pod-level traffic
+edges multiply by replica count and produce unreadable hairballs.
+
+**Edge filtering invariant.** The `project()` function filters edges by
+**both** endpoint visibility and `LayerSpec.relations`. Without the second
+filter, removing a relation from a layer's set only changes which entities
+count as participants — edges of that relation still render between two
+already-visible nodes (the historic `calls`-leak-into-Ownership regression).
+
+**Canvas chrome:**
+- Full-bleed graph canvas with **dotted grid background** providing spatial reference during pan/zoom
+- Floating top bar: projection-mode tabs, granularity tabs, an "include orphans" toggle
+- Floating `LegendPanel` (right): kind / relation legend, plus namespace color swatches in Infrastructure mode
+- Minimap (bottom-left), zoom controls (bottom-right)
+- Floating `NodeInspector` panel (right, conditional — appears on node click)
 
 **Node Cards (React Flow custom nodes):**
 Each entity renders as a card with a colored header and property rows.
@@ -150,14 +168,14 @@ Each entity renders as a card with a colored header and property rows.
 
 Card content: entity name (bold, header bar), kind-specific icon (top-right), 2-3 key properties (label + value rows), and **minimalist segmented bar indicators** for metrics like CPU, MEM, I/O — solid rectangular blocks with gaps, matching the reference mockup style (e.g., the IO `450MB/s` segmented bar in the POD_COMPUTE_02 card).
 
-**Edge Rendering — "Cable Bundle" Style:**
-Edges are rendered as organized cable bundles, inspired by physical network cluster cabling:
-- Each edge is a bundle of parallel lines ("cables") routed with right-angle or smooth orthogonal paths
-- **Cable count and thickness scale with traffic/confidence:** high-traffic `calls` edges render as thick multi-cable bundles; low-traffic `uses` edges render as thin single cables
-- Color-matched to relation type: `var(--color-signal)` for calls/exposes, `var(--color-info)` for runs_on, `var(--color-text-muted)` for uses/mounts
-- Cables route along grid-aligned paths (horizontal → vertical → horizontal) to maintain the organized "server rack wiring" aesthetic
-- Relation type label shown on hover or always visible (configurable)
-- Custom React Flow edge component handles the multi-cable rendering and traffic-based scaling
+**Edge Rendering — `RelationEdge`:**
+Edges are a custom React Flow edge component (`edges/RelationEdge.tsx`):
+
+- Path geometry uses React Flow's live source/target handle coordinates as the source of truth — never stale layout-box estimates. This is enforced because dagre layout positions are advisory; React Flow may reposition handles after re-render and the edge must follow.
+- Stroke color is keyed to relation type via CSS custom properties (`--color-signal` for `calls`/`exposes`, `--color-info` for `runs_on`/`contains`, `--color-text-muted` for `uses`/`mounts`).
+- For `calls` edges, stroke width scales with the live request rate snapshot from `useEdgeMetrics`, so high-traffic links read as visually heavier.
+- The original "cable bundle" mockup is approximated with stroke-width modulation rather than literal multi-line bundles; this kept the SVG cost flat as graph density grew.
+- An `EdgeMetricButton` overlay opens the Metrics Explorer pre-filtered to that edge.
 
 **Node Inspector Panel:**
 Appears when a node is clicked. Contents:
@@ -227,7 +245,7 @@ The Metrics Explorer must treat catalog `scopes` as authoritative:
 
 - entity mode renders only metrics whose scopes include `entity`
 - edge mode renders only metrics whose scopes include `edge`
-- entity-only traffic metrics such as `net_rx_bytes` and `net_tx_bytes` must never be requested in edge mode
+- edge mode uses edge-capable catalog entries such as servicegraph and HTTP request metrics; unsupported pod-network metrics must not be requested or displayed
 
 ### 5.4 Status Bar
 
@@ -399,3 +417,41 @@ web/
 | `typescript` | ^5 | Type safety |
 
 No additional UI frameworks or CSS frameworks.
+
+---
+
+## 10. Working Rules
+
+Constraints that have caused regressions if ignored:
+
+- **Layout strategies are synchronous.** `useGraphLayout` is a `useMemo`
+  dispatcher keyed by `ProjectionMode`; do not convert it to `useEffect` +
+  `setState`. The `LayoutStrategy` interface in `layouts/types.ts` is the
+  contract every strategy implements.
+- **Layout engine is dagre.** Topology layouts live under
+  `web/src/views/TopologyGraph/layouts/` and use `@dagrejs/dagre` per mode.
+- **Catalog scopes are authoritative.** Metrics Explorer renders entity
+  cards only when the catalog entry's `scopes` includes `entity`, and edge
+  cards only when it includes `edge`.
+- **Health summary.** Cluster Overview's runtime health row reads
+  `/api/v1/status.health_summary`: node health from
+  `k8s.node.condition.ready`, pod health from the latest topology snapshot's
+  pod labels (`phase`, `status`, `k8s.pod.phase`) with an explicit `unknown`
+  bucket. The UI does not infer phase from absence of telemetry.
+- **Node Inspector** renders only live metric labels attached to graph
+  nodes (CPU, memory, phase, etc.) plus inbound/outbound relations and the
+  "View Full Metrics →" link. No fabricated bars or sparklines.
+- **Status bar.** `BACKEND_OK` / `BACKEND_OFFLINE` / `DISCONNECTED` are
+  derived from the `/api/v1/status` poll and fetch-failure fallback.
+  Topology screenshots are only valid evidence when the footer reads
+  `BACKEND_OK`.
+- **Topology projection layer relations** (`projection.ts → LAYER_SPECS`):
+  - Ownership relations must include `contains`, `mounts`, `uses`,
+    `exposes`, and `routes_to`. Removing any one of them filters Ingress
+    or call-only services out of `computeParticipants` and they vanish.
+  - Do **NOT** add `calls` to ownership; `calls` belongs to Traffic only.
+  - Traffic relations: `calls`, `routes_to`, `exposes`. Infrastructure:
+    `runs_on`, `mounts`. Don't blend them.
+  - The edge filter in `project()` MUST check
+    `spec.relations.has(e.relation)` in addition to endpoint visibility,
+    or stale relations leak into the wrong layer.

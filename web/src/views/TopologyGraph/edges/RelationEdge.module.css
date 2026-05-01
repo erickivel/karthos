@@ -8,10 +8,10 @@
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-text-muted);
+  color: #d6dbe2;
   text-align: center;
-  background: var(--surface-nav);
-  border: 1px solid var(--surface-active);
+  background: #171b20;
+  border: 1px solid rgb(255 255 255 / 16%);
   border-radius: 6px;
   padding: 2px 7px;
   display: flex;
@@ -21,6 +21,7 @@
   width: fit-content;
   margin: 0 auto;
   white-space: nowrap;
+  box-shadow: 0 0 0 2px rgb(0 0 0 / 42%);
 }
 
 .metricSummary {

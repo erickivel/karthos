@@ -10,6 +10,7 @@ import (
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/oksg/pkg/core/semconv"
 )
 
 // MetricsHandler serves metric query and catalog endpoints.
@@ -222,8 +223,8 @@ func edgeRefFromLabels(labels map[string]string) *edgeRef {
 	if labels == nil {
 		return nil
 	}
-	source := entities.EntityID(labels["edge_client_id"])
-	target := entities.EntityID(labels["edge_server_id"])
+	source := entities.EntityID(labels[semconv.LabelEdgeClientID])
+	target := entities.EntityID(labels[semconv.LabelEdgeServerID])
 	if source == "" || target == "" {
 		return nil
 	}

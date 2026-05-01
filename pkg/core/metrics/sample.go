@@ -12,4 +12,5 @@ type MetricSample struct {
 	Value      float64           `json:"value"`
 	Timestamp  time.Time         `json:"timestamp"`
 	Labels     map[string]string `json:"labels,omitempty"`
+	Unit       Unit              `json:"unit,omitempty"`
 }

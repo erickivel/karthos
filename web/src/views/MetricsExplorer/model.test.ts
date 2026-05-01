@@ -7,23 +7,25 @@ describe('MetricsExplorer model', () => {
   it('filters edge mode down to edge-capable metrics only', () => {
     const metrics: CanonicalMetric[] = [
       {
-        name: 'request_rate_per_second',
+        name: 'servicegraph.request.count',
+        display_name: 'Service Graph Request Rate',
         unit: 'per_second',
         category: 'traffic',
         scopes: ['entity', 'edge'],
         description: 'rate',
       },
       {
-        name: 'net_rx_bytes',
+        name: 'k8s.pod.cpu.usage',
+        display_name: 'Pod CPU Usage',
         unit: 'bytes',
-        category: 'traffic',
+        category: 'resource',
         scopes: ['entity'],
-        description: 'rx bytes',
+        description: 'cpu',
       },
     ]
 
     expect(filterMetricsForMode(metrics, 'traffic', 'edge').map((metric) => metric.name)).toEqual([
-      'request_rate_per_second',
+      'servicegraph.request.count',
     ])
   })
 

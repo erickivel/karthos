@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
@@ -41,6 +42,107 @@ func TestPlanIncludesPrometheusReceiverWhenTargetsExist(t *testing.T) {
 	require.Contains(t, plan.AgentConfig.Receivers, "kubeletstats")
 	require.Contains(t, plan.AgentConfig.Receivers, "prometheus")
 	require.Contains(t, plan.GatewayConfig.Receivers, "otlp")
+}
+
+func TestPlanPrometheusScrapeStampsAppSource(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Type:    "prometheus",
+				Present: true,
+				PrometheusTargets: []profile.PrometheusTarget{
+					{
+						ServiceName: "gateway-go",
+						Namespace:   "oksg-demo",
+						Port:        8080,
+						Path:        "/metrics",
+						Reachable:   true,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	prometheus := plan.AgentConfig.Receivers["prometheus"].(map[string]any)
+	config := prometheus["config"].(map[string]any)
+	scrapeConfigs := config["scrape_configs"].([]map[string]any)
+	require.Len(t, scrapeConfigs, 1)
+
+	metricRelabels := scrapeConfigs[0]["metric_relabel_configs"].([]map[string]any)
+	require.Contains(t, metricRelabels, map[string]any{
+		"target_label": "oksg_source",
+		"replacement":  metrics.SourcePrometheusApp,
+	})
+}
+
+func TestPlanIncludesIstioMeshScrapeJobWhenMeshSourceExists(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Name:    "istio",
+				Type:    "istio",
+				Present: true,
+				Mesh: &profile.MeshSource{
+					Flavor:             "istio",
+					Mode:               "sidecar",
+					InjectedNamespaces: []string{"oksg-demo"},
+					MetricsPort:        15020,
+					MetricsPath:        "/stats/prometheus",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Contains(t, plan.AgentConfig.Receivers, "prometheus")
+	require.Contains(t, plan.AgentConfig.Service.Pipelines["metrics"].Receivers, "prometheus")
+
+	prometheus := plan.AgentConfig.Receivers["prometheus"].(map[string]any)
+	config := prometheus["config"].(map[string]any)
+	scrapeConfigs := config["scrape_configs"].([]map[string]any)
+	require.Len(t, scrapeConfigs, 1)
+	meshJob := scrapeConfigs[0]
+	require.Equal(t, "mesh-istio", meshJob["job_name"])
+	require.Equal(t, "/stats/prometheus", meshJob["metrics_path"])
+
+	relabelConfigs := meshJob["relabel_configs"].([]map[string]any)
+	require.Contains(t, relabelConfigs, map[string]any{
+		"source_labels": []string{"__meta_kubernetes_pod_container_name"},
+		"action":        "keep",
+		"regex":         "istio-proxy",
+	})
+	require.Contains(t, relabelConfigs, map[string]any{
+		"source_labels": []string{"__meta_kubernetes_namespace"},
+		"action":        "keep",
+		"regex":         "oksg-demo",
+	})
+
+	metricRelabels := meshJob["metric_relabel_configs"].([]map[string]any)
+	require.Contains(t, metricRelabels, map[string]any{
+		"source_labels": []string{"reporter"},
+		"action":        "keep",
+		"regex":         "destination",
+	})
+	require.Contains(t, metricRelabels, map[string]any{
+		"target_label": "oksg_source",
+		"replacement":  "mesh.istio",
+	})
+	require.Contains(t, metricRelabels, map[string]any{
+		"source_labels": []string{"source_canonical_service"},
+		"target_label":  "client",
+	})
+	require.Contains(t, metricRelabels, map[string]any{
+		"source_labels": []string{"destination_canonical_service"},
+		"target_label":  "server",
+	})
 }
 
 func TestPlanFallsBackToClusterIDWhenClusterNameEmpty(t *testing.T) {
@@ -309,4 +411,64 @@ func TestPlanNoConnectorsWhenTracesNotEnabled(t *testing.T) {
 	metricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
 	require.NotContains(t, metricsPipeline.Receivers, "spanmetrics")
 	require.NotContains(t, metricsPipeline.Receivers, "servicegraph")
+}
+
+// TestPlanSuppressesServicegraphConnectorWhenIstioWins verifies that when
+// istio is present together with OTLP traces, the planner does NOT deploy the
+// servicegraph connector (istio wins all servicegraph.* metrics) but keeps
+// spanmetrics (which has no overlapping winner).
+func TestPlanSuppressesServicegraphConnectorWhenIstioWins(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Name:    "istio",
+				Type:    "istio",
+				Present: true,
+				Mesh:    &profile.MeshSource{Flavor: "istio"},
+			},
+			{
+				Name:    "application-otlp",
+				Type:    "otlp",
+				Present: true,
+				OTLP:    &profile.OTLPSource{TracesEnabled: true},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, plan.GatewayConfig.Connectors, "spanmetrics")
+	require.NotContains(t, plan.GatewayConfig.Connectors, "servicegraph",
+		"servicegraph connector must not deploy when istio wins all its metrics")
+
+	tracesPipeline := plan.GatewayConfig.Service.Pipelines["traces"]
+	require.Contains(t, tracesPipeline.Exporters, "spanmetrics")
+	require.NotContains(t, tracesPipeline.Exporters, "servicegraph")
+
+	metricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
+	require.Contains(t, metricsPipeline.Receivers, "spanmetrics")
+	require.NotContains(t, metricsPipeline.Receivers, "servicegraph")
+}
+
+// TestPlanInstallsOksgSourceTagger verifies the agent and gateway pipelines
+// include the transform/oksg-source processor so every datapoint that lacks
+// an explicit oksg_source attribute gets one.
+func TestPlanInstallsOksgSourceTagger(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	require.Contains(t, plan.AgentConfig.Processors, oksgSourceTaggerProcessor)
+	require.Contains(t, plan.GatewayConfig.Processors, oksgSourceTaggerProcessor)
+
+	require.Contains(t, plan.AgentConfig.Service.Pipelines["metrics"].Processors, oksgSourceTaggerProcessor)
+	require.Contains(t, plan.GatewayConfig.Service.Pipelines["metrics"].Processors, oksgSourceTaggerProcessor)
 }

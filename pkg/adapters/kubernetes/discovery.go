@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -28,6 +29,10 @@ const (
 	otlpAnnotationTraces       = "oksg.io/otlp-traces"
 	otlpGRPCPort               = int32(4317)
 	otlpHTTPPort               = int32(4318)
+	istioSystemNamespace       = "istio-system"
+	istioSidecarWebhook        = "istio-sidecar-injector"
+	istioMetricsPort           = int32(15020)
+	istioMetricsPath           = "/stats/prometheus"
 )
 
 type HTTPProbe func(ctx context.Context, url string) bool
@@ -89,6 +94,11 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		return nil, fmt.Errorf("list deployments: %w", err)
 	}
 
+	pods, err := d.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list pods: %w", err)
+	}
+
 	services, err := d.client.CoreV1().Services("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
@@ -127,6 +137,18 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		profileResult.Workloads = append(profileResult.Workloads, workload)
 	}
 
+	for _, pod := range sortPods(pods.Items) {
+		if len(d.targetNamespaces) > 0 && !d.isTargetNamespace(pod.Namespace) {
+			continue
+		}
+		if isTerminatingPod(pod) {
+			continue
+		}
+		entityPod := entities.NewPod(d.clusterName, pod.Namespace, pod.Name, pod.Labels)
+		entityPod.WorkloadID = matchPodWorkloadID(entityPod, profileResult.Workloads)
+		profileResult.Pods = append(profileResult.Pods, entityPod)
+	}
+
 	for _, ing := range sortIngresses(ingresses.Items) {
 		ingress := entities.NewIngress(d.clusterName, ing.Namespace, ing.Name, "", ing.Labels)
 		ingress.BackendServices = extractIngressBackends(ing)
@@ -160,6 +182,9 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		},
 	}
 	profileResult.Sources = append(profileResult.Sources, otlpSources...)
+	if meshSource, ok := d.istioSource(ctx, namespaces.Items); ok {
+		profileResult.Sources = append(profileResult.Sources, meshSource)
+	}
 
 	profileResult.CollectionPaths = []profile.OTelCollectionPath{
 		{ReceiverType: "kubeletstats", Enabled: true},
@@ -179,8 +204,83 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		})
 		profileResult.RecommendedReceivers = append(profileResult.RecommendedReceivers, "prometheus")
 	}
+	if hasIstioSource(profileResult.Sources) {
+		profileResult.CollectionPaths = append(profileResult.CollectionPaths, profile.OTelCollectionPath{
+			ReceiverType: "prometheus/mesh-istio",
+			Enabled:      true,
+			Targets:      []string{fmt.Sprintf("pod/istio-proxy:%d%s", istioMetricsPort, istioMetricsPath)},
+		})
+		if !containsString(profileResult.RecommendedReceivers, "prometheus") {
+			profileResult.RecommendedReceivers = append(profileResult.RecommendedReceivers, "prometheus")
+		}
+	}
 
 	return profileResult, nil
+}
+
+func (d *DiscoveryAdapter) istioSource(ctx context.Context, namespaces []corev1.Namespace) (profile.ObservabilitySource, bool) {
+	hasSystemNamespace := false
+	var injected []string
+	for _, namespace := range namespaces {
+		if namespace.Name == istioSystemNamespace {
+			hasSystemNamespace = true
+		}
+		if namespace.Labels["istio-injection"] == "enabled" {
+			injected = append(injected, namespace.Name)
+		}
+	}
+	if !hasSystemNamespace {
+		return profile.ObservabilitySource{}, false
+	}
+
+	webhooks, err := d.client.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return profile.ObservabilitySource{}, false
+	}
+	if !hasMutatingWebhook(webhooks.Items, istioSidecarWebhook) {
+		return profile.ObservabilitySource{}, false
+	}
+	sort.Strings(injected)
+
+	return profile.ObservabilitySource{
+		Name:    "istio",
+		Type:    "istio",
+		Present: true,
+		Mesh: &profile.MeshSource{
+			Flavor:             "istio",
+			Mode:               "sidecar",
+			InjectedNamespaces: injected,
+			MetricsPort:        istioMetricsPort,
+			MetricsPath:        istioMetricsPath,
+		},
+	}, true
+}
+
+func hasMutatingWebhook(items []admissionv1.MutatingWebhookConfiguration, name string) bool {
+	for _, item := range items {
+		if item.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasIstioSource(sources []profile.ObservabilitySource) bool {
+	for _, source := range sources {
+		if source.Type == "istio" && source.Present && source.Mesh != nil && source.Mesh.Flavor == "istio" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *DiscoveryAdapter) prometheusTarget(ctx context.Context, service corev1.Service) (profile.PrometheusTarget, bool) {
@@ -285,6 +385,45 @@ func sortServices(items []corev1.Service) []corev1.Service {
 		return sorted[i].Namespace < sorted[j].Namespace
 	})
 	return sorted
+}
+
+func sortPods(items []corev1.Pod) []corev1.Pod {
+	sorted := append([]corev1.Pod(nil), items...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Namespace == sorted[j].Namespace {
+			return sorted[i].Name < sorted[j].Name
+		}
+		return sorted[i].Namespace < sorted[j].Namespace
+	})
+	return sorted
+}
+
+func isTerminatingPod(pod corev1.Pod) bool {
+	return pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+}
+
+func matchPodWorkloadID(pod entities.Pod, workloads []entities.Workload) entities.EntityID {
+	for _, workload := range workloads {
+		if pod.Namespace != workload.Namespace {
+			continue
+		}
+		if selectorMatches(workload.PodTemplateLabels, pod.Labels()) {
+			return workload.ID()
+		}
+	}
+	return ""
+}
+
+func selectorMatches(selector, labels map[string]string) bool {
+	if len(selector) == 0 {
+		return false
+	}
+	for key, value := range selector {
+		if labels[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *DiscoveryAdapter) isTargetNamespace(ns string) bool {

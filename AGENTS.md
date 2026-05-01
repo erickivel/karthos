@@ -24,6 +24,8 @@ All implementation details live in `docs/`. Use and update these files when impl
 | [docs/testing.md](docs/testing.md) | Unit tests, e2e model, scenarios, traffic generation | Changing test infrastructure, task names, or Helm install flow |
 | [docs/api-reference.md](docs/api-reference.md) | REST API routes, query params, request/response examples | Adding, removing, or changing API endpoints |
 | [docs/development.md](docs/development.md) | Project structure, tech stack, common commands, Helm ownership | Adding packages, changing structure, or modifying workflows |
+| [docs/metrics-pipeline.md](docs/metrics-pipeline.md) | Catalog, dialect, source registry, resolver, source arbitration end-to-end | Changing canonical metrics, dialects, sources, or arbitration rules |
+| [docs/frontend-design-spec.md](docs/frontend-design-spec.md) | Frontend tech stack, views, design system, projection modes, layout strategies | Changing frontend views, projection logic, layout strategies, or theme tokens |
 
 ## After-Change Checklist
 
@@ -56,6 +58,8 @@ When upgrading Go (e.g., to fix `govulncheck` findings), update **all** of these
 | `test/e2e/apps/base/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
 | `test/e2e/apps/with-prometheus/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
 | `test/e2e/apps/with-prometheus/gateway-go/go.mod` | `go X.Y.Z` directive |
+| `test/e2e/apps/with-istio/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
+| `test/e2e/apps/with-istio/gateway-go/go.mod` | `go X.Y.Z` directive |
 
 After updating, run `go mod tidy`, reinstall tools (`go install ...`), `asdf reshim golang`, then `task ci` and `task security`.
 
@@ -79,6 +83,15 @@ The frontend lives in `web/`. **All frontend operations run inside Docker contai
 - Source files are volume-mounted into the dev container for HMR. Edit files on the host, the container picks up changes.
 - API requests are proxied: Vite dev server proxies `/api/*` to the backend container, nginx does the same in production.
 - The `web/` directory has its own `Taskfile.yml` included from the root.
+- Topology layout strategies are synchronous unless a layout engine is genuinely async. Do not convert them to `useEffect` + `setState` just to fit a dispatcher.
+- For topology edges, React Flow's live handle coordinates are the endpoint source of truth. Do not route rendered edges from stale layout-box estimates.
+- Before judging topology screenshots, verify backend direct and frontend proxy status are both nominal and the footer says `BACKEND_OK`; offline/disconnected screenshots are not valid layout evidence.
+- Browser Use DOM/accessibility counts can miss custom SVG edge internals. Treat screenshots and app-state/layout evidence as primary for topology edge verification.
+- **Topology projection layer relations** (`web/src/views/TopologyGraph/projection.ts` → `LAYER_SPECS` and `project()`):
+  - Ownership relations must include all five of `contains`, `mounts`, `uses`, `exposes`, `routes_to`. Removing any one of them filters Ingress / call-only services out of `computeParticipants` and they vanish from the view (regression: "ownership is missing Ingress/ConfigMap").
+  - Do **NOT** add `calls` to the ownership layer relations. `calls` is a runtime traffic relation and belongs to the Traffic layer only; putting it in ownership pollutes the structural view with traffic edges. This rule has flipped before — keep `calls` out of ownership.
+  - Traffic relations stay `calls`, `routes_to`, `exposes`. Infrastructure stays `runs_on`, `mounts`. Don't blend them.
+  - The edge filter in `project()` MUST check `spec.relations.has(e.relation)` in addition to endpoint visibility. Without that, removing a relation from a layer's set only changes which entities count as participants — edges of that relation still render between two already-visible nodes. Real symptom: `calls` edges leaked into Ownership even after `calls` was removed from `ownership.relations`, because both endpoint services were already visible via `exposes` / `contains`. Keep both filters in lockstep.
 
 ## Kubernetes Port-Forwarding
 
@@ -98,10 +111,33 @@ The backend API is then available at `http://localhost:18081/api/v1/...`.
 - Keep `docs/discovery-flow.md` explicit about what auto-detection does today versus what the planner accepts from externally supplied profiles.
 - Keep logging documentation in `docs/`: structured JSON logs to stdout only, `kubectl logs` as the debugging path.
 - Update example outputs in `docs/discovery-flow.md` when ClusterProfile structure changes.
+- When removing a feature or code path, sweep the repo for phantom references in the same commit: tests, docs, diagrams, Taskfile entries, and scenario scripts. See `docs/development.md` → *Maintenance Rule* for the checklist.
+- For the frontend dev loop (`task web:dev` with a port-forwarded backend, and when to restart the dev container), see `docs/development.md` → *Frontend Dev Loop*.
+
+## Discovery Refresh & Node TTL Invariant
+
+The Postgres graph store ages out nodes whose most recent containing snapshot
+is older than `OKSG_NODE_TTL` (default 24h, see `latestNodeQuery` in
+`pkg/adapters/storage/postgresql/graph_store.go`). Workload, Ingress,
+ConfigMap, Secret, and PVC nodes are produced **only** by the structural
+ingestion path (`pkg/backend/ingest/structural_topology_*.go`) — runtime
+OTLP signals never re-emit them. So:
+
+- The structural ingester must be re-run on a timer strictly shorter than
+  `NodeTTL`, otherwise these entity kinds disappear from `/api/v1/graph`
+  after the TTL window. This is the regression that produced "ownership is
+  missing Ingress / ConfigMap / Workload" reports.
+- `cmd/backend/main.go:runDiscoveryRefreshLoop` does this on
+  `OKSG_DISCOVERY_REFRESH_INTERVAL` (default 10m). DO NOT remove the loop or
+  raise the interval to ≥ NodeTTL.
+- If you change `defaultNodeTTL` or `defaultDiscoveryRefreshInterval`,
+  preserve the strict inequality `discovery_refresh_interval < node_ttl`.
+- Pods/containers/services/nodes/namespaces survive without this loop because
+  OTLP keeps them fresh; structural-only kinds do not.
 
 ## Telemetry Mapping Rules
 
 - Before adding or remapping any metric, trace-derived metric, or telemetry source, verify the upstream or source-of-truth docs/spec first.
 - Record the signal contract you verified: how the signal is generated, whether it is gauge/sum/histogram and cumulative or delta, its units, and any default rate, flush, or aggregation window semantics.
-- Only after that verification should you change canonical metric mappings, unit conversions, query-time derivations, storage expectations, or UI assumptions.
-- Do not infer telemetry semantics from a metric name alone. Connectors such as `spanmetrics` and `servicegraph` can emit counters, histograms, and unit defaults that differ from what the canonical name suggests.
+- Only after that verification should you change the semconv metric registry, dialect translations, unit conversions, query-time derivations, storage expectations, or UI assumptions.
+- Do not infer telemetry semantics from a metric name alone. Connectors such as `spanmetrics` and `servicegraph` can emit counters, histograms, and unit defaults that differ from what the semconv name suggests.

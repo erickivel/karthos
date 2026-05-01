@@ -1,69 +1,79 @@
 package metrics
 
-// OTLPMetricMapping describes a canonical mapping with optional unit conversion.
+type MetricKind string
+
+const (
+	MetricKindGauge     MetricKind = "gauge"
+	MetricKindCounter   MetricKind = "counter"
+	MetricKindHistogram MetricKind = "histogram"
+)
+
+// OTLPMetricMapping describes semantic metric metadata plus optional unit conversion.
 type OTLPMetricMapping struct {
-	CanonicalName    string
-	ConversionFactor float64 // multiply raw value by this; 1.0 = no conversion
+	ConversionFactor float64
+	Unit             Unit
+	Kind             MetricKind
 }
 
-// OTLPToCanonicalMappings maps OTLP metric names to canonical metric names and unit conversion factors.
-var OTLPToCanonicalMappings = map[string]OTLPMetricMapping{
-	// kubeletstats
-	"k8s.pod.cpu.usage":            {"cpu_usage_millicores", 1000.0}, // cores → millicores
-	"k8s.pod.memory.working_set":   {"memory_usage_bytes", 1.0},
-	"k8s.node.cpu.usage":           {"cpu_usage_millicores", 1000.0},
-	"k8s.node.memory.working_set":  {"memory_usage_bytes", 1.0},
-	"k8s.container.cpu.request":    {"cpu_request_millicores", 1000.0},
-	"k8s.container.cpu.limit":      {"cpu_limit_millicores", 1000.0},
-	"k8s.container.memory.request": {"memory_request_bytes", 1.0},
-	"k8s.container.memory.limit":   {"memory_limit_bytes", 1.0},
-	// hostmetrics
-	"system.cpu.utilization": {"cpu_usage_millicores", 1000.0}, // ratio → millicores approx
-	"system.memory.usage":    {"memory_usage_bytes", 1.0},
-	"system.disk.io":         {"disk_read_bps", 1.0}, // direction resolved at normalization time
-	"system.network.io":      {"net_rx_bps", 1.0},    // direction resolved at normalization time
-	// kubeletstats volume
-	"k8s.volume.available":   {"volume_available_bytes", 1.0},
-	"k8s.volume.capacity":    {"volume_capacity_bytes", 1.0},
-	"k8s.volume.inodes.free": {"volume_inodes_free", 1.0},
-	"k8s.volume.inodes.used": {"volume_inodes_used", 1.0},
-	// hostmetrics filesystem
-	"system.filesystem.usage":       {"filesystem_usage_bytes", 1.0},
-	"system.filesystem.utilization": {"filesystem_utilization", 1.0},
-	// hostmetrics load
-	"system.cpu.load_average.1m":  {"cpu_load_average_1m", 1.0},
-	"system.cpu.load_average.5m":  {"cpu_load_average_5m", 1.0},
-	"system.cpu.load_average.15m": {"cpu_load_average_15m", 1.0},
-	// hostmetrics paging
-	"system.paging.usage":      {"paging_usage_bytes", 1.0},
-	"system.paging.operations": {"paging_operations_per_second", 1.0},
-	// k8scluster
-	"k8s.replicaset.desired":   {"replica_count", 1.0},
-	"k8s.deployment.desired":   {"replica_count", 1.0},
-	"k8s.deployment.available": {"deployment_available", 1.0},
-	// k8scluster state
-	"k8s.pod.phase":               {"pod_phase", 1.0},
-	"k8s.namespace.phase":         {"namespace_phase", 1.0},
-	"k8s.node.condition":          {"node_condition_ready", 1.0},               // condition type resolved at normalization time
-	"k8s.node.allocatable_cpu":    {"node_allocatable_cpu_millicores", 1000.0}, // cores → millicores
-	"k8s.node.allocatable_memory": {"node_allocatable_memory_bytes", 1.0},
-	// k8scluster workload state
-	"k8s.daemonset.desired_scheduled_nodes": {"daemonset_desired_nodes", 1.0},
-	"k8s.daemonset.ready_nodes":             {"daemonset_ready_nodes", 1.0},
-	"k8s.statefulset.desired_pods":          {"statefulset_desired_pods", 1.0},
-	"k8s.statefulset.ready_pods":            {"statefulset_ready_pods", 1.0},
-	// spanmetrics connector
-	"traces.span.metrics.calls":    {"request_rate_per_second", 1.0},
-	"traces.span.metrics.duration": {"request_duration_nanoseconds", 1e6}, // milliseconds → nanoseconds
-	// keep legacy mapping for any pre-existing serialized samples/tests
-	"traces.span.metrics.duration.sum": {"request_duration_nanoseconds", 1e6}, // milliseconds → nanoseconds
-	// servicegraph connector
-	"traces.service.graph.request.total":        {"request_rate_per_second", 1.0},
-	"traces.service.graph.request.server":       {"edge_latency_nanoseconds", 1e9}, // seconds → nanoseconds
-	"traces.service.graph.request_failed_total": {"error_rate_per_second", 1.0},
-	// prometheus receiver (forwards Prometheus-style names as-is over OTLP)
-	"http_requests_total":               {"request_rate_per_second", 1.0},
-	"http_request_duration_seconds":     {"request_duration_nanoseconds", 1e9},
-	"container_cpu_usage_seconds_total": {"cpu_usage_millicores", 1.0},
-	"container_memory_usage_bytes":      {"memory_usage_bytes", 1.0},
+// OTLPSemconvMetrics stores semconv-native metric metadata after source-specific
+// dialect translation has already happened.
+var OTLPSemconvMetrics = map[string]OTLPMetricMapping{
+	"k8s.pod.cpu.usage":                        {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
+	"k8s.pod.memory.working_set":               {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.node.cpu.usage":                       {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
+	"k8s.node.memory.working_set":              {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.cpu.request":                {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
+	"k8s.container.cpu.limit":                  {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
+	"k8s.container.memory.request":             {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.memory.limit":               {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.cpu.usage":                  {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
+	"k8s.container.memory.usage":               {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"system.cpu.utilization":                   {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
+	"system.memory.usage":                      {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"system.disk.io":                           {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindGauge},
+	"system.disk.io.read":                      {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindGauge},
+	"system.disk.io.write":                     {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindGauge},
+	"system.network.io":                        {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindGauge},
+	"system.network.io.receive":                {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindGauge},
+	"system.network.io.transmit":               {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindGauge},
+	"k8s.volume.available":                     {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.volume.capacity":                      {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.volume.inodes.free":                   {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.volume.inodes.used":                   {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"system.filesystem.usage":                  {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"system.filesystem.utilization":            {ConversionFactor: 1.0, Unit: UnitRatio, Kind: MetricKindGauge},
+	"system.cpu.load_average.1m":               {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"system.cpu.load_average.5m":               {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"system.cpu.load_average.15m":              {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"system.paging.usage":                      {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"system.paging.operations":                 {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindGauge},
+	"k8s.replicaset.desired":                   {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.deployment.desired":                   {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.deployment.available":                 {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.namespace.phase":                      {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.node.condition":                       {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.node.condition.ready":                 {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.node.condition.memory_pressure":       {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.node.condition.disk_pressure":         {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.node.allocatable_cpu":                 {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
+	"k8s.node.allocatable_memory":              {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.daemonset.desired_scheduled_nodes":    {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.daemonset.ready_nodes":                {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.statefulset.desired_pods":             {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.statefulset.ready_pods":               {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"http.server.request.count":                {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"http.server.request.duration":             {ConversionFactor: 1e9, Unit: UnitNanoseconds, Kind: MetricKindHistogram},
+	"rpc.server.request.count":                 {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"rpc.server.duration":                      {ConversionFactor: 1e6, Unit: UnitNanoseconds, Kind: MetricKindHistogram},
+	"servicegraph.request.count":               {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"servicegraph.request.duration":            {ConversionFactor: 1e9, Unit: UnitNanoseconds, Kind: MetricKindHistogram},
+	"servicegraph.request.error.count":         {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"servicegraph.request.body.size":           {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindHistogram},
+	"servicegraph.response.body.size":          {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindHistogram},
+	"servicegraph.grpc.request.message.count":  {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"servicegraph.grpc.response.message.count": {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"servicegraph.tcp.connection.open.count":   {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"servicegraph.tcp.connection.close.count":  {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	// Note: servicegraph.request.error.ratio is query-derived (see metric_store.buildPromQL)
+	// and intentionally NOT in this table — it never arrives as an OTLP sample.
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
@@ -30,6 +31,12 @@ const (
 	defaultTopologyFlushInterval   = 60 * time.Second
 	defaultStatusStaleSeconds      = 300
 	defaultNodeTTL                 = 24 * time.Hour
+	// defaultDiscoveryRefreshInterval re-runs structural ingestion from the
+	// discovery profile on a timer so workload/ingress/configmap/secret/pvc
+	// nodes keep producing fresh snapshots and survive `nodeTTL` aging in the
+	// graph store. MUST stay strictly less than defaultNodeTTL — otherwise
+	// structural nodes age out between refreshes and disappear from the API.
+	defaultDiscoveryRefreshInterval = 10 * time.Minute
 )
 
 type config struct {
@@ -48,6 +55,13 @@ type config struct {
 	TopologyFlushInterval time.Duration
 	StatusStaleSeconds    int
 	NodeTTL               time.Duration
+	// DiscoveryRefreshInterval re-runs structural ingestion from the
+	// discovery profile on a timer. Required because the graph store
+	// applies NodeTTL based on snapshot creation time; without periodic
+	// re-ingest, workload/ingress/configmap/secret/pvc nodes (which only
+	// the structural pipeline produces) age out and the API stops
+	// returning them. 0 disables the refresh — only do that for tests.
+	DiscoveryRefreshInterval time.Duration
 }
 
 func main() {
@@ -95,19 +109,52 @@ func run(ctx context.Context, args []string) error {
 	)
 
 	resolver := ingest.NewOTLPEntityResolverWithRegistry(cfg.ClusterName, stores.EntityRegistry)
-	normalizer := ingest.NewOTLPNormalizer(resolver)
-	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
-	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
+	dialect := metrics.NewDialectRegistryFromSources(metrics.DefaultLogicalSources())
 
+	var loadedProfile *profile.ClusterProfile
 	if cfg.DiscoveryProfile != "" {
-		if err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger); err != nil {
+		prof, err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger)
+		if err != nil {
 			return err
+		}
+		loadedProfile = prof
+
+		// Re-ingest the discovery profile periodically so structural nodes
+		// (workload/ingress/configmap/secret/pvc) get fresh snapshots and
+		// don't age out under NodeTTL. See `defaultDiscoveryRefreshInterval`
+		// for the rationale; without this, the structural snapshot is pushed
+		// once at startup and disappears after NodeTTL.
+		if cfg.DiscoveryRefreshInterval > 0 {
+			if cfg.NodeTTL > 0 && cfg.DiscoveryRefreshInterval >= cfg.NodeTTL {
+				logger.Warn("discovery refresh interval is not strictly less than node TTL; structural nodes will age out between refreshes",
+					logging.String("discovery_refresh_interval", cfg.DiscoveryRefreshInterval.String()),
+					logging.String("node_ttl", cfg.NodeTTL.String()),
+				)
+			}
+			go runDiscoveryRefreshLoop(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger)
 		}
 	}
 
+	var normalizerOpts []ingest.NormalizerOption
+	if loadedProfile != nil {
+		assignment, _, err := metrics.Resolve(metrics.DefaultCatalog(), metrics.DefaultLogicalSources(), loadedProfile)
+		if err != nil {
+			return fmt.Errorf("resolve metric source assignment: %w", err)
+		}
+		normalizerOpts = append(normalizerOpts, ingest.WithAssignment(assignment))
+		logger.Info("metric source assignment loaded",
+			logging.Any("metric_count", len(assignment)),
+		)
+	}
+
+	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, normalizerOpts...)
+	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
+	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
+	meshMetricTopoBuilder := ingest.NewMeshMetricTopologyBuilder(dialect, cfg.ClusterName)
+
 	bufferedTopo := ingest.NewBufferedTopologyIngestor(
 		map[schema.SignalType]ingest.TopologyBuilder{
-			schema.SignalMetric: metricTopoBuilder,
+			schema.SignalMetric: ingest.NewCompositeTopologyBuilder(metricTopoBuilder, meshMetricTopoBuilder),
 			schema.SignalTrace:  traceTopoBuilder,
 		},
 		stores.GraphStore,
@@ -148,7 +195,7 @@ func run(ctx context.Context, args []string) error {
 		EnabledSignals:      cfg.EnabledSignals,
 		MetricStore:         stores.MetricStore,
 		GraphStore:          stores.GraphStore,
-	}, ingest.NewEnvelopeBuilder(contextNow()), router, logger)
+	}, ingest.NewEnvelopeBuilder(contextNow), router, logger)
 	if err != nil {
 		return err
 	}
@@ -193,6 +240,7 @@ func parseConfig(args []string) (config, error) {
 	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
 	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
 	nodeTTLStr := fs.String("node-ttl", envOrDefault("OKSG_NODE_TTL", defaultNodeTTL.String()), "topology node TTL; nodes absent from snapshots for longer than this age out (0 disables)")
+	discoveryRefreshStr := fs.String("discovery-refresh-interval", envOrDefault("OKSG_DISCOVERY_REFRESH_INTERVAL", defaultDiscoveryRefreshInterval.String()), "interval to re-ingest the discovery profile so structural topology nodes (workload/ingress/configmap/secret/pvc) refresh under node-ttl; 0 disables")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -218,22 +266,31 @@ func parseConfig(args []string) (config, error) {
 		nodeTTL = 0
 	}
 
+	discoveryRefresh, err := time.ParseDuration(*discoveryRefreshStr)
+	if err != nil {
+		return config{}, fmt.Errorf("parse discovery refresh interval: %w", err)
+	}
+	if discoveryRefresh < 0 {
+		discoveryRefresh = 0
+	}
+
 	return config{
-		GRPCListenAddress:     *grpcListenAddress,
-		HTTPListenAddress:     *httpListenAddress,
-		HealthListenAddress:   *healthListenAddress,
-		APIListenAddress:      *apiListenAddress,
-		LogLevel:              *logLevel,
-		EnabledSignals:        signals,
-		ClusterName:           *clusterName,
-		DiscoveryProfile:      *discoveryProfile,
-		StorageBackend:        *storageBackend,
-		PostgresDSN:           *postgresDSN,
-		VMURL:                 *vmURL,
-		RawStoreEnabled:       *rawStoreEnabled,
-		TopologyFlushInterval: topologyFlushInterval,
-		StatusStaleSeconds:    *statusStaleSeconds,
-		NodeTTL:               nodeTTL,
+		GRPCListenAddress:        *grpcListenAddress,
+		HTTPListenAddress:        *httpListenAddress,
+		HealthListenAddress:      *healthListenAddress,
+		APIListenAddress:         *apiListenAddress,
+		LogLevel:                 *logLevel,
+		EnabledSignals:           signals,
+		ClusterName:              *clusterName,
+		DiscoveryProfile:         *discoveryProfile,
+		StorageBackend:           *storageBackend,
+		PostgresDSN:              *postgresDSN,
+		VMURL:                    *vmURL,
+		RawStoreEnabled:          *rawStoreEnabled,
+		TopologyFlushInterval:    topologyFlushInterval,
+		StatusStaleSeconds:       *statusStaleSeconds,
+		NodeTTL:                  nodeTTL,
+		DiscoveryRefreshInterval: discoveryRefresh,
 	}, nil
 }
 
@@ -282,6 +339,39 @@ func contextNow() time.Time {
 	return time.Now().UTC()
 }
 
+// runDiscoveryRefreshLoop re-runs structural ingestion on the configured
+// interval. Required because the graph store applies NodeTTL based on snapshot
+// creation time — without periodic re-ingest, workload/ingress/configmap/
+// secret/pvc nodes (only produced by the structural pipeline) age out and the
+// API stops returning them. Errors are logged and the loop continues; a
+// transient discovery-profile read failure shouldn't take the backend down.
+func runDiscoveryRefreshLoop(
+	ctx context.Context,
+	cfg config,
+	graphStore persistence.GraphStore,
+	metadataStore persistence.MetadataStore,
+	entityRegistry persistence.EntityRegistry,
+	logger *logging.Logger,
+) {
+	ticker := time.NewTicker(cfg.DiscoveryRefreshInterval)
+	defer ticker.Stop()
+	logger.Info("discovery refresh loop started",
+		logging.String("interval", cfg.DiscoveryRefreshInterval.String()),
+		logging.String("profile_path", cfg.DiscoveryProfile),
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("discovery refresh loop stopping")
+			return
+		case <-ticker.C:
+			if _, err := ingestDiscoveryProfile(ctx, cfg, graphStore, metadataStore, entityRegistry, logger); err != nil {
+				logger.Warn("discovery refresh ingest failed", logging.Error(err))
+			}
+		}
+	}
+}
+
 func ingestDiscoveryProfile(
 	ctx context.Context,
 	cfg config,
@@ -289,29 +379,29 @@ func ingestDiscoveryProfile(
 	metadataStore persistence.MetadataStore,
 	entityRegistry persistence.EntityRegistry,
 	logger *logging.Logger,
-) error {
+) (*profile.ClusterProfile, error) {
 	data, err := os.ReadFile(cfg.DiscoveryProfile)
 	if err != nil {
-		return fmt.Errorf("read discovery profile: %w", err)
+		return nil, fmt.Errorf("read discovery profile: %w", err)
 	}
 	var prof profile.ClusterProfile
 	if err := json.Unmarshal(data, &prof); err != nil {
-		return fmt.Errorf("unmarshal discovery profile: %w", err)
+		return nil, fmt.Errorf("unmarshal discovery profile: %w", err)
 	}
 
 	if err := metadataStore.PutDiscovery(ctx, prof); err != nil {
-		return fmt.Errorf("persist discovery profile: %w", err)
+		return nil, fmt.Errorf("persist discovery profile: %w", err)
 	}
 
 	builder := ingest.NewK8sStructuralTopologyBuilder(cfg.ClusterName)
 	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore, entityRegistry, logger)
 	if err := ingestor.IngestProfile(ctx, &prof); err != nil {
-		return fmt.Errorf("ingest structural topology: %w", err)
+		return nil, fmt.Errorf("ingest structural topology: %w", err)
 	}
 
 	logger.Info("structural topology ingested from discovery profile",
 		logging.String("profile_path", cfg.DiscoveryProfile),
 		logging.String("cluster_name", prof.ClusterName),
 	)
-	return nil
+	return &prof, nil
 }

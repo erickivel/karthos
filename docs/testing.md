@@ -27,14 +27,10 @@ Key coverage areas:
 
 ## E2E Model
 
-The current e2e architecture is intentionally still:
-
 - `kind` for the cluster
 - `test/e2e/apps` for demo workloads
 - `Taskfile.test.yml` for orchestration
 - `test/e2e/scenarios/*/run.sh` for scenario validation
-
-This slice does not replace the e2e architecture with KUTTL or Helm tests.
 
 ## Prerequisites
 
@@ -54,10 +50,10 @@ task test:e2e:apply-otel
 task test:e2e:verify
 ```
 
-`task test:e2e:setup` now provisions one control-plane node and one worker
+`task test:e2e:setup` provisions one control-plane node and one worker
 node so topology QA can validate cross-node placement in the live cluster.
 
-What each stage now does:
+What each stage does:
 
 - `test:e2e:discover`
   writes `bin/e2e/profile.json`
@@ -69,21 +65,46 @@ What each stage now does:
   checks Helm status, pod readiness including the frontend rollout, and recent agent/gateway/backend logs
 - generated values can also carry collector `featureGates`; the default agent e2e flow enables `receiver.kubeletstats.enableCPUUsageMetrics` to reduce known kubeletstats deprecation noise
 
+`test:e2e:deploy` waits for the demo app Deployments and pods before discovery
+runs. This keeps discovery profiles from capturing terminating rollout pods
+that would later appear as duplicate topology cards.
+
 ## Scenario Expectations
 
 ### Prometheus Available
 
 `./test/e2e/scenarios/prometheus-available/run.sh`
 
+This scenario covers Prometheus discovery, deploy, and traffic generation. The `e2e:scenario:prometheus` task runs the deploy pipeline and then sends gateway traffic automatically.
+
 Expected:
 
 - Prometheus-annotated services are detected
 - gateway-go emits OTLP traces (instrumented with OTel Go SDK, `peer.service` attributes set)
-- generated Helm values include Prometheus receiver config and spanmetrics/servicegraph connectors
+- generated Helm values include Prometheus receiver config and the gateway `spanmetrics`/`servicegraph` connectors
 - agent DaemonSet, gateway Deployment, backend Deployment, and frontend Deployment become ready
 - backend logs show accepted metric envelopes after the gateway forwards traffic
+- generated traffic flows through `gateway-go -> service-a-python` and `gateway-go -> service-b-node`
 - after traffic has flowed, `/api/v1/metrics` returns normalized samples and edge-filtered queries can resolve live call edges
+- `/api/v1/metrics` returns semconv servicegraph samples for `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
+- `servicegraph.request.error.ratio` remains query-derived and is safe to request through the same API
 - `/debug/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
+- Traffic topology mode intentionally stays aggregated at service/workload readability even when the granularity control is set to runtime or detailed; pod replica cards are not expected in Traffic mode
+
+### Istio Mesh Available
+
+`./test/e2e/scenarios/istio-available/run.sh`
+
+Expected:
+
+- `task test:e2e:scenario:istio` installs a minimal Istio control plane if needed, deploys the `with-istio` fixture, generates gateway traffic, and applies the OKSG collector plan
+- `oksg-demo` has sidecar injection enabled, while the sparse orphan pod explicitly disables injection
+- discovery emits an `istio` source with `mesh.flavor=istio`, `mesh.mode=sidecar`, and `/stats/prometheus` on port `15020`
+- generated Helm values include a dedicated `mesh-istio` Prometheus scrape job that selects `istio-proxy` containers and stamps Prometheus-safe `oksg_source=mesh.istio`
+- generated Helm values stamp discovered application Prometheus scrape jobs with `oksg_source=prometheus.app`
+- application Prometheus annotations are not required for mesh metrics
+- mesh-derived samples normalize to existing servicegraph edge metrics, including `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
+- graph `calls` edges include `mesh.istio` provenance, advance `last_seen` from metric datapoint timestamps, and preserve mesh metadata such as `network.protocol.name`, `mesh.security.policy`, and peer SPIFFE principals
 
 ## Generating Traffic
 
@@ -104,13 +125,15 @@ task test:e2e:traffic:watch
 task test:e2e:traffic:watch TRAFFIC_INTERVAL=1
 ```
 
+`task test:e2e:scenario:prometheus` already runs gateway traffic as the final step of the scenario. Use the standalone traffic tasks to generate additional load after the scenario has deployed.
+
 Typical sequence after a scenario run:
 
 ```bash
-task test:e2e:scenario:prometheus   # deploy and wire up telemetry
-task test:e2e:traffic TRAFFIC_REQUESTS=30  # generate traffic
+task test:e2e:scenario:prometheus   # deploy, wire up telemetry, and send initial gateway traffic
+task test:e2e:traffic TRAFFIC_REQUESTS=30  # optional: send more traffic
 task test:e2e:debug:api             # verify backend REST API access
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq .
 task test:e2e:debug:graph           # inspect topology graph snapshot
 ```
 
@@ -166,7 +189,17 @@ Coverage currently includes:
 - projection mode grouping behavior
 - granularity transitions and selection persistence
 - sparse/orphan pod handling
+- infrastructure overview rendering Kubernetes nodes as metric cards
+- compact infrastructure runtime pod packing inside node groups
+- traffic cards rendering servicegraph request rates
 - screenshot baselines for all `mode x granularity` combinations
+
+Topology metric assertions should stay entity-scoped. Pod CPU and memory are
+valid on pod cards, servicegraph request rates are valid on service and ingress
+traffic cards, node allocatable CPU and memory are valid on Kubernetes node
+cards, and workload readiness uses `k8s.deployment.available` over discovered
+`k8s.workload.replicas` metadata. PVC storage should only be asserted when the
+backend exposes paired PVC-resolved volume capacity and available samples.
 
 ### No Telemetry Fallback
 

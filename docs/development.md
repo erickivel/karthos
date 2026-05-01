@@ -1,6 +1,5 @@
 # Development Guide
 
-This guide focuses on the current implementation shape rather than future-only layouts.
 
 ## Prerequisites
 
@@ -37,33 +36,44 @@ cmd/
   schema-gen/      schema helper
 
 pkg/
-  adapters/kubernetes/   discovery adapter (Prometheus + OTLP workload detection)
-  adapters/otel/         source planner (hostmetrics, k8s_cluster, spanmetrics, servicegraph)
-  adapters/api/          REST API server (Layer 6 Phase A query and control endpoints)
+  adapters/api/          REST API server (handlers + response envelope + pagination)
+  adapters/autoinstrumentation/ reserved boundary for OTel operator integration (doc.go only)
+  adapters/istio/        reserved boundary for Istio-specific source adapters (doc.go only)
+  adapters/kubernetes/   discovery adapter (Prometheus + OTLP + Istio mesh detection)
+  adapters/obi/          reserved boundary for eBPF / OBI ingestion (doc.go only)
+  adapters/otel/         source planner; Helm values builder; transform/oksg-source processor
   adapters/otlp/         OTLP gRPC and HTTP server adapter
-  backend/ingest/        raw-envelope conversion, signal routing, entity resolution,
-                         OTLP normalization, topology building, and multi-ingestor fan-out
-                         (entity_resolver.go, normalizer.go, topology_builder.go,
-                          metric_topology_builder.go, normalizing_ingestor.go,
-                          plus existing otlp.go, ingest.go, semantic.go)
-  backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
-                         RawStore, EntityRegistry) and in-memory implementations
-  backend/query/         graph and metrics query contracts
+  adapters/prometheus/   reserved boundary for Prometheus / OpenMetrics adapters (doc.go only)
   adapters/storage/      storage factory and config (memory or external backends)
   adapters/storage/postgresql/     PostgreSQL implementations (pgx/v5)
   adapters/storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
+  backend/ingest/        envelope build, signal routing, entity resolution,
+                         OTLP normalization, structural / mesh / trace topology
+                         builders, composite + multi ingestor, metadata helpers
+                         (entity_resolver.go, normalizer.go, topology_builder.go,
+                          metric_topology_builder.go, mesh_metric_topology_builder.go,
+                          composite_topology_builder.go, structural_topology_builder.go,
+                          structural_topology_ingestor.go, normalizing_ingestor.go,
+                          buffered_topology_ingestor.go, multi_ingestor_test.go,
+                          plus otlp.go, ingest.go, semantic.go, metadata.go)
+  backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
+                         RawStore, EntityRegistry) and in-memory implementations
+  backend/query/         graph and metrics query contracts
   collector/configgen/   Helm values builder
   collector/deployer/    Helm runner
+  core/entities/         canonical graph-facing entities and stable IDs
+  core/featurestore/     reserved for future model-ready features
   core/logging/          shared JSON stdout logger
-  discovery/profile/     ClusterProfile types
-
-  core/
-    entities/        canonical graph-facing entities and stable IDs
-    metrics/         canonical metric definitions, units, and samples
-    topology/        graph nodes, edges, relations, and snapshots
-    registry/        canonical metric registry contracts
-    featurestore/    reserved for future model-ready features
-    schema/          raw telemetry envelopes, validation, schema versions
+  core/metrics/          canonical catalog, dialect maps, source registry,
+                         resolver, OTLP semconv mappings, units
+                         (catalog.go, sources.go, dialect.go, resolver.go,
+                          otel_mappings.go, canonical.go, sample.go, unit.go)
+  core/registry/         canonical metric registry contracts
+  core/schema/           raw telemetry envelopes, validation, schema versions
+  core/semconv/          OTLP semantic-convention attribute key constants
+  core/topology/         graph nodes, edges, relations, and snapshots
+  discovery/detectors/   Detector interface (Name, Detect → ObservabilitySource)
+  discovery/profile/     ClusterProfile, ObservabilitySource, Mesh types
 
   modeling/
     scenarios/       reserved scenario definitions
@@ -72,18 +82,28 @@ pkg/
 
 web/
   src/
-    api/             thin native fetch wrapper + domain API modules
-    hooks/           TanStack Query hooks with polling intervals
+    api/             thin native fetch wrapper + per-domain API modules
+    hooks/           TanStack Query polling hooks (graph, status, metrics, edge metrics, node metrics)
     stores/          Zustand cross-view state (selectedEntityId, connectionStatus)
     types/           TypeScript types matching backend API contracts
     views/
-      ClusterOverview/  KPIs, entity breakdown, relation types
-      TopologyGraph/    React Flow canvas, dagre layout, custom nodes/edges
-      MetricsExplorer/  category tabs, segmented bar charts, raw samples
+      ClusterOverview/  KPI row, entity breakdown, relation types, runtime health summary, discovery sources
+      TopologyGraph/    React Flow canvas + Ownership / Infrastructure / Traffic projections
+        layouts/         dagre layout strategies (ownership, infrastructure, traffic) plus shared
+                         dagreLayout.ts and sccCondensation.ts helpers
+        nodes/           EntityNode, NamespaceNode, NodeMetric (live metric chip)
+        edges/           RelationEdge (cable-bundle SVG edge with traffic-aware width)
+        FilterToolbar.tsx, LegendPanel.tsx, NodeInspector.tsx, EdgeMetricButton.tsx
+        projection.ts    LAYER_SPECS + project() — per-mode kinds/relations + edge filtering
+        useGraphLayout.ts synchronous layout dispatcher keyed by ProjectionMode
+        useProjectionState.ts URL-search-param-backed mode/granularity/orphans state
+        modes.ts         ProjectionMode and Granularity catalog used by the toolbar
+        namespaceColor.ts deterministic namespace color palette
+      MetricsExplorer/  category tabs, entity/edge selector, MetricCard charts, raw samples table
     components/
       Shell/          floating TopBar, Sidebar, StatusBar
-      shared/         DataChip, SegmentedBar
-    styles/           CSS custom properties theme system
+      shared/         DataChip, SegmentedBar, KpiCard
+    styles/           CSS custom properties theme system (dark theme)
   Dockerfile.dev     development container (Vite HMR)
   Dockerfile         production multi-stage (Vite build → nginx)
   nginx.conf         SPA fallback + /api/* proxy
@@ -170,6 +190,44 @@ When you replace a flow or interface:
 - delete obsolete templates
 - rewrite stale docs and task examples in the same change
 
+When you remove a feature or code path, sweep for phantom references in the same commit:
+
+- grep the repo for the feature name, task name, flag, file path, or API symbol
+- delete or rewrite tests that only existed to cover the removed behavior
+- delete or rewrite docs, diagrams, scenario scripts, and Taskfile entries that still reference it
+- confirm `task ci` stays green so the tree never carries half-removed features
+
+## Frontend Dev Loop
+
+`task web:dev` starts the Vite container with HMR, but the frontend still needs the backend API. In a separate terminal, port-forward the in-cluster backend so the dev server's `/api` proxy can reach it:
+
+```bash
+kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
+```
+
+The dev server reads the API base URL at startup. After you change `.env`, Vite config, or anything the container reads only on boot, stop `task web:dev` and re-run it so the changes take effect. Source file edits continue to hot-reload without a restart.
+
+### Topology layout strategies
+
+`web/src/views/TopologyGraph/layouts/` holds one strategy per projection mode. Each implements the synchronous `LayoutStrategy` interface (`layouts/types.ts`). Keep strategies synchronous unless the layout engine is genuinely async; do not wrap synchronous layouts in `useEffect` + `setState`, because React Query metric maps can change identity and create route churn. Per-mode algorithms:
+
+- **Ownership** — deterministic top-down hierarchy. Namespace groups are laid out side by side, and each independent component inside a namespace computes dynamic ranks from ownership relations. Roots start at the top, and each structural target is placed at least one rank below its source, so direct workload children (pods, ConfigMaps, Secrets, and PVCs) can share the next layer. Ownership intentionally excludes runtime `calls` edges; it keeps Kubernetes structural relations (`routes_to`, `exposes`, `contains`, `uses`, `mounts`) so the tree remains a static ownership/declaration view.
+- **Infrastructure** — Dagre left-to-right between K8s nodes, with a lightweight grid packer inside each node group so pods stay compact without pulling in a heavier layout engine. Pods carry a 4 px namespace-color left stripe (the `namespaceColor` helper in `web/src/views/TopologyGraph/namespaceColor.ts`).
+- **Traffic** — Dagre left-to-right with greedy cycle breaking and tuned rank/node spacing. Granularity is overridden in `projection.ts` so traffic L2/L3 collapse to overview (pod-level traffic edges multiply by replica count and produce unreadable hairballs).
+
+`useGraphLayout` is a thin synchronous dispatcher that picks the strategy by mode and threads `mode` into each entity node's `data` so renderers (e.g. the namespace stripe in `EntityNode.tsx`) can branch on it. For ownership, pure helpers split namespace components, build relation-derived component models, assign dynamic rank positions, and mark edges for ownership routing. React Flow's live source/target handle coordinates are the source of truth for rendered edge endpoints; do not route hierarchy edges from stale layout-box estimates. For traffic and infrastructure, the shared Dagre adapter computes node placement while React Flow renders relation geometry from normal source/target handles.
+
+### Topology layout QA
+
+Before visual topology QA, make sure the data path is live:
+
+```bash
+curl -fsS http://localhost:18081/api/v1/status | jq '.data.system_status'
+curl -fsS http://localhost:5173/api/v1/status | jq '.data.system_status'
+```
+
+Both should return `nominal`, and the app footer should say `BACKEND_OK`. Do not validate screenshots while the footer shows `BACKEND_OFFLINE`, `DISCONNECTED`, or proxy failures. Use Browser Use screenshots as the primary visual signal for custom SVG edges; DOM edge counts can be misleading because React Flow/custom edge internals are not always exposed in accessibility snapshots. Always verify that navigation into `/topology` does not freeze and that ownership, traffic, and infrastructure each render nodes plus visible edges.
+
 ## Debugging
 
 ```bash
@@ -215,15 +273,16 @@ kill %1
 For external-storage e2e runs, prefer:
 
 ```bash
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=request_rate_per_second" | jq '.data.samples[0:10]'
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=edge_latency_nanoseconds&edge_source_id=<source>&edge_target_id=<target>" | jq .
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=error_ratio&edge_source_id=<source>&edge_target_id=<target>" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq '.data.samples[0:10]'
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.duration&edge_source_id=<source>&edge_target_id=<target>" | jq .
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.error.ratio&edge_source_id=<source>&edge_target_id=<target>" | jq .
 ```
 
 Notes:
 
-- `request_rate_per_second` and `error_rate_per_second` are served as 1-minute rates at query time, even though the stored canonical series are counter-derived.
-- `error_ratio` is query-derived from the served request and error rates.
+- `http.server.request.count`, `rpc.server.request.count`, `servicegraph.request.count`, `servicegraph.request.error.count`, gRPC message counts, and TCP connection counts are served as 1-minute rates at query time, even though the stored semconv series are counter-derived.
+- `servicegraph.request.error.ratio` is query-derived from the served request and error rates.
+- Istio metrics enter through `metrics.IstioDialect`, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
 - The Metrics Explorer entity selector is driven by the latest graph snapshot, not the historical `/api/v1/entities` registry.
 
 ### Reading the graph output
@@ -287,7 +346,7 @@ curl -s "http://localhost:18081/api/v1/graph/nodes?kind=pod&page_size=10" | jq .
 curl -s http://localhost:18081/api/v1/graph/nodes/<id> | jq '.data.edges.outbound[0].related_node'
 
 # Metric series grouped by name with catalog metadata
-curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=cpu_usage_millicores" | jq '.data.series[0]'
+curl -s "http://localhost:18081/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage" | jq '.data.series[0]'
 
 # List canonical metric definitions
 curl -s http://localhost:18081/api/v1/metrics/catalog | jq

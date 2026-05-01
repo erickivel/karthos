@@ -52,3 +52,25 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+
+.sourceChip {
+  display: inline-block;
+  padding: 1px var(--space-xs);
+  background: var(--surface-active);
+  border-radius: var(--radius);
+  font-size: var(--text-label);
+  font-family: var(--font-mono, monospace);
+  color: var(--color-info);
+  white-space: nowrap;
+}
+
+.meshCell {
+  font-size: var(--text-label);
+  color: var(--color-signal);
+  cursor: help;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}

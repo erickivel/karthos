@@ -22,15 +22,28 @@ assert len(prom_source["prometheus_targets"]) >= 1, "Expected at least one prome
 print("✓ Discovery profile valid")
 PY
 
-# Wait for telemetry to flow through the pipeline.
+# Verify the generated collector values wire up the servicegraph/spanmetrics connectors.
+python3 - <<'PY'
+from pathlib import Path
+
+values = Path("bin/e2e/otel-values.yaml").read_text()
+assert "servicegraph:" in values, "generated Helm values should include the servicegraph connector"
+assert "spanmetrics:" in values, "generated Helm values should include the spanmetrics connector"
+print("✓ Generated collector values include servicegraph/spanmetrics connector wiring")
+PY
+
+# Wait for telemetry (including gateway traffic from the scenario) to flow through the pipeline.
 echo "Waiting 60s for telemetry to flow through pipeline..."
 sleep 60
 
-# Port-forward to backend health endpoint.
+# Port-forward to backend health and API endpoints.
 lsof -ti :13133 | xargs kill 2>/dev/null || true
+lsof -ti :18081 | xargs kill 2>/dev/null || true
 kubectl port-forward -n oksg-system deployment/oksg-backend 13133:13133 &
-PF_PID=$!
-trap "kill $PF_PID 2>/dev/null || true" EXIT
+PF_HEALTH_PID=$!
+kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
+PF_API_PID=$!
+trap "kill $PF_HEALTH_PID $PF_API_PID 2>/dev/null || true" EXIT
 sleep 3
 
 # Verify backend received metric samples and inspect the graph.
@@ -75,6 +88,37 @@ if graph:
     print(f"  Node kinds: {sorted(node_kinds)}")
 else:
     print("⚠ No graph snapshot yet (traces may not have flowed)")
+PY
+
+# Validate servicegraph-derived metrics exposed through the public REST API.
+python3 - <<'PY'
+import json
+import urllib.parse
+import urllib.request
+
+metrics = [
+    "servicegraph.request.count",
+    "servicegraph.request.duration",
+    "servicegraph.request.error.count",
+]
+
+for metric in metrics:
+    url = "http://localhost:18081/api/v1/metrics?" + urllib.parse.urlencode({
+        "metric_name": metric,
+        "page_size": "1000",
+    })
+    payload = json.loads(urllib.request.urlopen(url).read())
+    samples = payload.get("samples") or payload.get("data", {}).get("samples", [])
+    assert len(samples) > 0, f"expected at least one sample for {metric}"
+    print(f"✓ {metric}: {len(samples)} sample(s)")
+
+ratio_url = "http://localhost:18081/api/v1/metrics?" + urllib.parse.urlencode({
+    "metric_name": "servicegraph.request.error.ratio",
+    "page_size": "1000",
+})
+ratio_payload = json.loads(urllib.request.urlopen(ratio_url).read())
+ratio_samples = ratio_payload.get("samples") or ratio_payload.get("data", {}).get("samples", [])
+print(f"✓ servicegraph.request.error.ratio query returned {len(ratio_samples)} sample(s)")
 PY
 
 echo "✓ E2E prometheus scenario passed"

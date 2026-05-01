@@ -173,7 +173,13 @@ func makeHistogramRMWithAttrs(
 
 func newNormalizer() *ingest.OTLPNormalizer {
 	resolver := ingest.NewOTLPEntityResolver(testCluster)
-	return ingest.NewOTLPNormalizer(resolver)
+	dialect := metrics.NewDialectRegistry(
+		metrics.PrometheusDialect,
+		metrics.SpanmetricsDialect,
+		metrics.ServicegraphDialect,
+		metrics.IstioDialect,
+	)
+	return ingest.NewOTLPNormalizer(resolver, dialect)
 }
 
 func TestOTLPNormalizer_KubeletstatsCP(t *testing.T) {
@@ -188,7 +194,7 @@ func TestOTLPNormalizer_KubeletstatsCP(t *testing.T) {
 	require.Len(t, samples, 1)
 
 	s := samples[0]
-	assert.Equal(t, "cpu_usage_millicores", s.MetricName)
+	assert.Equal(t, "k8s.pod.cpu.usage", s.MetricName)
 	assert.InDelta(t, 500.0, s.Value, 1e-9)
 	assert.Equal(t, "otelcol", s.Labels["source"])
 	assert.Equal(t, time.Unix(0, int64(tsNano)).UTC(), s.Timestamp)
@@ -206,8 +212,25 @@ func TestOTLPNormalizer_MemoryMetric(t *testing.T) {
 	require.Len(t, samples, 1)
 
 	s := samples[0]
-	assert.Equal(t, "memory_usage_bytes", s.MetricName)
+	assert.Equal(t, "k8s.pod.memory.working_set", s.MetricName)
 	assert.InDelta(t, 1048576.0, s.Value, 1e-9)
+}
+
+func TestOTLPNormalizer_VolumeMetricPreservesVolumeLabelsAndResolvesPVC(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttr("k8s.volume.capacity", 1024, tsNano, "k8s.persistentvolumeclaim.name", "bundle-cache")
+	env := makeEnvelope(t, podResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	s := samples[0]
+	assert.Equal(t, "k8s.volume.capacity", s.MetricName)
+	assert.Equal(t, entities.ComputeEntityID(entities.KindPVC, testCluster, "default", "bundle-cache"), s.EntityID)
+	assert.Equal(t, "bundle-cache", s.Labels["k8s.persistentvolumeclaim.name"])
 }
 
 func TestOTLPNormalizer_DiskDirection(t *testing.T) {
@@ -221,7 +244,7 @@ func TestOTLPNormalizer_DiskDirection(t *testing.T) {
 		samples, err := normalizer.Normalize(context.Background(), env)
 		require.NoError(t, err)
 		require.Len(t, samples, 1)
-		assert.Equal(t, "disk_read_bps", samples[0].MetricName)
+		assert.Equal(t, "system.disk.io.read", samples[0].MetricName)
 	})
 
 	t.Run("write direction", func(t *testing.T) {
@@ -231,7 +254,7 @@ func TestOTLPNormalizer_DiskDirection(t *testing.T) {
 		samples, err := normalizer.Normalize(context.Background(), env)
 		require.NoError(t, err)
 		require.Len(t, samples, 1)
-		assert.Equal(t, "disk_write_bps", samples[0].MetricName)
+		assert.Equal(t, "system.disk.io.write", samples[0].MetricName)
 	})
 }
 
@@ -246,7 +269,7 @@ func TestOTLPNormalizer_NetworkDirection(t *testing.T) {
 		samples, err := normalizer.Normalize(context.Background(), env)
 		require.NoError(t, err)
 		require.Len(t, samples, 1)
-		assert.Equal(t, "net_tx_bps", samples[0].MetricName)
+		assert.Equal(t, "system.network.io.transmit", samples[0].MetricName)
 	})
 
 	t.Run("receive direction", func(t *testing.T) {
@@ -256,7 +279,7 @@ func TestOTLPNormalizer_NetworkDirection(t *testing.T) {
 		samples, err := normalizer.Normalize(context.Background(), env)
 		require.NoError(t, err)
 		require.Len(t, samples, 1)
-		assert.Equal(t, "net_rx_bps", samples[0].MetricName)
+		assert.Equal(t, "system.network.io.receive", samples[0].MetricName)
 	})
 
 	t.Run("tx direction", func(t *testing.T) {
@@ -266,7 +289,7 @@ func TestOTLPNormalizer_NetworkDirection(t *testing.T) {
 		samples, err := normalizer.Normalize(context.Background(), env)
 		require.NoError(t, err)
 		require.Len(t, samples, 1)
-		assert.Equal(t, "net_tx_bps", samples[0].MetricName)
+		assert.Equal(t, "system.network.io.transmit", samples[0].MetricName)
 	})
 }
 
@@ -349,7 +372,7 @@ func TestOTLPNormalizer_ServiceGraphEdgeLabels(t *testing.T) {
 	require.Len(t, samples, 1)
 
 	s := samples[0]
-	assert.Equal(t, "request_rate_per_second", s.MetricName)
+	assert.Equal(t, "servicegraph.request.count", s.MetricName)
 	assert.Equal(t, "service-a", s.Labels["edge_client"])
 	assert.Equal(t, "service-b", s.Labels["edge_server"])
 	assert.Equal(t,
@@ -482,7 +505,10 @@ func TestOTLPNormalizer_ServiceGraphUsesCanonicalServiceIDsFromRegistry(t *testi
 		},
 	}))
 
-	normalizer := ingest.NewOTLPNormalizer(ingest.NewOTLPEntityResolverWithRegistry(testCluster, registry))
+	normalizer := ingest.NewOTLPNormalizer(
+		ingest.NewOTLPEntityResolverWithRegistry(testCluster, registry),
+		metrics.NewDialectRegistry(metrics.PrometheusDialect, metrics.SpanmetricsDialect, metrics.ServicegraphDialect),
+	)
 	tsNano := uint64(time.Now().UnixNano())
 
 	rm := makeGaugeRMWithAttrs("traces.service.graph.request.total", 11.0, tsNano, map[string]string{
@@ -530,7 +556,10 @@ func TestOTLPNormalizer_SpanMetricsUseServiceEntityOverNode(t *testing.T) {
 		},
 	}))
 
-	normalizer := ingest.NewOTLPNormalizer(ingest.NewOTLPEntityResolverWithRegistry(testCluster, registry))
+	normalizer := ingest.NewOTLPNormalizer(
+		ingest.NewOTLPEntityResolverWithRegistry(testCluster, registry),
+		metrics.NewDialectRegistry(metrics.PrometheusDialect, metrics.SpanmetricsDialect, metrics.ServicegraphDialect),
+	)
 	tsNano := uint64(time.Now().UnixNano())
 	rm := makeGaugeRM("traces.span.metrics.calls", 5.0, tsNano)
 	env := makeEnvelope(t, map[string]string{
@@ -569,11 +598,11 @@ func TestOTLPNormalizer_PrometheusDurationHistogramEmitsSumCountPair(t *testing.
 	require.NoError(t, err)
 	require.Len(t, samples, 2)
 
-	sumSample, ok := findSample(samples, "request_duration_nanoseconds_sum")
+	sumSample, ok := findSample(samples, "http.server.request.duration_sum")
 	require.True(t, ok, "expected _sum sample")
 	assert.InDelta(t, 1_500_000_000.0, sumSample.Value, 1e-6)
 
-	countSample, ok := findSample(samples, "request_duration_nanoseconds_count")
+	countSample, ok := findSample(samples, "http.server.request.duration_count")
 	require.True(t, ok, "expected _count sample")
 	assert.InDelta(t, 3.0, countSample.Value, 1e-9)
 }
@@ -589,11 +618,11 @@ func TestOTLPNormalizer_SpanMetricsDurationHistogramEmitsSumCountPair(t *testing
 	require.NoError(t, err)
 	require.Len(t, samples, 2)
 
-	sumSample, ok := findSample(samples, "request_duration_nanoseconds_sum")
+	sumSample, ok := findSample(samples, "rpc.server.duration_sum")
 	require.True(t, ok)
 	assert.InDelta(t, 18_000_000.0, sumSample.Value, 1e-6)
 
-	countSample, ok := findSample(samples, "request_duration_nanoseconds_count")
+	countSample, ok := findSample(samples, "rpc.server.duration_count")
 	require.True(t, ok)
 	assert.InDelta(t, 3.0, countSample.Value, 1e-9)
 }
@@ -612,13 +641,13 @@ func TestOTLPNormalizer_ServiceGraphServerHistogramEmitsSumCountPair(t *testing.
 	require.NoError(t, err)
 	require.Len(t, samples, 2)
 
-	sumSample, ok := findSample(samples, "edge_latency_nanoseconds_sum")
+	sumSample, ok := findSample(samples, "servicegraph.request.duration_sum")
 	require.True(t, ok)
 	assert.InDelta(t, 2_400_000_000.0, sumSample.Value, 1e-6)
 	assert.Equal(t, "service-a", sumSample.Labels["edge_client"])
 	assert.Equal(t, "service-b", sumSample.Labels["edge_server"])
 
-	countSample, ok := findSample(samples, "edge_latency_nanoseconds_count")
+	countSample, ok := findSample(samples, "servicegraph.request.duration_count")
 	require.True(t, ok)
 	assert.InDelta(t, 3.0, countSample.Value, 1e-9)
 	assert.Equal(t, "service-a", countSample.Labels["edge_client"])
@@ -638,9 +667,102 @@ func TestOTLPNormalizer_ServiceGraphFailedTotalMapsToErrorRateCounter(t *testing
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
 
-	assert.Equal(t, "error_rate_per_second", samples[0].MetricName)
+	assert.Equal(t, "servicegraph.request.error.count", samples[0].MetricName)
 	assert.Equal(t, "service-a", samples[0].Labels["edge_client"])
 	assert.Equal(t, "service-b", samples[0].Labels["edge_server"])
+}
+
+func TestOTLPNormalizer_IstioRequestsUseServicegraphEdgeLabelsAndMeshMetadata(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("istio_requests_total", 42.0, tsNano, map[string]string{
+		"client":                          "gateway-go",
+		"server":                          "service-a-python",
+		"client_namespace":                "oksg-demo",
+		"server_namespace":                "oksg-demo",
+		"network.protocol.name":           "http",
+		"http.response.status_code":       "200",
+		"mesh.security.policy":            "mutual_tls",
+		"mesh.peer.source.principal":      "spiffe://cluster.local/ns/oksg-demo/sa/gateway",
+		"mesh.peer.destination.principal": "spiffe://cluster.local/ns/oksg-demo/sa/service-a",
+		"oksg.source":                     "mesh.istio",
+	})
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	s := samples[0]
+	assert.Equal(t, "servicegraph.request.count", s.MetricName)
+	assert.Equal(t, metrics.UnitPerSecond, s.Unit)
+	assert.Equal(t, "mesh.istio", s.Labels["source"])
+	assert.Equal(t, "gateway-go", s.Labels["edge_client"])
+	assert.Equal(t, "service-a-python", s.Labels["edge_server"])
+	assert.Equal(t, "http", s.Labels["network.protocol.name"])
+	assert.Equal(t, "mutual_tls", s.Labels["mesh.security.policy"])
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go")),
+		s.Labels["edge_client_id"],
+	)
+	assert.Equal(t,
+		string(entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "service-a-python")),
+		s.Labels["edge_server_id"],
+	)
+}
+
+func TestOTLPNormalizer_Istio5xxRequestsAlsoEmitErrorCount(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeGaugeRMWithAttrs("istio_requests_total", 3.0, tsNano, map[string]string{
+		"client":                    "gateway-go",
+		"server":                    "service-a-python",
+		"client_namespace":          "oksg-demo",
+		"server_namespace":          "oksg-demo",
+		"http.response.status_code": "503",
+		"oksg.source":               "mesh.istio",
+	})
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 2)
+
+	_, ok := findSample(samples, "servicegraph.request.count")
+	require.True(t, ok)
+	errSample, ok := findSample(samples, "servicegraph.request.error.count")
+	require.True(t, ok)
+	assert.Equal(t, "mesh.istio", errSample.Labels["source"])
+	assert.Equal(t, "503", errSample.Labels["http.response.status_code"])
+}
+
+func TestOTLPNormalizer_IstioDurationMillisecondsHistogramEmitsNanosecondSumCount(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeHistogramRMWithAttrs("istio_request_duration_milliseconds", 12.5, 5, tsNano, map[string]string{
+		"client":           "gateway-go",
+		"server":           "service-a-python",
+		"client_namespace": "oksg-demo",
+		"server_namespace": "oksg-demo",
+		"oksg.source":      "mesh.istio",
+	})
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 2)
+
+	sumSample, ok := findSample(samples, "servicegraph.request.duration_sum")
+	require.True(t, ok)
+	assert.InDelta(t, 12_500_000.0, sumSample.Value, 1e-6)
+	assert.Equal(t, metrics.UnitNanoseconds, sumSample.Unit)
+
+	countSample, ok := findSample(samples, "servicegraph.request.duration_count")
+	require.True(t, ok)
+	assert.InDelta(t, 5.0, countSample.Value, 1e-9)
 }
 
 func TestOTLPNormalizer_HistogramWithZeroCountSkipped(t *testing.T) {
@@ -683,7 +805,7 @@ func TestOTLPNormalizer_NodeConditionReady(t *testing.T) {
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
-	assert.Equal(t, "node_condition_ready", samples[0].MetricName)
+	assert.Equal(t, "k8s.node.condition.ready", samples[0].MetricName)
 }
 
 func TestOTLPNormalizer_NodeConditionMemoryPressure(t *testing.T) {
@@ -697,7 +819,7 @@ func TestOTLPNormalizer_NodeConditionMemoryPressure(t *testing.T) {
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
-	assert.Equal(t, "node_condition_memory_pressure", samples[0].MetricName)
+	assert.Equal(t, "k8s.node.condition.memory_pressure", samples[0].MetricName)
 }
 
 func TestOTLPNormalizer_NodeConditionUnknownSkipped(t *testing.T) {
@@ -727,7 +849,7 @@ func TestOTLPNormalizer_DeploymentEntityResolution(t *testing.T) {
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
-	assert.Equal(t, "replica_count", samples[0].MetricName)
+	assert.Equal(t, "k8s.deployment.desired", samples[0].MetricName)
 	assert.InDelta(t, 3.0, samples[0].Value, 1e-9)
 }
 
@@ -735,7 +857,7 @@ func TestOTLPNormalizer_SumDataPointInt64(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())
 
-	// Use k8s.replicaset.desired which maps to replica_count with factor 1.0
+	// Use k8s.replicaset.desired which now stays semconv-native.
 	rm := makeSumRMInt("k8s.replicaset.desired", 3, tsNano)
 	env := makeEnvelope(t, podResource(), rm)
 
@@ -744,6 +866,53 @@ func TestOTLPNormalizer_SumDataPointInt64(t *testing.T) {
 	require.Len(t, samples, 1)
 
 	s := samples[0]
-	assert.Equal(t, "replica_count", s.MetricName)
+	assert.Equal(t, "k8s.replicaset.desired", s.MetricName)
 	assert.InDelta(t, 3.0, s.Value, 1e-9)
+}
+
+// TestOTLPNormalizer_SourceMismatchDropped verifies that when an Assignment is
+// configured, samples whose oksg_source disagrees with the assigned source are
+// dropped and counted, while matching samples pass through.
+func TestOTLPNormalizer_SourceMismatchDropped(t *testing.T) {
+	resolver := ingest.NewOTLPEntityResolver(testCluster)
+	dialect := metrics.NewDialectRegistry(
+		metrics.PrometheusDialect,
+		metrics.SpanmetricsDialect,
+		metrics.ServicegraphDialect,
+		metrics.IstioDialect,
+	)
+	// Using k8s.pod.cpu.usage as the test vehicle: it lives in OTLPSemconvMetrics
+	// so the normalizer's translation lookup succeeds. Assignment pins it to
+	// mesh.istio (synthetic — kubelet is the real catalog winner) so we can
+	// observe the kubelet-tagged sample being dropped.
+	assignment := metrics.Assignment{
+		"k8s.pod.cpu.usage": metrics.SourceMeshIstio,
+	}
+	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithAssignment(assignment))
+
+	tsNano := uint64(time.Now().UnixNano())
+
+	// Sample tagged with the wrong source: should be dropped.
+	rmKubelet := makeGaugeRMWithAttr("k8s.pod.cpu.usage", 0.5, tsNano, "oksg_source", metrics.SourceKubelet)
+	envKubelet := makeEnvelope(t, podResource(), rmKubelet)
+	samples, err := normalizer.Normalize(context.Background(), envKubelet)
+	require.NoError(t, err)
+	require.Empty(t, samples, "kubelet sample must be dropped when istio is the assigned source")
+	require.Equal(t, uint64(1), normalizer.DroppedSampleCount())
+
+	// Sample tagged with the matching source: should pass through.
+	rmIstio := makeGaugeRMWithAttr("k8s.pod.cpu.usage", 0.75, tsNano, "oksg_source", metrics.SourceMeshIstio)
+	envIstio := makeEnvelope(t, podResource(), rmIstio)
+	samples, err = normalizer.Normalize(context.Background(), envIstio)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	require.InDelta(t, 750.0, samples[0].Value, 1e-9)
+	require.Equal(t, uint64(1), normalizer.DroppedSampleCount())
+
+	// Sample without an oksg_source attribute: legacy path, accepted.
+	rmUntagged := makeGaugeRM("k8s.pod.cpu.usage", 1.0, tsNano)
+	envUntagged := makeEnvelope(t, podResource(), rmUntagged)
+	samples, err = normalizer.Normalize(context.Background(), envUntagged)
+	require.NoError(t, err)
+	require.Len(t, samples, 1, "untagged samples must be accepted (legacy / unknown-source path)")
 }

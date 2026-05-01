@@ -28,7 +28,12 @@ const KIND_ENTRIES: KindEntry[] = [
 
 export function LegendPanel({ onClose }: LegendPanelProps) {
   return (
-    <div className={styles.panel} role="dialog" aria-label="Topology legend">
+    <div
+      className={styles.panel}
+      role="dialog"
+      aria-label="Topology legend"
+      data-testid="topology-legend"
+    >
       <header className={styles.header}>
         <span className={styles.title}>Topology legend</span>
         <button

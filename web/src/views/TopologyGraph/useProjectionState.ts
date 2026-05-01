@@ -9,6 +9,7 @@ import {
 
 const DEFAULT_MODE: ProjectionMode = 'ownership'
 const DEFAULT_GRANULARITY: Granularity = 'overview'
+const DEFAULT_INCLUDE_ORPHANS = false
 
 export function useProjectionState() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -19,6 +20,7 @@ export function useProjectionState() {
   const granularity: Granularity = isGranularity(rawGranularity)
     ? rawGranularity
     : DEFAULT_GRANULARITY
+  const includeOrphans = searchParams.get('orphans') === '1'
 
   const setMode = useCallback(
     (next: ProjectionMode) => {
@@ -44,5 +46,24 @@ export function useProjectionState() {
     [setSearchParams],
   )
 
-  return { mode, granularity, setMode, setGranularity }
+  const setIncludeOrphans = useCallback(
+    (next: boolean) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (next === DEFAULT_INCLUDE_ORPHANS) p.delete('orphans')
+        else p.set('orphans', '1')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
+
+  return {
+    mode,
+    granularity,
+    includeOrphans,
+    setMode,
+    setGranularity,
+    setIncludeOrphans,
+  }
 }

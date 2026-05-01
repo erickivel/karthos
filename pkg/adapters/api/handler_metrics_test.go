@@ -23,9 +23,9 @@ func seedMetrics(t *testing.T) *persistence.InMemoryMetricStore {
 	ts2 := time.Date(2026, 3, 30, 11, 0, 0, 0, time.UTC)
 
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "cpu_usage_millicores", EntityID: entityA, Value: 250, Timestamp: ts1},
-		{MetricName: "memory_usage_bytes", EntityID: entityA, Value: 1024000, Timestamp: ts1},
-		{MetricName: "cpu_usage_millicores", EntityID: entityB, Value: 500, Timestamp: ts2},
+		{MetricName: "k8s.pod.cpu.usage", EntityID: entityA, Value: 250, Timestamp: ts1},
+		{MetricName: "k8s.pod.memory.working_set", EntityID: entityA, Value: 1024000, Timestamp: ts1},
+		{MetricName: "k8s.pod.cpu.usage", EntityID: entityB, Value: 500, Timestamp: ts2},
 	}))
 	return ms
 }
@@ -45,7 +45,7 @@ func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -63,7 +63,7 @@ func TestQueryMetricsFilterByEntityID(t *testing.T) {
 	defer srv.cancel()
 
 	entityA := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "pod-a")
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores&entity_id="+string(entityA))
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&entity_id="+string(entityA))
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -79,7 +79,7 @@ func TestQueryMetricsFilterByEdgeIDs(t *testing.T) {
 	otherTargetID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-c")
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
 		{
-			MetricName: "edge_latency_nanoseconds",
+			MetricName: "servicegraph.request.duration",
 			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
 			Value:      12,
 			Timestamp:  now,
@@ -89,7 +89,7 @@ func TestQueryMetricsFilterByEdgeIDs(t *testing.T) {
 			},
 		},
 		{
-			MetricName: "edge_latency_nanoseconds",
+			MetricName: "servicegraph.request.duration",
 			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
 			Value:      15,
 			Timestamp:  now,
@@ -102,7 +102,7 @@ func TestQueryMetricsFilterByEdgeIDs(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=edge_latency_nanoseconds&edge_source_id="+string(sourceID)+"&edge_target_id="+string(targetID))
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID)+"&edge_target_id="+string(targetID))
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -119,7 +119,7 @@ func TestQueryMetricsFilterByMetricName(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -132,7 +132,7 @@ func TestQueryMetricsFilterByTimeRange(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores&from=2026-03-30T10:30:00Z&to=2026-03-30T11:30:00Z")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&from=2026-03-30T10:30:00Z&to=2026-03-30T11:30:00Z")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -155,7 +155,7 @@ func TestQueryMetricsPagination(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=cpu_usage_millicores&page_size=1")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=1")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data, nextToken := parsePaginatedDataWithToken(t, resp)
@@ -188,7 +188,7 @@ func TestCatalogFilterByCategory(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parseResponseData(t, resp)
-	require.EqualValues(t, 2, data["total"])
+	require.EqualValues(t, 3, data["total"])
 }
 
 func TestCatalogReturnsMetricScopes(t *testing.T) {
@@ -205,7 +205,7 @@ func TestCatalogReturnsMetricScopes(t *testing.T) {
 	var requestRate map[string]any
 	for _, raw := range metricsList {
 		entry := raw.(map[string]any)
-		if entry["name"] == "request_rate_per_second" {
+		if entry["name"] == "servicegraph.request.count" {
 			requestRate = entry
 			break
 		}
@@ -230,7 +230,7 @@ func TestMetricSeriesGrouped(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=cpu_usage_millicores")
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -241,7 +241,7 @@ func TestMetricSeriesGrouped(t *testing.T) {
 	require.Len(t, series, 1)
 
 	s0 := series[0].(map[string]any)
-	require.Equal(t, "cpu_usage_millicores", s0["metric_name"])
+	require.Equal(t, "k8s.pod.cpu.usage", s0["metric_name"])
 	require.Equal(t, "millicores", s0["unit"])
 	require.Equal(t, "resource", s0["category"])
 	samples := s0["samples"].([]any)
@@ -253,7 +253,7 @@ func TestMetricSeriesFilterByMetricName(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=memory_usage_bytes")
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.memory.working_set")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data := parsePaginatedData(t, resp)
@@ -261,7 +261,7 @@ func TestMetricSeriesFilterByMetricName(t *testing.T) {
 
 	series := data["series"].([]any)
 	s := series[0].(map[string]any)
-	require.Equal(t, "memory_usage_bytes", s["metric_name"])
+	require.Equal(t, "k8s.pod.memory.working_set", s["metric_name"])
 	require.Equal(t, "bytes", s["unit"])
 }
 
@@ -270,7 +270,7 @@ func TestMetricSeriesEmpty(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=cpu_usage_millicores")
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data := parsePaginatedData(t, resp)
@@ -287,7 +287,7 @@ func TestMetricSeriesGroupsEdgeMetricsPerEdge(t *testing.T) {
 	targetC := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-c")
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
 		{
-			MetricName: "edge_latency_nanoseconds",
+			MetricName: "servicegraph.request.duration",
 			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
 			Value:      12,
 			Timestamp:  now,
@@ -297,7 +297,7 @@ func TestMetricSeriesGroupsEdgeMetricsPerEdge(t *testing.T) {
 			},
 		},
 		{
-			MetricName: "edge_latency_nanoseconds",
+			MetricName: "servicegraph.request.duration",
 			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
 			Value:      15,
 			Timestamp:  now.Add(time.Minute),
@@ -310,7 +310,7 @@ func TestMetricSeriesGroupsEdgeMetricsPerEdge(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=edge_latency_nanoseconds&edge_source_id="+string(sourceID))
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID))
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 

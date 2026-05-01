@@ -5,6 +5,11 @@ export interface EdgeMetricSnapshot {
   latencyNs?: number
   errorRate?: number
   errorRatio?: number
+  source?: string
+  mtls?: boolean
+  protocol?: string
+  peerSource?: string
+  peerDestination?: string
 }
 
 export interface GraphEdgeMetricData {

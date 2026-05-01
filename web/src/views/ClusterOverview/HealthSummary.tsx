@@ -14,7 +14,7 @@ export function HealthSummary({ healthSummary }: HealthSummaryProps) {
       <div className={styles.header}>
         <h2 className={styles.title}>Runtime Health</h2>
         <span className={styles.subtitle}>
-          Latest node readiness and pod phase rollup from `/status`
+          Latest node readiness and topology pod state from `/status`
         </span>
       </div>
 
@@ -43,6 +43,11 @@ export function HealthSummary({ healthSummary }: HealthSummaryProps) {
           label="Failed Pods"
           value={healthSummary.pods.failed}
           accent={healthSummary.pods.failed > 0 ? 'alert' : 'muted'}
+        />
+        <KpiCard
+          label="Unknown Pods"
+          value={healthSummary.pods.unknown}
+          accent={healthSummary.pods.unknown > 0 ? 'info' : 'muted'}
         />
       </div>
     </section>

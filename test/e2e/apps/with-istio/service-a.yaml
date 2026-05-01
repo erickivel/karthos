@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-a-python
+  namespace: oksg-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: service-a-python
+  template:
+    metadata:
+      labels:
+        app: service-a-python
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: oksg-test-worker
+      containers:
+        - name: service-a-python
+          image: localhost:5001/service-a-python:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://$(HOST_IP):4318
+            - name: OTEL_SERVICE_NAME
+              value: service-a-python
+            - name: SERVICE_B_URL
+              value: http://service-b-node:8082/compute
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-a-python
+  namespace: oksg-demo
+spec:
+  selector:
+    app: service-a-python
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081

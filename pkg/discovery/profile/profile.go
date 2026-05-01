@@ -13,6 +13,7 @@ type ClusterProfile struct {
 	Nodes                []entities.Node       `json:"nodes,omitempty"`
 	Namespaces           []entities.Namespace  `json:"namespaces,omitempty"`
 	Workloads            []entities.Workload   `json:"workloads,omitempty"`
+	Pods                 []entities.Pod        `json:"pods,omitempty"`
 	Services             []entities.Service    `json:"services,omitempty"`
 	Ingresses            []entities.Ingress    `json:"ingresses,omitempty"`
 	Sources              []ObservabilitySource `json:"sources,omitempty"`
@@ -35,12 +36,21 @@ type OTLPSource struct {
 	HTTPEndpoint   string `json:"http_endpoint,omitempty"`
 }
 
+type MeshSource struct {
+	Flavor             string   `json:"flavor"`
+	Mode               string   `json:"mode"`
+	InjectedNamespaces []string `json:"injected_namespaces,omitempty"`
+	MetricsPort        int32    `json:"metrics_port,omitempty"`
+	MetricsPath        string   `json:"metrics_path,omitempty"`
+}
+
 type ObservabilitySource struct {
 	Name              string             `json:"name"`
 	Type              string             `json:"type"`
 	Present           bool               `json:"present"`
 	PrometheusTargets []PrometheusTarget `json:"prometheus_targets,omitempty"`
 	OTLP              *OTLPSource        `json:"otlp,omitempty"`
+	Mesh              *MeshSource        `json:"mesh,omitempty"`
 }
 
 type OTelCollectionPath struct {

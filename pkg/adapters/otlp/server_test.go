@@ -42,7 +42,7 @@ func TestServerAcceptsMetricsOverGRPC(t *testing.T) {
 		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"metric"},
-	}, backendingest.NewEnvelopeBuilder(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)
@@ -90,7 +90,7 @@ func TestServerAcceptsGzipCompressedMetricsOverGRPC(t *testing.T) {
 		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"metric"},
-	}, backendingest.NewEnvelopeBuilder(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)
@@ -142,7 +142,7 @@ func TestServerAcceptsTracesOverHTTP(t *testing.T) {
 		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"trace"},
-	}, backendingest.NewEnvelopeBuilder(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)), backendingest.NewSignalRouter(nil, tracesSink, nil), logger)
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(nil, tracesSink, nil), logger)
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)
@@ -201,7 +201,7 @@ func TestDebugGraphEndpoint(t *testing.T) {
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"metric"},
 		GraphStore:          graphStore,
-	}, backendingest.NewEnvelopeBuilder(time.Now()), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
+	}, backendingest.NewEnvelopeBuilder(func() time.Time { return time.Now() }), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)
@@ -223,6 +223,10 @@ func TestDebugGraphEndpoint(t *testing.T) {
 
 type recordingIngestor struct {
 	envelopes []schema.RawEnvelope
+}
+
+func fixedClock(now time.Time) func() time.Time {
+	return func() time.Time { return now }
 }
 
 func (r *recordingIngestor) Ingest(_ context.Context, envelope schema.RawEnvelope) error {
