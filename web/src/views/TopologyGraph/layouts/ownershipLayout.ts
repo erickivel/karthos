@@ -2,7 +2,6 @@ import { MarkerType, Position, type Node, type Edge } from '@xyflow/react'
 import type { EntityKind, GraphEdge, GraphNode, RelationType } from '@/types/graph'
 import type { LayoutStrategy, LayoutInput, LayoutDeps, LayoutResult } from './types'
 import { NODE_WIDTH, NODE_HEIGHT_DEFAULT } from './types'
-import { getEdgeMetricKeyFromNodes } from '../edgeMetrics'
 
 const DIRECTED_RELATIONS: RelationType[] = ['calls', 'runs_on', 'routes_to', 'exposes']
 
@@ -169,7 +168,7 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
     nextNamespaceX += namespaceWidth + OWNERSHIP_TREE.namespaceGap
   }
 
-  const edges = contentEdges.map((edge) => toReactEdge(edge, contentNodeMap, deps))
+  const edges = contentEdges.map((edge) => toReactEdge(edge, contentNodeMap))
 
   return { nodes: [...parentContainers, ...positioned], edges }
 }
@@ -424,7 +423,6 @@ function toReactNode(node: GraphNode, x: number, y: number, deps: LayoutDeps): N
     targetPosition: Position.Top,
     data: {
       ...node,
-      metrics: deps.nodeMetrics?.get(node.id) ?? {},
       mode: deps.mode,
     } as Record<string, unknown>,
   }
@@ -433,16 +431,10 @@ function toReactNode(node: GraphNode, x: number, y: number, deps: LayoutDeps): N
 function toReactEdge(
   edge: GraphEdge,
   contentNodeMap: Map<string, GraphNode>,
-  deps: LayoutDeps,
 ): Edge {
   const directed = DIRECTED_RELATIONS.includes(edge.relation)
   const sourceNode = contentNodeMap.get(edge.source)
   const targetNode = contentNodeMap.get(edge.target)
-  const edgeMetricKey = getEdgeMetricKeyFromNodes(
-    edge.relation,
-    sourceNode?.name,
-    targetNode?.name,
-  )
 
   return {
     id: edge.id,
@@ -455,7 +447,6 @@ function toReactEdge(
       sourceName: sourceNode?.name,
       targetName: targetNode?.name,
       routeStyle: 'ownership',
-      metrics: edgeMetricKey ? deps.edgeMetrics?.get(edgeMetricKey) : undefined,
     } as Record<string, unknown>,
     ...(directed && {
       markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },

@@ -7,6 +7,7 @@ import { useProjectionState } from './useProjectionState'
 import { LegendPanel } from './LegendPanel'
 import { GRANULARITY_ENTRIES, MODE_ENTRIES } from './modes'
 import { namespaceColor } from './namespaceColor'
+import { availableAlgorithms, LAYOUT_REGISTRY, type LayoutAlgorithm } from './layouts/registry'
 import styles from './FilterToolbar.module.css'
 
 interface FilterToolbarProps {
@@ -19,10 +20,14 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
     mode,
     granularity,
     includeOrphans,
+    layoutAlgorithm,
     setMode,
     setGranularity,
     setIncludeOrphans,
+    setLayoutAlgorithm,
   } = useProjectionState()
+  const modeAlgorithms = availableAlgorithms(mode)
+  const activeAlgorithm = layoutAlgorithm ?? LAYOUT_REGISTRY[mode].defaultAlgorithm
   const selectedEntityId = useAppStore((s) => s.selectedEntityId)
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId)
   const [legendOpen, setLegendOpen] = useState(false)
@@ -174,6 +179,28 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
             </button>
           ))}
         </div>
+
+        {modeAlgorithms.length > 1 && (
+          <select
+            className={styles.select}
+            value={activeAlgorithm}
+            onChange={(e) => {
+              const next = e.target.value as LayoutAlgorithm
+              setLayoutAlgorithm(
+                next === LAYOUT_REGISTRY[mode].defaultAlgorithm ? undefined : next,
+              )
+            }}
+            data-testid="topology-algorithm-select"
+            title="Layout algorithm"
+            aria-label="Layout algorithm"
+          >
+            {modeAlgorithms.map((algo) => (
+              <option key={algo} value={algo}>
+                {algo}
+              </option>
+            ))}
+          </select>
+        )}
 
         <label
           className={styles.toggleCheckbox}

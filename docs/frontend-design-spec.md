@@ -118,10 +118,15 @@ The landing page. Operators see cluster health at a glance. TCC reviewers see pr
 
 ### 5.2 Topology Graph (`/topology`)
 
-The core view. Interactive system graph rendered with React Flow on top of a
-dagre layout engine (`@dagrejs/dagre`). The full graph is too dense to be
-useful flat, so the view is filtered through one of three **projection
-modes** with three **granularity** levels. Both are URL-backed via
+The core view. Interactive system graph rendered with React Flow. Layout is
+selected per projection mode through `LAYOUT_REGISTRY`
+(`web/src/views/TopologyGraph/layouts/registry.ts`): Ownership and
+Infrastructure use synchronous strategies (custom tree / `@dagrejs/dagre`),
+Traffic uses ELK layered orthogonal (`elkjs`). The registry pairs each mode
+with a default algorithm and accepts additional algorithms keyed by name, so
+new strategies plug in without touching call sites. The full graph is too
+dense to be useful flat, so the view is filtered through one of three
+**projection modes** with three **granularity** levels. Both are URL-backed via
 `useProjectionState`, so links into the topology view round-trip mode and
 granularity.
 
@@ -132,7 +137,7 @@ granularity.
 |------|---------------|-------------------------|-----------------|
 | Ownership | namespace, workload, pod, container, configmap, secret, pvc, service, ingress | `contains`, `mounts`, `uses`, `exposes`, `routes_to` | top-down hierarchy, namespace groups side-by-side, dynamic ranks via `runLayered` |
 | Infrastructure | node, namespace, service, workload, ingress, pod, container | `runs_on`, `mounts` | dagre LR between K8s nodes + grid pack inside node groups, namespace stripe on pods |
-| Traffic | namespace, service, workload, ingress | `calls`, `routes_to`, `exposes` | dagre LR with greedy cycle breaking; granularity is forced to `overview` (collapsing pod-level edges) |
+| Traffic | namespace, service, workload, ingress | `calls`, `routes_to`, `exposes` | ELK layered (`RIGHT`) with orthogonal edge routing; route geometry returned by ELK is rendered as-is. Granularity is forced to `overview` (collapsing pod-level edges) |
 
 **Granularity** (`Granularity = 'overview' | 'runtime' | 'detailed'`):
 
@@ -171,7 +176,7 @@ Card content: entity name (bold, header bar), kind-specific icon (top-right), 2-
 **Edge Rendering — `RelationEdge`:**
 Edges are a custom React Flow edge component (`edges/RelationEdge.tsx`):
 
-- Path geometry uses React Flow's live source/target handle coordinates as the source of truth — never stale layout-box estimates. This is enforced because dagre layout positions are advisory; React Flow may reposition handles after re-render and the edge must follow.
+- Path geometry uses React Flow's live source/target handle coordinates as the source of truth — never stale layout-box estimates. This is enforced because dagre/tree layout positions are advisory; React Flow may reposition handles after re-render and the edge must follow. **Exception:** edges with `data.rawElk === true` carry an explicit `routePoints` array produced by ELK; these are rendered as-is and the live handle coordinates are intentionally ignored, otherwise the first/last segment would tilt off the orthogonal route.
 - Stroke color is keyed to relation type via CSS custom properties (`--color-signal` for `calls`/`exposes`, `--color-info` for `runs_on`/`contains`, `--color-text-muted` for `uses`/`mounts`).
 - For `calls` edges, stroke width scales with the live request rate snapshot from `useEdgeMetrics`, so high-traffic links read as visually heavier.
 - The original "cable bundle" mockup is approximated with stroke-width modulation rather than literal multi-line bundles; this kept the SVG cost flat as graph density grew.
@@ -428,8 +433,12 @@ Constraints that have caused regressions if ignored:
   dispatcher keyed by `ProjectionMode`; do not convert it to `useEffect` +
   `setState`. The `LayoutStrategy` interface in `layouts/types.ts` is the
   contract every strategy implements.
-- **Layout engine is dagre.** Topology layouts live under
-  `web/src/views/TopologyGraph/layouts/` and use `@dagrejs/dagre` per mode.
+- **Layouts are picked through `LAYOUT_REGISTRY`** in
+  `web/src/views/TopologyGraph/layouts/registry.ts`. Ownership runs a custom
+  tree layout, Infrastructure uses `@dagrejs/dagre`, Traffic uses ELK
+  (`elkjs`) layered orthogonal. The registry maps each `ProjectionMode` to a
+  default algorithm plus any optional alternates so adding a new strategy is
+  a one-line change.
 - **Catalog scopes are authoritative.** Metrics Explorer renders entity
   cards only when the catalog entry's `scopes` includes `entity`, and edge
   cards only when it includes `edge`.

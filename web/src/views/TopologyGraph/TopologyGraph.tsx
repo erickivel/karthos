@@ -1,7 +1,8 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   ReactFlow,
+  ReactFlowProvider,
   MiniMap,
   Controls,
   Background,
@@ -13,9 +14,10 @@ import { useGraphSnapshot } from "@/hooks/useGraphSnapshot";
 import { useNodeMetrics } from "@/hooks/useNodeMetrics";
 import { useEdgeMetrics } from "@/hooks/useEdgeMetrics";
 import { useAppStore } from "@/stores/useAppStore";
-import { useGraphLayout } from "./useGraphLayout";
+import { useGraphLayout, type LayoutInput } from "./useGraphLayout";
 import { useProjectionState } from "./useProjectionState";
 import { project } from "./projection";
+import type { MeasuredSize } from "./layouts/types";
 import { EntityNode } from "./nodes/EntityNode";
 import { NamespaceNode } from "./nodes/NamespaceNode";
 import { RelationEdge } from "./edges/RelationEdge";
@@ -27,12 +29,20 @@ const nodeTypes = { entity: EntityNode, namespace: NamespaceNode };
 const edgeTypes = { relation: RelationEdge };
 
 export function TopologyGraph() {
+  return (
+    <ReactFlowProvider>
+      <TopologyGraphInner />
+    </ReactFlowProvider>
+  );
+}
+
+function TopologyGraphInner() {
   const { data: snapshot } = useGraphSnapshot();
   const nodeMetrics = useNodeMetrics();
   const edgeMetrics = useEdgeMetrics();
   const [searchParams] = useSearchParams();
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
-  const { mode, granularity, includeOrphans } = useProjectionState();
+  const { mode, granularity, includeOrphans, layoutAlgorithm } = useProjectionState();
 
   const kindFilter = searchParams.get("kind");
   const namespaceFilter = searchParams.get("namespace");
@@ -93,7 +103,106 @@ export function TopologyGraph() {
     [filteredGraph, mode, granularity, includeOrphans],
   );
 
-  const { nodes, edges } = useGraphLayout(projection, mode, nodeMetrics, edgeMetrics);
+  // Measured node sizes harvested directly from the rendered React Flow nodes
+  // via a ResizeObserver keyed on `data-id`. We deliberately do NOT use
+  // `useReactFlow().getNodes()` / `useNodesInitialized` / `useStore(nodeLookup)`
+  // — in v12 the user-facing node objects don't carry `measured`, and the
+  // internal lookup wasn't surfacing measurements in this mounting topology.
+  // The DOM observer is also robust to React Query snapshot polls: node IDs
+  // are stable across polls so measured sizes persist; only IDs that genuinely
+  // leave the DOM get evicted (via the MutationObserver branch below).
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const [measuredSizes, setMeasuredSizes] = useState<Map<string, MeasuredSize>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    const root = surfaceRef.current;
+    if (!root) return;
+    const sizes = new Map<string, MeasuredSize>(measuredSizes);
+    let frame = 0;
+    const flush = () => {
+      frame = 0;
+      setMeasuredSizes((prev) =>
+        sizesEqual(prev, sizes) ? prev : new Map(sizes),
+      );
+    };
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(flush);
+    };
+    const observer = new ResizeObserver((entries) => {
+      let changed = false;
+      for (const entry of entries) {
+        const el = entry.target as HTMLElement;
+        const id = el.getAttribute("data-id");
+        if (!id) continue;
+        const box = entry.borderBoxSize?.[0];
+        const width = box ? box.inlineSize : entry.contentRect.width;
+        const height = box ? box.blockSize : entry.contentRect.height;
+        if (width <= 0 || height <= 0) continue;
+        const previous = sizes.get(id);
+        if (
+          !previous ||
+          Math.abs(previous.width - width) > 0.5 ||
+          Math.abs(previous.height - height) > 0.5
+        ) {
+          sizes.set(id, { width, height });
+          changed = true;
+        }
+      }
+      if (changed) schedule();
+    });
+    const tracked = new Set<Element>();
+    const sync = () => {
+      const els = root.querySelectorAll<HTMLElement>(
+        ".react-flow__node[data-id]",
+      );
+      const seen = new Set<Element>();
+      els.forEach((el) => {
+        seen.add(el);
+        if (!tracked.has(el)) {
+          tracked.add(el);
+          observer.observe(el);
+        }
+      });
+      for (const el of tracked) {
+        if (!seen.has(el)) {
+          tracked.delete(el);
+          observer.unobserve(el);
+          const id = el.getAttribute("data-id");
+          if (id && sizes.delete(id)) schedule();
+        }
+      }
+    };
+    sync();
+    const mutation = new MutationObserver(sync);
+    mutation.observe(root, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      mutation.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+    // The observer instance is created once per mount; we intentionally do not
+    // re-run when `measuredSizes` changes (the closure above mutates the same
+    // Map reference and schedules a flush only on real diffs).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const layoutInput = useMemo<LayoutInput>(
+    () => ({
+      ...projection,
+      nodeSizes: measuredSizes.size > 0 ? measuredSizes : undefined,
+    }),
+    [projection, measuredSizes],
+  );
+
+  const { nodes, edges } = useGraphLayout(
+    layoutInput,
+    mode,
+    layoutAlgorithm,
+    nodeMetrics,
+    edgeMetrics,
+  );
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
@@ -108,7 +217,11 @@ export function TopologyGraph() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.graphSurface} data-testid="topology-graph">
+      <div
+        className={styles.graphSurface}
+        data-testid="topology-graph"
+        ref={surfaceRef}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -144,4 +257,18 @@ export function TopologyGraph() {
       <NodeInspector />
     </div>
   );
+}
+
+function sizesEqual(
+  prev: Map<string, MeasuredSize>,
+  next: Map<string, MeasuredSize>,
+): boolean {
+  if (prev.size !== next.size) return false;
+  for (const [id, size] of next) {
+    const previous = prev.get(id);
+    if (!previous) return false;
+    if (Math.abs(previous.width - size.width) > 0.5) return false;
+    if (Math.abs(previous.height - size.height) > 0.5) return false;
+  }
+  return true;
 }

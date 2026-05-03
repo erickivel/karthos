@@ -3,7 +3,6 @@ import { MarkerType, Position, type Edge, type Node } from '@xyflow/react'
 import type { GraphEdge, GraphNode, RelationType } from '@/types/graph'
 import type { LayoutDeps, LayoutInput, LayoutResult } from './types'
 import { NODE_HEIGHT_DEFAULT, NODE_HEIGHT_SMALL, NODE_WIDTH, SMALL_KINDS } from './types'
-import { getEdgeMetricKeyFromNodes } from '../edgeMetrics'
 
 export interface DagreLayoutSpec {
   rankdir: 'TB' | 'LR'
@@ -92,7 +91,7 @@ export function runDagreLayout(
 
   const edges = contentEdges
     .filter((edge) => graph.hasNode(edge.source) && graph.hasNode(edge.target))
-    .map((edge) => toReactEdge(edge, contentNodeMap, deps))
+    .map((edge) => toReactEdge(edge, contentNodeMap))
 
   return { nodes: [...parentContainers, ...positionedContent], edges }
 }
@@ -117,7 +116,6 @@ function toReactNode(
     targetPosition,
     data: {
       ...node,
-      metrics: deps.nodeMetrics?.get(node.id) ?? {},
       mode: deps.mode,
     } as Record<string, unknown>,
   }
@@ -186,15 +184,9 @@ function buildParentContainers(
 function toReactEdge(
   edge: GraphEdge,
   contentNodeMap: Map<string, GraphNode>,
-  deps: LayoutDeps,
 ): Edge {
   const sourceNode = contentNodeMap.get(edge.source)
   const targetNode = contentNodeMap.get(edge.target)
-  const edgeMetricKey = getEdgeMetricKeyFromNodes(
-    edge.relation,
-    sourceNode?.name,
-    targetNode?.name,
-  )
 
   return {
     id: edge.id,
@@ -206,7 +198,6 @@ function toReactEdge(
       ...edge,
       sourceName: sourceNode?.name,
       targetName: targetNode?.name,
-      metrics: edgeMetricKey ? deps.edgeMetrics?.get(edgeMetricKey) : undefined,
     } as Record<string, unknown>,
     ...(DIRECTED_RELATIONS.includes(edge.relation) && {
       markerEnd: {

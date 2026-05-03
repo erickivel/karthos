@@ -13,7 +13,8 @@ interface RoutedPoint {
 type RelationEdgeData = GraphEdge &
   GraphEdgeMetricData & {
     routePoints?: RoutedPoint[];
-    routeStyle?: "ownership";
+    routeStyle?: "ownership" | "orthogonal";
+    rawElk?: boolean;
   };
 
 function getEdgeColor(relation: RelationType): string {
@@ -151,11 +152,17 @@ function getRoundedRoutePath(points: RoutedPoint[], radius = 10): string {
   return commands.join(" ");
 }
 
-function getOwnershipRoutePoints(
+function getRoutedPoints(
   edge: RelationEdgeData | undefined,
   routePoints: RoutedPoint[] | null,
   props: EdgeProps,
 ): RoutedPoint[] | null {
+  // ELK-routed edges: render the engine's section points as-is.
+  // Live React Flow handle coordinates are intentionally ignored here; rewriting
+  // the first/last segment from sourceX/targetX would create the diagonal
+  // artifact described in docs/topology-elk-raw-react-flow.md.
+  if (edge?.rawElk && routePoints) return routePoints;
+
   if (edge?.routeStyle !== "ownership") return null;
 
   if (routePoints) {
@@ -190,9 +197,9 @@ function RelationEdgeComponent(props: EdgeProps) {
     targetPosition: props.targetPosition,
     borderRadius: 8,
   });
-  const ownershipRoutePoints = getOwnershipRoutePoints(edge, routePoints, props);
-  const edgePath = ownershipRoutePoints
-    ? getRoundedRoutePath(ownershipRoutePoints)
+  const explicitRoutePoints = getRoutedPoints(edge, routePoints, props);
+  const edgePath = explicitRoutePoints
+    ? getRoundedRoutePath(explicitRoutePoints)
     : smoothPath;
 
   // True midpoint of the rendered SVG path, computed via getPointAtLength.
