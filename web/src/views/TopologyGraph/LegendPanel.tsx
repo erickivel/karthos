@@ -1,6 +1,10 @@
 import { X } from 'lucide-react'
 import type { EntityKind } from '@/types/graph'
-import { GRANULARITY_ENTRIES, MODE_ENTRIES } from './modes'
+import {
+  GRANULARITY_ENTRIES,
+  MODE_ENTRIES,
+  TRAFFIC_GRANULARITY_ENTRIES,
+} from './modes'
 import styles from './LegendPanel.module.css'
 
 interface LegendPanelProps {
@@ -59,9 +63,21 @@ export function LegendPanel({ onClose }: LegendPanelProps) {
       </section>
 
       <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Granularity</h3>
+        <h3 className={styles.sectionTitle}>Granularity (Ownership / Infrastructure)</h3>
         <ul className={styles.list}>
           {GRANULARITY_ENTRIES.map((g) => (
+            <li key={g.value} className={styles.item}>
+              <span className={styles.itemLabel}>{g.label}</span>
+              <span className={styles.itemDesc}>{g.description}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.sectionTitle}>Traffic flows</h3>
+        <ul className={styles.list}>
+          {TRAFFIC_GRANULARITY_ENTRIES.map((g) => (
             <li key={g.value} className={styles.item}>
               <span className={styles.itemLabel}>{g.label}</span>
               <span className={styles.itemDesc}>{g.description}</span>

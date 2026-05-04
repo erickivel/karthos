@@ -20,8 +20,11 @@ type RelationEdgeData = GraphEdge &
 function getEdgeColor(relation: RelationType): string {
   switch (relation) {
     case "calls":
-    case "exposes":
       return "var(--color-signal)";
+    case "exposes":
+      // Structural in Workload Flow — muted to read distinct from `calls`,
+      // which carries traffic-rate styling.
+      return "var(--color-text-muted)";
     case "runs_on":
     case "contains":
       return "var(--color-info)";
@@ -61,6 +64,22 @@ function getMetricState(edge: GraphEdge & GraphEdgeMetricData) {
   const errorRatio = edge.metrics?.errorRatio ?? 0;
   const errorRate = edge.metrics?.errorRate ?? 0;
 
+  // Structural relation in Workload Flow: thin, single, muted, dashed.
+  // No rate/latency/error coloring — exposes describes K8s wiring, not
+  // observed traffic, so it must read different from `calls`.
+  if (edge.relation === "exposes") {
+    return {
+      cableCount: 1,
+      cableWidth: 0.9,
+      cableSpacing: 0,
+      bundleWidth: 1.4,
+      opacity: 0.55,
+      stroke: getEdgeColor(edge.relation),
+      summary: "exposes",
+      dash: "4 3" as const,
+    };
+  }
+
   const cableCount =
     edge.relation === "calls"
       ? Math.min(6, Math.max(1, Math.ceil(Math.log10(rate + 1) * 2.4)))
@@ -96,6 +115,7 @@ function getMetricState(edge: GraphEdge & GraphEdgeMetricData) {
     ]
       .filter(Boolean)
       .join(" · "),
+    dash: undefined as string | undefined,
   };
 }
 
@@ -252,6 +272,7 @@ function RelationEdgeComponent(props: EdgeProps) {
               : 0.7
           }
           strokeLinecap="round"
+          strokeDasharray={metricState?.dash}
           transform={
             offset === 0
               ? undefined

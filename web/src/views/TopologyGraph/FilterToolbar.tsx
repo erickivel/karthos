@@ -5,7 +5,7 @@ import type { AvailableFilters } from '@/types/graph'
 import { useAppStore } from '@/stores/useAppStore'
 import { useProjectionState } from './useProjectionState'
 import { LegendPanel } from './LegendPanel'
-import { GRANULARITY_ENTRIES, MODE_ENTRIES } from './modes'
+import { granularityEntriesFor, MODE_ENTRIES } from './modes'
 import { namespaceColor } from './namespaceColor'
 import { availableAlgorithms, LAYOUT_REGISTRY, type LayoutAlgorithm } from './layouts/registry'
 import styles from './FilterToolbar.module.css'
@@ -26,6 +26,7 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
     setIncludeOrphans,
     setLayoutAlgorithm,
   } = useProjectionState()
+  const granularityEntries = granularityEntriesFor(mode)
   const modeAlgorithms = availableAlgorithms(mode)
   const activeAlgorithm = layoutAlgorithm ?? LAYOUT_REGISTRY[mode].defaultAlgorithm
   const selectedEntityId = useAppStore((s) => s.selectedEntityId)
@@ -164,7 +165,7 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
           aria-label="Granularity"
           data-testid="topology-granularity-group"
         >
-          {GRANULARITY_ENTRIES.map(({ value, shortLabel, label, icon: Icon, description }) => (
+          {granularityEntries.map(({ value, shortLabel, label, icon: Icon, description }) => (
             <button
               key={value}
               type="button"
