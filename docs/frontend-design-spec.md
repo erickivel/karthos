@@ -137,16 +137,30 @@ granularity.
 |------|---------------|-------------------------|-----------------|
 | Ownership | namespace, workload, pod, container, configmap, secret, pvc, service, ingress | `contains`, `mounts`, `uses`, `exposes`, `routes_to` | top-down hierarchy, namespace groups side-by-side, dynamic ranks via `runLayered` |
 | Infrastructure | node, namespace, service, workload, ingress, pod, container | `runs_on`, `mounts` | dagre LR between K8s nodes + grid pack inside node groups, namespace stripe on pods |
-| Traffic | namespace, service, workload, ingress | `calls`, `routes_to`, `exposes` | ELK layered (`RIGHT`) with orthogonal edge routing; route geometry returned by ELK is rendered as-is. Granularity is forced to `overview` (collapsing pod-level edges) |
+| Traffic | varies by flow — see Traffic flows below | `calls`, `routes_to`, `exposes` | ELK layered (`RIGHT`) with orthogonal edge routing; route geometry returned by ELK is rendered as-is |
 
-**Granularity** (`Granularity = 'overview' | 'runtime' | 'detailed'`):
+**Granularity** (`Granularity = 'overview' | 'runtime' | 'detailed'`) — used by Ownership and Infrastructure:
 
 - `overview` — namespace, node, service, workload, ingress
 - `runtime` — overview + pod
 - `detailed` — runtime + container, configmap, secret, pvc
 
-The Traffic mode intentionally caps at `overview` because pod-level traffic
-edges multiply by replica count and produce unreadable hairballs.
+**Traffic flows** (Traffic mode reuses the `Granularity` URL state but
+relabels the picker — see `TRAFFIC_FLOW_SPECS` and
+`TRAFFIC_GRANULARITY_ENTRIES`):
+
+| Granularity | Flow | Visible kinds | Relations |
+|-------------|------|---------------|-----------|
+| `overview`  | Endpoint Flow | ingress, service | `routes_to`, `calls` |
+| `runtime`   | Workload Flow | ingress, service, workload | `calls`, `exposes`, `routes_to` |
+| `detailed`  | Instance Flow | pod | `calls` |
+
+Endpoint Flow is the default and answers "which entrypoints and services
+are talking?". Workload Flow bridges runtime traffic with the controllers
+that implement the endpoints — `exposes` is rendered structurally (thin,
+muted, dashed) so it reads distinct from the rate-styled `calls` edges.
+Instance Flow renders all participating pods for replica-level
+troubleshooting; pod auto-collapse and zero-traffic hiding are deferred.
 
 **Edge filtering invariant.** The `project()` function filters edges by
 **both** endpoint visibility and `LayerSpec.relations`. Without the second
@@ -177,7 +191,7 @@ Card content: entity name (bold, header bar), kind-specific icon (top-right), 2-
 Edges are a custom React Flow edge component (`edges/RelationEdge.tsx`):
 
 - Path geometry uses React Flow's live source/target handle coordinates as the source of truth — never stale layout-box estimates. This is enforced because dagre/tree layout positions are advisory; React Flow may reposition handles after re-render and the edge must follow. **Exception:** edges with `data.rawElk === true` carry an explicit `routePoints` array produced by ELK; these are rendered as-is and the live handle coordinates are intentionally ignored, otherwise the first/last segment would tilt off the orthogonal route.
-- Stroke color is keyed to relation type via CSS custom properties (`--color-signal` for `calls`/`exposes`, `--color-info` for `runs_on`/`contains`, `--color-text-muted` for `uses`/`mounts`).
+- Stroke color is keyed to relation type via CSS custom properties (`--color-signal` for `calls`, `--color-info` for `runs_on`/`contains`, `--color-text-muted` for `exposes` and other structural relations). In Workload Flow the `exposes` edge is rendered thin, muted and dashed so it visually separates from rate-styled `calls`.
 - For `calls` edges, stroke width scales with the live request rate snapshot from `useEdgeMetrics`, so high-traffic links read as visually heavier.
 - The original "cable bundle" mockup is approximated with stroke-width modulation rather than literal multi-line bundles; this kept the SVG cost flat as graph density grew.
 - An `EdgeMetricButton` overlay opens the Metrics Explorer pre-filtered to that edge.

@@ -5,6 +5,8 @@ import {
   Eye,
   Activity,
   Layers,
+  Workflow,
+  Cpu,
   type LucideIcon,
 } from 'lucide-react'
 import type { Granularity, ProjectionMode } from './projection'
@@ -64,3 +66,39 @@ export const GRANULARITY_ENTRIES: ModeEntry<Granularity>[] = [
     description: 'Adds containers, configmaps, secrets and PVCs.',
   },
 ]
+
+// Traffic mode reuses the Granularity URL state but presents three named
+// flows instead of L1/L2/L3. Keeping the underlying value IDs unchanged
+// preserves shareable links across modes.
+export const TRAFFIC_GRANULARITY_ENTRIES: ModeEntry<Granularity>[] = [
+  {
+    value: 'overview',
+    label: 'Endpoint Flow',
+    shortLabel: 'Endpoint',
+    icon: Network,
+    description:
+      'Logical traffic surface — ingress/gateway and services. Routes and call edges only.',
+  },
+  {
+    value: 'runtime',
+    label: 'Workload Flow',
+    shortLabel: 'Workload',
+    icon: Workflow,
+    description:
+      'Which controllers implement traffic — services, workloads, ingress. Exposes is structural.',
+  },
+  {
+    value: 'detailed',
+    label: 'Instance Flow',
+    shortLabel: 'Instance',
+    icon: Cpu,
+    description:
+      'Pod replicas participating in traffic. Pod-level call edges only.',
+  },
+]
+
+export function granularityEntriesFor(
+  mode: ProjectionMode,
+): ModeEntry<Granularity>[] {
+  return mode === 'traffic' ? TRAFFIC_GRANULARITY_ENTRIES : GRANULARITY_ENTRIES
+}
