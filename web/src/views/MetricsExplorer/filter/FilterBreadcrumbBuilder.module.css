@@ -1,0 +1,298 @@
+.root {
+  background: var(--surface-module);
+  border: 1px solid var(--surface-divider);
+  border-radius: 8px;
+  overflow: visible;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+.header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+}
+
+.path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.matches {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  font-weight: 700;
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.editButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--surface-divider);
+  background: var(--surface-base);
+  color: var(--color-text-primary);
+  border-radius: 5px;
+  padding: 7px 10px;
+  font-family: var(--font-family);
+  font-size: var(--text-label);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.editButton[data-active='true'] {
+  border-color: var(--color-signal);
+  background: var(--surface-active);
+  color: var(--color-text-primary);
+}
+
+.resetButton {
+  background: var(--surface-module);
+  border: 1px solid var(--surface-divider);
+  color: var(--color-text-primary);
+  border-radius: 4px;
+  padding: 4px 9px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: var(--font-family);
+}
+
+.activeFlag {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: rgba(8, 220, 125, 0.12);
+  border: 1px solid var(--color-signal);
+  color: var(--color-signal);
+  font-size: var(--text-label);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.segmentWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 320px;
+  padding: 6px 9px;
+  background: var(--surface-base);
+  border: 1px solid var(--surface-divider);
+  border-radius: 5px;
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segment[data-open='true'] {
+  background: var(--surface-active);
+  border-color: var(--color-signal);
+}
+
+.segmentLabel {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.segmentValue {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.slash {
+  color: var(--surface-divider);
+  margin: 0 2px;
+}
+
+.builder {
+  border-top: 1px solid var(--surface-divider);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface-nav);
+  font-family: ui-monospace, 'SF Mono', monospace;
+  animation: sFade 160ms ease-out;
+}
+
+@keyframes sFade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.builderRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.builderKeyword {
+  font-size: var(--text-label);
+  font-weight: 900;
+  color: var(--color-info);
+  letter-spacing: 0.1em;
+  min-width: 60px;
+}
+
+.combobox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface-module);
+  border: 1px solid var(--surface-divider);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: var(--text-body);
+  min-width: 150px;
+}
+
+.combobox[data-wide='true'] {
+  min-width: 320px;
+}
+
+.combobox[data-open='true'] {
+  border-color: var(--color-signal);
+}
+
+.comboboxLabel {
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+
+.comboboxEq {
+  color: var(--color-text-muted);
+}
+
+.comboboxButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--text-body);
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.comboboxButton[data-set='true'] {
+  color: var(--color-info);
+}
+
+.comboboxValue {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queryWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-module);
+  border: 1px solid var(--surface-divider);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: var(--text-body);
+  min-width: 220px;
+}
+
+.queryLabel {
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+
+.queryInput {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--text-body);
+  min-width: 0;
+}
+
+.builderFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--surface-active);
+  padding-top: 10px;
+  font-family: var(--font-family);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.builderHint {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}
+
+.applyButton {
+  background: var(--surface-module);
+  border: 1px solid var(--color-signal);
+  color: var(--color-signal);
+  border-radius: 4px;
+  padding: 4px 9px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: var(--font-family);
+}
+
+@media (max-width: 760px) {
+  .header {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .path {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .actions {
+    justify-content: flex-start;
+  }
+}

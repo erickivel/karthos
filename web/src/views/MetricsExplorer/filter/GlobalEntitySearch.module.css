@@ -1,0 +1,133 @@
+.wrap {
+  position: relative;
+}
+
+.bar {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-module);
+  border: 1px solid var(--surface-divider);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--color-text-muted);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+.bar[data-open='true'] {
+  border-color: var(--color-signal);
+  box-shadow: 0 0 0 1px var(--color-signal) inset;
+  color: var(--color-signal);
+}
+
+.input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+  font-weight: 500;
+  min-width: 0;
+}
+
+.kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--surface-divider);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--surface-nav);
+  border: 1px solid var(--surface-active);
+  border-radius: 8px;
+  max-height: 380px;
+  overflow-y: auto;
+  z-index: 70;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+
+.empty {
+  padding: 14px;
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 14px 110px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-primary);
+  padding: 8px 10px;
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.row[data-active='true'] {
+  background: var(--surface-active);
+}
+
+.healthDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.healthDot[data-health='healthy'] { background: var(--color-signal); }
+.healthDot[data-health='degraded'] { background: var(--color-warn); }
+.healthDot[data-health='down'] { background: var(--color-alert); }
+
+.kindBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  background: var(--surface-active);
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.kindSwatch {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ns {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}
+
+.status {
+  color: var(--color-info);
+  font-size: var(--text-label);
+}

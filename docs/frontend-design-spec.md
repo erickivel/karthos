@@ -224,47 +224,64 @@ Appears when a node is clicked. Contents:
 
 Entity and edge time-series exploration across the canonical metric categories.
 
-**Layout:**
-- Header: mode switch + Entity or Edge selector + Time range dropdown
-- Category tabs: Resource, Traffic, Latency, Error, Capacity, Health
-- Chart grid (2 columns): one card per metric in the active category
-- Raw Samples table: scrollable table of MetricSample records
+Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped and removed in favour of a tighter selection UX with a global keyboard search.
 
-**Entity mode:**
-Dropdown listing entities from the latest graph snapshot only. Pre-filled when arriving from the topology inspector via `/metrics?entity={id}`.
+**Layout (entity mode):**
+1. Header: page title + Entity / Edge mode tabs
+2. **Global entity search** (`filter/GlobalEntitySearch.tsx`): full-width input with a `⌘K` shortcut. Fuzzy text search across name, namespace, kind, and status against the latest snapshot. Arrow keys + Enter pick.
+3. **Breadcrumb / Builder filter** (`filter/FilterBreadcrumbBuilder.tsx`): path-style `Namespace / Kind / Entity` segments backed by `SearchablePopover`. An "Edit Filters" toggle expands an advanced builder with `SCOPE` (namespace, kind), `WHERE` (status, name-contains query), and `SELECT` (entity) rows. "Reset" clears all state.
+4. **Selection summary** (`SelectionSummary.tsx`): card with health dot, entity name, kind badge, namespace/cluster/status chips, and the segmented time-range control (`5m / 15m / 1h / 6h / 24h`).
+5. **Category tabs**: filtered to categories applicable to the selected kind via `applicability/kindCategories.ts`.
+6. **Chart grid**: one `MetricCard` per applicable canonical metric. Cards share a Recharts `syncId` so the hover cursor mirrors across cards even though only a single entity is selected.
+7. **Raw Samples table**: scrollable, scope column shows `namespace/name` for entity samples and `src → tgt` for edge samples.
 
-**Edge mode:**
-Dropdown listing graph `calls` edges by source and target display names. Pre-filled when arriving from the topology inspector via `/metrics?mode=edge&edgeSource={id}&edgeTarget={id}`.
+**Layout (edge mode):**
+1. Same header, mode tab on Edge.
+2. **Edge selector** (`edge/EdgeSelector.tsx`): single search-and-pick combobox over `calls` edges in the snapshot; shows source and target health dots, kind swatches, names, and namespaces. Keyboard navigable.
+3. **Selection summary** in edge variant: source → target with relation badge.
+4. Tabs are fixed to traffic, latency, error (the categories defined for `MetricScope = 'edge'`).
+5. Same chart grid + raw samples.
+
+**URL state:**
+- Entity: `/metrics?mode=entity&entity={id}` (single id; the multi-id `entity=a,b,c` shape was retired with multi-compare).
+- Edge: `/metrics?mode=edge&edgeSource={id}&edgeTarget={id}` (unchanged).
+- Deep-links from the topology `NodeInspector` (`entityMetricsUrl` / `edgeMetricsUrl` in `web/src/lib/links.ts`) are preserved.
+
+**Chart Cards (`MetricCard.tsx`):**
+- Title + `InfoTooltip` showing sample count, canonical metric name, and source list (active source highlighted in Signal Green).
+- Source chips listing `metric.sources[]` with the active one accent-coloured.
+- Prominent current value (last sample) + unit, right-aligned.
+- Recharts `BarChart` with horizontal gridlines, hidden Y axis, and a 5-tick X axis (left/center/right + "now" label on the rightmost tick).
+- Empty state: dashed border + "No samples in selected time range" + the list of expected sources, so empty cards distinguish "no data right now" from "this never applies".
 
 **Time Range:**
-Dropdown: Last 5m, 15m, 1h, 6h, 24h. Maps to `from` and `to` query params on the metrics API.
+Segmented control inside the selection summary. Maps to `from` / `to` query params on the metrics API.
 
 **Category Tabs:**
 Maps 1:1 to the canonical `MetricCategory` values: resource, traffic, latency, error, capacity, health. Active tab highlighted in Signal Green.
 
-**Chart Cards:**
-Each canonical metric for the selected entity gets a card containing:
-- Metric name (uppercase label)
-- Current value + unit (large, colored)
-- Time-series chart: **minimalist segmented bar charts** as the primary visualization style — solid rectangular blocks with gaps between them, using opacity gradients from `var(--surface-active)` (older data) to `var(--color-signal)` (recent data), matching the "Live Telemetry" aesthetic from the reference mockups
-- Line charts used only where continuous trend is essential (e.g., latency percentiles)
-- Multi-series support where applicable (e.g., disk read/write on same chart)
-
-**Raw Samples Table:**
-Scrollable table with columns: Metric, Value, Unit, Timestamp. Zebra-striped with tonal layering (alternating `var(--surface-nav)` / `var(--surface-module)`). Useful for operators debugging and TCC reviewers inspecting raw data.
+**Raw Samples Table (`RawSamplesTable.tsx`):**
+Scrollable table with columns: Metric, Scope, Source, (Mesh — only when mesh-labelled samples are present), Value, Unit, Timestamp. The page passes a snapshot-aware `scopeFor` formatter so users see human-readable namespace/name, not raw IDs.
 
 **Data sources:**
 - `GET /api/v1/metrics/series?metric_name={name}&entity_id[]={id}&from=&to=` → entity metric series
 - `GET /api/v1/metrics/series?metric_name={name}&edge_source_id={id}&edge_target_id={id}&from=&to=` → edge metric series
 - `GET /api/v1/metrics/catalog?category=` → canonical metric definitions, including per-metric `scopes`
 - `GET /api/v1/graph` → graph edges for the edge selector
-- `GET /api/v1/graph` → live graph nodes for the entity selector
+- `GET /api/v1/graph` → live graph nodes for the global search and breadcrumb filter
 
 The Metrics Explorer must treat catalog `scopes` as authoritative:
 
 - entity mode renders only metrics whose scopes include `entity`
 - edge mode renders only metrics whose scopes include `edge`
 - edge mode uses edge-capable catalog entries such as servicegraph and HTTP request metrics; unsupported pod-network metrics must not be requested or displayed
+
+**Applicability layer.** On top of `scopes`, the Explorer hides tabs and cards that are *structurally* inapplicable to the selected entity kind via two small frontend config files:
+
+- `web/src/views/MetricsExplorer/applicability/kindCategories.ts` — `EntityKind → MetricCategory[]`, drives **tab visibility** (e.g. ConfigMap exposes no tabs).
+- `web/src/views/MetricsExplorer/applicability/sourceKinds.ts` — `SourceId → EntityKind[] | '*'`, drives **card visibility** (e.g. an `mesh.istio`-only metric is hidden when a Pod is selected).
+
+Cards that are applicable but currently empty render an informative empty state listing the metric's expected sources, distinguishing "no data right now" from "this never applies". Unknown source ids fail open and emit a single `console.warn` in dev. See `web/src/views/MetricsExplorer/applicability/README.md` for the full model and how to extend it.
 
 ### 5.4 Status Bar
 

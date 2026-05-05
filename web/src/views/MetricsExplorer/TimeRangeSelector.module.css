@@ -1,0 +1,29 @@
+.group {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  gap: 0;
+  background: var(--surface-base);
+  border-radius: 6px;
+  padding: 3px;
+}
+
+.button {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-family: var(--font-family);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.button[data-active='true'] {
+  background: var(--surface-active);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}

@@ -16,6 +16,7 @@ import type { GraphNode } from "@/types/graph";
 import { formatBytes } from "../../utils/formatters";
 import { EdgeMetricButton } from "./EdgeMetricButton";
 import { buildEdgeMetricKey, type EdgeMetricSnapshot } from "./edgeMetrics";
+import { edgeMetricsUrl, entityMetricsUrl } from "@/lib/links";
 import styles from "./NodeInspector.module.css";
 
 interface NodeMetricSummaryItem {
@@ -234,12 +235,10 @@ export function NodeInspector() {
   const detailItems = getDetailItems(node);
   const specItems = getSpecItems(node);
   const openEdgeMetrics = (sourceId: string, targetId: string) => {
-    navigate(
-      `/metrics?mode=edge&edgeSource=${encodeURIComponent(sourceId)}&edgeTarget=${encodeURIComponent(targetId)}`,
-    );
+    navigate(edgeMetricsUrl(sourceId, targetId));
   };
   const openEntityMetrics = () => {
-    navigate(`/metrics?mode=entity&entity=${encodeURIComponent(node.id)}`);
+    navigate(entityMetricsUrl(node.id));
   };
 
   return (

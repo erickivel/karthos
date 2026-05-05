@@ -1,82 +1,125 @@
 .card {
   background: var(--surface-module);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--surface-divider);
+  border-radius: 6px;
   padding: var(--space-md);
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: 10px;
+  min-height: 226px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+
+.card[data-empty='true'] {
+  opacity: 0.85;
 }
 
 .header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--space-sm);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  min-height: 62px;
 }
 
-.heading {
+.headingCol {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
 }
 
 .name {
-  font-size: var(--text-body);
-  font-weight: 600;
-  color: var(--color-text);
-  text-transform: uppercase;
-  letter-spacing: var(--letter-wide);
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.subtitle {
-  font-size: var(--text-label);
-  font-family: var(--font-mono, monospace);
+.sourceRow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sourceChip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(214, 225, 234, 0.09);
   color: var(--color-text-muted);
+  border: 1px solid var(--surface-divider);
+  white-space: nowrap;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.sourceLine {
-  font-size: var(--text-label);
-  font-family: var(--font-mono, monospace);
-  color: var(--color-info);
-  cursor: help;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sourceChip[data-active='true'] {
+  background: rgba(8, 220, 125, 0.16);
+  color: var(--color-signal);
+  border-color: var(--color-signal);
 }
 
-.currentValue {
-  font-size: 1.25rem;
-  font-weight: 600;
+.value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 23px;
+  font-weight: 800;
   color: var(--color-signal);
   font-variant-numeric: tabular-nums;
 }
 
 .unit {
-  font-size: var(--text-label);
-  font-weight: 400;
+  font-size: 11px;
   color: var(--color-text-muted);
+  font-weight: 600;
 }
 
 .chart {
   width: 100%;
+  flex: 1;
+  min-height: 140px;
 }
 
 .empty {
-  height: 100px;
+  height: 140px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   color: var(--color-text-muted);
   font-size: var(--text-body);
+  border: 1px dashed var(--surface-divider);
+  border-radius: var(--radius);
+}
+
+.emptyMessage {
+  font-size: var(--text-body);
+}
+
+.emptyHint {
+  font-size: var(--text-label);
+  font-family: ui-monospace, monospace;
 }
 
 .tooltip {
   background: var(--surface-nav);
-  border: 1px solid var(--surface-active);
+  border: 1px solid var(--surface-divider);
   border-radius: 6px;
   padding: 6px 10px;
   display: flex;
@@ -87,7 +130,7 @@
 
 .tooltipValue {
   font-size: var(--text-body);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--color-signal);
   font-variant-numeric: tabular-nums;
 }
@@ -95,4 +138,5 @@
 .tooltipTime {
   font-size: var(--text-label);
   color: var(--color-text-muted);
+  font-family: ui-monospace, monospace;
 }

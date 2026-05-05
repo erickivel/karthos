@@ -1,0 +1,73 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.button:hover,
+.button:focus-visible {
+  color: var(--color-text-primary);
+  border-color: var(--surface-divider);
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 7px);
+  left: 0;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 13px;
+  border-radius: 6px;
+  border: 1px solid var(--surface-divider);
+  background: var(--surface-nav);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
+  color: var(--color-text-primary);
+  font-size: var(--text-body);
+  line-height: 1.45;
+  font-family: ui-monospace, monospace;
+  text-transform: none;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+
+.title {
+  color: var(--color-text-primary);
+  font-weight: 800;
+}
+
+.value {
+  color: var(--color-signal);
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.code {
+  color: var(--color-text-primary);
+  font-family: ui-monospace, monospace;
+}
+
+.activeSource {
+  color: var(--color-signal);
+  font-family: ui-monospace, monospace;
+}

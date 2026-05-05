@@ -101,7 +101,11 @@ web/
         useProjectionState.ts URL-search-param-backed mode/granularity/orphans/algorithm state
         modes.ts         ProjectionMode and Granularity catalog used by the toolbar
         namespaceColor.ts deterministic namespace color palette
-      MetricsExplorer/  category tabs, entity/edge selector, MetricCard charts, raw samples table
+      MetricsExplorer/  single-entity / single-edge explorer
+        filter/        GlobalEntitySearch (⌘K), FilterBreadcrumbBuilder, SearchablePopover, applyFilters
+        edge/          EdgeSelector (calls-edge picker)
+        applicability/ kindCategories + sourceKinds gating tabs and cards by selected kind
+        SelectionSummary, MetricCard, InfoTooltip, RawSamplesTable, CategoryTabs, TimeRangeSelector
     components/
       Shell/          floating TopBar, Sidebar, StatusBar
       shared/         DataChip, SegmentedBar, KpiCard
@@ -289,7 +293,7 @@ Notes:
 - `http.server.request.count`, `rpc.server.request.count`, `servicegraph.request.count`, `servicegraph.request.error.count`, gRPC message counts, and TCP connection counts are served as 1-minute rates at query time, even though the stored semconv series are counter-derived.
 - `servicegraph.request.error.ratio` is query-derived from the served request and error rates.
 - Istio metrics enter through `metrics.IstioDialect`, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
-- The Metrics Explorer entity selector is driven by the latest graph snapshot, not the historical `/api/v1/entities` registry.
+- The Metrics Explorer entity search and breadcrumb filter are driven by the latest graph snapshot (`useGraphSnapshot`), not the historical `/api/v1/entities` registry. Edge mode lists `calls` edges from the same snapshot.
 
 ### Reading the graph output
 
