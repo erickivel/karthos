@@ -192,6 +192,13 @@ function EdgeCardError({ onRetry }: { onRetry: () => void }) {
 
 function getDetailItems(node: GraphNode) {
   const labels = node.labels ?? {};
+  const dash = "—";
+
+  const base: InfoItem[] = [
+    { label: "Kind", value: node.kind ? String(node.kind) : dash },
+    { label: "Cluster", value: node.cluster || dash },
+    { label: "Namespace", value: node.namespace || dash },
+  ];
 
   if (node.kind === "workload") {
     const workloadType = labels["k8s.deployment.name"]
@@ -203,34 +210,14 @@ function getDetailItems(node: GraphNode) {
           : labels["k8s.replicaset.name"]
             ? "ReplicaSet"
             : "Workload";
-
     return [
+      ...base,
       { label: "Type", value: workloadType },
       { label: "Controller", value: node.name },
-      ...(node.namespace
-        ? [{ label: "Namespace", value: node.namespace }]
-        : []),
     ];
   }
 
-  if (node.kind === "namespace") {
-    return [
-      { label: "Namespace", value: node.name },
-      ...(node.cluster ? [{ label: "Cluster", value: node.cluster }] : []),
-    ];
-  }
-
-  if (node.kind === "node") {
-    return [
-      { label: "Node", value: node.name },
-      ...(node.cluster ? [{ label: "Cluster", value: node.cluster }] : []),
-    ];
-  }
-
-  return [
-    ...(node.cluster ? [{ label: "Cluster", value: node.cluster }] : []),
-    ...(node.namespace ? [{ label: "Namespace", value: node.namespace }] : []),
-  ];
+  return base;
 }
 
 function getSpecItems(node: GraphNode) {
