@@ -202,6 +202,47 @@ func TestGetNodeReturnsEnrichedEdges(t *testing.T) {
 	require.Equal(t, "service", related["kind"])
 }
 
+// countingEntityRegistry wraps an EntityRegistry and counts per-id and batch
+// lookups so tests can assert that handlers fold per-edge entity resolution
+// into a single batch.
+type countingEntityRegistry struct {
+	inner      persistence.EntityRegistry
+	getCalls   int
+	batchCalls int
+	batchedIDs int
+}
+
+func (c *countingEntityRegistry) UpsertEntity(ctx context.Context, e entities.Entity) error {
+	return c.inner.UpsertEntity(ctx, e)
+}
+func (c *countingEntityRegistry) GetEntity(ctx context.Context, id entities.EntityID) (entities.Entity, error) {
+	c.getCalls++
+	return c.inner.GetEntity(ctx, id)
+}
+func (c *countingEntityRegistry) GetEntities(ctx context.Context, ids []entities.EntityID) (map[entities.EntityID]entities.Entity, error) {
+	c.batchCalls++
+	c.batchedIDs += len(ids)
+	return c.inner.GetEntities(ctx, ids)
+}
+func (c *countingEntityRegistry) ListEntities(ctx context.Context, q persistence.EntityQuery) ([]entities.Entity, error) {
+	return c.inner.ListEntities(ctx, q)
+}
+
+func TestGetNodeUsesSingleBatchedEntityLookup(t *testing.T) {
+	gs := seedGraph(t)
+	counting := &countingEntityRegistry{inner: seedEntityRegistry(t)}
+	srv := newTestServer(t, Config{GraphStore: gs, EntityRegistry: counting})
+	defer srv.cancel()
+
+	svcA := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-a")
+	resp := doGet(t, srv, "/api/v1/graph/nodes/"+string(svcA))
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.Equal(t, 1, counting.batchCalls, "handleGetNode should batch entity lookups into a single call")
+	require.Equal(t, 0, counting.getCalls, "handleGetNode should not fall back to per-id GetEntity")
+}
+
 func TestGetNodeReturns404(t *testing.T) {
 	gs := seedGraph(t)
 	srv := newTestServer(t, Config{GraphStore: gs})

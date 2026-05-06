@@ -71,20 +71,22 @@ type availableFilters struct {
 
 // --- helpers ---
 
-func (h *GraphHandler) enrichNode(ctx context.Context, n topology.Node) enrichedNode {
+// enrichNodeFrom builds an enrichedNode from a topology node and a
+// pre-resolved entity (which may be nil if the lookup missed). Callers that
+// already have a batched map of entities should use this directly to avoid
+// per-node DB round-trips.
+func enrichNodeFrom(n topology.Node, entity entities.Entity) enrichedNode {
 	en := enrichedNode{
 		ID:     n.ID,
 		Kind:   n.Kind,
 		Status: "unknown",
 		Labels: n.Labels,
 	}
-	if h.entityRegistry != nil {
-		if entity, err := h.entityRegistry.GetEntity(ctx, n.ID); err == nil {
-			ref := entityRefOf(entity)
-			en.Name = ref.Name
-			en.Namespace = ref.Namespace
-			en.Cluster = ref.Cluster
-		}
+	if entity != nil {
+		ref := entityRefOf(entity)
+		en.Name = ref.Name
+		en.Namespace = ref.Namespace
+		en.Cluster = ref.Cluster
 	}
 	if en.Name == "" && n.Labels != nil {
 		en.Name = n.Labels["name"]
@@ -95,12 +97,22 @@ func (h *GraphHandler) enrichNode(ctx context.Context, n topology.Node) enriched
 	return en
 }
 
-func (h *GraphHandler) resolveEntitySummary(ctx context.Context, id entities.EntityID) *relatedEntitySummary {
-	if h.entityRegistry == nil {
-		return nil
+// batchEntities resolves the given IDs through the registry in a single call.
+// Returns an empty map if the registry is nil or ids is empty.
+func (h *GraphHandler) batchEntities(ctx context.Context, ids []entities.EntityID) map[entities.EntityID]entities.Entity {
+	if h.entityRegistry == nil || len(ids) == 0 {
+		return map[entities.EntityID]entities.Entity{}
 	}
-	entity, err := h.entityRegistry.GetEntity(ctx, id)
+	resolved, err := h.entityRegistry.GetEntities(ctx, ids)
 	if err != nil {
+		h.logger.Warn("batch entity lookup failed", logging.Error(err))
+		return map[entities.EntityID]entities.Entity{}
+	}
+	return resolved
+}
+
+func summaryFrom(entity entities.Entity) *relatedEntitySummary {
+	if entity == nil {
 		return nil
 	}
 	ref := entityRefOf(entity)
@@ -195,9 +207,15 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 	namespaces := sortedSetKeys(nsSet)
 	relations := sortedKeys(relationCounts)
 
+	ids := make([]entities.EntityID, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	resolved := h.batchEntities(r.Context(), ids)
+
 	enrichedNodes := make([]enrichedNode, 0, len(nodes))
 	for _, n := range nodes {
-		enrichedNodes = append(enrichedNodes, h.enrichNode(r.Context(), n))
+		enrichedNodes = append(enrichedNodes, enrichNodeFrom(n, resolved[n.ID]))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -247,12 +265,22 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	kindFilter := entities.EntityKind(r.URL.Query().Get("kind"))
 	nsFilter := r.URL.Query().Get("namespace")
 
-	var filtered []enrichedNode
+	var candidates []topology.Node
 	for _, n := range nodes {
 		if kindFilter != "" && n.Kind != kindFilter {
 			continue
 		}
-		en := h.enrichNode(r.Context(), n)
+		candidates = append(candidates, n)
+	}
+	candidateIDs := make([]entities.EntityID, 0, len(candidates))
+	for _, n := range candidates {
+		candidateIDs = append(candidateIDs, n.ID)
+	}
+	resolved := h.batchEntities(r.Context(), candidateIDs)
+
+	var filtered []enrichedNode
+	for _, n := range candidates {
+		en := enrichNodeFrom(n, resolved[n.ID])
 		if nsFilter != "" && en.Namespace != nsFilter {
 			continue
 		}
@@ -312,8 +340,6 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enriched := h.enrichNode(r.Context(), *found)
-
 	var outbound []topology.Edge
 	var inbound []topology.Edge
 	for _, edge := range edges {
@@ -325,15 +351,28 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	idSet := map[entities.EntityID]struct{}{nodeID: {}}
+	for _, e := range outbound {
+		idSet[e.Target] = struct{}{}
+	}
+	for _, e := range inbound {
+		idSet[e.Source] = struct{}{}
+	}
+	ids := make([]entities.EntityID, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	resolved := h.batchEntities(r.Context(), ids)
+
+	enriched := enrichNodeFrom(*found, resolved[nodeID])
+
 	outboundEnriched := make([]enrichedEdge, 0, len(outbound))
 	for _, e := range outbound {
-		related := h.resolveEntitySummary(r.Context(), e.Target)
-		outboundEnriched = append(outboundEnriched, toEnrichedEdge(e, related))
+		outboundEnriched = append(outboundEnriched, toEnrichedEdge(e, summaryFrom(resolved[e.Target])))
 	}
 	inboundEnriched := make([]enrichedEdge, 0, len(inbound))
 	for _, e := range inbound {
-		related := h.resolveEntitySummary(r.Context(), e.Source)
-		inboundEnriched = append(inboundEnriched, toEnrichedEdge(e, related))
+		inboundEnriched = append(inboundEnriched, toEnrichedEdge(e, summaryFrom(resolved[e.Source])))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
