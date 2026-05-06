@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowDown,
@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useNodeDetail } from "@/hooks/useNodeDetail";
 import { useEdgeMetrics } from "@/hooks/useEdgeMetrics";
+import { useGraphSnapshot } from "@/hooks/useGraphSnapshot";
 import { useAppStore } from "@/stores/useAppStore";
 import { DataChip } from "@/components/shared/DataChip";
 import type { GraphNode } from "@/types/graph";
@@ -164,6 +165,31 @@ function DataRow({ item }: { item: InfoItem }) {
   );
 }
 
+function SkeletonEdgeRows({ count = 3 }: { count?: number }) {
+  return (
+    <div className={styles.edgeList} aria-busy="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className={styles.skeletonRow}>
+          <span className={styles.skeletonDot} />
+          <span className={styles.skeletonBar} />
+          <span className={`${styles.skeletonBar} ${styles.skeletonBarShort}`} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EdgeCardError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className={styles.errorState}>
+      <span className={styles.errorMessage}>Couldn't load edge details</span>
+      <button type="button" className={styles.retryBtn} onClick={onRetry}>
+        Retry
+      </button>
+    </div>
+  );
+}
+
 function getDetailItems(node: GraphNode) {
   const labels = node.labels ?? {};
 
@@ -223,14 +249,24 @@ export function NodeInspector() {
   const navigate = useNavigate();
   const selectedEntityId = useAppStore((s) => s.selectedEntityId);
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
-  const { data } = useNodeDetail(selectedEntityId);
+  const { data, isPending, isError, refetch } = useNodeDetail(selectedEntityId);
   const edgeMetrics = useEdgeMetrics();
+  const { data: graphSnapshot } = useGraphSnapshot();
 
-  if (!selectedEntityId || !data) return null;
+  const snapshotNode = useMemo(() => {
+    if (!selectedEntityId || !graphSnapshot) return undefined;
+    return graphSnapshot.graph.nodes.find((n) => n.id === selectedEntityId);
+  }, [selectedEntityId, graphSnapshot]);
 
-  const metricSummary = buildMetricSummary(data.node);
+  if (!selectedEntityId) return null;
 
-  const { node, edges } = data;
+  const node = data?.node ?? snapshotNode;
+  if (!node) return null;
+
+  const edges = data?.edges;
+  const detailLoading = isPending && !data;
+  const detailFailed = isError && !data;
+  const metricSummary = buildMetricSummary(node);
   const labels = node.labels ?? {};
   const detailItems = getDetailItems(node);
   const specItems = getSpecItems(node);
@@ -261,6 +297,9 @@ export function NodeInspector() {
             <BarChart3 size={13} strokeWidth={2} />
             <span>Detailed metrics</span>
           </button>
+          {detailLoading && (
+            <span className={styles.loadingSubtitle}>Loading details…</span>
+          )}
         </div>
         <button
           className={styles.closeBtn}
@@ -343,7 +382,11 @@ export function NodeInspector() {
           title="Inbound"
           tone="inbound"
         >
-          {edges.inbound.length > 0 ? (
+          {detailLoading ? (
+            <SkeletonEdgeRows />
+          ) : detailFailed ? (
+            <EdgeCardError onRetry={() => refetch()} />
+          ) : edges && edges.inbound.length > 0 ? (
             <div className={styles.edgeList}>
               {edges.inbound.map((e) => {
                 const snapshot =
@@ -383,7 +426,11 @@ export function NodeInspector() {
           title="Outbound"
           tone="outbound"
         >
-          {edges.outbound.length > 0 ? (
+          {detailLoading ? (
+            <SkeletonEdgeRows />
+          ) : detailFailed ? (
+            <EdgeCardError onRetry={() => refetch()} />
+          ) : edges && edges.outbound.length > 0 ? (
             <div className={styles.edgeList}>
               {edges.outbound.map((e) => {
                 const snapshot =
