@@ -67,7 +67,7 @@ to. `DefaultLogicalSources()` returns the built-in registry:
 |----|-------------|--------|---------|
 | `kubelet` | Kubelet stats | always | `KubeletDialect` |
 | `host-os` | Host OS metrics | always | none |
-| `kube-cluster` | Kubernetes API | always | none |
+| `kube-cluster` | Kubernetes API | always | `KubeClusterDialect` |
 | `prometheus.app` | Application Prometheus endpoints | profile has prometheus targets | `PrometheusDialect` |
 | `mesh.istio` | Istio service mesh | profile contains an `istio` source with `Mesh != nil` | `IstioDialect` |
 | `traces.spanmetrics` | Trace-derived span metrics | profile advertises OTLP traces | `SpanmetricsDialect` |
@@ -117,6 +117,7 @@ A dialect is a `map[rawName]canonicalName`. The built-in dialects:
 |---------|---------------------|
 | `PrometheusDialect` | `http_requests_total` → `http.server.request.count`, `http_request_duration_seconds` → `http.server.request.duration` |
 | `KubeletDialect` | `container.cpu.usage` → `k8s.container.cpu.usage`, `container.memory.usage` → `k8s.container.memory.usage` |
+| `KubeClusterDialect` | `k8s.container.cpu_request` → `k8s.container.cpu.request`, `k8s.container.memory_limit` → `k8s.container.memory.limit`, plus the cpu_limit and memory_request equivalents |
 | `SpanmetricsDialect` | `traces.span.metrics.calls` → `rpc.server.request.count`, `traces.span.metrics.duration` → `rpc.server.duration` |
 | `ServicegraphDialect` | `traces.service.graph.request.total` → `servicegraph.request.count`, `traces.service.graph.request.server` → `servicegraph.request.duration`, `traces.service.graph.request_failed_total` → `servicegraph.request.error.count` |
 | `IstioDialect` | `istio_requests_total` → `servicegraph.request.count`, `istio_request_duration_milliseconds` → `servicegraph.request.duration`, plus body size, gRPC message, and TCP connection counters |
@@ -249,21 +250,158 @@ falls through to `traces.servicegraph`, the planner enables the connector,
 and the same canonical name is served end-to-end. The UI never sees the
 difference.
 
-## 7. Adding a New Metric
+## 7. Adding a New Metric: End-to-End Checklist
 
-The contract a new metric must satisfy:
+A new canonical metric must pass through six independent contract steps
+before a UI tile lights up. **Every one of them is silently failable** —
+the unit-test suite catches catalog/mapping/dialect drift but cannot catch
+receiver-config or OTTL-tag mistakes. Both classes of bug have shipped
+to production before. Treat this as a sequence, not a punch list, and
+finish with live-cluster verification on every PR.
 
-1. Add an entry to `defaultCatalog` with semconv-style name, unit, category,
-   scopes, and at least one `SourceRef`.
-2. Add an entry to `OTLPSemconvMetrics` for ingest unit/kind, **or** add the
-   name to `catalogSourcelessExceptions` if it is purely query-derived.
-3. If the producer emits a non-canonical name, add a translation to the
-   producer's `Dialect` map.
-4. Update `TestDefaultCatalogIncludesRequiredMetrics` so the catalog
-   regression suite enforces presence.
-5. Update `docs/api-reference.md` if the metric introduces a new query
-   shape, and `docs/runtime-flow.md` if it introduces a new derivation rule
-   (rate, ratio, histogram unit conversion).
+### Step 1 — Receiver-side: confirm the metric is actually produced
+
+For each upstream OTel receiver (kubeletstats, hostmetrics, k8s_cluster,
+prometheus, spanmetrics connector, servicegraph connector, istio scrape):
+
+- Open the receiver's `metadata.yaml` at the contrib version pinned in
+  `deploy/helm/oksg-otel/values.yaml` (search the file for `tag:`) and
+  confirm the metric appears under `metrics:` with `enabled: true`.
+- If `enabled: false` (common — e.g. `system.cpu.utilization` in the
+  hostmetrics cpu scraper), enable it explicitly under the receiver's
+  `metrics:` block in `pkg/adapters/otel/source_planner.go`. Add an
+  assertion in `pkg/adapters/otel/source_planner_test.go` that the
+  enable lives in the generated config.
+- Note the metric's **wire-format name** exactly as written in the
+  upstream `metadata.yaml`. This is what the OTel pipeline sees on the
+  wire, and it often differs from the OTel semconv canonical we use in
+  the catalog. Examples: kubeletstats emits `container.cpu.usage`
+  (no `k8s.` prefix); k8s_cluster emits `k8s.container.cpu_request`
+  (underscore segment, not dotted).
+
+### Step 2 — Dialect: translate wire name → catalog canonical
+
+If the wire name and the catalog canonical differ:
+
+- Add a `DialectMap` entry to the source's dialect in
+  `pkg/core/metrics/dialect.go`.
+- Confirm `LogicalSource.Dialect` for that source is set in
+  `pkg/core/metrics/sources.go`. (A `nil` dialect means the source emits
+  canonical-shaped names directly; setting a dialect for the first time
+  requires this wire-up.)
+- Add a translation assertion in `pkg/core/metrics/dialect_test.go` and
+  a round-trip normalizer test in
+  `pkg/backend/ingest/normalizer_test.go` that feeds the raw OTLP wire
+  name and asserts the dotted canonical comes out (mirror the
+  `RawKubelet*` and `RawKubeCluster*` test patterns).
+
+### Step 3 — OTTL source tagger: stamp `oksg_source` correctly
+
+`buildOksgSourceTagger` in `pkg/adapters/otel/source_planner.go` runs at
+the agent and gateway **before** the dialect (which lives in the
+backend). So OTTL rules see **wire-format names**, not canonical names.
+Two consequences:
+
+- Rules that match against canonical names that only exist post-dialect
+  are dead code. `^k8s\.container\.` at the gateway only matches
+  k8s_cluster output (kubeletstats container metrics arrive as raw
+  `container.*`, not `k8s.container.*`).
+- The first matching rule wins (`attributes["oksg_source"] == nil`
+  guard). Rule ordering matters when prefixes overlap. Place specific
+  rules before broad ones.
+
+For each metric:
+
+- Identify which receiver/connector emits it on the wire and confirm
+  exactly one tagger rule matches the wire name.
+- Confirm the source ID stamped by that rule equals the `Sources[].ID`
+  in the catalog row. Mismatch is silently fatal:
+  `shouldDropForSource` (`pkg/backend/ingest/normalizer.go`) drops every
+  datapoint whose tag disagrees with the catalog assignment.
+- Add a planner test asserting the tagger statement is present
+  (mirror `TestPlanTagsK8sContainerMetricsAsKubeCluster`).
+
+### Step 4 — OTLP mapping: declare unit/kind/conversion
+
+In `pkg/core/metrics/otel_mappings.go`, add an entry to
+`OTLPSemconvMetrics` keyed by the **post-dialect canonical** name:
+
+```go
+"k8s.container.cpu.request": {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
+```
+
+Set `ConversionFactor` to convert from the producer's unit to the
+canonical unit (cores → millicores: 1000.0; seconds → nanoseconds: 1e9;
+otherwise 1.0). Set `Kind` to gauge / sum / counter / histogram based on
+the upstream `metadata.yaml`. Without this entry the normalizer silently
+drops every datapoint at the type-check (`normalizer.go` ingest loop).
+
+### Step 5 — Catalog: advertise the metric
+
+Add a `defaultCatalog` row in `pkg/core/metrics/catalog.go`:
+
+- `Name`: post-dialect canonical, exactly matching `OTLPSemconvMetrics`.
+- `Unit`: the canonical unit (matches `OTLPSemconvMetrics`).
+- `Category`: `resource` / `traffic` / `latency` / `error` / `capacity`
+  / `health`.
+- `Scopes`: `entity`, `edge`, or both.
+- `Sources`: the source IDs that can produce this metric, with priority.
+  The IDs **must** match what the OTTL tagger stamps in step 3.
+
+Update `TestDefaultCatalogIncludesRequiredMetrics` to enforce presence
+plus unit/category/sources. Confirm the metric is not in
+`TestDefaultCatalogExcludesUnsupportedMetrics`.
+
+If the metric is purely query-derived (e.g. ratios computed in PromQL),
+add it to `catalogSourcelessExceptions` and skip the OTLP mapping.
+
+### Step 6 — Live-cluster verification (mandatory)
+
+Unit tests do not exercise the receiver pipeline, so receiver-config
+and OTTL-tag drift can ship green tests but produce zero data. After
+merging, redeploy to kind and verify both layers:
+
+- VictoriaMetrics has the Prometheus-translated name. Port-forward
+  is not needed; exec into the VM pod:
+  ```
+  kubectl exec -n oksg-system oksg-otel-victoria-metrics-single-server-0 -- \
+    wget -qO- 'http://127.0.0.1:8428/api/v1/label/__name__/values' \
+    | python3 -c "import json,sys; print('<your_metric_underscore_form>' in json.load(sys.stdin)['data'])"
+  ```
+- Backend API serves the metric with the expected source label:
+  ```
+  curl 'http://localhost:18081/api/v1/metrics?metric_name=<canonical>&entity_id=<id>' \
+    | jq '.data | {samples: (.samples | length), source: .samples[-1].labels.source}'
+  ```
+- Frontend Metrics Explorer renders a non-empty chart for the metric on
+  a Container/Node/Workload entity in the appropriate category tab.
+
+### Forensic toolkit when a metric is missing
+
+If a metric is advertised but missing in storage, the drop is at one of
+four points. Bisect with these reads:
+
+1. **Receiver accepting?** Port-forward the gateway's `:8888/metrics`
+   endpoint and read
+   `otelcol_receiver_accepted_metric_points{receiver="..."}`. Zero
+   means the receiver isn't producing — go back to Step 1.
+2. **Reaching backend?** Compare with
+   `otelcol_exporter_sent_metric_points{exporter="otlp"}` on the
+   gateway. Equal means everything left.
+3. **Dropped at normalizer?** Backend logs with normal verbosity do
+   not record OTLP-mapping misses. Check
+   `OTLPNormalizer.DroppedSampleCount()` (Prom-self-metric or test
+   instrumentation) for source-mismatch drops.
+4. **Dialect translation hit?** Add a normalizer test that feeds the
+   wire name and asserts the canonical output. If it fails, the dialect
+   is wrong (or `LogicalSource.Dialect` is still `nil`).
+
+### Misc follow-ups when the metric introduces new query shape
+
+- Update `docs/api-reference.md` if the metric introduces a new query
+  shape (e.g. histogram quantile, ratio derivation).
+- Update `docs/runtime-flow.md` if it introduces a new ingest-time
+  derivation rule (rate, ratio, histogram unit conversion).
 
 ## 8. Adding a New Source
 

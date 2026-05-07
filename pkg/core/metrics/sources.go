@@ -36,6 +36,7 @@ var defaultLogicalSources = []LogicalSource{
 		DisplayName: "Kubernetes API",
 		Description: "Cluster-level workload, capacity and condition metrics produced by the OTel k8s_cluster receiver.",
 		Detect:      alwaysAvailable,
+		Dialect:     KubeClusterDialect,
 	},
 	{
 		ID:          SourcePrometheusApp,

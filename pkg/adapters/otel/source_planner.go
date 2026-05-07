@@ -92,7 +92,11 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			"collection_interval": "30s",
 			"root_path":           "/hostfs",
 			"scrapers": map[string]any{
-				"cpu":        map[string]any{},
+				"cpu": map[string]any{
+					"metrics": map[string]any{
+						"system.cpu.utilization": map[string]any{"enabled": true},
+					},
+				},
 				"memory":     map[string]any{},
 				"disk":       map[string]any{},
 				"filesystem": map[string]any{},
@@ -520,13 +524,19 @@ const oksgSourceTaggerProcessor = "transform/oksg-source"
 func buildOksgSourceTagger() map[string]any {
 	guard := `attributes["oksg_source"] == nil`
 	statements := []string{
-		// kubeletstats receiver: pod / container / volume / kubelet-side node metrics
-		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.(pod|container|volume)\\.") and ` + guard,
+		// kubeletstats receiver: pod / volume / kubelet-side node metrics.
+		// Container CPU/memory usage from kubeletstats arrives on the wire as
+		// raw `container.*` (translated to `k8s.container.*` only at the
+		// backend dialect step), and is matched by the next rule below.
+		// `k8s.container.*` here at the gateway/agent always originates from
+		// the k8s_cluster receiver and is tagged below.
+		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.(pod|volume)\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^container\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set") and ` + guard,
 		// hostmetrics receiver
 		`set(attributes["oksg_source"], "` + metrics.SourceHostOS + `") where IsMatch(metric.name, "^system\\.") and ` + guard,
-		// k8s_cluster receiver: cluster-level workload + capacity + condition metrics
+		// k8s_cluster receiver: cluster-level workload + capacity + condition + container spec metrics
+		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.container\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.(replicaset|deployment|namespace|daemonset|statefulset)\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.node\\.(condition|allocatable|cpu\\.capacity|cpu\\.cores|cpu\\.frequency|memory\\.capacity|disk\\.capacity|network\\.bandwidth)") and ` + guard,
 		// spanmetrics connector

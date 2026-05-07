@@ -241,6 +241,55 @@ func TestOTLPNormalizer_RawKubeletContainerMemoryUsage(t *testing.T) {
 	assert.Equal(t, metrics.UnitBytes, samples[0].Unit)
 }
 
+// TestOTLPNormalizer_RawKubeClusterContainerCPURequest verifies that the
+// k8s_cluster receiver's underscore wire name is translated to the dotted
+// catalog canonical via the KubeClusterDialect.
+func TestOTLPNormalizer_RawKubeClusterContainerCPURequest(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+		"k8s.container.name": "app",
+	}
+
+	rm := makeGaugeRM("k8s.container.cpu_request", 0.25, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "test-pod", "app")
+	assert.Equal(t, "k8s.container.cpu.request", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 250.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitMillicores, samples[0].Unit)
+}
+
+func TestOTLPNormalizer_RawKubeClusterContainerMemoryLimit(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+		"k8s.container.name": "app",
+	}
+
+	rm := makeGaugeRM("k8s.container.memory_limit", 268435456, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "test-pod", "app")
+	assert.Equal(t, "k8s.container.memory.limit", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 268435456.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitBytes, samples[0].Unit)
+}
+
 func TestOTLPNormalizer_MemoryMetric(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())

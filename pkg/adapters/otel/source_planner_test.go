@@ -271,6 +271,14 @@ func TestPlanBaselineAlwaysIncludesHostmetricsAndKubeletstatsVolume(t *testing.T
 	agentMetricsPipeline := plan.AgentConfig.Service.Pipelines["metrics"]
 	require.Contains(t, agentMetricsPipeline.Receivers, "hostmetrics")
 
+	// hostmetrics cpu scraper must explicitly enable system.cpu.utilization
+	// (off by default in OTel contrib v0.111+).
+	hostmetrics := plan.AgentConfig.Receivers["hostmetrics"].(map[string]any)
+	scrapers := hostmetrics["scrapers"].(map[string]any)
+	cpuScraper := scrapers["cpu"].(map[string]any)
+	cpuMetrics := cpuScraper["metrics"].(map[string]any)
+	require.Contains(t, cpuMetrics, "system.cpu.utilization")
+
 	// k8s_cluster always in gateway receivers.
 	require.Contains(t, plan.GatewayConfig.Receivers, "k8s_cluster")
 
@@ -496,5 +504,35 @@ func TestPlanTagsRawContainerMetricsAsKubelet(t *testing.T) {
 
 	require.Contains(t, statements,
 		`set(attributes["oksg_source"], "`+metrics.SourceKubelet+`") where IsMatch(metric.name, "^container\\.") and attributes["oksg_source"] == nil`,
+	)
+}
+
+// TestPlanTagsK8sContainerMetricsAsKubeCluster verifies that container-scope
+// metrics emitted by the k8s_cluster receiver (e.g. k8s.container.ready,
+// k8s.container.restarts, k8s.container.cpu_request) are tagged kube-cluster,
+// not kubelet. Mistagging these as kubelet causes the backend's
+// shouldDropForSource to drop them (catalog assigns them to kube-cluster).
+func TestPlanTagsK8sContainerMetricsAsKubeCluster(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	tagger := plan.GatewayConfig.Processors[oksgSourceTaggerProcessor].(map[string]any)
+	metricStatements := tagger["metric_statements"].([]map[string]any)
+	require.Len(t, metricStatements, 1)
+	statements := metricStatements[0]["statements"].([]string)
+
+	require.Contains(t, statements,
+		`set(attributes["oksg_source"], "`+metrics.SourceKubeCluster+`") where IsMatch(metric.name, "^k8s\\.container\\.") and attributes["oksg_source"] == nil`,
+	)
+
+	// Sanity: the kubelet broad rule must NOT match k8s.container.* anymore.
+	require.NotContains(t, statements,
+		`set(attributes["oksg_source"], "`+metrics.SourceKubelet+`") where IsMatch(metric.name, "^k8s\\.(pod|container|volume)\\.") and attributes["oksg_source"] == nil`,
 	)
 }
