@@ -516,6 +516,7 @@ func buildOksgSourceTagger() map[string]any {
 	statements := []string{
 		// kubeletstats receiver: pod / container / volume / kubelet-side node metrics
 		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.(pod|container|volume)\\.") and ` + guard,
+		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^container\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set") and ` + guard,
 		// hostmetrics receiver
 		`set(attributes["oksg_source"], "` + metrics.SourceHostOS + `") where IsMatch(metric.name, "^system\\.") and ` + guard,

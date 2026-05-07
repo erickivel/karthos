@@ -87,9 +87,10 @@ type LogicalSource struct {
 
 `Detect` reads the discovery profile and answers "could this cluster produce
 metrics from this source?". `Dialect` describes how to translate raw names.
-A `nil` dialect means the source already emits canonical-shaped names (the
-kubeletstats receiver maps OTLP resource attributes onto `k8s.*` names
-without an intermediate dialect).
+A `nil` dialect means the source already emits canonical-shaped names. The
+kubeletstats receiver emits a mix of `k8s.*` and upstream `container.*` names,
+so its source dialect maps container usage metrics onto the public
+`k8s.container.*` catalog names.
 
 Source IDs are exported as constants so the catalog, dialect, and planner
 share a single contract:
@@ -110,11 +111,12 @@ type Dialect interface {
 }
 ```
 
-A dialect is a `map[rawName]canonicalName`. The four built-in dialects:
+A dialect is a `map[rawName]canonicalName`. The built-in dialects:
 
 | Dialect | Example translation |
 |---------|---------------------|
 | `PrometheusDialect` | `http_requests_total` → `http.server.request.count`, `http_request_duration_seconds` → `http.server.request.duration` |
+| `KubeletDialect` | `container.cpu.usage` → `k8s.container.cpu.usage`, `container.memory.usage` → `k8s.container.memory.usage` |
 | `SpanmetricsDialect` | `traces.span.metrics.calls` → `rpc.server.request.count`, `traces.span.metrics.duration` → `rpc.server.duration` |
 | `ServicegraphDialect` | `traces.service.graph.request.total` → `servicegraph.request.count`, `traces.service.graph.request.server` → `servicegraph.request.duration`, `traces.service.graph.request_failed_total` → `servicegraph.request.error.count` |
 | `IstioDialect` | `istio_requests_total` → `servicegraph.request.count`, `istio_request_duration_milliseconds` → `servicegraph.request.duration`, plus body size, gRPC message, and TCP connection counters |

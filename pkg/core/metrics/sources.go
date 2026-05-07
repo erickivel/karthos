@@ -8,9 +8,7 @@ import (
 // ClusterProfile to decide whether the source is available; Dialect translates
 // raw on-the-wire metric names emitted by the source into canonical names.
 //
-// Sources whose Dialect is nil emit canonical-shaped names directly (e.g. the
-// kubeletstats receiver maps OTel resource attributes onto canonical k8s.* names
-// without an intermediate dialect).
+// Sources whose Dialect is nil emit canonical-shaped names directly.
 type LogicalSource struct {
 	ID          string
 	DisplayName string
@@ -25,6 +23,7 @@ var defaultLogicalSources = []LogicalSource{
 		DisplayName: "Kubelet stats",
 		Description: "Per-node kubelet /stats/summary scraped by the OTel kubeletstats receiver.",
 		Detect:      alwaysAvailable,
+		Dialect:     KubeletDialect,
 	},
 	{
 		ID:          SourceHostOS,

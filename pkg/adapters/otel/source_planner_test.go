@@ -472,3 +472,23 @@ func TestPlanInstallsOksgSourceTagger(t *testing.T) {
 	require.Contains(t, plan.AgentConfig.Service.Pipelines["metrics"].Processors, oksgSourceTaggerProcessor)
 	require.Contains(t, plan.GatewayConfig.Service.Pipelines["metrics"].Processors, oksgSourceTaggerProcessor)
 }
+
+func TestPlanTagsRawContainerMetricsAsKubelet(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	tagger := plan.AgentConfig.Processors[oksgSourceTaggerProcessor].(map[string]any)
+	metricStatements := tagger["metric_statements"].([]map[string]any)
+	require.Len(t, metricStatements, 1)
+	statements := metricStatements[0]["statements"].([]string)
+
+	require.Contains(t, statements,
+		`set(attributes["oksg_source"], "`+metrics.SourceKubelet+`") where IsMatch(metric.name, "^container\\.") and attributes["oksg_source"] == nil`,
+	)
+}

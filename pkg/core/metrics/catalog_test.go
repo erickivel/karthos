@@ -7,9 +7,15 @@ import (
 )
 
 func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
-	required := map[string]struct{}{
-		"k8s.pod.cpu.usage":                        {},
-		"k8s.pod.memory.working_set":               {},
+	type metricExpectation struct {
+		unit     Unit
+		category MetricCategory
+		sources  []SourceRef
+	}
+
+	required := map[string]metricExpectation{
+		"k8s.pod.cpu.usage":                        {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.memory.working_set":               {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"system.disk.io.read":                      {},
 		"system.disk.io.write":                     {},
 		"servicegraph.request.count":               {},
@@ -29,6 +35,8 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.container.cpu.limit":                  {},
 		"k8s.container.memory.request":             {},
 		"k8s.container.memory.limit":               {},
+		"k8s.container.cpu.usage":                  {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.container.memory.usage":               {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.replicaset.desired":                   {},
 		"system.network.io.receive":                {},
 		"system.network.io.transmit":               {},
@@ -57,6 +65,19 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	}
 
 	for _, metric := range DefaultCatalog() {
+		expected, ok := required[metric.Name]
+		if !ok {
+			continue
+		}
+		if expected.unit != "" {
+			require.Equalf(t, expected.unit, metric.Unit, "metric %s unit", metric.Name)
+		}
+		if expected.category != "" {
+			require.Equalf(t, expected.category, metric.Category, "metric %s category", metric.Name)
+		}
+		if expected.sources != nil {
+			require.Equalf(t, expected.sources, metric.Sources, "metric %s sources", metric.Name)
+		}
 		delete(required, metric.Name)
 	}
 

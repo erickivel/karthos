@@ -56,6 +56,11 @@ var PrometheusDialect = DialectMap{
 	"container_memory_usage_bytes":      "k8s.container.memory.usage",
 }
 
+var KubeletDialect = DialectMap{
+	"container.cpu.usage":    "k8s.container.cpu.usage",
+	"container.memory.usage": "k8s.container.memory.usage",
+}
+
 var SpanmetricsDialect = DialectMap{
 	"traces.span.metrics.calls":    "rpc.server.request.count",
 	"traces.span.metrics.duration": "rpc.server.duration",
