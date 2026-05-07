@@ -65,7 +65,7 @@ to. `DefaultLogicalSources()` returns the built-in registry:
 
 | ID | DisplayName | Detect | Dialect |
 |----|-------------|--------|---------|
-| `kubelet` | Kubelet stats | always | none (semconv-native) |
+| `kubelet` | Kubelet stats | always | `KubeletDialect` |
 | `host-os` | Host OS metrics | always | none |
 | `kube-cluster` | Kubernetes API | always | none |
 | `prometheus.app` | Application Prometheus endpoints | profile has prometheus targets | `PrometheusDialect` |

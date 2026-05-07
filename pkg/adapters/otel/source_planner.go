@@ -212,6 +212,12 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 				"k8s.node.condition": map[string]any{
 					"enabled": true,
 				},
+				"k8s.container.ready": map[string]any{
+					"enabled": true,
+				},
+				"k8s.container.restarts": map[string]any{
+					"enabled": true,
+				},
 			},
 		},
 	}

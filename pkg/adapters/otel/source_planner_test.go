@@ -277,6 +277,12 @@ func TestPlanBaselineAlwaysIncludesHostmetricsAndKubeletstatsVolume(t *testing.T
 	// k8s_cluster must be in the gateway metrics pipeline receivers.
 	gatewayMetricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
 	require.Contains(t, gatewayMetricsPipeline.Receivers, "k8s_cluster")
+
+	// k8s_cluster must explicitly enable container.ready and container.restarts.
+	k8sCluster := plan.GatewayConfig.Receivers["k8s_cluster"].(map[string]any)
+	enabledMetrics := k8sCluster["metrics"].(map[string]any)
+	require.Contains(t, enabledMetrics, "k8s.container.ready")
+	require.Contains(t, enabledMetrics, "k8s.container.restarts")
 }
 
 // TestPlanSpanmetricsAndServicegraphConnectorsWhenOTLPTracesEnabled verifies
