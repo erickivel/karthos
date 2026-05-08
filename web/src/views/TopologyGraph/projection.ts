@@ -57,6 +57,15 @@ export const VISIBLE_KINDS_BY_GRANULARITY: Record<Granularity, Set<EntityKind>> 
   ]),
 }
 
+// Infrastructure has its own granularity meaning (Node / Pod / Container)
+// and does not share OVERVIEW_KINDS with Ownership.
+export const INFRASTRUCTURE_VISIBLE_KINDS: Record<Granularity, Set<EntityKind>> =
+  {
+    overview: new Set<EntityKind>(['node']),
+    runtime: new Set<EntityKind>(['node', 'pod']),
+    detailed: new Set<EntityKind>(['node', 'pod', 'container']),
+  }
+
 // LAYER_SPECS — single registry. Adding a new layer is one entry: kinds
 // allow-list, layer-relevant relations, and an intrinsic predicate (entities
 // that always participate regardless of edges, e.g. a namespace in ownership).
@@ -107,8 +116,14 @@ export const LAYER_SPECS: Record<ProjectionMode, LayerSpec> = {
   },
   infrastructure: {
     id: 'infrastructure',
-    kinds: new Set<EntityKind>(['node', 'pod', 'container', 'pvc']),
-    relations: new Set<RelationType>(['runs_on', 'mounts']),
+    // Infrastructure is purely "where compute runs": Node ⊃ Pod ⊃ Container.
+    // PVCs / Secrets / ConfigMaps are storage/config resources, not runtime
+    // hosts, and live outside this view.
+    kinds: new Set<EntityKind>(['node', 'pod', 'container']),
+    // `runs_on` ties pods to their host node; `contains` ties containers to
+    // their pod. Both relations are structural — they describe the K8s
+    // hosting hierarchy, not observed traffic.
+    relations: new Set<RelationType>(['runs_on', 'contains']),
     intrinsic: (e) => e.kind === 'node',
   },
   // Traffic at default granularity (overview) is the Endpoint Flow.
@@ -171,10 +186,11 @@ export function visibleKindsFor(
     return new Set(TRAFFIC_FLOW_SPECS[granularity].kinds)
   }
 
-  const base = new Set(VISIBLE_KINDS_BY_GRANULARITY[granularity])
-  if (mode === 'infrastructure' && granularity === 'detailed') {
-    base.delete('container')
+  if (mode === 'infrastructure') {
+    return new Set(INFRASTRUCTURE_VISIBLE_KINDS[granularity])
   }
+
+  const base = new Set(VISIBLE_KINDS_BY_GRANULARITY[granularity])
   const allowed = LAYER_SPECS[mode].kinds
   for (const kind of base) {
     if (!allowed.has(kind)) base.delete(kind)
@@ -309,8 +325,15 @@ export function project(
       if (ns) groupOf.set(n.id, ns.id)
     }
   } else if (parentKind === 'node') {
+    // Infrastructure uses two-tier nesting: pods group under their host node,
+    // containers group under their pod. The layout walks `groupOf` to render
+    // Node ⊃ Pod ⊃ Container as nested rectangles.
     const nodeEntitiesById = new Map<string, GraphNode>()
-    for (const n of visibleNodes) if (n.kind === 'node') nodeEntitiesById.set(n.id, n)
+    const podEntitiesById = new Map<string, GraphNode>()
+    for (const n of visibleNodes) {
+      if (n.kind === 'node') nodeEntitiesById.set(n.id, n)
+      else if (n.kind === 'pod') podEntitiesById.set(n.id, n)
+    }
 
     const podToHostNode = new Map<string, string>()
     const containerToPod = new Map<string, string>()
@@ -322,15 +345,13 @@ export function project(
       }
     }
     for (const n of visibleNodes) {
-      if (n.kind === 'node') continue
       if (n.kind === 'pod') {
         const host = podToHostNode.get(n.id)
         if (host) groupOf.set(n.id, host)
       } else if (n.kind === 'container') {
         const podId = containerToPod.get(n.id)
-        if (podId) {
-          const host = podToHostNode.get(podId)
-          if (host) groupOf.set(n.id, host)
+        if (podId && podEntitiesById.has(podId)) {
+          groupOf.set(n.id, podId)
         }
       }
     }

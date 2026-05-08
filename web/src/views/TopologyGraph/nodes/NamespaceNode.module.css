@@ -47,3 +47,12 @@
 .pillNode {
   background: var(--kind-node);
 }
+
+.podVariant {
+  background: color-mix(in srgb, var(--kind-pod) 6%, transparent);
+  border-color: color-mix(in srgb, var(--kind-pod) 28%, transparent);
+}
+
+.pillPod {
+  background: var(--kind-pod);
+}

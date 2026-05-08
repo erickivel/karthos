@@ -136,14 +136,34 @@ granularity.
 | Mode | Visible kinds | Layer-relevant relations | Layout strategy |
 |------|---------------|-------------------------|-----------------|
 | Ownership | namespace, workload, pod, container, configmap, secret, pvc, service, ingress | `contains`, `mounts`, `uses`, `exposes`, `routes_to` | top-down hierarchy, namespace groups side-by-side, dynamic ranks via `runLayered` |
-| Infrastructure | node, namespace, service, workload, ingress, pod, container | `runs_on`, `mounts` | dagre LR between K8s nodes + grid pack inside node groups, namespace stripe on pods |
+| Infrastructure | node, pod, container | `runs_on`, `contains` | dagre LR for the single-tier cases (Nodes / Pods on nodes); hand-packed two-tier nesting for Containers in pods |
 | Traffic | varies by flow — see Traffic flows below | `calls`, `routes_to`, `exposes` | ELK layered (`RIGHT`) with orthogonal edge routing; route geometry returned by ELK is rendered as-is |
 
-**Granularity** (`Granularity = 'overview' | 'runtime' | 'detailed'`) — used by Ownership and Infrastructure:
+**Granularity** (`Granularity = 'overview' | 'runtime' | 'detailed'`) is shared
+URL state across all modes; the picker labels swap per mode via
+`granularityEntriesFor(mode)` while the underlying URL value stays stable
+for shareable links.
+
+For Ownership:
 
 - `overview` — namespace, node, service, workload, ingress
 - `runtime` — overview + pod
 - `detailed` — runtime + container, configmap, secret, pvc
+
+For Infrastructure (`INFRASTRUCTURE_GRANULARITY_ENTRIES` +
+`INFRASTRUCTURE_VISIBLE_KINDS`):
+
+| URL value  | Picker label          | Visible kinds        |
+|------------|-----------------------|----------------------|
+| `overview` | "Nodes"               | node                 |
+| `runtime`  | "Pods on nodes"       | node, pod            |
+| `detailed` | "Containers in pods"  | node, pod, container |
+
+Infrastructure is purely "where compute runs": Node ⊃ Pod ⊃ Container.
+PVCs / Secrets / ConfigMaps live outside this view. At `detailed`
+granularity the layout switches to a hand-packed two-tier nesting (node
+rectangles contain pod rectangles contain container cards) and emits no
+edges — containment is encoded by visual nesting.
 
 **Traffic flows** (Traffic mode reuses the `Granularity` URL state but
 relabels the picker — see `TRAFFIC_FLOW_SPECS` and

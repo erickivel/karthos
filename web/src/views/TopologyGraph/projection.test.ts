@@ -103,7 +103,7 @@ describe('topology projection', () => {
     expect(result.edges[0]).toMatchObject({ source: 'pod-a1', target: 'pod-b1' })
   })
 
-  it('keeps infrastructure detailed host groups compact by excluding containers', () => {
+  it('infrastructure detailed nests containers under pods under host nodes', () => {
     const result = project(
       [
         node('host', 'node', 'oksg-test-worker'),
@@ -119,8 +119,66 @@ describe('topology projection', () => {
       { includeOrphans: true },
     )
 
-    expect(result.nodes.map((n) => n.id).sort()).toEqual(['host', 'pod-a'])
+    expect(result.nodes.map((n) => n.id).sort()).toEqual([
+      'container-a',
+      'host',
+      'pod-a',
+    ])
     expect(result.groupOf.get('pod-a')).toBe('host')
-    expect(result.groupOf.has('container-a')).toBe(false)
+    expect(result.groupOf.get('container-a')).toBe('pod-a')
+  })
+
+  it('infrastructure overview shows only host nodes', () => {
+    const result = project(
+      [
+        node('host', 'node', 'oksg-test-worker'),
+        node('pod-a', 'pod', 'gateway-a'),
+      ],
+      [edge('runs-on', 'pod-a', 'host', 'runs_on')],
+      'infrastructure',
+      'overview',
+      { includeOrphans: true },
+    )
+
+    expect(result.nodes.map((n) => n.kind)).toEqual(['node'])
+  })
+
+  it('infrastructure runtime shows pods nested under nodes (no containers)', () => {
+    const result = project(
+      [
+        node('host', 'node', 'oksg-test-worker'),
+        node('pod-a', 'pod', 'gateway-a'),
+        node('container-a', 'container', 'gateway'),
+      ],
+      [
+        edge('runs-on', 'pod-a', 'host', 'runs_on'),
+        edge('contains', 'pod-a', 'container-a', 'contains'),
+      ],
+      'infrastructure',
+      'runtime',
+      { includeOrphans: true },
+    )
+
+    expect(result.nodes.map((n) => n.kind).sort()).toEqual(['node', 'pod'])
+    expect(result.nodes.some((n) => n.kind === 'container')).toBe(false)
+  })
+
+  it('infrastructure drops PVC entirely', () => {
+    const result = project(
+      [
+        node('host', 'node', 'oksg-test-worker'),
+        node('pod-a', 'pod', 'gateway-a'),
+        node('vol-a', 'pvc', 'data'),
+      ],
+      [
+        edge('runs-on', 'pod-a', 'host', 'runs_on'),
+        edge('mounts', 'pod-a', 'vol-a', 'mounts'),
+      ],
+      'infrastructure',
+      'detailed',
+      { includeOrphans: true },
+    )
+
+    expect(result.nodes.some((n) => n.kind === 'pvc')).toBe(false)
   })
 })
