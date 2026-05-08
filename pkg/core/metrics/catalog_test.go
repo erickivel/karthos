@@ -64,6 +64,10 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"system.paging.usage":                      {},
 		"system.paging.operations":                 {},
 		"k8s.namespace.phase":                      {},
+		"k8s.pod.phase":                            {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.pod.status_reason":                    {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"oksg.pod.health.status":                   {unit: UnitCount, category: CategoryHealth, sources: nil},
+		"oksg.container.health.status":             {unit: UnitCount, category: CategoryHealth, sources: nil},
 		"k8s.node.condition.ready":                 {},
 		"k8s.node.condition.memory_pressure":       {},
 		"k8s.node.condition.disk_pressure":         {},
@@ -107,7 +111,6 @@ func TestDefaultCatalogExcludesUnsupportedMetrics(t *testing.T) {
 		"k8s.node.network.bandwidth.transmit": {},
 		"k8s.pod.network.io.receive":          {},
 		"k8s.pod.network.io.transmit":         {},
-		"k8s.pod.phase":                       {},
 	}
 
 	for _, metric := range DefaultCatalog() {
@@ -142,10 +145,18 @@ func TestDefaultCatalogEntriesHaveDisplayNames(t *testing.T) {
 	}
 }
 
-// servicegraph.request.error.ratio is query-derived (see metric_store.buildPromQL)
-// and never arrives as an OTLP sample, so it intentionally has no source.
+// Query-derived metrics — composed at query time from other catalog metrics
+// (see pkg/adapters/storage/victoriametrics/metric_store.go buildPromQL switch
+// arms, and the derivedHealthStatus helper for cross-entity composition).
+// They never arrive as OTLP samples, so they intentionally have no source.
+//
+// When adding a new derived metric here you MUST also add a buildPromQL case
+// (or extend derivedHealthStatus) before the metric is exposed via the
+// catalog test's `required` map — otherwise queries return empty silently.
 var catalogSourcelessExceptions = map[string]struct{}{
 	"servicegraph.request.error.ratio": {},
+	"oksg.pod.health.status":           {},
+	"oksg.container.health.status":     {},
 }
 
 func TestDefaultCatalogEntriesDeclareSources(t *testing.T) {

@@ -244,7 +244,11 @@ Semconv metric names are the API contract. Query-time derivations currently incl
 - `http.server.request.count` / `rpc.server.request.count` / `servicegraph.request.count` -> `rate(...[1m])`
 - `servicegraph.request.error.count`, `servicegraph.grpc.request.message.count`, `servicegraph.grpc.response.message.count`, `servicegraph.tcp.connection.open.count`, and `servicegraph.tcp.connection.close.count` -> `rate(...[1m])`
 - `servicegraph.request.error.ratio` -> `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`
+- `oksg.container.health.status` -> integer-encoded enum (1=healthy, 2=running_not_ready, 3=restarting) derived from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Priority order: restarting > not_ready > healthy. Empty result means no recent sample (treat as unknown).
+- `oksg.pod.health.status` -> integer-encoded enum (1=healthy, 4=pending, 5=succeeded, 6=failed, 7=unknown) derived from `k8s.pod.phase`. running_not_ready and restarting at pod scope are a follow-up — see `oksg.container.health.status` for those today.
 - `http.server.request.duration` / `rpc.server.duration` / `servicegraph.request.duration` / `servicegraph.request.body.size` / `servicegraph.response.body.size` -> `rate(<metric>_sum[1m]) / clamp_min(rate(<metric>_count[1m]), 1)`
+
+The integer→label mapping for any enum metric is documented in the catalog row's `Description` field (see `GET /api/v1/metrics/catalog`); UIs should read it from the catalog rather than hard-coding.
 
 | Param | Type | Description |
 |-------|------|-------------|

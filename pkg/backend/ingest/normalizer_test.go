@@ -267,6 +267,30 @@ func TestOTLPNormalizer_RawKubeClusterContainerCPURequest(t *testing.T) {
 	assert.Equal(t, metrics.UnitMillicores, samples[0].Unit)
 }
 
+// TestOTLPNormalizer_RawKubeClusterPodPhase verifies that k8s_cluster's
+// integer-encoded pod phase gauge round-trips to a KindPod entity sample.
+func TestOTLPNormalizer_RawKubeClusterPodPhase(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+	}
+
+	rm := makeGaugeRM("k8s.pod.phase", 2, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindPod, testCluster, "default", "test-pod")
+	assert.Equal(t, "k8s.pod.phase", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 2.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitCount, samples[0].Unit)
+}
+
 func TestOTLPNormalizer_RawKubeClusterContainerMemoryLimit(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC).UnixNano())

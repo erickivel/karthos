@@ -286,11 +286,14 @@ func TestPlanBaselineAlwaysIncludesHostmetricsAndKubeletstatsVolume(t *testing.T
 	gatewayMetricsPipeline := plan.GatewayConfig.Service.Pipelines["metrics"]
 	require.Contains(t, gatewayMetricsPipeline.Receivers, "k8s_cluster")
 
-	// k8s_cluster must explicitly enable container.ready and container.restarts.
+	// k8s_cluster must explicitly enable container.ready, container.restarts,
+	// and pod.status_reason (all default-disabled or recently default-flipped
+	// in v0.111+; explicit enables make the contract visible in the plan).
 	k8sCluster := plan.GatewayConfig.Receivers["k8s_cluster"].(map[string]any)
 	enabledMetrics := k8sCluster["metrics"].(map[string]any)
 	require.Contains(t, enabledMetrics, "k8s.container.ready")
 	require.Contains(t, enabledMetrics, "k8s.container.restarts")
+	require.Contains(t, enabledMetrics, "k8s.pod.status_reason")
 }
 
 // TestPlanSpanmetricsAndServicegraphConnectorsWhenOTLPTracesEnabled verifies
@@ -531,8 +534,43 @@ func TestPlanTagsK8sContainerMetricsAsKubeCluster(t *testing.T) {
 		`set(attributes["oksg_source"], "`+metrics.SourceKubeCluster+`") where IsMatch(metric.name, "^k8s\\.container\\.") and attributes["oksg_source"] == nil`,
 	)
 
-	// Sanity: the kubelet broad rule must NOT match k8s.container.* anymore.
+	// Sanity: the old broad kubelet rule that conflated kubeletstats and
+	// k8s_cluster pod/container metrics must be gone.
 	require.NotContains(t, statements,
 		`set(attributes["oksg_source"], "`+metrics.SourceKubelet+`") where IsMatch(metric.name, "^k8s\\.(pod|container|volume)\\.") and attributes["oksg_source"] == nil`,
+	)
+	require.NotContains(t, statements,
+		`set(attributes["oksg_source"], "`+metrics.SourceKubelet+`") where IsMatch(metric.name, "^k8s\\.(pod|volume)\\.") and attributes["oksg_source"] == nil`,
+	)
+}
+
+// TestPlanTagsK8sPodPhaseAsKubeCluster verifies that k8s.pod.phase (and any
+// other pod-scope status signal from the k8s_cluster receiver) is tagged
+// kube-cluster. The kubelet pod rule is tightened to match only the metric
+// families kubeletstats actually emits at pod scope (cpu / memory /
+// filesystem / network), so k8s.pod.phase falls through to the broad
+// ^k8s\.pod\. kube-cluster rule below.
+func TestPlanTagsK8sPodPhaseAsKubeCluster(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	tagger := plan.GatewayConfig.Processors[oksgSourceTaggerProcessor].(map[string]any)
+	metricStatements := tagger["metric_statements"].([]map[string]any)
+	require.Len(t, metricStatements, 1)
+	statements := metricStatements[0]["statements"].([]string)
+
+	// Tightened kubelet pod rule (the only kubelet pod families on the wire).
+	require.Contains(t, statements,
+		`set(attributes["oksg_source"], "`+metrics.SourceKubelet+`") where IsMatch(metric.name, "^k8s\\.pod\\.(cpu|memory|filesystem|network)\\.") and attributes["oksg_source"] == nil`,
+	)
+	// Broad kube-cluster pod rule that catches phase/status_reason/etc.
+	require.Contains(t, statements,
+		`set(attributes["oksg_source"], "`+metrics.SourceKubeCluster+`") where IsMatch(metric.name, "^k8s\\.pod\\.") and attributes["oksg_source"] == nil`,
 	)
 }

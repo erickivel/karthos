@@ -43,17 +43,20 @@ Important properties:
 - **Sources drive arbitration**, not detection. A metric with several entries
   in `Sources` declares more than one possible producer; the resolver picks
   exactly one per cluster.
-- **`servicegraph.request.error.ratio` has no Sources.** It is query-derived
-  at the API layer (see `docs/api-reference.md` and `docs/runtime-flow.md`).
+- **Query-derived metrics have no Sources.** `servicegraph.request.error.ratio`,
+  `oksg.pod.health.status`, and `oksg.container.health.status` are composed at
+  query time from other catalog metrics — see the *Query-derived enum metrics*
+  section below and the `buildPromQL` switch arms in
+  `pkg/adapters/storage/victoriametrics/metric_store.go`. They are listed in
+  `catalogSourcelessExceptions` (`pkg/core/metrics/catalog_test.go`).
 - **Catalog ↔ ingest invariant.** Every cataloged metric (other than the
   query-derived exceptions tracked in `catalogSourcelessExceptions`) must
   appear in `OTLPSemconvMetrics` (`pkg/core/metrics/otel_mappings.go`); the
   test `TestDefaultCatalogMetricsHaveIngestOrQuerySupport` enforces this.
 - **Unsupported metrics stay out of the catalog.** Names that have no real
-  ingest path (e.g. `k8s.pod.phase`, `k8s.pod.network.io.*`,
-  `k8s.node.*` capacity gauges) are explicitly excluded by
-  `TestDefaultCatalogExcludesUnsupportedMetrics` so the UI never advertises a
-  metric the backend cannot produce.
+  ingest path (e.g. `k8s.pod.network.io.*`, `k8s.node.*` capacity gauges) are
+  explicitly excluded by `TestDefaultCatalogExcludesUnsupportedMetrics` so
+  the UI never advertises a metric the backend cannot produce.
 
 The current categories are `resource`, `traffic`, `latency`, `error`,
 `capacity`, and `health`. Categories drive the Metrics Explorer tab layout.
@@ -186,6 +189,41 @@ dropped.
 
 This is the mechanism that prevents double-counting when the same canonical
 metric has two installed producers.
+
+### 4c. Query-derived enum metrics
+
+A small number of catalog metrics are **composed at query time** from other
+catalog metrics rather than ingested directly. They are listed in
+`catalogSourcelessExceptions` (`pkg/core/metrics/catalog_test.go`) and have an
+empty `Sources` list. Today three such metrics exist:
+
+- `servicegraph.request.error.ratio` — `error.count / request.count`.
+- `oksg.container.health.status` — integer-encoded enum derived per container
+  from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Public
+  values: `1=healthy`, `2=running_not_ready`, `3=restarting`. Priority order
+  enforced by PromQL `or` clause ordering: restarting > not_ready > healthy.
+- `oksg.pod.health.status` — integer-encoded enum derived per pod from
+  `k8s.pod.phase`. Public values: `1=healthy` (Running), `4=pending`,
+  `5=succeeded`, `6=failed`, `7=unknown`. Pod-scope rollups of
+  `running_not_ready` (2) and `restarting` (3) require a `pod_id` label on
+  container metrics — those states are observable today only at container
+  scope. Tracked as a follow-up plan.
+
+**Convention for status-shaped signals.** Receivers that emit lifecycle state
+(e.g. `k8s.pod.phase` from `k8s_cluster`) typically encode the enum as an
+integer gauge; we keep the integer encoding through the pipeline because
+`MetricSample.Value` in this codebase is `float64` only. The integer→label
+mapping is documented in the catalog row's `Description`, which the frontend
+reads via `/api/v1/metrics/catalog` rather than hard-coding. Do not invent
+string-valued samples for new enum metrics.
+
+**Composition contract.** The `buildPromQL` switch arm
+(`pkg/adapters/storage/victoriametrics/metric_store.go`) is the single source
+of the composition. Each enum clause uses `(predicate == bool N)` so the
+output is `0`/`1`, multiplies by the integer enum value, and chains via
+PromQL `or` in priority order. When a clause matches no series the metric
+returns empty, which the API serves as "no recent sample" — equivalent to
+`unknown`.
 
 ## 5. Ingest-Side Mappings
 
@@ -352,8 +390,23 @@ Update `TestDefaultCatalogIncludesRequiredMetrics` to enforce presence
 plus unit/category/sources. Confirm the metric is not in
 `TestDefaultCatalogExcludesUnsupportedMetrics`.
 
-If the metric is purely query-derived (e.g. ratios computed in PromQL),
-add it to `catalogSourcelessExceptions` and skip the OTLP mapping.
+If the metric is purely query-derived (e.g. ratios computed in PromQL,
+status enums composed from other metrics), the contract is different:
+- Omit `Sources` from the catalog row.
+- Add the name to `catalogSourcelessExceptions` (`pkg/core/metrics/catalog_test.go`).
+- Add a `buildPromQL` switch arm in
+  `pkg/adapters/storage/victoriametrics/metric_store.go` **before** adding
+  the metric to `required` in `TestDefaultCatalogIncludesRequiredMetrics`,
+  otherwise queries return empty silently with green tests.
+- Document the composition rule and (for enum-shaped metrics) the
+  integer→label mapping in the catalog row's `Description`. The frontend
+  reads this via `/api/v1/metrics/catalog` — do not hard-code the mapping
+  in UI code.
+
+For status/lifecycle signals: keep the integer encoding all the way through
+the pipeline. `MetricSample.Value` is `float64`; do not invent string-valued
+samples. The receiver's own integer encoding (e.g. `k8s.pod.phase` 1–5) is
+the source of truth; map it to a public enum in `buildPromQL` if needed.
 
 ### Step 6 — Live-cluster verification (mandatory)
 
