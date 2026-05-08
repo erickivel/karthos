@@ -159,8 +159,12 @@ function InspectorDataCard({
 function DataRow({ item }: { item: InfoItem }) {
   return (
     <div className={styles.dataRow}>
-      <span className={styles.dataKey}>{item.label}</span>
-      <strong className={styles.dataValue}>{item.value}</strong>
+      <span className={styles.dataKey} title={item.label}>
+        {item.label}
+      </span>
+      <strong className={styles.dataValue} title={item.value}>
+        {item.value}
+      </strong>
     </div>
   );
 }
