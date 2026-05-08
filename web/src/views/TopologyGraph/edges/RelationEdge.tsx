@@ -75,7 +75,7 @@ function getMetricState(edge: GraphEdge & GraphEdgeMetricData) {
       bundleWidth: 1.4,
       opacity: 0.55,
       stroke: getEdgeColor(edge.relation),
-      summary: "exposes",
+      summary: "",
       dash: "4 3" as const,
     };
   }
