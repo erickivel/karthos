@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { HelpCircle } from 'lucide-react'
 import type { AvailableFilters } from '@/types/graph'
@@ -8,6 +8,8 @@ import { LegendPanel } from './LegendPanel'
 import { granularityEntriesFor, MODE_ENTRIES } from './modes'
 import { namespaceColor } from './namespaceColor'
 import { availableAlgorithms, LAYOUT_REGISTRY, type LayoutAlgorithm } from './layouts/registry'
+import { SearchablePopover } from '@/views/MetricsExplorer/filter/SearchablePopover'
+import type { FilterOption } from '@/views/MetricsExplorer/filter/types'
 import styles from './FilterToolbar.module.css'
 
 interface FilterToolbarProps {
@@ -36,6 +38,9 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
   const currentKind = searchParams.get('kind') ?? ''
   const currentNamespace = searchParams.get('namespace') ?? ''
   const currentRelation = searchParams.get('relation') ?? ''
+  const [openPicker, setOpenPicker] = useState<'kind' | 'namespace' | 'relation' | null>(
+    null,
+  )
 
   const updateFilter = (key: string, value: string) => {
     setSearchParams((prev) => {
@@ -48,6 +53,30 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
       return next
     })
   }
+
+  const kindOptions = useMemo<FilterOption[]>(
+    () => [
+      { label: 'All kinds', value: '', meta: 'no kind filter' },
+      ...(filters?.kinds ?? []).map((k) => ({ label: k, value: k })),
+    ],
+    [filters?.kinds],
+  )
+
+  const namespaceOptions = useMemo<FilterOption[]>(
+    () => [
+      { label: 'All namespaces', value: '', meta: 'no namespace filter' },
+      ...(filters?.namespaces ?? []).map((ns) => ({ label: ns, value: ns })),
+    ],
+    [filters?.namespaces],
+  )
+
+  const relationOptions = useMemo<FilterOption[]>(
+    () => [
+      { label: 'All relations', value: '', meta: 'no relation filter' },
+      ...(filters?.relations ?? []).map((r) => ({ label: r, value: r })),
+    ],
+    [filters?.relations],
+  )
 
   const legendNamespaces = useMemo(() => {
     if (mode !== 'infrastructure') return []
@@ -72,53 +101,43 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
   return (
     <>
       <div className={styles.toolbar}>
-        <select
-          className={styles.select}
-          value={currentKind}
-          onChange={(e) => updateFilter('kind', e.target.value)}
-          data-testid="filter-kind"
-          title="Filter by entity kind"
-          aria-label="Filter by entity kind"
-        >
-          <option value="">All Kinds</option>
-          {filters?.kinds.map((k) => (
-            <option key={k} value={k}>
-              {k}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className={styles.select}
-          value={currentNamespace}
-          onChange={(e) => updateFilter('namespace', e.target.value)}
-          data-testid="filter-namespace"
-          title="Filter by namespace"
-          aria-label="Filter by namespace"
-        >
-          <option value="">All Namespaces</option>
-          {filters?.namespaces.map((ns) => (
-            <option key={ns} value={ns}>
-              {ns}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className={styles.select}
-          value={currentRelation}
-          onChange={(e) => updateFilter('relation', e.target.value)}
-          data-testid="filter-relation"
-          title="Filter by relation type"
-          aria-label="Filter by relation type"
-        >
-          <option value="">All Relations</option>
-          {filters?.relations.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
+        <div className={styles.breadcrumb}>
+          <BreadcrumbSegment
+            id="kind"
+            label="Kind"
+            value={currentKind || 'all kinds'}
+            selected={currentKind}
+            options={kindOptions}
+            picker={openPicker}
+            setPicker={setOpenPicker}
+            onSelect={(v) => updateFilter('kind', v)}
+            testId="filter-kind"
+          />
+          <BreadcrumbSlash />
+          <BreadcrumbSegment
+            id="namespace"
+            label="Namespace"
+            value={currentNamespace || 'all namespaces'}
+            selected={currentNamespace}
+            options={namespaceOptions}
+            picker={openPicker}
+            setPicker={setOpenPicker}
+            onSelect={(v) => updateFilter('namespace', v)}
+            testId="filter-namespace"
+          />
+          <BreadcrumbSlash />
+          <BreadcrumbSegment
+            id="relation"
+            label="Relation"
+            value={currentRelation || 'all relations'}
+            selected={currentRelation}
+            options={relationOptions}
+            picker={openPicker}
+            setPicker={setOpenPicker}
+            onSelect={(v) => updateFilter('relation', v)}
+            testId="filter-relation"
+          />
+        </div>
 
         {legendNamespaces.length > 0 && (
           <div className={styles.legend} data-testid="namespace-legend">
@@ -137,48 +156,59 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
         className={styles.toolbarRight}
         data-inspector-open={Boolean(selectedEntityId || legendOpen)}
       >
-        <div
-          className={styles.group}
-          role="group"
-          aria-label="Projection mode"
-          data-testid="topology-mode-group"
-        >
-          {MODE_ENTRIES.map(({ value, shortLabel, label, icon: Icon, description }) => (
-            <button
-              key={value}
-              type="button"
-              className={`${styles.toggle} ${mode === value ? styles.toggleActive : ''}`}
-              aria-pressed={mode === value}
-              title={`${label} — ${description}`}
-              onClick={() => setMode(value)}
-              data-testid={`mode-${value}`}
-            >
-              <Icon size={12} strokeWidth={1.75} className={styles.toggleIcon} />
-              <span>{shortLabel}</span>
-            </button>
-          ))}
+        <div className={styles.section}>
+          <span className={styles.sectionLabel}>View</span>
+          <div
+            className={styles.group}
+            role="group"
+            aria-label="Projection mode"
+            data-testid="topology-mode-group"
+          >
+            {MODE_ENTRIES.map(({ value, shortLabel, label, icon: Icon, description }) => (
+              <button
+                key={value}
+                type="button"
+                className={`${styles.toggle} ${mode === value ? styles.toggleActive : ''}`}
+                aria-pressed={mode === value}
+                title={`${label} — ${description}`}
+                onClick={() => setMode(value)}
+                data-testid={`mode-${value}`}
+              >
+                <Icon size={12} strokeWidth={1.75} className={styles.toggleIcon} />
+                <span>{shortLabel}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div
-          className={styles.group}
-          role="group"
-          aria-label="Granularity"
-          data-testid="topology-granularity-group"
-        >
-          {granularityEntries.map(({ value, shortLabel, label, icon: Icon, description }) => (
-            <button
-              key={value}
-              type="button"
-              className={`${styles.toggle} ${granularity === value ? styles.toggleActive : ''}`}
-              aria-pressed={granularity === value}
-              title={`${label} — ${description}`}
-              onClick={() => setGranularity(value)}
-              data-testid={`granularity-${value}`}
-            >
-              <Icon size={12} strokeWidth={1.75} className={styles.toggleIcon} />
-              <span>{shortLabel}</span>
-            </button>
-          ))}
+        <div className={`${styles.section} ${styles.subSection}`}>
+          <span className={styles.sectionLabel}>
+            <span className={styles.sectionLabelLead}>Layer</span>
+            <span className={styles.sectionLabelMuted}>
+              · {MODE_ENTRIES.find((m) => m.value === mode)?.shortLabel ?? mode}
+            </span>
+          </span>
+          <div
+            className={styles.group}
+            role="group"
+            aria-label="Granularity"
+            data-testid="topology-granularity-group"
+          >
+            {granularityEntries.map(({ value, shortLabel, label, icon: Icon, description }) => (
+              <button
+                key={value}
+                type="button"
+                className={`${styles.toggle} ${granularity === value ? styles.toggleActive : ''}`}
+                aria-pressed={granularity === value}
+                title={`${label} — ${description}`}
+                onClick={() => setGranularity(value)}
+                data-testid={`granularity-${value}`}
+              >
+                <Icon size={12} strokeWidth={1.75} className={styles.toggleIcon} />
+                <span>{shortLabel}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {modeAlgorithms.length > 1 && (
@@ -232,5 +262,84 @@ export function FilterToolbar({ filters }: FilterToolbarProps) {
 
       {legendOpen && <LegendPanel onClose={() => setLegendOpen(false)} />}
     </>
+  )
+}
+
+type PickerId = 'kind' | 'namespace' | 'relation' | null
+
+interface BreadcrumbSegmentProps {
+  id: Exclude<PickerId, null>
+  label: string
+  value: string
+  selected: string
+  options: FilterOption[]
+  picker: PickerId
+  setPicker: (id: PickerId) => void
+  onSelect: (value: string) => void
+  testId?: string
+}
+
+function BreadcrumbSegment({
+  id,
+  label,
+  value,
+  selected,
+  options,
+  picker,
+  setPicker,
+  onSelect,
+  testId,
+}: BreadcrumbSegmentProps) {
+  const open = picker === id
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  return (
+    <span className={styles.segmentWrap}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className={styles.segment}
+        data-open={open}
+        data-testid={testId}
+        title={`Filter by ${label.toLowerCase()}`}
+        aria-label={`Filter by ${label.toLowerCase()}`}
+        onClick={() => setPicker(open ? null : id)}
+      >
+        <span className={styles.segmentLabel}>{label}</span>
+        <span className={styles.segmentValue}>{value}</span>
+        <BreadcrumbChevron />
+      </button>
+      <SearchablePopover
+        open={open}
+        options={options}
+        selected={selected}
+        onSelect={(v) => {
+          onSelect(v)
+          setPicker(null)
+        }}
+        onClose={() => setPicker(null)}
+        width={300}
+        anchorRef={buttonRef}
+      />
+    </span>
+  )
+}
+
+function BreadcrumbSlash() {
+  return <span className={styles.slash}>/</span>
+}
+
+function BreadcrumbChevron() {
+  return (
+    <svg
+      width={10}
+      height={10}
+      viewBox="0 0 10 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      aria-hidden
+    >
+      <path d="M2 4l3 3 3-3" />
+    </svg>
   )
 }
