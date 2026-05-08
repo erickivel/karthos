@@ -104,7 +104,11 @@ function toReactNode(
 ): Node {
   // Intentionally do not set `width`/`height` on the node — React Flow needs
   // to keep measuring the rendered DOM so we can feed real sizes back into ELK
-  // on the second pass (see TopologyGraph measure-then-layout cycle).
+  // on the second pass (see TopologyGraph measure-then-layout cycle). Setting
+  // them here also fixes handle positions to the layout-time width, so when
+  // the actual DOM is wider than the ELK estimate the rendered edges visually
+  // disconnect from the cards. The Traffic-mode minimap will show empty cells
+  // for custom nodes; that's the cost of keeping ELK + edges correct.
   return {
     id: node.id,
     type: 'entity',

@@ -229,6 +229,8 @@ function runInfrastructureNestedLayout(
       id: hl.host.id,
       type: 'namespace',
       position: { x: hostX, y: hostY },
+      width: hl.width,
+      height: hl.height,
       zIndex: -2,
       selectable: true,
       draggable: false,
@@ -248,6 +250,8 @@ function runInfrastructureNestedLayout(
         id: pod.pod.id,
         type: 'namespace',
         position: { x: podX, y: podY },
+        width: pod.width,
+        height: pod.height,
         zIndex: -1,
         selectable: true,
         draggable: false,
@@ -265,6 +269,8 @@ function runInfrastructureNestedLayout(
           id: node.id,
           type: 'entity',
           position: { x: podX + cx, y: podY + cy },
+          width: CONTAINER_WIDTH,
+          height: CONTAINER_HEIGHT,
           data: { ...node, mode: deps.mode } as Record<string, unknown>,
         })
       }
@@ -282,6 +288,8 @@ function runInfrastructureNestedLayout(
         id: orphan.id,
         type: 'entity',
         position: { x: orphanX, y: orphanY },
+        width: NODE_WIDTH,
+        height: CONTAINER_HEIGHT,
         data: { ...orphan, mode: deps.mode } as Record<string, unknown>,
       })
       orphanX += NODE_WIDTH + 30

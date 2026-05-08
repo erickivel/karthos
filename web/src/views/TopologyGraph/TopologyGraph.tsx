@@ -28,6 +28,27 @@ import styles from "./TopologyGraph.module.css";
 const nodeTypes = { entity: EntityNode, namespace: NamespaceNode };
 const edgeTypes = { relation: RelationEdge };
 
+// MiniMap fills are read by SVG <rect> elements inside React Flow's MiniMap
+// component. Returning the per-kind CSS variable lets each entity show its
+// kind color in the minimap, and namespace/host/pod parent rectangles get a
+// muted neutral so they read as containers, not entities.
+function miniMapNodeColor(node: { type?: string; data?: Record<string, unknown> }): string {
+  if (node.type === "namespace") {
+    const variant = node.data?.variant;
+    if (variant === "node") return "var(--kind-node)";
+    if (variant === "pod") return "var(--kind-pod)";
+    return "var(--kind-namespace)";
+  }
+  const kind = node.data?.kind as string | undefined;
+  return kind ? `var(--kind-${kind})` : "var(--color-text-muted)";
+}
+
+function miniMapNodeStroke(node: { type?: string }): string {
+  return node.type === "namespace"
+    ? "rgba(255, 255, 255, 0.25)"
+    : "rgba(255, 255, 255, 0.55)";
+}
+
 export function TopologyGraph() {
   return (
     <ReactFlowProvider>
@@ -242,14 +263,27 @@ function TopologyGraphInner() {
             size={1.5}
             bgColor="transparent"
           />
-          <MiniMap
-            nodeColor="var(--surface-active)"
-            maskColor="rgba(18, 20, 22, 0.8)"
-            style={{ background: "var(--surface-nav)" }}
-          />
+          {mode !== "traffic" && (
+            // Traffic mode runs ELK; setting width/height on its nodes (which
+            // MiniMap needs to render anything) breaks the measure→relayout
+            // cycle and detaches edges from cards. Hide the minimap there
+            // rather than ship a misleading empty box. See AGENTS.md.
+            <MiniMap
+              pannable
+              zoomable
+              nodeColor={miniMapNodeColor}
+              nodeStrokeColor={miniMapNodeStroke}
+              nodeStrokeWidth={2}
+              nodeBorderRadius={3}
+              maskColor="rgba(8, 9, 10, 0.72)"
+              maskStrokeColor="rgba(255, 255, 255, 0.18)"
+              maskStrokeWidth={1}
+              className={styles.miniMap}
+            />
+          )}
           <Controls
             showInteractive={false}
-            style={{ background: "var(--surface-nav)" }}
+            className={styles.controls}
           />
         </ReactFlow>
       </div>

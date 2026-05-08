@@ -147,6 +147,8 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
           id: realParent.id,
           type: 'namespace',
           position: { x: namespaceX, y: namespaceY },
+          width: namespaceWidth,
+          height: namespaceHeight,
           zIndex: -1,
           data: {
             ...realParent,
@@ -423,6 +425,10 @@ function toReactNode(node: GraphNode, x: number, y: number, deps: LayoutDeps): N
     id: node.id,
     type: 'entity',
     position: { x, y },
+    // Explicit size so MiniMap can render a placeholder for each node — the
+    // custom EntityNode doesn't populate `node.measured` in v12.
+    width: NODE_WIDTH,
+    height: NODE_HEIGHT_DEFAULT,
     sourcePosition: Position.Bottom,
     targetPosition: Position.Top,
     data: {

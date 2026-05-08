@@ -112,6 +112,11 @@ function toReactNode(
       x: (position?.x ?? 0) - NODE_WIDTH / 2,
       y: (position?.y ?? 0) - height / 2,
     },
+    // Explicit dimensions so MiniMap (and any future bbox consumer) sees
+    // a real size — custom nodes don't populate `node.measured` reliably
+    // in React Flow v12.
+    width: NODE_WIDTH,
+    height,
     sourcePosition,
     targetPosition,
     data: {
@@ -161,6 +166,8 @@ function buildParentContainers(
     .filter((parent) => parentBounds.has(parent.id))
     .map((parent) => {
       const bounds = parentBounds.get(parent.id)!
+      const nsWidth = bounds.maxX - bounds.minX + NS_PADDING * 2
+      const nsHeight = bounds.maxY - bounds.minY + NS_PADDING * 2 + NS_PILL_OFFSET
       return {
         id: parent.id,
         type: 'namespace',
@@ -168,12 +175,14 @@ function buildParentContainers(
           x: bounds.minX - NS_PADDING,
           y: bounds.minY - NS_PADDING - NS_PILL_OFFSET,
         },
+        width: nsWidth,
+        height: nsHeight,
         zIndex: -1,
         data: {
           ...parent,
           variant: parentKind ?? 'namespace',
-          nsWidth: bounds.maxX - bounds.minX + NS_PADDING * 2,
-          nsHeight: bounds.maxY - bounds.minY + NS_PADDING * 2 + NS_PILL_OFFSET,
+          nsWidth,
+          nsHeight,
         } as Record<string, unknown>,
         selectable: true,
         draggable: false,
