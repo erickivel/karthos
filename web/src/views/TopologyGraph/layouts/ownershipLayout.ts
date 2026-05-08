@@ -91,7 +91,11 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
 
   const positioned: Node[] = []
   const parentContainers: Node[] = []
-  let nextNamespaceX = 0
+  // Ownership stacks namespaces top-to-bottom (one rectangle per row) so each
+  // namespace's tree gets the full canvas width and reads vertically. Earlier
+  // versions packed them side-by-side, which made wide namespaces overlap and
+  // forced horizontal scrolling — see frontend-design-spec § 5.2.
+  let nextNamespaceY = 0
 
   const parentOrder = [
     ...parentNodes,
@@ -130,8 +134,8 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
       contentHeight +
       OWNERSHIP_TREE.namespacePaddingTop +
       OWNERSHIP_TREE.namespacePaddingBottom
-    const namespaceX = nextNamespaceX
-    const namespaceY = 0
+    const namespaceX = 0
+    const namespaceY = nextNamespaceY
     const isRootGroup = parent.id === '__root__'
     let componentX = namespaceX + (isRootGroup ? 0 : OWNERSHIP_TREE.namespacePaddingX)
     const baseY = namespaceY + (isRootGroup ? 0 : OWNERSHIP_TREE.namespacePaddingTop)
@@ -165,7 +169,7 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
       componentX += component.width + OWNERSHIP_TREE.componentGap
     }
 
-    nextNamespaceX += namespaceWidth + OWNERSHIP_TREE.namespaceGap
+    nextNamespaceY += namespaceHeight + OWNERSHIP_TREE.namespaceGap
   }
 
   const edges = contentEdges.map((edge) => toReactEdge(edge, contentNodeMap))
