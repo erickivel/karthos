@@ -97,8 +97,12 @@ export function FilterBreadcrumbBuilder({ nodes, state, setState }: Props) {
   const statusOptions: FilterOption[] = [
     { label: 'any', value: '', meta: 'all health states' },
     { label: 'healthy', value: 'healthy', health: 'healthy' },
-    { label: 'degraded', value: 'degraded', health: 'degraded' },
-    { label: 'down', value: 'down', health: 'down' },
+    { label: 'running, not ready', value: 'running_not_ready', health: 'running_not_ready' },
+    { label: 'restarting', value: 'restarting', health: 'restarting' },
+    { label: 'pending', value: 'pending', health: 'pending' },
+    { label: 'succeeded', value: 'succeeded', health: 'succeeded' },
+    { label: 'failed', value: 'failed', health: 'failed' },
+    { label: 'unknown', value: 'unknown', health: 'unknown' },
   ]
 
   const selectedNode = allNodes.find((n) => n.id === state.entityId)

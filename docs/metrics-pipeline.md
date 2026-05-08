@@ -212,17 +212,32 @@ empty `Sources` list. Today three such metrics exist:
 **Convention for status-shaped signals.** Receivers that emit lifecycle state
 (e.g. `k8s.pod.phase` from `k8s_cluster`) typically encode the enum as an
 integer gauge; we keep the integer encoding through the pipeline because
-`MetricSample.Value` in this codebase is `float64` only. The integer→label
-mapping is documented in the catalog row's `Description`, which the frontend
-reads via `/api/v1/metrics/catalog` rather than hard-coding. Do not invent
+`MetricSample.Value` in this codebase is `float64` only. Do not invent
 string-valued samples for new enum metrics.
+
+**Integer-to-string translation at the API boundary.** The integer encoding
+is internal: storage, PromQL composition, and the OTLP normalizer all see
+integers and never strings. The translation to public plain-text labels
+(`healthy`, `running_not_ready`, `restarting`, etc.) lives **only** in
+`pkg/core/metrics/health_status.go` and is applied by:
+
+- The metric store at `Query` time, which sets `MetricSample.ValueLabel` for
+  any health-status metric (see `IsHealthStatusMetric` and the in-memory and
+  VictoriaMetrics adapters). Other metrics never carry `ValueLabel`.
+- The graph and status handlers, which call the translator to populate
+  `enrichedNode.Status` and bucket `health_summary.pods.*` by string key.
+
+Frontends never see the integer for these metrics. New consumers (UI, exporters,
+dashboards) read the string. The catalog row's `Description` documents both the
+integer encoding (for transparency / debugging) and the string labels.
 
 **Composition contract.** The `buildPromQL` switch arm
 (`pkg/adapters/storage/victoriametrics/metric_store.go`) is the single source
-of the composition. Each enum clause uses `(predicate == bool N)` so the
-output is `0`/`1`, multiplies by the integer enum value, and chains via
-PromQL `or` in priority order. When a clause matches no series the metric
-returns empty, which the API serves as "no recent sample" — equivalent to
+of the composition. Each enum clause uses `(predicate) * 0 + N` so the
+clause emits a sample with value `N` only when its predicate matches and emits
+no sample otherwise; PromQL `or` then keeps the first matching clause per
+series in priority order. When a clause matches no series the metric returns
+empty, which the API serves as "no recent sample" — equivalent to
 `unknown`.
 
 ## 5. Ingest-Side Mappings

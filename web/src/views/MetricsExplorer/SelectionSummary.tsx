@@ -57,7 +57,7 @@ function EdgeBlock({ source, target, relation }: Omit<EdgeSummaryProps, 'kind' |
     <div className={styles.block}>
       <span className={styles.eyebrow}>Selected edge</span>
       <div className={styles.titleRow}>
-        <span className={styles.healthDot} data-health={source ? nodeHealth(source.status) : 'degraded'} />
+        <span className={styles.healthDot} data-health={source ? nodeHealth(source.status) : 'unknown'} />
         <span className={styles.title}>
           {source ? source.name : 'unknown source'}
         </span>

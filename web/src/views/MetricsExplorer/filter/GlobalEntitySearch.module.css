@@ -92,8 +92,12 @@
 }
 
 .healthDot[data-health='healthy'] { background: var(--color-signal); }
-.healthDot[data-health='degraded'] { background: var(--color-warn); }
-.healthDot[data-health='down'] { background: var(--color-alert); }
+.healthDot[data-health='running_not_ready'] { background: var(--color-warn); }
+.healthDot[data-health='restarting'] { background: var(--color-alert); }
+.healthDot[data-health='pending'] { background: var(--color-info, var(--color-warn)); }
+.healthDot[data-health='succeeded'] { background: var(--color-info, var(--color-signal)); }
+.healthDot[data-health='failed'] { background: var(--color-alert); }
+.healthDot[data-health='unknown'] { background: var(--color-muted, var(--color-warn)); }
 
 .kindBadge {
   display: inline-flex;

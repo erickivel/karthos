@@ -198,7 +198,7 @@ Edges are a custom React Flow edge component (`edges/RelationEdge.tsx`):
 
 **Node Inspector Panel:**
 Appears when a node is clicked. Contents:
-- Entity name + status indicator dot
+- Entity name + status indicator dot. The dot reads `node.status` directly — one of the public health-status string set (`healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`) supplied by the backend at the API boundary. The frontend does no enum translation; see `pkg/core/metrics/health_status.go`.
 - Kind/type chips
 - Properties section: namespace, kind-specific fields from entity labels
 - Inbound relations: list with relation type + source entity name (clickable)

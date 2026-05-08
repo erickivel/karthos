@@ -133,8 +133,16 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 		return nil, err
 	}
 
+	healthMetric := metrics.IsHealthStatusMetric(q.MetricName)
 	for i := range samples {
 		samples[i].MetricName = q.MetricName
+		if healthMetric {
+			// Populate the public string label so consumers never have to
+			// re-implement the integer→label mapping. Storage and PromQL
+			// composition keep the integer; this is the API-boundary
+			// translation point.
+			samples[i].ValueLabel = metrics.HealthLabel(q.MetricName, samples[i].Value)
+		}
 	}
 
 	return samples, nil

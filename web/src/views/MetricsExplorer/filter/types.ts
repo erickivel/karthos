@@ -28,22 +28,39 @@ export interface FilterOption {
   health?: NodeHealth
 }
 
-export type NodeHealth = 'healthy' | 'degraded' | 'down'
+/**
+ * Public health-status union. The backend translates the integer-encoded
+ * `oksg.{pod,container}.health.status` enum to one of these strings at the
+ * API boundary (see `pkg/core/metrics/health_status.go`); the frontend just
+ * renders. No mapping logic lives here.
+ */
+export type NodeHealth =
+  | 'healthy'
+  | 'running_not_ready'
+  | 'restarting'
+  | 'pending'
+  | 'succeeded'
+  | 'failed'
+  | 'unknown'
+
+const KNOWN_HEALTHS: ReadonlySet<NodeHealth> = new Set([
+  'healthy',
+  'running_not_ready',
+  'restarting',
+  'pending',
+  'succeeded',
+  'failed',
+  'unknown',
+])
 
 /**
- * Coarse health bucketing derived from `GraphNode.status`. The graph store
- * surfaces free-form status strings; we normalise to three buckets so the
- * UI can render a deterministic dot.
+ * Narrow the free-form `GraphNode.status` string to the public NodeHealth
+ * union. Anything outside the set returned by the backend is reported as
+ * `unknown` so consumers don't have to guard against it.
  */
 export function nodeHealth(status: string | undefined): NodeHealth {
-  const s = (status ?? '').toLowerCase()
-  if (s === 'ready' || s === 'running' || s === 'healthy' || s === 'active' || s === 'available') {
-    return 'healthy'
-  }
-  if (s === 'failed' || s === 'down' || s === 'unhealthy' || s === 'crashloopbackoff' || s === 'error') {
-    return 'down'
-  }
-  return 'degraded'
+  const s = status ?? ''
+  return KNOWN_HEALTHS.has(s as NodeHealth) ? (s as NodeHealth) : 'unknown'
 }
 
 /**

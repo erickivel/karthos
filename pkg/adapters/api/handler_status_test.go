@@ -187,17 +187,29 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 		Graph: topology.Graph{
 			Timestamp: now,
 			Nodes: []topology.Node{
-				{ID: "pod-1", Kind: entities.KindPod, Labels: map[string]string{"phase": "Running"}},
-				{ID: "pod-2", Kind: entities.KindPod, Labels: map[string]string{"status": "running"}},
-				{ID: "pod-3", Kind: entities.KindPod, Labels: map[string]string{"phase": "Pending"}},
-				{ID: "pod-4", Kind: entities.KindPod, Labels: map[string]string{"phase": "Failed"}},
-				{ID: "pod-5", Kind: entities.KindPod, Labels: map[string]string{"phase": "Unknown"}},
-				{ID: "pod-6", Kind: entities.KindPod, Labels: map[string]string{"app": "without-phase"}},
+				{ID: "pod-1", Kind: entities.KindPod},
+				{ID: "pod-2", Kind: entities.KindPod},
+				{ID: "pod-3", Kind: entities.KindPod},
+				{ID: "pod-4", Kind: entities.KindPod},
+				{ID: "pod-5", Kind: entities.KindPod},
+				{ID: "pod-6", Kind: entities.KindPod}, // no health sample → unknown
 			},
 		},
 	}))
 
-	// Write node condition metrics.
+	// Pod health buckets are derived from the oksg.pod.health.status enum
+	// metric. Public values: 1=healthy, 4=pending, 5=succeeded, 6=failed,
+	// 7=unknown (the pod-scope composition does not emit 2 or 3 today).
+	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "oksg.pod.health.status", EntityID: "pod-1", Value: 1, Timestamp: now},
+		{MetricName: "oksg.pod.health.status", EntityID: "pod-2", Value: 1, Timestamp: now},
+		{MetricName: "oksg.pod.health.status", EntityID: "pod-3", Value: 4, Timestamp: now},
+		{MetricName: "oksg.pod.health.status", EntityID: "pod-4", Value: 6, Timestamp: now},
+		{MetricName: "oksg.pod.health.status", EntityID: "pod-5", Value: 7, Timestamp: now},
+		// pod-6 has no sample → falls through to unknown.
+	}))
+
+	// Node condition metrics drive the node bucket.
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
 		{MetricName: "k8s.node.condition.ready", EntityID: "node-1", Value: 1, Timestamp: now},
 		{MetricName: "k8s.node.condition.ready", EntityID: "node-2", Value: 1, Timestamp: now},
@@ -225,10 +237,13 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 	require.EqualValues(t, 1, nodes["unhealthy"])
 
 	pods := hs["pods"].(map[string]any)
-	require.EqualValues(t, 2, pods["running"])
+	require.EqualValues(t, 2, pods["healthy"])
 	require.EqualValues(t, 1, pods["pending"])
 	require.EqualValues(t, 1, pods["failed"])
-	require.EqualValues(t, 2, pods["unknown"])
+	require.EqualValues(t, 2, pods["unknown"]) // pod-5 (explicit) + pod-6 (no sample)
+	require.EqualValues(t, 0, pods["running_not_ready"])
+	require.EqualValues(t, 0, pods["restarting"])
+	require.EqualValues(t, 0, pods["succeeded"])
 
 	// Unhealthy node should cause degraded status.
 	require.Equal(t, "degraded", data["system_status"])

@@ -14,7 +14,7 @@ export function HealthSummary({ healthSummary }: HealthSummaryProps) {
       <div className={styles.header}>
         <h2 className={styles.title}>Runtime Health</h2>
         <span className={styles.subtitle}>
-          Latest node readiness and topology pod state from `/status`
+          Latest node readiness and pod health-status enum from `/status`
         </span>
       </div>
 
@@ -30,9 +30,19 @@ export function HealthSummary({ healthSummary }: HealthSummaryProps) {
           accent={healthSummary.nodes.unhealthy > 0 ? 'alert' : 'muted'}
         />
         <KpiCard
-          label="Running Pods"
-          value={healthSummary.pods.running}
+          label="Healthy Pods"
+          value={healthSummary.pods.healthy}
           accent="signal"
+        />
+        <KpiCard
+          label="Restarting Pods"
+          value={healthSummary.pods.restarting}
+          accent={healthSummary.pods.restarting > 0 ? 'alert' : 'muted'}
+        />
+        <KpiCard
+          label="Running, Not Ready"
+          value={healthSummary.pods.running_not_ready}
+          accent={healthSummary.pods.running_not_ready > 0 ? 'info' : 'muted'}
         />
         <KpiCard
           label="Pending Pods"
@@ -43,6 +53,11 @@ export function HealthSummary({ healthSummary }: HealthSummaryProps) {
           label="Failed Pods"
           value={healthSummary.pods.failed}
           accent={healthSummary.pods.failed > 0 ? 'alert' : 'muted'}
+        />
+        <KpiCard
+          label="Succeeded Pods"
+          value={healthSummary.pods.succeeded}
+          accent={healthSummary.pods.succeeded > 0 ? 'info' : 'muted'}
         />
         <KpiCard
           label="Unknown Pods"

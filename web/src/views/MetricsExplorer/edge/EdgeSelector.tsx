@@ -162,13 +162,13 @@ export function EdgeSelector({ nodes, edges, selectedSource, selectedTarget, onS
               <Endpoint
                 node={r.source}
                 fallback={r.sourceId}
-                health={r.source ? nodeHealth(r.source.status) : 'degraded'}
+                health={r.source ? nodeHealth(r.source.status) : 'unknown'}
               />
               <span className={styles.arrow}>→</span>
               <Endpoint
                 node={r.target}
                 fallback={r.targetId}
-                health={r.target ? nodeHealth(r.target.status) : 'degraded'}
+                health={r.target ? nodeHealth(r.target.status) : 'unknown'}
               />
               <span className={styles.relation}>{r.relation}</span>
             </button>
