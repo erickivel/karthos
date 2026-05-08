@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useClickOutside } from '@/hooks/useClickOutside'
 import type { GraphNode } from '@/types/graph'
 import { applyFilters, nodeHealth, type NodeHealth } from './types'
 import styles from './GlobalEntitySearch.module.css'
@@ -15,6 +16,8 @@ export function GlobalEntitySearch({ nodes, onSelect }: Props) {
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  useClickOutside(wrapRef, open, () => setOpen(false))
 
   const matches = useMemo(
     () => applyFilters(nodes, { namespace: '', kind: '', entityId: '', query: q, status: '' }).slice(0, MAX_RESULTS),
@@ -43,7 +46,7 @@ export function GlobalEntitySearch({ nodes, onSelect }: Props) {
   }
 
   return (
-    <div className={styles.wrap}>
+    <div className={styles.wrap} ref={wrapRef}>
       <div className={styles.bar} data-open={open}>
         <SearchIcon />
         <input
@@ -52,7 +55,6 @@ export function GlobalEntitySearch({ nodes, onSelect }: Props) {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onFocus={() => setOpen(true)}
-          onBlur={() => window.setTimeout(() => setOpen(false), 120)}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') {
               e.preventDefault()

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EntityKind, GraphNode } from '@/types/graph'
 import { SearchablePopover } from './SearchablePopover'
 import {
@@ -40,28 +40,36 @@ export function FilterBreadcrumbBuilder({ nodes, state, setState }: Props) {
 
   const allNodes = useMemo(() => nodes ?? [], [nodes])
   const candidates = useMemo(() => applyFilters(allNodes, state), [allNodes, state])
+  // scopedEntities now respects every filter except `entityId` itself, so the
+  // entity picker only lists candidates that match the current namespace,
+  // kind, status, and query.
   const scopedEntities = useMemo(
-    () => applyFilters(allNodes, { ...state, entityId: '', query: '', status: '' }),
+    () => applyFilters(allNodes, { ...state, entityId: '' }),
     [allNodes, state],
   )
 
   const namespaceOptions = useMemo<FilterOption[]>(() => {
+    // Narrow by every other field so the user never sees a namespace that
+    // would yield zero matches under their other filters.
+    const scoped = applyFilters(allNodes, {
+      ...state,
+      namespace: '',
+      entityId: '',
+    })
     const counts = new Map<string, number>()
-    for (const n of allNodes) {
+    for (const n of scoped) {
       if (!n.namespace) continue
       counts.set(n.namespace, (counts.get(n.namespace) ?? 0) + 1)
     }
     const sorted = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]))
     return [
-      { label: 'All namespaces', value: '', meta: `${allNodes.length} entities` },
+      { label: 'All namespaces', value: '', meta: `${scoped.length} entities` },
       ...sorted.map(([ns, n]) => ({ label: ns, value: ns, meta: `${n} entities` })),
     ]
-  }, [allNodes])
+  }, [allNodes, state])
 
   const kindOptions = useMemo<FilterOption[]>(() => {
-    const scoped = state.namespace
-      ? allNodes.filter((n) => n.namespace === state.namespace)
-      : allNodes
+    const scoped = applyFilters(allNodes, { ...state, kind: '', entityId: '' })
     const counts = new Map<EntityKind, number>()
     for (const n of scoped) counts.set(n.kind, (counts.get(n.kind) ?? 0) + 1)
     const sorted = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]))
@@ -74,7 +82,7 @@ export function FilterBreadcrumbBuilder({ nodes, state, setState }: Props) {
         color: KIND_COLOR[kind],
       })),
     ]
-  }, [allNodes, state.namespace])
+  }, [allNodes, state])
 
   const entityOptions = useMemo<FilterOption[]>(() => {
     const sorted = [...scopedEntities].sort(compareNodes).slice(0, 300)
@@ -106,6 +114,18 @@ export function FilterBreadcrumbBuilder({ nodes, state, setState }: Props) {
   ]
 
   const selectedNode = allNodes.find((n) => n.id === state.entityId)
+
+  // If the currently selected entity no longer satisfies the other filters
+  // (user changed kind/status/query/namespace and made it ineligible),
+  // clear it so the breadcrumbs don't lie about the active selection.
+  useEffect(() => {
+    if (!state.entityId) return
+    const stillMatches = scopedEntities.some((n) => n.id === state.entityId)
+    if (!stillMatches) {
+      setState({ ...state, entityId: '' })
+    }
+  }, [scopedEntities, state, setState])
+
   const activeAdvanced = state.status || state.query
   const hasAny = state.namespace || state.kind || state.entityId || activeAdvanced
 
@@ -301,9 +321,11 @@ function PathSegment({
   width = 280,
 }: PathSegmentProps) {
   const open = picker === id
+  const buttonRef = useRef<HTMLButtonElement>(null)
   return (
     <span className={styles.segmentWrap}>
       <button
+        ref={buttonRef}
         type="button"
         className={styles.segment}
         data-open={open}
@@ -321,6 +343,7 @@ function PathSegment({
         onSelect={onSelect}
         onClose={() => setPicker(null)}
         width={width}
+        anchorRef={buttonRef}
       />
     </span>
   )
@@ -358,11 +381,13 @@ function BuilderCombobox({
 }: BuilderComboboxProps) {
   const open = picker === (id as PickerId)
   const current = options.find((o) => o.value === value)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   return (
     <span className={styles.combobox} data-wide={wide ? 'true' : 'false'} data-open={open}>
       <span className={styles.comboboxLabel}>{label}</span>
       <span className={styles.comboboxEq}>=</span>
       <button
+        ref={buttonRef}
         type="button"
         className={styles.comboboxButton}
         data-set={Boolean(value)}
@@ -378,6 +403,7 @@ function BuilderCombobox({
         onSelect={onChange}
         onClose={() => setPicker(null)}
         width={wide ? 380 : 300}
+        anchorRef={buttonRef}
       />
     </span>
   )

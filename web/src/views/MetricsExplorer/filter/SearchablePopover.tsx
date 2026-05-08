@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useClickOutside } from '@/hooks/useClickOutside'
 import type { FilterOption, NodeHealth } from './types'
 import styles from './SearchablePopover.module.css'
 
@@ -9,6 +10,7 @@ interface SearchablePopoverProps {
   onSelect: (value: string) => void
   onClose: () => void
   width?: number
+  anchorRef?: RefObject<HTMLElement | null>
 }
 
 export function SearchablePopover({
@@ -18,10 +20,17 @@ export function SearchablePopover({
   onSelect,
   onClose,
   width = 280,
+  anchorRef,
 }: SearchablePopoverProps) {
   const [q, setQ] = useState('')
   const [hi, setHi] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const safeRefs = useMemo(
+    () => (anchorRef ? [popoverRef, anchorRef] : [popoverRef]),
+    [anchorRef],
+  )
+  useClickOutside(safeRefs, open, onClose)
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase()
@@ -47,7 +56,12 @@ export function SearchablePopover({
   }
 
   return (
-    <div className={styles.popover} style={{ width }} role="listbox">
+    <div
+      ref={popoverRef}
+      className={styles.popover}
+      style={{ width }}
+      role="listbox"
+    >
       <div className={styles.searchRow}>
         <SearchIcon />
         <input
