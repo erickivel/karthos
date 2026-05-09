@@ -217,7 +217,12 @@ func buildPromQL(q query.MetricQuery) string {
 		"servicegraph.grpc.request.message.count",
 		"servicegraph.grpc.response.message.count",
 		"servicegraph.tcp.connection.open.count",
-		"servicegraph.tcp.connection.close.count":
+		"servicegraph.tcp.connection.close.count",
+		"system.disk.operations",
+		"system.disk.operation_time",
+		"system.network.errors",
+		"system.network.dropped",
+		"system.network.packets":
 		return fmt.Sprintf("rate(%s[1m])", selector)
 	case "servicegraph.request.error.ratio":
 		errorRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "servicegraph.request.error.count")))

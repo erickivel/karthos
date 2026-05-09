@@ -18,7 +18,7 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.pod.memory.working_set":               {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.node.cpu.usage":                       {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.node.memory.working_set":              {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"system.cpu.utilization":                   {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.cpu.utilization":                   {unit: UnitPercent, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 		"system.memory.usage":                      {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 		"k8s.deployment.desired":                   {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"system.disk.io.read":                      {},
