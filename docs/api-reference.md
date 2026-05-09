@@ -67,6 +67,8 @@ Response:
 
 `health_summary` is present when a MetricStore is configured. Node health uses the latest `k8s.node.condition.ready` samples from the last 5 minutes. Pod buckets are derived from the `oksg.pod.health.status` derived enum metric (the integer value is translated server-side via `pkg/core/metrics/health_status.go`); pods without a recent sample fall through to the `unknown` bucket.
 
+The `unknown` bucket can include pod entities that no longer exist in the cluster but have not yet aged out of the entity registry. Structural ingestion only re-emits pods that the discovery refresh observes, while `oksg.pod.health.status` is derived from `k8s.pod.phase` and disappears as soon as the pod is gone — so during the window between deletion and TTL eviction (`OKSG_NODE_TTL`, default 24h), the topology still lists the pod with `status: "unknown"`.
+
 Pod bucket keys match the public health-status string set used elsewhere in the API: `healthy`, `running_not_ready`, `restarting`, `pending`, `succeeded`, `failed`, `unknown`. The pod-scope composition currently only emits `healthy / pending / succeeded / failed / unknown`; `running_not_ready` and `restarting` are observable today at container scope (`oksg.container.health.status`) and roll up to pod scope only after a future `pod_id` labelling change to container metrics.
 
 Status values:
@@ -389,7 +391,9 @@ List semconv-native metric definitions.
 
 Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both, and a `sources` array describing which logical sources can produce the metric and at what priority.
 
-The `sources` array drives runtime arbitration: at backend startup the resolver picks the highest-priority (smallest `priority` value) source whose detector returns true for the cluster's discovery profile. The planner only deploys receivers for selected sources; the ingester drops samples whose `oksg_source` attribute disagrees with the assigned source. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
+The `sources` array drives runtime arbitration: at backend startup the resolver (`pkg/core/metrics/resolver.go`) picks the highest-priority (smallest `priority` value) source whose detector returns true for the cluster's discovery profile. The planner only deploys receivers for selected sources; the ingester drops samples whose `oksg_source` attribute disagrees with the assigned source. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
+
+The array is exposed in priority order (lower number = higher priority); UIs that need a single "primary source" label should render `sources[0].id`. The full array is informational — lower-priority entries are fallbacks the resolver did not pick. The currently-active source per metric is not exposed on the catalog endpoint today; consumers that need it should read the `source` label on actual sample responses from `/api/v1/metrics/series`.
 
 `selection_policy` defaults to `"priority"` (omitted from the response when default). The values `"disjoint"` and `"all"` are reserved for future per-scope routing and multi-source aggregation; the resolver returns an error if it encounters them.
 
