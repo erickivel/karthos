@@ -104,7 +104,7 @@ web/
       MetricsExplorer/  single-entity / single-edge explorer
         filter/        GlobalEntitySearch (⌘K), FilterBreadcrumbBuilder, SearchablePopover, applyFilters
         edge/          EdgeSelector (calls-edge picker)
-        applicability/ kindCategories + sourceKinds gating tabs and cards by selected kind
+        applicability/ catalog `scopes` + `applies_to` gating tabs and cards by selected kind
         SelectionSummary, MetricCard, InfoTooltip, RawSamplesTable, CategoryTabs, TimeRangeSelector
     components/
       Shell/          floating TopBar, Sidebar, StatusBar

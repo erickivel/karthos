@@ -3,6 +3,7 @@ package metrics
 import (
 	"testing"
 
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,6 +146,29 @@ func TestDefaultCatalogEntriesHaveDisplayNames(t *testing.T) {
 	}
 }
 
+func TestDefaultCatalogEntityMetricsDeclareApplicableKinds(t *testing.T) {
+	for _, metric := range DefaultCatalog() {
+		if hasScope(metric, ScopeEntity) {
+			require.NotEmptyf(t, metric.AppliesTo, "entity metric %s declares no AppliesTo kinds", metric.Name)
+			continue
+		}
+		require.Emptyf(t, metric.AppliesTo, "edge-only metric %s must not declare entity AppliesTo kinds", metric.Name)
+	}
+}
+
+func TestDefaultCatalogApplicabilityTargetsExpectedKinds(t *testing.T) {
+	catalog := catalogByName(DefaultCatalog())
+
+	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["k8s.container.cpu.usage"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["k8s.container.ready"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["oksg.container.health.status"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindPod}, catalog["k8s.pod.cpu.usage"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindNode}, catalog["k8s.node.cpu.usage"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindPVC}, catalog["k8s.volume.inodes.used"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindService}, catalog["servicegraph.request.count"].AppliesTo)
+	require.Empty(t, catalog["servicegraph.request.duration"].AppliesTo)
+}
+
 // Query-derived metrics — composed at query time from other catalog metrics
 // (see pkg/adapters/storage/victoriametrics/metric_store.go buildPromQL switch
 // arms, and the derivedHealthStatus helper for cross-entity composition).
@@ -179,4 +203,21 @@ func TestDefaultCatalogSourceRefsTargetKnownSources(t *testing.T) {
 			require.Truef(t, ok, "metric %s references unknown source %s", metric.Name, ref.ID)
 		}
 	}
+}
+
+func hasScope(metric CanonicalMetric, scope MetricScope) bool {
+	for _, candidate := range metric.Scopes {
+		if candidate == scope {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogByName(catalog []CanonicalMetric) map[string]CanonicalMetric {
+	out := make(map[string]CanonicalMetric, len(catalog))
+	for _, metric := range catalog {
+		out[metric.Name] = metric
+	}
+	return out
 }

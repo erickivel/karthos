@@ -1,22 +1,19 @@
 import type { EntityKind } from '@/types/graph'
 import type { CanonicalMetric, MetricCategory, MetricScope } from '@/types/metrics'
-import { KIND_CATEGORIES } from './kindCategories'
-import { SOURCE_KINDS } from './sourceKinds'
 
 export type ExplorerMode = 'entity' | 'edge'
 
 const ALL_CATEGORIES: MetricCategory[] = ['resource', 'traffic', 'latency', 'error', 'capacity', 'health']
 const EDGE_CATEGORIES: MetricCategory[] = ['traffic', 'latency', 'error']
 
-const warnedSources = new Set<string>()
+const warnedMetrics = new Set<string>()
 
-function warnUnknownSourceOnce(sourceId: string): void {
+function warnMissingAppliesToOnce(metricName: string): void {
   if (!import.meta.env.DEV) return
-  if (warnedSources.has(sourceId)) return
-  warnedSources.add(sourceId)
+  if (warnedMetrics.has(metricName)) return
+  warnedMetrics.add(metricName)
   console.warn(
-    `[applicability] Unknown source id "${sourceId}". ` +
-      `Add it to web/src/views/MetricsExplorer/applicability/sourceKinds.ts. ` +
+    `[applicability] Metric "${metricName}" has no applies_to catalog metadata. ` +
       `Treating as applicable to every kind (fail-open).`,
   )
 }
@@ -31,36 +28,39 @@ function warnUnknownSourceOnce(sourceId: string): void {
  * If `kind` is null (no entity selected, or selection has mixed kinds), the
  * union of all categories is returned so the user still sees every tab.
  */
-export function visibleCategoriesForKind(
+export function visibleCategoriesForSelection(
+  metrics: CanonicalMetric[] | undefined,
   kind: EntityKind | null,
   mode: ExplorerMode,
 ): MetricCategory[] {
+  if (!metrics) return mode === 'edge' ? EDGE_CATEGORIES : ALL_CATEGORIES
+  if (mode === 'entity' && kind === null) return ALL_CATEGORIES
+
+  const visible = ALL_CATEGORIES.filter((category) =>
+    applicableMetrics(metrics, category, kind, mode).length > 0,
+  )
+
+  if (visible.length > 0) return visible
   if (mode === 'edge') return EDGE_CATEGORIES
-  if (kind === null) return ALL_CATEGORIES
-  return KIND_CATEGORIES[kind] ?? ALL_CATEGORIES
+  return []
 }
 
 /**
- * Returns true if any of the metric's catalog sources can emit data for the
- * given entity kind. Unknown source ids fail open and warn once in dev.
- *
- * A metric with no declared sources (rare) is treated as applicable.
+ * Returns true when the backend catalog says the metric applies to the given
+ * entity kind. Missing metadata fails open for compatibility with older
+ * backend responses, but current catalog tests require entity metrics to
+ * declare this explicitly.
  */
 export function isMetricApplicableToKind(
   metric: CanonicalMetric,
   kind: EntityKind | null,
 ): boolean {
   if (kind === null) return true
-  if (!metric.sources || metric.sources.length === 0) return true
-  return metric.sources.some((source) => {
-    const mapping = SOURCE_KINDS[source.id]
-    if (mapping === undefined) {
-      warnUnknownSourceOnce(source.id)
-      return true
-    }
-    if (mapping === '*') return true
-    return mapping.includes(kind)
-  })
+  if (!metric.applies_to) {
+    warnMissingAppliesToOnce(metric.name)
+    return true
+  }
+  return metric.applies_to.includes(kind)
 }
 
 /**
@@ -84,5 +84,5 @@ export function applicableMetrics(
 
 /** Test-only helper to reset the dev-warn dedupe set. */
 export function __resetApplicabilityWarnings(): void {
-  warnedSources.clear()
+  warnedMetrics.clear()
 }

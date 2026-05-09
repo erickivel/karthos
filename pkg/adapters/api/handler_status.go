@@ -188,7 +188,6 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 		})
 		if err == nil {
 			latestLabel := latestLabelPerEntity(podSamples)
-			seen := make(map[entities.EntityID]struct{}, len(podIDs))
 			for _, id := range podIDs {
 				switch latestLabel[id] {
 				case metrics.HealthHealthy:
@@ -206,9 +205,7 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 				default:
 					hs.Pods.Unknown++
 				}
-				seen[id] = struct{}{}
 			}
-			_ = seen
 		} else {
 			h.logger.Warn("pod health-status query failed", logging.Error(err))
 			hs.Pods.Unknown += len(podIDs)

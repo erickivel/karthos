@@ -1,5 +1,7 @@
 package metrics
 
+import "github.com/erickivel/oksg/pkg/core/entities"
+
 var defaultCatalog = []CanonicalMetric{
 	{Name: "k8s.pod.cpu.usage", DisplayName: "Pod CPU Usage", Unit: UnitMillicores, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod CPU usage.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 	{Name: "k8s.pod.memory.working_set", DisplayName: "Pod Memory Working Set", Unit: UnitBytes, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod memory working set.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
@@ -71,5 +73,88 @@ var defaultCatalog = []CanonicalMetric{
 func DefaultCatalog() []CanonicalMetric {
 	catalog := make([]CanonicalMetric, len(defaultCatalog))
 	copy(catalog, defaultCatalog)
+	for i := range catalog {
+		catalog[i].AppliesTo = cloneEntityKinds(defaultAppliesTo[catalog[i].Name])
+	}
 	return catalog
+}
+
+var (
+	appliesToNode      = []entities.EntityKind{entities.KindNode}
+	appliesToNamespace = []entities.EntityKind{entities.KindNamespace}
+	appliesToWorkload  = []entities.EntityKind{entities.KindWorkload}
+	appliesToPod       = []entities.EntityKind{entities.KindPod}
+	appliesToContainer = []entities.EntityKind{entities.KindContainer}
+	appliesToService   = []entities.EntityKind{entities.KindService}
+	appliesToPVC       = []entities.EntityKind{entities.KindPVC}
+)
+
+var defaultAppliesTo = map[string][]entities.EntityKind{
+	"k8s.pod.cpu.usage":                     appliesToPod,
+	"k8s.pod.memory.working_set":            appliesToPod,
+	"k8s.pod.phase":                         appliesToPod,
+	"k8s.pod.status_reason":                 appliesToPod,
+	"oksg.pod.health.status":                appliesToPod,
+	"k8s.container.cpu.request":             appliesToContainer,
+	"k8s.container.cpu.limit":               appliesToContainer,
+	"k8s.container.memory.request":          appliesToContainer,
+	"k8s.container.memory.limit":            appliesToContainer,
+	"k8s.container.cpu.usage":               appliesToContainer,
+	"k8s.container.memory.usage":            appliesToContainer,
+	"k8s.container.ready":                   appliesToContainer,
+	"k8s.container.restarts":                appliesToContainer,
+	"oksg.container.health.status":          appliesToContainer,
+	"k8s.node.cpu.usage":                    appliesToNode,
+	"k8s.node.memory.working_set":           appliesToNode,
+	"k8s.node.condition.ready":              appliesToNode,
+	"k8s.node.condition.memory_pressure":    appliesToNode,
+	"k8s.node.condition.disk_pressure":      appliesToNode,
+	"k8s.node.allocatable_cpu":              appliesToNode,
+	"k8s.node.allocatable_memory":           appliesToNode,
+	"system.cpu.utilization":                appliesToNode,
+	"system.memory.usage":                   appliesToNode,
+	"system.disk.io.read":                   appliesToNode,
+	"system.disk.io.write":                  appliesToNode,
+	"system.network.io.receive":             appliesToNode,
+	"system.network.io.transmit":            appliesToNode,
+	"system.network.errors":                 appliesToNode,
+	"system.network.dropped":                appliesToNode,
+	"system.network.packets":                appliesToNode,
+	"system.disk.operations":                appliesToNode,
+	"system.disk.operation_time":            appliesToNode,
+	"system.filesystem.usage":               appliesToNode,
+	"system.filesystem.utilization":         appliesToNode,
+	"system.cpu.load_average.1m":            appliesToNode,
+	"system.cpu.load_average.5m":            appliesToNode,
+	"system.cpu.load_average.15m":           appliesToNode,
+	"system.paging.usage":                   appliesToNode,
+	"system.paging.operations":              appliesToNode,
+	"k8s.volume.available":                  appliesToPVC,
+	"k8s.volume.capacity":                   appliesToPVC,
+	"k8s.volume.inodes.free":                appliesToPVC,
+	"k8s.volume.inodes.used":                appliesToPVC,
+	"k8s.namespace.phase":                   appliesToNamespace,
+	"k8s.deployment.available":              appliesToWorkload,
+	"k8s.deployment.desired":                appliesToWorkload,
+	"k8s.replicaset.desired":                appliesToWorkload,
+	"k8s.daemonset.desired_scheduled_nodes": appliesToWorkload,
+	"k8s.daemonset.ready_nodes":             appliesToWorkload,
+	"k8s.statefulset.desired_pods":          appliesToWorkload,
+	"k8s.statefulset.ready_pods":            appliesToWorkload,
+	"http.server.request.count":             appliesToService,
+	"rpc.server.request.count":              appliesToService,
+	"servicegraph.request.count":            appliesToService,
+	"http.server.request.duration":          appliesToService,
+	"rpc.server.duration":                   appliesToService,
+	"servicegraph.request.error.count":      appliesToService,
+	"servicegraph.request.error.ratio":      appliesToService,
+}
+
+func cloneEntityKinds(kinds []entities.EntityKind) []entities.EntityKind {
+	if len(kinds) == 0 {
+		return nil
+	}
+	out := make([]entities.EntityKind, len(kinds))
+	copy(out, kinds)
+	return out
 }

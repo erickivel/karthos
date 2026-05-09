@@ -1,3 +1,5 @@
+import type { EntityKind } from './graph'
+
 export type MetricCategory =
   | 'resource'
   | 'traffic'
@@ -46,6 +48,7 @@ export interface CanonicalMetric {
   unit: string
   category: MetricCategory
   scopes: MetricScope[]
+  applies_to?: EntityKind[]
   description: string
   sources?: SourceRef[]
   selection_policy?: SelectionPolicy

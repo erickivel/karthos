@@ -13,7 +13,7 @@ import { GlobalEntitySearch } from './filter/GlobalEntitySearch'
 import { FilterBreadcrumbBuilder } from './filter/FilterBreadcrumbBuilder'
 import { EdgeSelector } from './edge/EdgeSelector'
 import { EMPTY_FILTER, type FilterState } from './filter/types'
-import { applicableMetrics, visibleCategoriesForKind, type ExplorerMode } from './applicability/applicability'
+import { applicableMetrics, visibleCategoriesForSelection, type ExplorerMode } from './applicability/applicability'
 import type { GraphNode } from '@/types/graph'
 import type { MetricCategory, MetricSample, MetricSeries } from '@/types/metrics'
 import styles from './MetricsExplorer.module.css'
@@ -64,8 +64,8 @@ export function MetricsExplorer() {
   const selectedKind = selectedNode?.kind ?? null
 
   const visibleCategories = useMemo(
-    () => visibleCategoriesForKind(isEntityMode ? selectedKind : null, mode),
-    [isEntityMode, selectedKind, mode],
+    () => visibleCategoriesForSelection(catalog?.metrics, isEntityMode ? selectedKind : null, mode),
+    [catalog?.metrics, isEntityMode, selectedKind, mode],
   )
 
   const categoryMetrics = useMemo(

@@ -1,5 +1,7 @@
 package metrics
 
+import "github.com/erickivel/oksg/pkg/core/entities"
+
 type MetricCategory string
 type MetricScope string
 
@@ -16,15 +18,16 @@ const (
 )
 
 type CanonicalMetric struct {
-	Name            string          `json:"name"`
-	DisplayName     string          `json:"display_name"`
-	Unit            Unit            `json:"unit"`
-	Category        MetricCategory  `json:"category"`
-	Scopes          []MetricScope   `json:"scopes,omitempty"`
-	Dimensions      []string        `json:"dimensions,omitempty"`
-	Description     string          `json:"description"`
-	Sources         []SourceRef     `json:"sources,omitempty"`
-	SelectionPolicy SelectionPolicy `json:"selection_policy,omitempty"`
+	Name            string                `json:"name"`
+	DisplayName     string                `json:"display_name"`
+	Unit            Unit                  `json:"unit"`
+	Category        MetricCategory        `json:"category"`
+	Scopes          []MetricScope         `json:"scopes,omitempty"`
+	AppliesTo       []entities.EntityKind `json:"applies_to,omitempty"`
+	Dimensions      []string              `json:"dimensions,omitempty"`
+	Description     string                `json:"description"`
+	Sources         []SourceRef           `json:"sources,omitempty"`
+	SelectionPolicy SelectionPolicy       `json:"selection_policy,omitempty"`
 }
 
 // SourceRef binds a canonical metric to a logical source that can produce it.

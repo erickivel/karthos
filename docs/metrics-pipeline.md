@@ -26,6 +26,7 @@ type CanonicalMetric struct {
     Unit            Unit            // canonical unit (millicores, bytes, ns, ratio, ...)
     Category        MetricCategory  // resource | traffic | latency | error | capacity | health
     Scopes          []MetricScope   // entity, edge, or both
+    AppliesTo       []EntityKind    // entity kinds valid for entity-scope queries
     Description     string
     Sources         []SourceRef     // {ID, Priority} — which logical sources can produce it
     SelectionPolicy SelectionPolicy // priority (default), disjoint, all
@@ -40,6 +41,10 @@ Important properties:
 - **Scopes are authoritative for the API and UI.** A metric in `scopes:["edge"]`
   must only be requested with `edge_source_id` / `edge_target_id` filters; the
   Metrics Explorer enforces this at query time.
+- **AppliesTo is authoritative for entity-kind applicability.** `applies_to`
+  answers "which graph entity kinds can this metric be queried against?" and is
+  distinct from `Sources`, which answers "which collector or tool can produce
+  this metric?" The frontend must not infer entity applicability from source IDs.
 - **Sources drive arbitration**, not detection. A metric with several entries
   in `Sources` declares more than one possible producer; the resolver picks
   exactly one per cluster.

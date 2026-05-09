@@ -389,7 +389,7 @@ List semconv-native metric definitions.
 |-------|------|-------------|
 | `category` | string | Filter by category (`resource`, `traffic`, `latency`, `error`, `capacity`, `health`) |
 
-Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both, and a `sources` array describing which logical sources can produce the metric and at what priority.
+Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both; an `applies_to` array describing the graph entity kinds an entity-scoped metric is valid for; and a `sources` array describing which logical sources can produce the metric and at what priority. Edge-only metrics omit `applies_to`.
 
 The `sources` array drives runtime arbitration: at backend startup the resolver (`pkg/core/metrics/resolver.go`) picks the highest-priority (smallest `priority` value) source whose detector returns true for the cluster's discovery profile. The planner only deploys receivers for selected sources; the ingester drops samples whose `oksg_source` attribute disagrees with the assigned source. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
 
@@ -400,13 +400,14 @@ The array is exposed in priority order (lower number = higher priority); UIs tha
 Example:
 
 ```bash
-curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[] | {name, scopes, sources}'
+curl -s http://localhost:18081/api/v1/metrics/catalog | jq '.data.metrics[] | {name, scopes, applies_to, sources}'
 ```
 
 ```json
 {
   "name": "servicegraph.request.count",
   "scopes": ["entity", "edge"],
+  "applies_to": ["service"],
   "sources": [
     {"id": "mesh.istio", "priority": 1},
     {"id": "traces.servicegraph", "priority": 2}
