@@ -97,12 +97,16 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 						"system.cpu.utilization": map[string]any{"enabled": true},
 					},
 				},
-				"memory":     map[string]any{},
-				"disk":       map[string]any{},
-				"filesystem": map[string]any{},
-				"network":    map[string]any{},
-				"load":       map[string]any{},
-				"paging":     map[string]any{},
+				"memory": map[string]any{},
+				"disk":   map[string]any{},
+				"filesystem": map[string]any{
+					"metrics": map[string]any{
+						"system.filesystem.utilization": map[string]any{"enabled": true},
+					},
+				},
+				"network": map[string]any{},
+				"load":    map[string]any{},
+				"paging":  map[string]any{},
 			},
 		},
 	}
