@@ -7,9 +7,20 @@ import (
 )
 
 func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
-	required := map[string]struct{}{
-		"k8s.pod.cpu.usage":                        {},
-		"k8s.pod.memory.working_set":               {},
+	type metricExpectation struct {
+		unit     Unit
+		category MetricCategory
+		sources  []SourceRef
+	}
+
+	required := map[string]metricExpectation{
+		"k8s.pod.cpu.usage":                        {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.memory.working_set":               {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.cpu.usage":                       {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.memory.working_set":              {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"system.cpu.utilization":                   {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.memory.usage":                      {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"k8s.deployment.desired":                   {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"system.disk.io.read":                      {},
 		"system.disk.io.write":                     {},
 		"servicegraph.request.count":               {},
@@ -29,9 +40,18 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.container.cpu.limit":                  {},
 		"k8s.container.memory.request":             {},
 		"k8s.container.memory.limit":               {},
+		"k8s.container.cpu.usage":                  {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.container.memory.usage":               {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.container.ready":                      {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.restarts":                   {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"k8s.replicaset.desired":                   {},
 		"system.network.io.receive":                {},
 		"system.network.io.transmit":               {},
+		"system.network.errors":                    {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.network.dropped":                   {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.network.packets":                   {unit: UnitPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.disk.operations":                   {unit: UnitPerSecond, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.disk.operation_time":               {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 		"k8s.volume.available":                     {},
 		"k8s.volume.capacity":                      {},
 		"k8s.volume.inodes.free":                   {},
@@ -44,6 +64,10 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"system.paging.usage":                      {},
 		"system.paging.operations":                 {},
 		"k8s.namespace.phase":                      {},
+		"k8s.pod.phase":                            {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.pod.status_reason":                    {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"oksg.pod.health.status":                   {unit: UnitCount, category: CategoryHealth, sources: nil},
+		"oksg.container.health.status":             {unit: UnitCount, category: CategoryHealth, sources: nil},
 		"k8s.node.condition.ready":                 {},
 		"k8s.node.condition.memory_pressure":       {},
 		"k8s.node.condition.disk_pressure":         {},
@@ -57,6 +81,19 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	}
 
 	for _, metric := range DefaultCatalog() {
+		expected, ok := required[metric.Name]
+		if !ok {
+			continue
+		}
+		if expected.unit != "" {
+			require.Equalf(t, expected.unit, metric.Unit, "metric %s unit", metric.Name)
+		}
+		if expected.category != "" {
+			require.Equalf(t, expected.category, metric.Category, "metric %s category", metric.Name)
+		}
+		if expected.sources != nil {
+			require.Equalf(t, expected.sources, metric.Sources, "metric %s sources", metric.Name)
+		}
 		delete(required, metric.Name)
 	}
 
@@ -74,7 +111,6 @@ func TestDefaultCatalogExcludesUnsupportedMetrics(t *testing.T) {
 		"k8s.node.network.bandwidth.transmit": {},
 		"k8s.pod.network.io.receive":          {},
 		"k8s.pod.network.io.transmit":         {},
-		"k8s.pod.phase":                       {},
 	}
 
 	for _, metric := range DefaultCatalog() {
@@ -109,10 +145,18 @@ func TestDefaultCatalogEntriesHaveDisplayNames(t *testing.T) {
 	}
 }
 
-// servicegraph.request.error.ratio is query-derived (see metric_store.buildPromQL)
-// and never arrives as an OTLP sample, so it intentionally has no source.
+// Query-derived metrics — composed at query time from other catalog metrics
+// (see pkg/adapters/storage/victoriametrics/metric_store.go buildPromQL switch
+// arms, and the derivedHealthStatus helper for cross-entity composition).
+// They never arrive as OTLP samples, so they intentionally have no source.
+//
+// When adding a new derived metric here you MUST also add a buildPromQL case
+// (or extend derivedHealthStatus) before the metric is exposed via the
+// catalog test's `required` map — otherwise queries return empty silently.
 var catalogSourcelessExceptions = map[string]struct{}{
 	"servicegraph.request.error.ratio": {},
+	"oksg.pod.health.status":           {},
+	"oksg.container.health.status":     {},
 }
 
 func TestDefaultCatalogEntriesDeclareSources(t *testing.T) {

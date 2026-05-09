@@ -59,13 +59,15 @@ Response:
     "data_stale": false,
     "health_summary": {
       "nodes": {"healthy": 3, "unhealthy": 0},
-      "pods": {"pending": 0, "running": 12, "succeeded": 0, "failed": 0, "unknown": 2}
+      "pods": {"healthy": 12, "running_not_ready": 0, "restarting": 0, "pending": 0, "succeeded": 0, "failed": 0, "unknown": 2}
     }
   }
 }
 ```
 
-`health_summary` is present when a MetricStore is configured. Node health uses the latest `k8s.node.condition.ready` samples from the last 5 minutes. Pod health is derived from current topology pod nodes and their `phase`, `status`, or `k8s.pod.phase` labels when available; pods with unknown or missing state are counted in the `unknown` bucket instead of being inferred from missing telemetry.
+`health_summary` is present when a MetricStore is configured. Node health uses the latest `k8s.node.condition.ready` samples from the last 5 minutes. Pod buckets are derived from the `oksg.pod.health.status` derived enum metric (the integer value is translated server-side via `pkg/core/metrics/health_status.go`); pods without a recent sample fall through to the `unknown` bucket.
+
+Pod bucket keys match the public health-status string set used elsewhere in the API: `healthy`, `running_not_ready`, `restarting`, `pending`, `succeeded`, `failed`, `unknown`. The pod-scope composition currently only emits `healthy / pending / succeeded / failed / unknown`; `running_not_ready` and `restarting` are observable today at container scope (`oksg.container.health.status`) and roll up to pod scope only after a future `pod_id` labelling change to container metrics.
 
 Status values:
 
@@ -176,7 +178,7 @@ Response:
 }
 ```
 
-Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` defaults to `"unknown"`; aggregate runtime health is exposed through `/api/v1/status.health_summary` (see above), which combines node readiness samples with the latest topology pod state.
+Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is one of the public health-status string set: `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. For Pod and Container nodes the value is the latest sample of `oksg.pod.health.status` / `oksg.container.health.status` translated to its string label by the API (see `pkg/core/metrics/health_status.go`); for kinds without a derived health metric (Service, Node, etc.) the field is `"unknown"`. Aggregate runtime health is exposed through `/api/v1/status.health_summary` (see above).
 
 ### GET /api/v1/graph/nodes/{id}
 
@@ -244,7 +246,11 @@ Semconv metric names are the API contract. Query-time derivations currently incl
 - `http.server.request.count` / `rpc.server.request.count` / `servicegraph.request.count` -> `rate(...[1m])`
 - `servicegraph.request.error.count`, `servicegraph.grpc.request.message.count`, `servicegraph.grpc.response.message.count`, `servicegraph.tcp.connection.open.count`, and `servicegraph.tcp.connection.close.count` -> `rate(...[1m])`
 - `servicegraph.request.error.ratio` -> `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`
+- `oksg.container.health.status` -> integer-encoded enum (1=healthy, 2=running_not_ready, 3=restarting) derived from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Priority order: restarting > not_ready > healthy. Empty result means no recent sample (treat as unknown).
+- `oksg.pod.health.status` -> integer-encoded enum (1=healthy, 4=pending, 5=succeeded, 6=failed, 7=unknown) derived from `k8s.pod.phase`. running_not_ready and restarting at pod scope are a follow-up — see `oksg.container.health.status` for those today.
 - `http.server.request.duration` / `rpc.server.duration` / `servicegraph.request.duration` / `servicegraph.request.body.size` / `servicegraph.response.body.size` -> `rate(<metric>_sum[1m]) / clamp_min(rate(<metric>_count[1m]), 1)`
+
+The integer→label mapping for any enum metric is documented in the catalog row's `Description` field (see `GET /api/v1/metrics/catalog`); UIs should read it from the catalog rather than hard-coding.
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -281,6 +287,22 @@ Response:
   "next_token": "NQ=="
 }
 ```
+
+For the derived health-status enum metrics (`oksg.pod.health.status`, `oksg.container.health.status`), every sample additionally carries a `value_label` field with the public string label translated from the integer `value` by the backend. Frontends should render `value_label`; the integer encoding is internal to storage and PromQL composition only.
+
+```json
+{
+  "metric_name": "oksg.container.health.status",
+  "entity_id": "...",
+  "value": 3,
+  "value_label": "restarting",
+  "timestamp": "2026-05-08T10:00:00Z",
+  "unit": "count",
+  "labels": {"source": ""}
+}
+```
+
+The closed value-label set is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown` and is the same set used by `enrichedNode.status` and `health_summary.pods.*`. Canonical mapping lives in `pkg/core/metrics/health_status.go`. The `value_label` field is omitted on samples for any other metric.
 
 For edge-oriented metrics, samples include an optional `edge` object plus the original edge labels:
 

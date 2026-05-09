@@ -89,17 +89,23 @@ web/
     views/
       ClusterOverview/  KPI row, entity breakdown, relation types, runtime health summary, discovery sources
       TopologyGraph/    React Flow canvas + Ownership / Infrastructure / Traffic projections
-        layouts/         dagre layout strategies (ownership, infrastructure, traffic) plus shared
-                         dagreLayout.ts and sccCondensation.ts helpers
+        layouts/         per-mode strategies wired through registry.ts: ownershipLayout (custom
+                         tree), infrastructureLayout (dagreLayout.ts wrapper around @dagrejs/dagre),
+                         elkLayout.ts (elkjs layered orthogonal for traffic)
         nodes/           EntityNode, NamespaceNode, NodeMetric (live metric chip)
         edges/           RelationEdge (cable-bundle SVG edge with traffic-aware width)
         FilterToolbar.tsx, LegendPanel.tsx, NodeInspector.tsx, EdgeMetricButton.tsx
         projection.ts    LAYER_SPECS + project() — per-mode kinds/relations + edge filtering
-        useGraphLayout.ts synchronous layout dispatcher keyed by ProjectionMode
-        useProjectionState.ts URL-search-param-backed mode/granularity/orphans state
+        useGraphLayout.ts dispatcher that resolves mode + algorithm via registry; sync strategies
+                         resolve in the same render, async strategies (ELK) settle through useEffect
+        useProjectionState.ts URL-search-param-backed mode/granularity/orphans/algorithm state
         modes.ts         ProjectionMode and Granularity catalog used by the toolbar
         namespaceColor.ts deterministic namespace color palette
-      MetricsExplorer/  category tabs, entity/edge selector, MetricCard charts, raw samples table
+      MetricsExplorer/  single-entity / single-edge explorer
+        filter/        GlobalEntitySearch (⌘K), FilterBreadcrumbBuilder, SearchablePopover, applyFilters
+        edge/          EdgeSelector (calls-edge picker)
+        applicability/ kindCategories + sourceKinds gating tabs and cards by selected kind
+        SelectionSummary, MetricCard, InfoTooltip, RawSamplesTable, CategoryTabs, TimeRangeSelector
     components/
       Shell/          floating TopBar, Sidebar, StatusBar
       shared/         DataChip, SegmentedBar, KpiCard
@@ -209,13 +215,17 @@ The dev server reads the API base URL at startup. After you change `.env`, Vite 
 
 ### Topology layout strategies
 
-`web/src/views/TopologyGraph/layouts/` holds one strategy per projection mode. Each implements the synchronous `LayoutStrategy` interface (`layouts/types.ts`). Keep strategies synchronous unless the layout engine is genuinely async; do not wrap synchronous layouts in `useEffect` + `setState`, because React Query metric maps can change identity and create route churn. Per-mode algorithms:
+`web/src/views/TopologyGraph/layouts/` holds one strategy per projection mode, registered through `registry.ts` (`LAYOUT_REGISTRY`). Each strategy implements the `LayoutStrategy` interface (`layouts/types.ts`) and may return either a `LayoutResult` synchronously or a `Promise<LayoutResult>`. Keep strategies synchronous unless the layout engine is genuinely async; do not wrap synchronous layouts in `useEffect` + `setState`, because React Query metric maps can change identity and create route churn. Per-mode algorithms:
 
 - **Ownership** — deterministic top-down hierarchy. Namespace groups are laid out side by side, and each independent component inside a namespace computes dynamic ranks from ownership relations. Roots start at the top, and each structural target is placed at least one rank below its source, so direct workload children (pods, ConfigMaps, Secrets, and PVCs) can share the next layer. Ownership intentionally excludes runtime `calls` edges; it keeps Kubernetes structural relations (`routes_to`, `exposes`, `contains`, `uses`, `mounts`) so the tree remains a static ownership/declaration view.
 - **Infrastructure** — Dagre left-to-right between K8s nodes, with a lightweight grid packer inside each node group so pods stay compact without pulling in a heavier layout engine. Pods carry a 4 px namespace-color left stripe (the `namespaceColor` helper in `web/src/views/TopologyGraph/namespaceColor.ts`).
-- **Traffic** — Dagre left-to-right with greedy cycle breaking and tuned rank/node spacing. Granularity is overridden in `projection.ts` so traffic L2/L3 collapse to overview (pod-level traffic edges multiply by replica count and produce unreadable hairballs).
+- **Traffic** — ELK layered (`RIGHT`) with orthogonal edge routing (`elkjs`). The strategy is async because ELK runs through the WASM/JS engine. Each edge carries `routePoints` from ELK's edge sections plus `routeStyle: 'orthogonal'` and `rawElk: true`; `RelationEdge` renders those points directly. Granularity is overridden in `projection.ts` so traffic L2/L3 collapse to overview (pod-level traffic edges multiply by replica count and produce unreadable hairballs).
 
-`useGraphLayout` is a thin synchronous dispatcher that picks the strategy by mode and threads `mode` into each entity node's `data` so renderers (e.g. the namespace stripe in `EntityNode.tsx`) can branch on it. For ownership, pure helpers split namespace components, build relation-derived component models, assign dynamic rank positions, and mark edges for ownership routing. React Flow's live source/target handle coordinates are the source of truth for rendered edge endpoints; do not route hierarchy edges from stale layout-box estimates. For traffic and infrastructure, the shared Dagre adapter computes node placement while React Flow renders relation geometry from normal source/target handles.
+**Measure-then-layout for ELK.** `EntityNode` is content-driven (CSS pins width to 250 px but height varies per kind / metric content). If ELK is fed the static `NODE_HEIGHT_DEFAULT` for every node, edge endpoints land away from the actual rendered handles. To prevent that, `TopologyGraph.tsx` runs a DOM `ResizeObserver` keyed on each `.react-flow__node[data-id]` and writes the observed sizes into `LayoutInput.nodeSizes`; the ELK strategy uses those when present and falls back to the constants on the very first paint. Cached sizes survive snapshot polls because node IDs are stable across `useGraphSnapshot` refetches — only IDs that actually leave the DOM (different layer / filter) are evicted by the paired `MutationObserver`. Do not switch this to `useNodesInitialized` / `useReactFlow().getNodes()` / `useStore(s => s.nodeLookup)` without verifying that the chosen API actually surfaces `node.measured` for our custom EntityNode mounting; in v12 it did not.
+
+**Metric decoupling.** Layout strategies emit structural positions and edge endpoints only — they never read `nodeMetrics` / `edgeMetrics`. `useGraphLayout` runs a synchronous `decorateWithMetrics` pass on top of the resolved `LayoutResult` to merge metric snapshots into `node.data.metrics` / `edge.data.metrics`. This keeps metric polls cheap (no re-layout) and prevents async layouts (ELK) from being cancelled mid-resolve every time a metric tick produces a new map identity.
+
+`useGraphLayout` resolves the strategy via `LAYOUT_REGISTRY` keyed by mode + optional `?algo=` URL param, threads `mode` into each entity node's `data` so renderers (e.g. the namespace stripe in `EntityNode.tsx`) can branch on it, and surfaces async results via internal `useState`/`useEffect` only when the strategy returns a promise. React Flow's live source/target handle coordinates remain the source of truth for ownership and infrastructure edges; do not route those hierarchy edges from stale layout-box estimates. For ELK-routed traffic edges, the engine's `routePoints` win — they are rendered as-is, and live handle coordinates are intentionally ignored to avoid the diagonal artifact that appears when the first/last segment is rewritten from React Flow handles.
 
 ### Topology layout QA
 
@@ -283,7 +293,7 @@ Notes:
 - `http.server.request.count`, `rpc.server.request.count`, `servicegraph.request.count`, `servicegraph.request.error.count`, gRPC message counts, and TCP connection counts are served as 1-minute rates at query time, even though the stored semconv series are counter-derived.
 - `servicegraph.request.error.ratio` is query-derived from the served request and error rates.
 - Istio metrics enter through `metrics.IstioDialect`, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
-- The Metrics Explorer entity selector is driven by the latest graph snapshot, not the historical `/api/v1/entities` registry.
+- The Metrics Explorer entity search and breadcrumb filter are driven by the latest graph snapshot (`useGraphSnapshot`), not the historical `/api/v1/entities` registry. Edge mode lists `calls` edges from the same snapshot.
 
 ### Reading the graph output
 

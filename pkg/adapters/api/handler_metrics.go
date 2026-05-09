@@ -44,6 +44,10 @@ type enrichedSample struct {
 	MetricName string            `json:"metric_name"`
 	EntityID   entities.EntityID `json:"entity_id"`
 	Value      float64           `json:"value"`
+	// ValueLabel is the public string translation of an integer-encoded enum
+	// value (see pkg/core/metrics/health_status.go). Set only on samples for
+	// metrics where IsHealthStatusMetric reports true; omitted otherwise.
+	ValueLabel string            `json:"value_label,omitempty"`
 	Timestamp  string            `json:"timestamp"`
 	Labels     map[string]string `json:"labels,omitempty"`
 	Unit       metrics.Unit      `json:"unit,omitempty"`
@@ -118,6 +122,7 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 			MetricName: s.MetricName,
 			EntityID:   s.EntityID,
 			Value:      s.Value,
+			ValueLabel: s.ValueLabel,
 			Timestamp:  s.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
 			Labels:     s.Labels,
 			Unit:       h.unitLookup[s.MetricName],

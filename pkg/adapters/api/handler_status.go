@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
@@ -143,12 +142,17 @@ type nodeSummary struct {
 	Unhealthy int `json:"unhealthy"`
 }
 
+// podSummary buckets pods by their oksg.pod.health.status string label.
+// Field names match the public string set documented at
+// pkg/core/metrics/health_status.go and in docs/api-reference.md.
 type podSummary struct {
-	Pending   int `json:"pending"`
-	Running   int `json:"running"`
-	Succeeded int `json:"succeeded"`
-	Failed    int `json:"failed"`
-	Unknown   int `json:"unknown"`
+	Healthy         int `json:"healthy"`
+	RunningNotReady int `json:"running_not_ready"`
+	Restarting      int `json:"restarting"`
+	Pending         int `json:"pending"`
+	Succeeded       int `json:"succeeded"`
+	Failed          int `json:"failed"`
+	Unknown         int `json:"unknown"`
 }
 
 func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary {
@@ -173,48 +177,79 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 		}
 	}
 
-	if h.graphStore != nil {
-		if snap, err := h.graphStore.GetLatest(ctx); err == nil && snap != nil {
-			for _, node := range snap.Graph.Nodes {
-				if node.Kind != entities.KindPod {
-					continue
-				}
-				switch podPhaseFromLabels(node.Labels) {
-				case "pending":
+	// Pod health from the derived oksg.pod.health.status enum (string label
+	// already populated on each sample by the metric store).
+	if podIDs := h.podEntityIDs(ctx); len(podIDs) > 0 {
+		podSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
+			MetricName: "oksg.pod.health.status",
+			EntityIDs:  podIDs,
+			From:       from,
+			To:         now,
+		})
+		if err == nil {
+			latestLabel := latestLabelPerEntity(podSamples)
+			seen := make(map[entities.EntityID]struct{}, len(podIDs))
+			for _, id := range podIDs {
+				switch latestLabel[id] {
+				case metrics.HealthHealthy:
+					hs.Pods.Healthy++
+				case metrics.HealthRunningNotReady:
+					hs.Pods.RunningNotReady++
+				case metrics.HealthRestarting:
+					hs.Pods.Restarting++
+				case metrics.HealthPending:
 					hs.Pods.Pending++
-				case "running":
-					hs.Pods.Running++
-				case "succeeded":
+				case metrics.HealthSucceeded:
 					hs.Pods.Succeeded++
-				case "failed":
+				case metrics.HealthFailed:
 					hs.Pods.Failed++
-				case "unknown":
+				default:
 					hs.Pods.Unknown++
 				}
+				seen[id] = struct{}{}
 			}
+			_ = seen
+		} else {
+			h.logger.Warn("pod health-status query failed", logging.Error(err))
+			hs.Pods.Unknown += len(podIDs)
 		}
 	}
 
 	return hs
 }
 
-func podPhaseFromLabels(labels map[string]string) string {
-	for _, key := range []string{"phase", "status", "k8s.pod.phase"} {
-		phase := strings.ToLower(strings.TrimSpace(labels[key]))
-		switch phase {
-		case "1", "pending":
-			return "pending"
-		case "2", "running":
-			return "running"
-		case "3", "succeeded", "complete", "completed":
-			return "succeeded"
-		case "4", "failed", "error":
-			return "failed"
-		case "5", "unknown":
-			return "unknown"
+// podEntityIDs returns the IDs of every Pod in the latest topology snapshot.
+// Used as the multi-match filter on the health-status query so the metric
+// store only returns samples for currently-known pods.
+func (h *StatusHandler) podEntityIDs(ctx context.Context) []entities.EntityID {
+	if h.graphStore == nil {
+		return nil
+	}
+	snap, err := h.graphStore.GetLatest(ctx)
+	if err != nil || snap == nil {
+		return nil
+	}
+	var ids []entities.EntityID
+	for _, node := range snap.Graph.Nodes {
+		if node.Kind == entities.KindPod {
+			ids = append(ids, node.ID)
 		}
 	}
-	return "unknown"
+	return ids
+}
+
+// latestLabelPerEntity collapses a list of MetricSamples to one ValueLabel per
+// entity, keeping the most recent timestamp.
+func latestLabelPerEntity(samples []metrics.MetricSample) map[entities.EntityID]string {
+	latest := make(map[entities.EntityID]string, len(samples))
+	latestTS := make(map[entities.EntityID]time.Time, len(samples))
+	for _, sample := range samples {
+		if ts, ok := latestTS[sample.EntityID]; !ok || sample.Timestamp.After(ts) {
+			latest[sample.EntityID] = sample.ValueLabel
+			latestTS[sample.EntityID] = sample.Timestamp
+		}
+	}
+	return latest
 }
 
 func latestSamplePerEntity(samples []metrics.MetricSample) map[entities.EntityID]float64 {

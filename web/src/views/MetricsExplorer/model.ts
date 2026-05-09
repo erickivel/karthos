@@ -20,19 +20,22 @@ export function filterMetricsForMode(
   mode: ExplorerMode,
 ): CanonicalMetric[] {
   const requiredScope: MetricScope = mode === 'entity' ? 'entity' : 'edge'
-  return (metrics ?? []).filter((metric) => metric.category === category && metric.scopes.includes(requiredScope))
+  return (metrics ?? []).filter(
+    (metric) => metric.category === category && metric.scopes.includes(requiredScope),
+  )
 }
 
 export function buildEntityOptions(nodes: GraphNode[] | undefined): EntityOption[] {
-  return [...(nodes ?? [])]
-    .sort(compareNodes)
-    .map((node) => ({
-      id: node.id,
-      label: `[${node.kind}] ${node.namespace ? `${node.namespace}/` : ''}${node.name}`,
-    }))
+  return [...(nodes ?? [])].sort(compareNodes).map((node) => ({
+    id: node.id,
+    label: `[${node.kind}] ${node.namespace ? `${node.namespace}/` : ''}${node.name}`,
+  }))
 }
 
-export function buildEdgeOptions(edges: GraphEdge[] | undefined, nodes: GraphNode[] | undefined): EdgeOption[] {
+export function buildEdgeOptions(
+  edges: GraphEdge[] | undefined,
+  nodes: GraphNode[] | undefined,
+): EdgeOption[] {
   const nodeByID = new Map((nodes ?? []).map((node) => [node.id, node]))
   const seen = new Set<string>()
 

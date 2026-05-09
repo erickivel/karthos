@@ -7,8 +7,11 @@ export interface HealthSummary {
     unhealthy: number
   }
   pods: {
-    running: number
+    healthy: number
+    running_not_ready: number
+    restarting: number
     pending: number
+    succeeded: number
     failed: number
     unknown: number
   }

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowDown,
@@ -10,12 +10,14 @@ import {
 } from "lucide-react";
 import { useNodeDetail } from "@/hooks/useNodeDetail";
 import { useEdgeMetrics } from "@/hooks/useEdgeMetrics";
+import { useGraphSnapshot } from "@/hooks/useGraphSnapshot";
 import { useAppStore } from "@/stores/useAppStore";
 import { DataChip } from "@/components/shared/DataChip";
 import type { GraphNode } from "@/types/graph";
 import { formatBytes } from "../../utils/formatters";
 import { EdgeMetricButton } from "./EdgeMetricButton";
 import { buildEdgeMetricKey, type EdgeMetricSnapshot } from "./edgeMetrics";
+import { edgeMetricsUrl, entityMetricsUrl } from "@/lib/links";
 import styles from "./NodeInspector.module.css";
 
 interface NodeMetricSummaryItem {
@@ -157,14 +159,50 @@ function InspectorDataCard({
 function DataRow({ item }: { item: InfoItem }) {
   return (
     <div className={styles.dataRow}>
-      <span className={styles.dataKey}>{item.label}</span>
-      <strong className={styles.dataValue}>{item.value}</strong>
+      <span className={styles.dataKey} title={item.label}>
+        {item.label}
+      </span>
+      <strong className={styles.dataValue} title={item.value}>
+        {item.value}
+      </strong>
+    </div>
+  );
+}
+
+function SkeletonEdgeRows({ count = 3 }: { count?: number }) {
+  return (
+    <div className={styles.edgeList} aria-busy="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className={styles.skeletonRow}>
+          <span className={styles.skeletonDot} />
+          <span className={styles.skeletonBar} />
+          <span className={`${styles.skeletonBar} ${styles.skeletonBarShort}`} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EdgeCardError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className={styles.errorState}>
+      <span className={styles.errorMessage}>Couldn't load edge details</span>
+      <button type="button" className={styles.retryBtn} onClick={onRetry}>
+        Retry
+      </button>
     </div>
   );
 }
 
 function getDetailItems(node: GraphNode) {
   const labels = node.labels ?? {};
+  const dash = "—";
+
+  const base: InfoItem[] = [
+    { label: "Kind", value: node.kind ? String(node.kind) : dash },
+    { label: "Cluster", value: node.cluster || dash },
+    { label: "Namespace", value: node.namespace || dash },
+  ];
 
   if (node.kind === "workload") {
     const workloadType = labels["k8s.deployment.name"]
@@ -176,34 +214,14 @@ function getDetailItems(node: GraphNode) {
           : labels["k8s.replicaset.name"]
             ? "ReplicaSet"
             : "Workload";
-
     return [
+      ...base,
       { label: "Type", value: workloadType },
       { label: "Controller", value: node.name },
-      ...(node.namespace
-        ? [{ label: "Namespace", value: node.namespace }]
-        : []),
     ];
   }
 
-  if (node.kind === "namespace") {
-    return [
-      { label: "Namespace", value: node.name },
-      ...(node.cluster ? [{ label: "Cluster", value: node.cluster }] : []),
-    ];
-  }
-
-  if (node.kind === "node") {
-    return [
-      { label: "Node", value: node.name },
-      ...(node.cluster ? [{ label: "Cluster", value: node.cluster }] : []),
-    ];
-  }
-
-  return [
-    ...(node.cluster ? [{ label: "Cluster", value: node.cluster }] : []),
-    ...(node.namespace ? [{ label: "Namespace", value: node.namespace }] : []),
-  ];
+  return base;
 }
 
 function getSpecItems(node: GraphNode) {
@@ -222,24 +240,32 @@ export function NodeInspector() {
   const navigate = useNavigate();
   const selectedEntityId = useAppStore((s) => s.selectedEntityId);
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
-  const { data } = useNodeDetail(selectedEntityId);
+  const { data, isPending, isError, refetch } = useNodeDetail(selectedEntityId);
   const edgeMetrics = useEdgeMetrics();
+  const { data: graphSnapshot } = useGraphSnapshot();
 
-  if (!selectedEntityId || !data) return null;
+  const snapshotNode = useMemo(() => {
+    if (!selectedEntityId || !graphSnapshot) return undefined;
+    return graphSnapshot.graph.nodes.find((n) => n.id === selectedEntityId);
+  }, [selectedEntityId, graphSnapshot]);
 
-  const metricSummary = buildMetricSummary(data.node);
+  if (!selectedEntityId) return null;
 
-  const { node, edges } = data;
+  const node = data?.node ?? snapshotNode;
+  if (!node) return null;
+
+  const edges = data?.edges;
+  const detailLoading = isPending && !data;
+  const detailFailed = isError && !data;
+  const metricSummary = buildMetricSummary(node);
   const labels = node.labels ?? {};
   const detailItems = getDetailItems(node);
   const specItems = getSpecItems(node);
   const openEdgeMetrics = (sourceId: string, targetId: string) => {
-    navigate(
-      `/metrics?mode=edge&edgeSource=${encodeURIComponent(sourceId)}&edgeTarget=${encodeURIComponent(targetId)}`,
-    );
+    navigate(edgeMetricsUrl(sourceId, targetId));
   };
   const openEntityMetrics = () => {
-    navigate(`/metrics?mode=entity&entity=${encodeURIComponent(node.id)}`);
+    navigate(entityMetricsUrl(node.id));
   };
 
   return (
@@ -262,6 +288,9 @@ export function NodeInspector() {
             <BarChart3 size={13} strokeWidth={2} />
             <span>Detailed metrics</span>
           </button>
+          {detailLoading && (
+            <span className={styles.loadingSubtitle}>Loading details…</span>
+          )}
         </div>
         <button
           className={styles.closeBtn}
@@ -344,7 +373,11 @@ export function NodeInspector() {
           title="Inbound"
           tone="inbound"
         >
-          {edges.inbound.length > 0 ? (
+          {detailLoading ? (
+            <SkeletonEdgeRows />
+          ) : detailFailed ? (
+            <EdgeCardError onRetry={() => refetch()} />
+          ) : edges && edges.inbound.length > 0 ? (
             <div className={styles.edgeList}>
               {edges.inbound.map((e) => {
                 const snapshot =
@@ -384,7 +417,11 @@ export function NodeInspector() {
           title="Outbound"
           tone="outbound"
         >
-          {edges.outbound.length > 0 ? (
+          {detailLoading ? (
+            <SkeletonEdgeRows />
+          ) : detailFailed ? (
+            <EdgeCardError onRetry={() => refetch()} />
+          ) : edges && edges.outbound.length > 0 ? (
             <div className={styles.edgeList}>
               {edges.outbound.map((e) => {
                 const snapshot =

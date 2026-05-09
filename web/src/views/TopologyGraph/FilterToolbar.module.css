@@ -4,12 +4,68 @@
   left: calc(52px + var(--space-md) + var(--space-md));
   z-index: 50;
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
   padding: var(--space-sm);
   background: var(--surface-nav);
   border-radius: var(--radius-lg);
   /* Offset below topbar */
   margin-top: calc(40px + var(--space-sm));
+}
+
+.breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.segmentWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 280px;
+  padding: 6px 9px;
+  background: var(--surface-base);
+  border: 1px solid var(--surface-divider);
+  border-radius: 5px;
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segment[data-open='true'] {
+  background: var(--surface-active);
+  border-color: var(--color-signal);
+}
+
+.segmentLabel {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.segmentValue {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.slash {
+  color: var(--surface-divider);
+  margin: 0 2px;
 }
 
 .toolbarRight {
@@ -31,6 +87,45 @@
 
 .toolbarRight[data-inspector-open="true"] {
   right: 420px;
+}
+
+.toolbarRight .section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Visually nest the Layer section under View — small left bar + indent so it
+   reads as a child filter of the active mode. */
+.toolbarRight .subSection {
+  position: relative;
+  padding-left: 10px;
+  margin-top: 4px;
+  border-left: 2px solid var(--surface-active);
+}
+
+.toolbarRight .sectionLabel {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  padding: 0 2px;
+}
+
+.toolbarRight .sectionLabelLead {
+  color: var(--color-text-primary);
+}
+
+.toolbarRight .sectionLabelMuted {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  font-size: 0.7rem;
 }
 
 .toolbarRight .group {

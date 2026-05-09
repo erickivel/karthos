@@ -2,8 +2,10 @@ import {
   Boxes,
   Server,
   Network,
-  Eye,
-  Activity,
+  Workflow,
+  Cpu,
+  Box,
+  Container,
   Layers,
   type LucideIcon,
 } from 'lucide-react'
@@ -41,26 +43,95 @@ export const MODE_ENTRIES: ModeEntry<ProjectionMode>[] = [
   },
 ]
 
-export const GRANULARITY_ENTRIES: ModeEntry<Granularity>[] = [
+// Ownership mode reuses the Granularity URL state but shows the K8s object
+// hierarchy in human terms instead of L1/L2/L3. URL values stay
+// overview/runtime/detailed for shareable-link stability — same convention as
+// Traffic and Infrastructure.
+export const OWNERSHIP_GRANULARITY_ENTRIES: ModeEntry<Granularity>[] = [
   {
     value: 'overview',
-    label: 'L1 — Overview',
-    shortLabel: 'L1',
-    icon: Eye,
-    description: 'Namespaces or nodes, services, workloads, ingress.',
+    label: 'Workloads & services',
+    shortLabel: 'Workloads',
+    icon: Workflow,
+    description: 'Top-level objects per namespace: services, workloads, ingress.',
   },
   {
     value: 'runtime',
-    label: 'L2 — Runtime',
-    shortLabel: 'L2',
-    icon: Activity,
-    description: 'Adds pods to the overview level.',
+    label: 'Pods per workload',
+    shortLabel: 'Pods',
+    icon: Box,
+    description: 'Adds pod replicas under each workload.',
   },
   {
     value: 'detailed',
-    label: 'L3 — Detailed',
-    shortLabel: 'L3',
+    label: 'Containers & resources',
+    shortLabel: 'Resources',
     icon: Layers,
-    description: 'Adds containers, configmaps, secrets and PVCs.',
+    description: 'Adds containers, configmaps, secrets, and PVCs to the tree.',
   },
 ]
+
+// Traffic mode reuses the Granularity URL state but presents three named
+// flows instead of L1/L2/L3. Keeping the underlying value IDs unchanged
+// preserves shareable links across modes.
+export const TRAFFIC_GRANULARITY_ENTRIES: ModeEntry<Granularity>[] = [
+  {
+    value: 'overview',
+    label: 'Endpoint Flow',
+    shortLabel: 'Endpoint',
+    icon: Network,
+    description:
+      'Logical traffic surface — ingress/gateway and services. Routes and call edges only.',
+  },
+  {
+    value: 'runtime',
+    label: 'Workload Flow',
+    shortLabel: 'Workload',
+    icon: Workflow,
+    description:
+      'Which controllers implement traffic — services, workloads, ingress. Exposes is structural.',
+  },
+  {
+    value: 'detailed',
+    label: 'Instance Flow',
+    shortLabel: 'Instance',
+    icon: Cpu,
+    description:
+      'Pod replicas participating in traffic. Pod-level call edges only.',
+  },
+]
+
+// Infrastructure mode reuses the Granularity URL state but presents three
+// physically meaningful tiers — Nodes / Pods / Containers — instead of
+// L1/L2/L3. URL values stay overview/runtime/detailed for shareable links.
+export const INFRASTRUCTURE_GRANULARITY_ENTRIES: ModeEntry<Granularity>[] = [
+  {
+    value: 'overview',
+    label: 'Nodes',
+    shortLabel: 'Nodes',
+    icon: Server,
+    description: 'Just the cluster nodes — where compute lives.',
+  },
+  {
+    value: 'runtime',
+    label: 'Pods on nodes',
+    shortLabel: 'Pods',
+    icon: Box,
+    description: 'Pods nested inside the node that hosts them.',
+  },
+  {
+    value: 'detailed',
+    label: 'Containers in pods',
+    shortLabel: 'Containers',
+    icon: Container,
+    description: 'Full Node ⊃ Pod ⊃ Container nesting.',
+  },
+]
+
+export function granularityEntriesFor(
+  mode: ProjectionMode,
+): ModeEntry<Granularity>[] {
+  if (mode === 'traffic') return TRAFFIC_GRANULARITY_ENTRIES
+  if (mode === 'infrastructure') return INFRASTRUCTURE_GRANULARITY_ENTRIES
+  return OWNERSHIP_GRANULARITY_ENTRIES
+}

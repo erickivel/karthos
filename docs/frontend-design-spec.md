@@ -118,10 +118,15 @@ The landing page. Operators see cluster health at a glance. TCC reviewers see pr
 
 ### 5.2 Topology Graph (`/topology`)
 
-The core view. Interactive system graph rendered with React Flow on top of a
-dagre layout engine (`@dagrejs/dagre`). The full graph is too dense to be
-useful flat, so the view is filtered through one of three **projection
-modes** with three **granularity** levels. Both are URL-backed via
+The core view. Interactive system graph rendered with React Flow. Layout is
+selected per projection mode through `LAYOUT_REGISTRY`
+(`web/src/views/TopologyGraph/layouts/registry.ts`): Ownership and
+Infrastructure use synchronous strategies (custom tree / `@dagrejs/dagre`),
+Traffic uses ELK layered orthogonal (`elkjs`). The registry pairs each mode
+with a default algorithm and accepts additional algorithms keyed by name, so
+new strategies plug in without touching call sites. The full graph is too
+dense to be useful flat, so the view is filtered through one of three
+**projection modes** with three **granularity** levels. Both are URL-backed via
 `useProjectionState`, so links into the topology view round-trip mode and
 granularity.
 
@@ -131,17 +136,51 @@ granularity.
 | Mode | Visible kinds | Layer-relevant relations | Layout strategy |
 |------|---------------|-------------------------|-----------------|
 | Ownership | namespace, workload, pod, container, configmap, secret, pvc, service, ingress | `contains`, `mounts`, `uses`, `exposes`, `routes_to` | top-down hierarchy, namespace groups side-by-side, dynamic ranks via `runLayered` |
-| Infrastructure | node, namespace, service, workload, ingress, pod, container | `runs_on`, `mounts` | dagre LR between K8s nodes + grid pack inside node groups, namespace stripe on pods |
-| Traffic | namespace, service, workload, ingress | `calls`, `routes_to`, `exposes` | dagre LR with greedy cycle breaking; granularity is forced to `overview` (collapsing pod-level edges) |
+| Infrastructure | node, pod, container | `runs_on`, `contains` | dagre LR for the single-tier cases (Nodes / Pods on nodes); hand-packed two-tier nesting for Containers in pods |
+| Traffic | varies by flow — see Traffic flows below | `calls`, `routes_to`, `exposes` | ELK layered (`RIGHT`) with orthogonal edge routing; route geometry returned by ELK is rendered as-is |
 
-**Granularity** (`Granularity = 'overview' | 'runtime' | 'detailed'`):
+**Granularity** (`Granularity = 'overview' | 'runtime' | 'detailed'`) is shared
+URL state across all modes; the picker labels swap per mode via
+`granularityEntriesFor(mode)` while the underlying URL value stays stable
+for shareable links.
+
+For Ownership:
 
 - `overview` — namespace, node, service, workload, ingress
 - `runtime` — overview + pod
 - `detailed` — runtime + container, configmap, secret, pvc
 
-The Traffic mode intentionally caps at `overview` because pod-level traffic
-edges multiply by replica count and produce unreadable hairballs.
+For Infrastructure (`INFRASTRUCTURE_GRANULARITY_ENTRIES` +
+`INFRASTRUCTURE_VISIBLE_KINDS`):
+
+| URL value  | Picker label          | Visible kinds        |
+|------------|-----------------------|----------------------|
+| `overview` | "Nodes"               | node                 |
+| `runtime`  | "Pods on nodes"       | node, pod            |
+| `detailed` | "Containers in pods"  | node, pod, container |
+
+Infrastructure is purely "where compute runs": Node ⊃ Pod ⊃ Container.
+PVCs / Secrets / ConfigMaps live outside this view. At `detailed`
+granularity the layout switches to a hand-packed two-tier nesting (node
+rectangles contain pod rectangles contain container cards) and emits no
+edges — containment is encoded by visual nesting.
+
+**Traffic flows** (Traffic mode reuses the `Granularity` URL state but
+relabels the picker — see `TRAFFIC_FLOW_SPECS` and
+`TRAFFIC_GRANULARITY_ENTRIES`):
+
+| Granularity | Flow | Visible kinds | Relations |
+|-------------|------|---------------|-----------|
+| `overview`  | Endpoint Flow | ingress, service | `routes_to`, `calls` |
+| `runtime`   | Workload Flow | ingress, service, workload | `calls`, `exposes`, `routes_to` |
+| `detailed`  | Instance Flow | pod | `calls` |
+
+Endpoint Flow is the default and answers "which entrypoints and services
+are talking?". Workload Flow bridges runtime traffic with the controllers
+that implement the endpoints — `exposes` is rendered structurally (thin,
+muted, dashed) so it reads distinct from the rate-styled `calls` edges.
+Instance Flow renders all participating pods for replica-level
+troubleshooting; pod auto-collapse and zero-traffic hiding are deferred.
 
 **Edge filtering invariant.** The `project()` function filters edges by
 **both** endpoint visibility and `LayerSpec.relations`. Without the second
@@ -171,15 +210,15 @@ Card content: entity name (bold, header bar), kind-specific icon (top-right), 2-
 **Edge Rendering — `RelationEdge`:**
 Edges are a custom React Flow edge component (`edges/RelationEdge.tsx`):
 
-- Path geometry uses React Flow's live source/target handle coordinates as the source of truth — never stale layout-box estimates. This is enforced because dagre layout positions are advisory; React Flow may reposition handles after re-render and the edge must follow.
-- Stroke color is keyed to relation type via CSS custom properties (`--color-signal` for `calls`/`exposes`, `--color-info` for `runs_on`/`contains`, `--color-text-muted` for `uses`/`mounts`).
+- Path geometry uses React Flow's live source/target handle coordinates as the source of truth — never stale layout-box estimates. This is enforced because dagre/tree layout positions are advisory; React Flow may reposition handles after re-render and the edge must follow. **Exception:** edges with `data.rawElk === true` carry an explicit `routePoints` array produced by ELK; these are rendered as-is and the live handle coordinates are intentionally ignored, otherwise the first/last segment would tilt off the orthogonal route.
+- Stroke color is keyed to relation type via CSS custom properties (`--color-signal` for `calls`, `--color-info` for `runs_on`/`contains`, `--color-text-muted` for `exposes` and other structural relations). In Workload Flow the `exposes` edge is rendered thin, muted and dashed so it visually separates from rate-styled `calls`.
 - For `calls` edges, stroke width scales with the live request rate snapshot from `useEdgeMetrics`, so high-traffic links read as visually heavier.
 - The original "cable bundle" mockup is approximated with stroke-width modulation rather than literal multi-line bundles; this kept the SVG cost flat as graph density grew.
 - An `EdgeMetricButton` overlay opens the Metrics Explorer pre-filtered to that edge.
 
 **Node Inspector Panel:**
 Appears when a node is clicked. Contents:
-- Entity name + status indicator dot
+- Entity name + status indicator dot. The dot reads `node.status` directly — one of the public health-status string set (`healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`) supplied by the backend at the API boundary. The frontend does no enum translation; see `pkg/core/metrics/health_status.go`.
 - Kind/type chips
 - Properties section: namespace, kind-specific fields from entity labels
 - Inbound relations: list with relation type + source entity name (clickable)
@@ -205,47 +244,64 @@ Appears when a node is clicked. Contents:
 
 Entity and edge time-series exploration across the canonical metric categories.
 
-**Layout:**
-- Header: mode switch + Entity or Edge selector + Time range dropdown
-- Category tabs: Resource, Traffic, Latency, Error, Capacity, Health
-- Chart grid (2 columns): one card per metric in the active category
-- Raw Samples table: scrollable table of MetricSample records
+Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped and removed in favour of a tighter selection UX with a global keyboard search.
 
-**Entity mode:**
-Dropdown listing entities from the latest graph snapshot only. Pre-filled when arriving from the topology inspector via `/metrics?entity={id}`.
+**Layout (entity mode):**
+1. Header: page title + Entity / Edge mode tabs
+2. **Global entity search** (`filter/GlobalEntitySearch.tsx`): full-width input with a `⌘K` shortcut. Fuzzy text search across name, namespace, kind, and status against the latest snapshot. Arrow keys + Enter pick.
+3. **Breadcrumb / Builder filter** (`filter/FilterBreadcrumbBuilder.tsx`): path-style `Namespace / Kind / Entity` segments backed by `SearchablePopover`. An "Edit Filters" toggle expands an advanced builder with `SCOPE` (namespace, kind), `WHERE` (status, name-contains query), and `SELECT` (entity) rows. "Reset" clears all state. Each picker is fed by `applyFilters(allNodes, ...)` minus its own field, so the namespace, kind, and entity dropdowns only ever list options that are still viable under the *other* active filters; if a previously-selected entity falls out of the new candidate set, it auto-clears. Popovers dismiss on outside click or `Escape` (`useClickOutside` hook).
+4. **Selection summary** (`SelectionSummary.tsx`): card with health dot, entity name, kind badge, namespace/cluster/status chips, and the segmented time-range control (`5m / 15m / 1h / 6h / 24h`).
+5. **Category tabs**: filtered to categories applicable to the selected kind via `applicability/kindCategories.ts`.
+6. **Chart grid**: one `MetricCard` per applicable canonical metric. Cards share a Recharts `syncId` so the hover cursor mirrors across cards even though only a single entity is selected.
+7. **Raw Samples table**: scrollable, scope column shows `namespace/name` for entity samples and `src → tgt` for edge samples.
 
-**Edge mode:**
-Dropdown listing graph `calls` edges by source and target display names. Pre-filled when arriving from the topology inspector via `/metrics?mode=edge&edgeSource={id}&edgeTarget={id}`.
+**Layout (edge mode):**
+1. Same header, mode tab on Edge.
+2. **Edge selector** (`edge/EdgeSelector.tsx`): single search-and-pick combobox over `calls` edges in the snapshot; shows source and target health dots, kind swatches, names, and namespaces. Keyboard navigable.
+3. **Selection summary** in edge variant: source → target with relation badge.
+4. Tabs are fixed to traffic, latency, error (the categories defined for `MetricScope = 'edge'`).
+5. Same chart grid + raw samples.
+
+**URL state:**
+- Entity: `/metrics?mode=entity&entity={id}` (single id; the multi-id `entity=a,b,c` shape was retired with multi-compare).
+- Edge: `/metrics?mode=edge&edgeSource={id}&edgeTarget={id}` (unchanged).
+- Deep-links from the topology `NodeInspector` (`entityMetricsUrl` / `edgeMetricsUrl` in `web/src/lib/links.ts`) are preserved.
+
+**Chart Cards (`MetricCard.tsx`):**
+- Title + `InfoTooltip` showing sample count, canonical metric name, and source list (active source highlighted in Signal Green).
+- Source chips listing `metric.sources[]` with the active one accent-coloured.
+- Prominent current value (last sample) + unit, right-aligned.
+- Recharts `BarChart` with horizontal gridlines, hidden Y axis, and a 5-tick X axis (left/center/right + "now" label on the rightmost tick).
+- Empty state: dashed border + "No samples in selected time range" + the list of expected sources, so empty cards distinguish "no data right now" from "this never applies".
 
 **Time Range:**
-Dropdown: Last 5m, 15m, 1h, 6h, 24h. Maps to `from` and `to` query params on the metrics API.
+Segmented control inside the selection summary. Maps to `from` / `to` query params on the metrics API.
 
 **Category Tabs:**
 Maps 1:1 to the canonical `MetricCategory` values: resource, traffic, latency, error, capacity, health. Active tab highlighted in Signal Green.
 
-**Chart Cards:**
-Each canonical metric for the selected entity gets a card containing:
-- Metric name (uppercase label)
-- Current value + unit (large, colored)
-- Time-series chart: **minimalist segmented bar charts** as the primary visualization style — solid rectangular blocks with gaps between them, using opacity gradients from `var(--surface-active)` (older data) to `var(--color-signal)` (recent data), matching the "Live Telemetry" aesthetic from the reference mockups
-- Line charts used only where continuous trend is essential (e.g., latency percentiles)
-- Multi-series support where applicable (e.g., disk read/write on same chart)
-
-**Raw Samples Table:**
-Scrollable table with columns: Metric, Value, Unit, Timestamp. Zebra-striped with tonal layering (alternating `var(--surface-nav)` / `var(--surface-module)`). Useful for operators debugging and TCC reviewers inspecting raw data.
+**Raw Samples Table (`RawSamplesTable.tsx`):**
+Scrollable table with columns: Metric, Scope, Source, (Mesh — only when mesh-labelled samples are present), Value, Unit, Timestamp. The page passes a snapshot-aware `scopeFor` formatter so users see human-readable namespace/name, not raw IDs.
 
 **Data sources:**
 - `GET /api/v1/metrics/series?metric_name={name}&entity_id[]={id}&from=&to=` → entity metric series
 - `GET /api/v1/metrics/series?metric_name={name}&edge_source_id={id}&edge_target_id={id}&from=&to=` → edge metric series
 - `GET /api/v1/metrics/catalog?category=` → canonical metric definitions, including per-metric `scopes`
 - `GET /api/v1/graph` → graph edges for the edge selector
-- `GET /api/v1/graph` → live graph nodes for the entity selector
+- `GET /api/v1/graph` → live graph nodes for the global search and breadcrumb filter
 
 The Metrics Explorer must treat catalog `scopes` as authoritative:
 
 - entity mode renders only metrics whose scopes include `entity`
 - edge mode renders only metrics whose scopes include `edge`
 - edge mode uses edge-capable catalog entries such as servicegraph and HTTP request metrics; unsupported pod-network metrics must not be requested or displayed
+
+**Applicability layer.** On top of `scopes`, the Explorer hides tabs and cards that are *structurally* inapplicable to the selected entity kind via two small frontend config files:
+
+- `web/src/views/MetricsExplorer/applicability/kindCategories.ts` — `EntityKind → MetricCategory[]`, drives **tab visibility** (e.g. ConfigMap exposes no tabs).
+- `web/src/views/MetricsExplorer/applicability/sourceKinds.ts` — `SourceId → EntityKind[] | '*'`, drives **card visibility** (e.g. an `mesh.istio`-only metric is hidden when a Pod is selected).
+
+Cards that are applicable but currently empty render an informative empty state listing the metric's expected sources, distinguishing "no data right now" from "this never applies". Unknown source ids fail open and emit a single `console.warn` in dev. See `web/src/views/MetricsExplorer/applicability/README.md` for the full model and how to extend it.
 
 ### 5.4 Status Bar
 
@@ -428,8 +484,12 @@ Constraints that have caused regressions if ignored:
   dispatcher keyed by `ProjectionMode`; do not convert it to `useEffect` +
   `setState`. The `LayoutStrategy` interface in `layouts/types.ts` is the
   contract every strategy implements.
-- **Layout engine is dagre.** Topology layouts live under
-  `web/src/views/TopologyGraph/layouts/` and use `@dagrejs/dagre` per mode.
+- **Layouts are picked through `LAYOUT_REGISTRY`** in
+  `web/src/views/TopologyGraph/layouts/registry.ts`. Ownership runs a custom
+  tree layout, Infrastructure uses `@dagrejs/dagre`, Traffic uses ELK
+  (`elkjs`) layered orthogonal. The registry maps each `ProjectionMode` to a
+  default algorithm plus any optional alternates so adding a new strategy is
+  a one-line change.
 - **Catalog scopes are authoritative.** Metrics Explorer renders entity
   cards only when the catalog entry's `scopes` includes `entity`, and edge
   cards only when it includes `edge`.

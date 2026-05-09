@@ -191,8 +191,8 @@ REST API flags:
 reverse-proxied to `oksg-backend:8080`. Three views:
 
 - `/` Cluster Overview — KPI row, entity breakdown, relation types, runtime health summary, discovery sources
-- `/topology` Topology Graph — React Flow canvas with three projection modes (Ownership, Infrastructure, Traffic) and three granularity levels; dagre per-mode layout strategies under `web/src/views/TopologyGraph/layouts/`
-- `/metrics` Metrics Explorer — category tabs, entity/edge selector, time range, MetricCard charts, raw samples
+- `/topology` Topology Graph — React Flow canvas with three projection modes (Ownership, Infrastructure, Traffic) and three granularity levels; per-mode layout strategies under `web/src/views/TopologyGraph/layouts/` are selected via `LAYOUT_REGISTRY` (custom tree for Ownership, `@dagrejs/dagre` for Infrastructure, `elkjs` layered orthogonal for Traffic)
+- `/metrics` Metrics Explorer — Entity/Edge mode toggle, ⌘K global entity search, breadcrumb/builder hybrid filter (entity), edge selector (edge), selection summary with segmented time range, applicability-gated category tabs, restyled MetricCard charts (gridlines + value/unit + info tooltip), and raw samples table
 
 State: TanStack Query for polling, Zustand for cross-view selection.
 Theming: CSS custom properties only — no hardcoded hex in components.

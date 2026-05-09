@@ -69,6 +69,15 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 		}
 		result = append(result, sample)
 	}
+	// Mirror VMMetricStore: populate the public string label for health-status
+	// enum metrics so consumers (incl. tests) see the same shape regardless of
+	// backing store. Storage writes hold integer values only; the label is an
+	// API/store-boundary derivation.
+	if metrics.IsHealthStatusMetric(q.MetricName) {
+		for i := range result {
+			result[i].ValueLabel = metrics.HealthLabel(q.MetricName, result[i].Value)
+		}
+	}
 	return result, nil
 }
 

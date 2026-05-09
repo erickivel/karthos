@@ -17,6 +17,16 @@
 //       (see the `spec.relations.has(...)` filter in `project()`).
 //    Adding a relation here changes BOTH of those — that's deliberate.
 //
+// 3. Traffic mode is split across THREE flows by granularity:
+//    - overview  → Endpoint Flow  (ingress, service; routes_to + calls)
+//    - runtime   → Workload Flow  (ingress, service, workload; calls + exposes + routes_to)
+//    - detailed  → Instance Flow  (pod; calls)
+//    `resolveLayerSpec` picks the right LayerSpec per (mode, granularity).
+//    Endpoint and Instance Flow MUST NOT include `exposes` — exposes is
+//    structural and only appears in Workload Flow. Re-introducing the old
+//    `mode === 'traffic'` overview override would collapse Workload and
+//    Instance Flows back to Endpoint Flow.
+//
 import type {
   EntityKind,
   GraphEdge,
@@ -46,6 +56,15 @@ export const VISIBLE_KINDS_BY_GRANULARITY: Record<Granularity, Set<EntityKind>> 
     ...DETAILED_ADDS,
   ]),
 }
+
+// Infrastructure has its own granularity meaning (Node / Pod / Container)
+// and does not share OVERVIEW_KINDS with Ownership.
+export const INFRASTRUCTURE_VISIBLE_KINDS: Record<Granularity, Set<EntityKind>> =
+  {
+    overview: new Set<EntityKind>(['node']),
+    runtime: new Set<EntityKind>(['node', 'pod']),
+    detailed: new Set<EntityKind>(['node', 'pod', 'container']),
+  }
 
 // LAYER_SPECS — single registry. Adding a new layer is one entry: kinds
 // allow-list, layer-relevant relations, and an intrinsic predicate (entities
@@ -97,15 +116,55 @@ export const LAYER_SPECS: Record<ProjectionMode, LayerSpec> = {
   },
   infrastructure: {
     id: 'infrastructure',
-    kinds: new Set<EntityKind>(['node', 'pod', 'container', 'pvc']),
-    relations: new Set<RelationType>(['runs_on', 'mounts']),
+    // Infrastructure is purely "where compute runs": Node ⊃ Pod ⊃ Container.
+    // PVCs / Secrets / ConfigMaps are storage/config resources, not runtime
+    // hosts, and live outside this view.
+    kinds: new Set<EntityKind>(['node', 'pod', 'container']),
+    // `runs_on` ties pods to their host node; `contains` ties containers to
+    // their pod. Both relations are structural — they describe the K8s
+    // hosting hierarchy, not observed traffic.
+    relations: new Set<RelationType>(['runs_on', 'contains']),
     intrinsic: (e) => e.kind === 'node',
   },
+  // Traffic at default granularity (overview) is the Endpoint Flow.
+  // Workload (runtime) and Instance (detailed) flows live in
+  // TRAFFIC_FLOW_SPECS below; resolveLayerSpec picks the right one.
   traffic: {
     id: 'traffic',
-    kinds: new Set<EntityKind>(['service', 'workload', 'ingress', 'pod']),
-    relations: new Set<RelationType>(['calls', 'routes_to', 'exposes']),
+    kinds: new Set<EntityKind>(['service', 'ingress']),
+    relations: new Set<RelationType>(['calls', 'routes_to']),
   },
+}
+
+// Traffic mode renders three distinct flows, picked by granularity.
+// Endpoint Flow (overview): logical traffic surface, no workloads/pods.
+// Workload Flow (runtime): which controllers implement traffic; `exposes`
+// is structural here and rendered visually distinct from `calls`.
+// Instance Flow (detailed): pod-level participants only.
+export const TRAFFIC_FLOW_SPECS: Record<Granularity, LayerSpec> = {
+  overview: {
+    id: 'traffic',
+    kinds: new Set<EntityKind>(['service', 'ingress']),
+    relations: new Set<RelationType>(['calls', 'routes_to']),
+  },
+  runtime: {
+    id: 'traffic',
+    kinds: new Set<EntityKind>(['service', 'workload', 'ingress']),
+    relations: new Set<RelationType>(['calls', 'exposes', 'routes_to']),
+  },
+  detailed: {
+    id: 'traffic',
+    kinds: new Set<EntityKind>(['pod']),
+    relations: new Set<RelationType>(['calls']),
+  },
+}
+
+export function resolveLayerSpec(
+  mode: ProjectionMode,
+  granularity: Granularity,
+): LayerSpec {
+  if (mode === 'traffic') return TRAFFIC_FLOW_SPECS[granularity]
+  return LAYER_SPECS[mode]
 }
 
 export interface ProjectionResult {
@@ -119,16 +178,19 @@ export function visibleKindsFor(
   mode: ProjectionMode,
   granularity: Granularity,
 ): Set<EntityKind> {
-  // Mode override: traffic at runtime/detailed silently behaves as overview.
-  // Pod-level call edges produce unreadable hairballs (every edge multiplied
-  // by replica count); collapse to service/workload granularity.
-  const effective: Granularity =
-    mode === 'traffic' && granularity !== 'overview' ? 'overview' : granularity
-
-  const base = new Set(VISIBLE_KINDS_BY_GRANULARITY[effective])
-  if (mode === 'infrastructure' && effective === 'detailed') {
-    base.delete('container')
+  // Traffic is granularity-driven through TRAFFIC_FLOW_SPECS: each flow
+  // declares exactly the kinds it wants (Endpoint=ingress/service,
+  // Workload=+workload, Instance=pod-only). The old overview override was
+  // removed deliberately — see load-bearing decision #3 at the top.
+  if (mode === 'traffic') {
+    return new Set(TRAFFIC_FLOW_SPECS[granularity].kinds)
   }
+
+  if (mode === 'infrastructure') {
+    return new Set(INFRASTRUCTURE_VISIBLE_KINDS[granularity])
+  }
+
+  const base = new Set(VISIBLE_KINDS_BY_GRANULARITY[granularity])
   const allowed = LAYER_SPECS[mode].kinds
   for (const kind of base) {
     if (!allowed.has(kind)) base.delete(kind)
@@ -221,7 +283,7 @@ export function project(
 ): ProjectionResult {
   const visibleKinds = visibleKindsFor(mode, granularity)
   const parentKind = parentKindFor(mode)
-  const spec = LAYER_SPECS[mode]
+  const spec = resolveLayerSpec(mode, granularity)
   const includeOrphans = options.includeOrphans ?? false
 
   const kindFiltered = nodes.filter((n) => visibleKinds.has(n.kind))
@@ -263,8 +325,15 @@ export function project(
       if (ns) groupOf.set(n.id, ns.id)
     }
   } else if (parentKind === 'node') {
+    // Infrastructure uses two-tier nesting: pods group under their host node,
+    // containers group under their pod. The layout walks `groupOf` to render
+    // Node ⊃ Pod ⊃ Container as nested rectangles.
     const nodeEntitiesById = new Map<string, GraphNode>()
-    for (const n of visibleNodes) if (n.kind === 'node') nodeEntitiesById.set(n.id, n)
+    const podEntitiesById = new Map<string, GraphNode>()
+    for (const n of visibleNodes) {
+      if (n.kind === 'node') nodeEntitiesById.set(n.id, n)
+      else if (n.kind === 'pod') podEntitiesById.set(n.id, n)
+    }
 
     const podToHostNode = new Map<string, string>()
     const containerToPod = new Map<string, string>()
@@ -276,15 +345,13 @@ export function project(
       }
     }
     for (const n of visibleNodes) {
-      if (n.kind === 'node') continue
       if (n.kind === 'pod') {
         const host = podToHostNode.get(n.id)
         if (host) groupOf.set(n.id, host)
       } else if (n.kind === 'container') {
         const podId = containerToPod.get(n.id)
-        if (podId) {
-          const host = podToHostNode.get(podId)
-          if (host) groupOf.set(n.id, host)
+        if (podId && podEntitiesById.has(podId)) {
+          groupOf.set(n.id, podId)
         }
       }
     }

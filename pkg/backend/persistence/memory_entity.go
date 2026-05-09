@@ -110,6 +110,23 @@ func (r *InMemoryEntityRegistry) GetEntity(_ context.Context, id entities.Entity
 	return e, nil
 }
 
+// GetEntities returns the entities for the given IDs. Missing IDs are simply
+// absent from the returned map; callers must treat absence as not-found.
+func (r *InMemoryEntityRegistry) GetEntities(_ context.Context, ids []entities.EntityID) (map[entities.EntityID]entities.Entity, error) {
+	out := make(map[entities.EntityID]entities.Entity, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, id := range ids {
+		if e, ok := r.entities[id]; ok {
+			out[id] = e
+		}
+	}
+	return out, nil
+}
+
 // ListEntities returns entities matching the query filters. Kind and Namespace
 // are only applied when non-empty.
 func (r *InMemoryEntityRegistry) ListEntities(_ context.Context, q EntityQuery) ([]entities.Entity, error) {

@@ -3,7 +3,6 @@ import { MarkerType, Position, type Edge, type Node } from '@xyflow/react'
 import type { GraphEdge, GraphNode, RelationType } from '@/types/graph'
 import type { LayoutDeps, LayoutInput, LayoutResult } from './types'
 import { NODE_HEIGHT_DEFAULT, NODE_HEIGHT_SMALL, NODE_WIDTH, SMALL_KINDS } from './types'
-import { getEdgeMetricKeyFromNodes } from '../edgeMetrics'
 
 export interface DagreLayoutSpec {
   rankdir: 'TB' | 'LR'
@@ -92,7 +91,7 @@ export function runDagreLayout(
 
   const edges = contentEdges
     .filter((edge) => graph.hasNode(edge.source) && graph.hasNode(edge.target))
-    .map((edge) => toReactEdge(edge, contentNodeMap, deps))
+    .map((edge) => toReactEdge(edge, contentNodeMap))
 
   return { nodes: [...parentContainers, ...positionedContent], edges }
 }
@@ -113,11 +112,15 @@ function toReactNode(
       x: (position?.x ?? 0) - NODE_WIDTH / 2,
       y: (position?.y ?? 0) - height / 2,
     },
+    // Explicit dimensions so MiniMap (and any future bbox consumer) sees
+    // a real size — custom nodes don't populate `node.measured` reliably
+    // in React Flow v12.
+    width: NODE_WIDTH,
+    height,
     sourcePosition,
     targetPosition,
     data: {
       ...node,
-      metrics: deps.nodeMetrics?.get(node.id) ?? {},
       mode: deps.mode,
     } as Record<string, unknown>,
   }
@@ -163,6 +166,8 @@ function buildParentContainers(
     .filter((parent) => parentBounds.has(parent.id))
     .map((parent) => {
       const bounds = parentBounds.get(parent.id)!
+      const nsWidth = bounds.maxX - bounds.minX + NS_PADDING * 2
+      const nsHeight = bounds.maxY - bounds.minY + NS_PADDING * 2 + NS_PILL_OFFSET
       return {
         id: parent.id,
         type: 'namespace',
@@ -170,12 +175,14 @@ function buildParentContainers(
           x: bounds.minX - NS_PADDING,
           y: bounds.minY - NS_PADDING - NS_PILL_OFFSET,
         },
+        width: nsWidth,
+        height: nsHeight,
         zIndex: -1,
         data: {
           ...parent,
           variant: parentKind ?? 'namespace',
-          nsWidth: bounds.maxX - bounds.minX + NS_PADDING * 2,
-          nsHeight: bounds.maxY - bounds.minY + NS_PADDING * 2 + NS_PILL_OFFSET,
+          nsWidth,
+          nsHeight,
         } as Record<string, unknown>,
         selectable: true,
         draggable: false,
@@ -186,15 +193,9 @@ function buildParentContainers(
 function toReactEdge(
   edge: GraphEdge,
   contentNodeMap: Map<string, GraphNode>,
-  deps: LayoutDeps,
 ): Edge {
   const sourceNode = contentNodeMap.get(edge.source)
   const targetNode = contentNodeMap.get(edge.target)
-  const edgeMetricKey = getEdgeMetricKeyFromNodes(
-    edge.relation,
-    sourceNode?.name,
-    targetNode?.name,
-  )
 
   return {
     id: edge.id,
@@ -206,7 +207,6 @@ function toReactEdge(
       ...edge,
       sourceName: sourceNode?.name,
       targetName: targetNode?.name,
-      metrics: edgeMetricKey ? deps.edgeMetrics?.get(edgeMetricKey) : undefined,
     } as Record<string, unknown>,
     ...(DIRECTED_RELATIONS.includes(edge.relation) && {
       markerEnd: {

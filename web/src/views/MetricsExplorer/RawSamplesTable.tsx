@@ -3,6 +3,12 @@ import styles from './RawSamplesTable.module.css'
 
 interface RawSamplesTableProps {
   samples: MetricSample[]
+  /**
+   * Optional custom scope formatter. Defaults to entity_id or
+   * source→target for edge samples. The page passes a snapshot-aware
+   * formatter so users see human-readable namespace/name, not raw IDs.
+   */
+  scopeFor?: (sample: MetricSample) => string
 }
 
 const MESH_LABEL_KEYS = [
@@ -47,7 +53,14 @@ function meshSummary(labels: Record<string, string>): { text: string; tooltip: s
   return { text: parts.join(' · '), tooltip: tooltipLines.join('\n') }
 }
 
-export function RawSamplesTable({ samples }: RawSamplesTableProps) {
+function defaultScope(sample: MetricSample): string {
+  if (sample.edge) {
+    return `${sample.edge.source_id} → ${sample.edge.target_id}`
+  }
+  return sample.entity_id
+}
+
+export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamplesTableProps) {
   if (samples.length === 0) return null
 
   const showMesh = samples.some(hasMeshMetadata)
@@ -75,7 +88,7 @@ export function RawSamplesTable({ samples }: RawSamplesTableProps) {
               return (
                 <tr key={i} className={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
                   <td>{s.metric_name}</td>
-                  <td>{formatScope(s)}</td>
+                  <td>{scopeFor(s)}</td>
                   <td>{source ? <span className={styles.sourceChip}>{source}</span> : <span className={styles.muted}>-</span>}</td>
                   {showMesh && (
                     <td>
@@ -99,11 +112,4 @@ export function RawSamplesTable({ samples }: RawSamplesTableProps) {
       </div>
     </div>
   )
-}
-
-function formatScope(sample: MetricSample): string {
-  if (sample.edge) {
-    return `${sample.edge.source_id} -> ${sample.edge.target_id}`
-  }
-  return sample.entity_id
 }

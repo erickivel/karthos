@@ -1,13 +1,13 @@
-import styles from './MetricsExplorer.module.css'
+import styles from './TimeRangeSelector.module.css'
 
 export type TimeRange = '5m' | '15m' | '1h' | '6h' | '24h'
 
 const RANGES: { label: string; value: TimeRange }[] = [
-  { label: 'Last 5m', value: '5m' },
-  { label: 'Last 15m', value: '15m' },
-  { label: 'Last 1h', value: '1h' },
-  { label: 'Last 6h', value: '6h' },
-  { label: 'Last 24h', value: '24h' },
+  { label: '5m', value: '5m' },
+  { label: '15m', value: '15m' },
+  { label: '1h', value: '1h' },
+  { label: '6h', value: '6h' },
+  { label: '24h', value: '24h' },
 ]
 
 const RANGE_MS: Record<TimeRange, number> = {
@@ -25,16 +25,21 @@ interface TimeRangeSelectorProps {
 
 export function TimeRangeSelector({ value, onChange }: TimeRangeSelectorProps) {
   return (
-    <select
-      className={styles.select}
-      value={value}
-      onChange={(e) => onChange(e.target.value as TimeRange)}
-      aria-label="Select time range"
-    >
+    <div className={styles.group} role="radiogroup" aria-label="Time range">
       {RANGES.map((r) => (
-        <option key={r.value} value={r.value}>{r.label}</option>
+        <button
+          key={r.value}
+          type="button"
+          role="radio"
+          aria-checked={value === r.value}
+          className={styles.button}
+          data-active={value === r.value}
+          onClick={() => onChange(r.value)}
+        >
+          {r.label}
+        </button>
       ))}
-    </select>
+    </div>
   )
 }
 

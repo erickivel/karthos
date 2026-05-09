@@ -101,6 +101,45 @@ func (r *PostgresEntityRegistry) GetEntity(ctx context.Context, id entities.Enti
 	return e, nil
 }
 
+// GetEntities returns the entities for the given IDs as a map keyed by ID.
+// Missing IDs are absent from the map. A single SELECT ... WHERE id = ANY($1)
+// is used so callers avoid the per-id round-trip cost of GetEntity in a loop.
+func (r *PostgresEntityRegistry) GetEntities(ctx context.Context, ids []entities.EntityID) (map[entities.EntityID]entities.Entity, error) {
+	out := make(map[entities.EntityID]entities.Entity, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = string(id)
+	}
+	rows, err := r.conn.pool.Query(ctx,
+		`SELECT id, kind, cluster, namespace, name, labels FROM entities WHERE id = ANY($1)`,
+		idStrs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("pg entity batch get: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e persistence.StoredEntity
+		var kind string
+		var labelsJSON []byte
+		if err := rows.Scan(&e.EntityID, &kind, &e.Cluster, &e.Namespace, &e.Name, &labelsJSON); err != nil {
+			return nil, fmt.Errorf("pg entity batch scan: %w", err)
+		}
+		e.EntityKind = entities.EntityKind(kind)
+		if err := json.Unmarshal(labelsJSON, &e.Metadata); err != nil {
+			return nil, fmt.Errorf("pg entity batch unmarshal labels: %w", err)
+		}
+		out[e.EntityID] = e
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pg entity batch iteration: %w", err)
+	}
+	return out, nil
+}
+
 // ListEntities returns entities matching the query filters.
 func (r *PostgresEntityRegistry) ListEntities(ctx context.Context, q persistence.EntityQuery) ([]entities.Entity, error) {
 	sql := `SELECT id, kind, cluster, namespace, name, labels FROM entities WHERE 1=1`

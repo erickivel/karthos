@@ -173,12 +173,7 @@ func makeHistogramRMWithAttrs(
 
 func newNormalizer() *ingest.OTLPNormalizer {
 	resolver := ingest.NewOTLPEntityResolver(testCluster)
-	dialect := metrics.NewDialectRegistry(
-		metrics.PrometheusDialect,
-		metrics.SpanmetricsDialect,
-		metrics.ServicegraphDialect,
-		metrics.IstioDialect,
-	)
+	dialect := metrics.NewDialectRegistryFromSources(metrics.DefaultLogicalSources())
 	return ingest.NewOTLPNormalizer(resolver, dialect)
 }
 
@@ -198,6 +193,125 @@ func TestOTLPNormalizer_KubeletstatsCP(t *testing.T) {
 	assert.InDelta(t, 500.0, s.Value, 1e-9)
 	assert.Equal(t, "otelcol", s.Labels["source"])
 	assert.Equal(t, time.Unix(0, int64(tsNano)).UTC(), s.Timestamp)
+}
+
+func TestOTLPNormalizer_RawKubeletContainerCPUUsage(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+		"k8s.container.name": "app",
+	}
+
+	rm := makeGaugeRM("container.cpu.usage", 0.5, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "test-pod", "app")
+	assert.Equal(t, "k8s.container.cpu.usage", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 500.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitMillicores, samples[0].Unit)
+}
+
+func TestOTLPNormalizer_RawKubeletContainerMemoryUsage(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+		"k8s.container.name": "app",
+	}
+
+	rm := makeGaugeRM("container.memory.usage", 1048576, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "test-pod", "app")
+	assert.Equal(t, "k8s.container.memory.usage", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 1048576.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitBytes, samples[0].Unit)
+}
+
+// TestOTLPNormalizer_RawKubeClusterContainerCPURequest verifies that the
+// k8s_cluster receiver's underscore wire name is translated to the dotted
+// catalog canonical via the KubeClusterDialect.
+func TestOTLPNormalizer_RawKubeClusterContainerCPURequest(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+		"k8s.container.name": "app",
+	}
+
+	rm := makeGaugeRM("k8s.container.cpu_request", 0.25, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "test-pod", "app")
+	assert.Equal(t, "k8s.container.cpu.request", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 250.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitMillicores, samples[0].Unit)
+}
+
+// TestOTLPNormalizer_RawKubeClusterPodPhase verifies that k8s_cluster's
+// integer-encoded pod phase gauge round-trips to a KindPod entity sample.
+func TestOTLPNormalizer_RawKubeClusterPodPhase(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+	}
+
+	rm := makeGaugeRM("k8s.pod.phase", 2, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindPod, testCluster, "default", "test-pod")
+	assert.Equal(t, "k8s.pod.phase", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 2.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitCount, samples[0].Unit)
+}
+
+func TestOTLPNormalizer_RawKubeClusterContainerMemoryLimit(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+		"k8s.container.name": "app",
+	}
+
+	rm := makeGaugeRM("k8s.container.memory_limit", 268435456, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "test-pod", "app")
+	assert.Equal(t, "k8s.container.memory.limit", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 268435456.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitBytes, samples[0].Unit)
 }
 
 func TestOTLPNormalizer_MemoryMetric(t *testing.T) {

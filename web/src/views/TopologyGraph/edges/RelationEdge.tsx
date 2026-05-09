@@ -13,14 +13,18 @@ interface RoutedPoint {
 type RelationEdgeData = GraphEdge &
   GraphEdgeMetricData & {
     routePoints?: RoutedPoint[];
-    routeStyle?: "ownership";
+    routeStyle?: "ownership" | "orthogonal";
+    rawElk?: boolean;
   };
 
 function getEdgeColor(relation: RelationType): string {
   switch (relation) {
     case "calls":
-    case "exposes":
       return "var(--color-signal)";
+    case "exposes":
+      // Structural in Workload Flow — muted to read distinct from `calls`,
+      // which carries traffic-rate styling.
+      return "var(--color-text-muted)";
     case "runs_on":
     case "contains":
       return "var(--color-info)";
@@ -60,6 +64,22 @@ function getMetricState(edge: GraphEdge & GraphEdgeMetricData) {
   const errorRatio = edge.metrics?.errorRatio ?? 0;
   const errorRate = edge.metrics?.errorRate ?? 0;
 
+  // Structural relation in Workload Flow: thin, single, muted, dashed.
+  // No rate/latency/error coloring — exposes describes K8s wiring, not
+  // observed traffic, so it must read different from `calls`.
+  if (edge.relation === "exposes") {
+    return {
+      cableCount: 1,
+      cableWidth: 0.9,
+      cableSpacing: 0,
+      bundleWidth: 1.4,
+      opacity: 0.55,
+      stroke: getEdgeColor(edge.relation),
+      summary: "",
+      dash: "4 3" as const,
+    };
+  }
+
   const cableCount =
     edge.relation === "calls"
       ? Math.min(6, Math.max(1, Math.ceil(Math.log10(rate + 1) * 2.4)))
@@ -95,6 +115,7 @@ function getMetricState(edge: GraphEdge & GraphEdgeMetricData) {
     ]
       .filter(Boolean)
       .join(" · "),
+    dash: undefined as string | undefined,
   };
 }
 
@@ -151,11 +172,17 @@ function getRoundedRoutePath(points: RoutedPoint[], radius = 10): string {
   return commands.join(" ");
 }
 
-function getOwnershipRoutePoints(
+function getRoutedPoints(
   edge: RelationEdgeData | undefined,
   routePoints: RoutedPoint[] | null,
   props: EdgeProps,
 ): RoutedPoint[] | null {
+  // ELK-routed edges: render the engine's section points as-is.
+  // Live React Flow handle coordinates are intentionally ignored here; rewriting
+  // the first/last segment from sourceX/targetX would create the diagonal
+  // artifact described in docs/topology-elk-raw-react-flow.md.
+  if (edge?.rawElk && routePoints) return routePoints;
+
   if (edge?.routeStyle !== "ownership") return null;
 
   if (routePoints) {
@@ -190,9 +217,9 @@ function RelationEdgeComponent(props: EdgeProps) {
     targetPosition: props.targetPosition,
     borderRadius: 8,
   });
-  const ownershipRoutePoints = getOwnershipRoutePoints(edge, routePoints, props);
-  const edgePath = ownershipRoutePoints
-    ? getRoundedRoutePath(ownershipRoutePoints)
+  const explicitRoutePoints = getRoutedPoints(edge, routePoints, props);
+  const edgePath = explicitRoutePoints
+    ? getRoundedRoutePath(explicitRoutePoints)
     : smoothPath;
 
   // True midpoint of the rendered SVG path, computed via getPointAtLength.
@@ -245,6 +272,7 @@ function RelationEdgeComponent(props: EdgeProps) {
               : 0.7
           }
           strokeLinecap="round"
+          strokeDasharray={metricState?.dash}
           transform={
             offset === 0
               ? undefined

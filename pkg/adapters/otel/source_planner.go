@@ -92,7 +92,11 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			"collection_interval": "30s",
 			"root_path":           "/hostfs",
 			"scrapers": map[string]any{
-				"cpu":        map[string]any{},
+				"cpu": map[string]any{
+					"metrics": map[string]any{
+						"system.cpu.utilization": map[string]any{"enabled": true},
+					},
+				},
 				"memory":     map[string]any{},
 				"disk":       map[string]any{},
 				"filesystem": map[string]any{},
@@ -210,6 +214,18 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			"allocatable_types_to_report": []string{"cpu", "memory", "ephemeral-storage"},
 			"metrics": map[string]any{
 				"k8s.node.condition": map[string]any{
+					"enabled": true,
+				},
+				"k8s.container.ready": map[string]any{
+					"enabled": true,
+				},
+				"k8s.container.restarts": map[string]any{
+					"enabled": true,
+				},
+				// Default-disabled in v0.111+; surfaces the integer-encoded
+				// pod failure reason (Evicted, NodeAffinity, etc.) used by
+				// the derived oksg.pod.health.status enum.
+				"k8s.pod.status_reason": map[string]any{
 					"enabled": true,
 				},
 			},
@@ -514,12 +530,29 @@ const oksgSourceTaggerProcessor = "transform/oksg-source"
 func buildOksgSourceTagger() map[string]any {
 	guard := `attributes["oksg_source"] == nil`
 	statements := []string{
-		// kubeletstats receiver: pod / container / volume / kubelet-side node metrics
-		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.(pod|container|volume)\\.") and ` + guard,
+		// kubeletstats receiver. The pod-scope rule lists only the metric
+		// families kubeletstats actually emits (cpu, memory, filesystem,
+		// network); pod-scope status metrics like k8s.pod.phase /
+		// status_reason originate from k8s_cluster and are tagged kube-cluster
+		// below. Volume metrics live at top-level k8s.volume.* and are
+		// matched by the next clause. Container CPU/memory usage from
+		// kubeletstats arrives on the wire as raw `container.*` (translated
+		// to `k8s.container.*` only at the backend dialect step), so
+		// `k8s.container.*` here at the gateway/agent always originates from
+		// the k8s_cluster receiver.
+		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.pod\\.(cpu|memory|filesystem|network)\\.") and ` + guard,
+		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.volume\\.") and ` + guard,
+		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^container\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set") and ` + guard,
 		// hostmetrics receiver
 		`set(attributes["oksg_source"], "` + metrics.SourceHostOS + `") where IsMatch(metric.name, "^system\\.") and ` + guard,
-		// k8s_cluster receiver: cluster-level workload + capacity + condition metrics
+		// k8s_cluster receiver: cluster-level workload + capacity + condition + container/pod spec/status metrics.
+		// The broad ^k8s\.pod\. rule is intentionally last among the pod
+		// matchers — it catches pod.phase / pod.status_reason and any future
+		// pod-scope k8s_cluster signal that the kubelet rules above didn't
+		// claim.
+		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.container\\.") and ` + guard,
+		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.pod\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.(replicaset|deployment|namespace|daemonset|statefulset)\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.node\\.(condition|allocatable|cpu\\.capacity|cpu\\.cores|cpu\\.frequency|memory\\.capacity|disk\\.capacity|network\\.bandwidth)") and ` + guard,
 		// spanmetrics connector

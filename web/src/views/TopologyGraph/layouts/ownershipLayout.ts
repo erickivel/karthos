@@ -2,7 +2,6 @@ import { MarkerType, Position, type Node, type Edge } from '@xyflow/react'
 import type { EntityKind, GraphEdge, GraphNode, RelationType } from '@/types/graph'
 import type { LayoutStrategy, LayoutInput, LayoutDeps, LayoutResult } from './types'
 import { NODE_WIDTH, NODE_HEIGHT_DEFAULT } from './types'
-import { getEdgeMetricKeyFromNodes } from '../edgeMetrics'
 
 const DIRECTED_RELATIONS: RelationType[] = ['calls', 'runs_on', 'routes_to', 'exposes']
 
@@ -92,7 +91,11 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
 
   const positioned: Node[] = []
   const parentContainers: Node[] = []
-  let nextNamespaceX = 0
+  // Ownership stacks namespaces top-to-bottom (one rectangle per row) so each
+  // namespace's tree gets the full canvas width and reads vertically. Earlier
+  // versions packed them side-by-side, which made wide namespaces overlap and
+  // forced horizontal scrolling — see frontend-design-spec § 5.2.
+  let nextNamespaceY = 0
 
   const parentOrder = [
     ...parentNodes,
@@ -131,8 +134,8 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
       contentHeight +
       OWNERSHIP_TREE.namespacePaddingTop +
       OWNERSHIP_TREE.namespacePaddingBottom
-    const namespaceX = nextNamespaceX
-    const namespaceY = 0
+    const namespaceX = 0
+    const namespaceY = nextNamespaceY
     const isRootGroup = parent.id === '__root__'
     let componentX = namespaceX + (isRootGroup ? 0 : OWNERSHIP_TREE.namespacePaddingX)
     const baseY = namespaceY + (isRootGroup ? 0 : OWNERSHIP_TREE.namespacePaddingTop)
@@ -144,6 +147,8 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
           id: realParent.id,
           type: 'namespace',
           position: { x: namespaceX, y: namespaceY },
+          width: namespaceWidth,
+          height: namespaceHeight,
           zIndex: -1,
           data: {
             ...realParent,
@@ -166,10 +171,10 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
       componentX += component.width + OWNERSHIP_TREE.componentGap
     }
 
-    nextNamespaceX += namespaceWidth + OWNERSHIP_TREE.namespaceGap
+    nextNamespaceY += namespaceHeight + OWNERSHIP_TREE.namespaceGap
   }
 
-  const edges = contentEdges.map((edge) => toReactEdge(edge, contentNodeMap, deps))
+  const edges = contentEdges.map((edge) => toReactEdge(edge, contentNodeMap))
 
   return { nodes: [...parentContainers, ...positioned], edges }
 }
@@ -420,11 +425,14 @@ function toReactNode(node: GraphNode, x: number, y: number, deps: LayoutDeps): N
     id: node.id,
     type: 'entity',
     position: { x, y },
+    // Explicit size so MiniMap can render a placeholder for each node — the
+    // custom EntityNode doesn't populate `node.measured` in v12.
+    width: NODE_WIDTH,
+    height: NODE_HEIGHT_DEFAULT,
     sourcePosition: Position.Bottom,
     targetPosition: Position.Top,
     data: {
       ...node,
-      metrics: deps.nodeMetrics?.get(node.id) ?? {},
       mode: deps.mode,
     } as Record<string, unknown>,
   }
@@ -433,16 +441,10 @@ function toReactNode(node: GraphNode, x: number, y: number, deps: LayoutDeps): N
 function toReactEdge(
   edge: GraphEdge,
   contentNodeMap: Map<string, GraphNode>,
-  deps: LayoutDeps,
 ): Edge {
   const directed = DIRECTED_RELATIONS.includes(edge.relation)
   const sourceNode = contentNodeMap.get(edge.source)
   const targetNode = contentNodeMap.get(edge.target)
-  const edgeMetricKey = getEdgeMetricKeyFromNodes(
-    edge.relation,
-    sourceNode?.name,
-    targetNode?.name,
-  )
 
   return {
     id: edge.id,
@@ -455,7 +457,6 @@ function toReactEdge(
       sourceName: sourceNode?.name,
       targetName: targetNode?.name,
       routeStyle: 'ownership',
-      metrics: edgeMetricKey ? deps.edgeMetrics?.get(edgeMetricKey) : undefined,
     } as Record<string, unknown>,
     ...(directed && {
       markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },

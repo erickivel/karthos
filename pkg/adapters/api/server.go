@@ -80,6 +80,7 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 	graphHandler := &GraphHandler{
 		graphStore:     cfg.GraphStore,
 		entityRegistry: cfg.EntityRegistry,
+		metricStore:    cfg.MetricStore,
 		logger:         logger,
 	}
 	graphHandler.RegisterRoutes(mux)

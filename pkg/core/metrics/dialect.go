@@ -56,6 +56,22 @@ var PrometheusDialect = DialectMap{
 	"container_memory_usage_bytes":      "k8s.container.memory.usage",
 }
 
+var KubeletDialect = DialectMap{
+	"container.cpu.usage":    "k8s.container.cpu.usage",
+	"container.memory.usage": "k8s.container.memory.usage",
+}
+
+// KubeClusterDialect translates k8s_cluster receiver wire names (with underscore
+// segments per its v0.111+ metadata.yaml) into the dotted catalog canonicals.
+// Container ready/restarts already use single-segment names that match the
+// catalog directly and need no translation.
+var KubeClusterDialect = DialectMap{
+	"k8s.container.cpu_request":    "k8s.container.cpu.request",
+	"k8s.container.cpu_limit":      "k8s.container.cpu.limit",
+	"k8s.container.memory_request": "k8s.container.memory.request",
+	"k8s.container.memory_limit":   "k8s.container.memory.limit",
+}
+
 var SpanmetricsDialect = DialectMap{
 	"traces.span.metrics.calls":    "rpc.server.request.count",
 	"traces.span.metrics.duration": "rpc.server.duration",

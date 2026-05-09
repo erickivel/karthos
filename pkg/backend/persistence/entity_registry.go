@@ -21,6 +21,7 @@ type EntityQuery struct {
 type EntityRegistry interface {
 	UpsertEntity(ctx context.Context, entity entities.Entity) error
 	GetEntity(ctx context.Context, id entities.EntityID) (entities.Entity, error)
+	GetEntities(ctx context.Context, ids []entities.EntityID) (map[entities.EntityID]entities.Entity, error)
 	ListEntities(ctx context.Context, q EntityQuery) ([]entities.Entity, error)
 }
 

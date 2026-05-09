@@ -26,3 +26,56 @@
 .container :global(.react-flow__background-pattern circle) {
   fill: var(--surface-divider);
 }
+
+/* React Flow zoom/fit controls
+   Default styling renders almost-white buttons on the dark canvas, which
+   reads as a faint pale strip. Restyle for visible contrast. */
+.controls.controls {
+  background: var(--surface-nav);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  overflow: hidden;
+}
+
+.controls.controls :global(.react-flow__controls-button) {
+  width: 30px;
+  height: 30px;
+  background: var(--surface-nav);
+  color: var(--color-text);
+  border: none;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  fill: var(--color-text);
+}
+
+.controls.controls :global(.react-flow__controls-button:last-child) {
+  border-bottom: none;
+}
+
+.controls.controls :global(.react-flow__controls-button:hover) {
+  background: var(--surface-active);
+  color: var(--color-signal);
+  fill: var(--color-signal);
+}
+
+.controls.controls :global(.react-flow__controls-button svg) {
+  width: 14px;
+  height: 14px;
+  max-width: 14px;
+  max-height: 14px;
+}
+
+/* MiniMap container — give it a clear border + padding so it reads as a
+   distinct overview window. */
+.miniMap.miniMap {
+  background: var(--surface-nav);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  width: 220px;
+  height: 160px;
+}
+
+.miniMap.miniMap :global(.react-flow__minimap-mask) {
+  fill: rgba(8, 9, 10, 0.72);
+}

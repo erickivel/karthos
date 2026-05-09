@@ -69,10 +69,35 @@ test.describe('topology projection structure', () => {
     ).toHaveCount(3)
   })
 
-  test('keeps traffic mode readable for a service with many pods', async ({ page }) => {
+  test('Endpoint Flow shows ingress + services only, no workloads or pods', async ({ page }) => {
+    await setMode(page, 'traffic')
+    await setGranularity(page, 'overview')
+
+    await expect(page.locator('[data-entity-kind="pod"]')).toHaveCount(0)
+    await expect(page.locator('[data-entity-kind="workload"]')).toHaveCount(0)
+    await expect(groupCardsByAttributes(page, { kind: 'node' })).toHaveCount(0)
+    await expect(groupCardsByAttributes(page, { kind: 'namespace' })).toHaveCount(0)
+  })
+
+  test('Workload Flow adds workloads, still hides pods', async ({ page }) => {
     await setMode(page, 'traffic')
     await setGranularity(page, 'runtime')
 
+    await expect(page.locator('[data-entity-kind="pod"]')).toHaveCount(0)
+    await expect(
+      page.locator('[data-entity-kind="workload"]').first(),
+    ).toBeVisible()
+    await expect(groupCardsByAttributes(page, { kind: 'node' })).toHaveCount(0)
+    await expect(groupCardsByAttributes(page, { kind: 'namespace' })).toHaveCount(0)
+  })
+
+  test('Instance Flow renders pod replicas and no service/workload nodes', async ({ page }) => {
+    await setMode(page, 'traffic')
+    await setGranularity(page, 'detailed')
+
+    await expect(page.locator('[data-entity-kind="service"]')).toHaveCount(0)
+    await expect(page.locator('[data-entity-kind="workload"]')).toHaveCount(0)
+    await expect(page.locator('[data-entity-kind="ingress"]')).toHaveCount(0)
     await expect(
       entityCardsByAttributes(page, {
         kind: 'pod',
@@ -80,11 +105,9 @@ test.describe('topology projection structure', () => {
         namePrefix: 'service-b-node-',
       }),
     ).toHaveCount(3)
-    await expect(groupCardsByAttributes(page, { kind: 'node' })).toHaveCount(0)
-    await expect(groupCardsByAttributes(page, { kind: 'namespace' })).toHaveCount(0)
   })
 
-  test('shows servicegraph traffic on service cards in traffic mode', async ({ page }) => {
+  test('shows servicegraph traffic on service cards in Endpoint Flow', async ({ page }) => {
     await setMode(page, 'traffic')
     await setGranularity(page, 'overview')
 

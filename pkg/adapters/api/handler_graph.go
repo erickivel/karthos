@@ -11,6 +11,7 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
@@ -18,6 +19,7 @@ import (
 type GraphHandler struct {
 	graphStore     persistence.GraphStore
 	entityRegistry persistence.EntityRegistry
+	metricStore    persistence.MetricStore
 	logger         *logging.Logger
 }
 
@@ -71,20 +73,26 @@ type availableFilters struct {
 
 // --- helpers ---
 
-func (h *GraphHandler) enrichNode(ctx context.Context, n topology.Node) enrichedNode {
+// enrichNodeFrom builds an enrichedNode from a topology node, a pre-resolved
+// entity (may be nil if the registry lookup missed), and a pre-resolved
+// status string from the latest health-status sample (empty if none).
+// The status falls back to metrics.HealthUnknown so the field is always
+// populated with one of the public string-set values.
+func enrichNodeFrom(n topology.Node, entity entities.Entity, status string) enrichedNode {
+	if status == "" {
+		status = metrics.HealthUnknown
+	}
 	en := enrichedNode{
 		ID:     n.ID,
 		Kind:   n.Kind,
-		Status: "unknown",
+		Status: status,
 		Labels: n.Labels,
 	}
-	if h.entityRegistry != nil {
-		if entity, err := h.entityRegistry.GetEntity(ctx, n.ID); err == nil {
-			ref := entityRefOf(entity)
-			en.Name = ref.Name
-			en.Namespace = ref.Namespace
-			en.Cluster = ref.Cluster
-		}
+	if entity != nil {
+		ref := entityRefOf(entity)
+		en.Name = ref.Name
+		en.Namespace = ref.Namespace
+		en.Cluster = ref.Cluster
 	}
 	if en.Name == "" && n.Labels != nil {
 		en.Name = n.Labels["name"]
@@ -95,12 +103,78 @@ func (h *GraphHandler) enrichNode(ctx context.Context, n topology.Node) enriched
 	return en
 }
 
-func (h *GraphHandler) resolveEntitySummary(ctx context.Context, id entities.EntityID) *relatedEntitySummary {
-	if h.entityRegistry == nil {
+// batchEntities resolves the given IDs through the registry in a single call.
+// Returns an empty map if the registry is nil or ids is empty.
+func (h *GraphHandler) batchEntities(ctx context.Context, ids []entities.EntityID) map[entities.EntityID]entities.Entity {
+	if h.entityRegistry == nil || len(ids) == 0 {
+		return map[entities.EntityID]entities.Entity{}
+	}
+	resolved, err := h.entityRegistry.GetEntities(ctx, ids)
+	if err != nil {
+		h.logger.Warn("batch entity lookup failed", logging.Error(err))
+		return map[entities.EntityID]entities.Entity{}
+	}
+	return resolved
+}
+
+// resolveHealthStatus issues at most two metric-store queries (one per
+// derived health-status metric) for the supplied node IDs and returns a map
+// of entity ID to its public string label. Missing entries (no recent
+// sample, no metric store, query error) are absent from the returned map;
+// the caller defaults to metrics.HealthUnknown.
+//
+// The lookup is per-snapshot (not per-node) and uses the multi-match
+// entity_id=~"..." filter that metricSelector already supports, so this is
+// O(2 queries) regardless of node count.
+func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node) map[entities.EntityID]string {
+	if h.metricStore == nil || len(nodes) == 0 {
 		return nil
 	}
-	entity, err := h.entityRegistry.GetEntity(ctx, id)
+	var podIDs, containerIDs []entities.EntityID
+	for _, n := range nodes {
+		switch n.Kind {
+		case entities.KindPod:
+			podIDs = append(podIDs, n.ID)
+		case entities.KindContainer:
+			containerIDs = append(containerIDs, n.ID)
+		}
+	}
+	resolved := make(map[entities.EntityID]string)
+	h.fillHealthStatus(ctx, "oksg.pod.health.status", podIDs, resolved)
+	h.fillHealthStatus(ctx, "oksg.container.health.status", containerIDs, resolved)
+	return resolved
+}
+
+func (h *GraphHandler) fillHealthStatus(ctx context.Context, metricName string, ids []entities.EntityID, into map[entities.EntityID]string) {
+	if len(ids) == 0 {
+		return
+	}
+	now := time.Now()
+	samples, err := h.metricStore.Query(ctx, query.MetricQuery{
+		MetricName: metricName,
+		EntityIDs:  ids,
+		From:       now.Add(-5 * time.Minute),
+		To:         now,
+	})
 	if err != nil {
+		h.logger.Warn("health-status query failed", logging.Error(err), logging.String("metric", metricName))
+		return
+	}
+	// Keep the most recent sample per entity (samples come back in
+	// descending time order from the store).
+	for _, s := range samples {
+		if _, seen := into[s.EntityID]; seen {
+			continue
+		}
+		if s.ValueLabel == "" {
+			continue
+		}
+		into[s.EntityID] = s.ValueLabel
+	}
+}
+
+func summaryFrom(entity entities.Entity) *relatedEntitySummary {
+	if entity == nil {
 		return nil
 	}
 	ref := entityRefOf(entity)
@@ -195,9 +269,16 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 	namespaces := sortedSetKeys(nsSet)
 	relations := sortedKeys(relationCounts)
 
+	ids := make([]entities.EntityID, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	resolved := h.batchEntities(r.Context(), ids)
+	healthByID := h.resolveHealthStatus(r.Context(), nodes)
+
 	enrichedNodes := make([]enrichedNode, 0, len(nodes))
 	for _, n := range nodes {
-		enrichedNodes = append(enrichedNodes, h.enrichNode(r.Context(), n))
+		enrichedNodes = append(enrichedNodes, enrichNodeFrom(n, resolved[n.ID], healthByID[n.ID]))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -247,12 +328,23 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	kindFilter := entities.EntityKind(r.URL.Query().Get("kind"))
 	nsFilter := r.URL.Query().Get("namespace")
 
-	var filtered []enrichedNode
+	var candidates []topology.Node
 	for _, n := range nodes {
 		if kindFilter != "" && n.Kind != kindFilter {
 			continue
 		}
-		en := h.enrichNode(r.Context(), n)
+		candidates = append(candidates, n)
+	}
+	candidateIDs := make([]entities.EntityID, 0, len(candidates))
+	for _, n := range candidates {
+		candidateIDs = append(candidateIDs, n.ID)
+	}
+	resolved := h.batchEntities(r.Context(), candidateIDs)
+	healthByID := h.resolveHealthStatus(r.Context(), candidates)
+
+	var filtered []enrichedNode
+	for _, n := range candidates {
+		en := enrichNodeFrom(n, resolved[n.ID], healthByID[n.ID])
 		if nsFilter != "" && en.Namespace != nsFilter {
 			continue
 		}
@@ -312,8 +404,6 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enriched := h.enrichNode(r.Context(), *found)
-
 	var outbound []topology.Edge
 	var inbound []topology.Edge
 	for _, edge := range edges {
@@ -325,15 +415,29 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	idSet := map[entities.EntityID]struct{}{nodeID: {}}
+	for _, e := range outbound {
+		idSet[e.Target] = struct{}{}
+	}
+	for _, e := range inbound {
+		idSet[e.Source] = struct{}{}
+	}
+	ids := make([]entities.EntityID, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	resolved := h.batchEntities(r.Context(), ids)
+	healthByID := h.resolveHealthStatus(r.Context(), []topology.Node{*found})
+
+	enriched := enrichNodeFrom(*found, resolved[nodeID], healthByID[nodeID])
+
 	outboundEnriched := make([]enrichedEdge, 0, len(outbound))
 	for _, e := range outbound {
-		related := h.resolveEntitySummary(r.Context(), e.Target)
-		outboundEnriched = append(outboundEnriched, toEnrichedEdge(e, related))
+		outboundEnriched = append(outboundEnriched, toEnrichedEdge(e, summaryFrom(resolved[e.Target])))
 	}
 	inboundEnriched := make([]enrichedEdge, 0, len(inbound))
 	for _, e := range inbound {
-		related := h.resolveEntitySummary(r.Context(), e.Source)
-		inboundEnriched = append(inboundEnriched, toEnrichedEdge(e, related))
+		inboundEnriched = append(inboundEnriched, toEnrichedEdge(e, summaryFrom(resolved[e.Source])))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

@@ -41,3 +41,19 @@ func TestBuiltInDialectsTranslateKnownMetrics(t *testing.T) {
 	require.Equal(t, "istio_tcp_sent_bytes_total", registry.Translate("istio_tcp_sent_bytes_total"))
 	require.Equal(t, "istio_tcp_received_bytes_total", registry.Translate("istio_tcp_received_bytes_total"))
 }
+
+func TestDefaultSourceDialectsTranslateKubeletContainerMetrics(t *testing.T) {
+	registry := NewDialectRegistryFromSources(DefaultLogicalSources())
+
+	require.Equal(t, "k8s.container.cpu.usage", registry.Translate("container.cpu.usage"))
+	require.Equal(t, "k8s.container.memory.usage", registry.Translate("container.memory.usage"))
+}
+
+func TestDefaultSourceDialectsTranslateKubeClusterContainerSpecs(t *testing.T) {
+	registry := NewDialectRegistryFromSources(DefaultLogicalSources())
+
+	require.Equal(t, "k8s.container.cpu.request", registry.Translate("k8s.container.cpu_request"))
+	require.Equal(t, "k8s.container.cpu.limit", registry.Translate("k8s.container.cpu_limit"))
+	require.Equal(t, "k8s.container.memory.request", registry.Translate("k8s.container.memory_request"))
+	require.Equal(t, "k8s.container.memory.limit", registry.Translate("k8s.container.memory_limit"))
+}

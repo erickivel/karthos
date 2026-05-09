@@ -161,6 +161,22 @@ func TestBuildPromQL(t *testing.T) {
 			},
 			expected: `rate(servicegraph_request_duration_sum{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(servicegraph_request_duration_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1)`,
 		},
+		{
+			name: "container health status composes ready and restart-rate per container",
+			query: query.MetricQuery{
+				MetricName: "oksg.container.health.status",
+				EntityIDs:  []entities.EntityID{"container-1"},
+			},
+			expected: `(rate(k8s_container_restarts{entity_id=~"container-1"}[5m]) > 0) * 0 + 3 or (k8s_container_ready{entity_id=~"container-1"} == 0) * 0 + 2 or (k8s_container_ready{entity_id=~"container-1"} == 1) * 0 + 1`,
+		},
+		{
+			name: "pod health status maps phase enum to public health enum",
+			query: query.MetricQuery{
+				MetricName: "oksg.pod.health.status",
+				EntityIDs:  []entities.EntityID{"pod-1"},
+			},
+			expected: `(k8s_pod_phase{entity_id=~"pod-1"} == 2) * 0 + 1 or (k8s_pod_phase{entity_id=~"pod-1"} == 1) * 0 + 4 or (k8s_pod_phase{entity_id=~"pod-1"} == 3) * 0 + 5 or (k8s_pod_phase{entity_id=~"pod-1"} == 4) * 0 + 6 or (k8s_pod_phase{entity_id=~"pod-1"} == 5) * 0 + 7`,
+		},
 	}
 
 	for _, tt := range tests {
