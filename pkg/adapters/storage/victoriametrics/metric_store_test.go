@@ -162,6 +162,42 @@ func TestBuildPromQL(t *testing.T) {
 			expected: `rate(servicegraph_request_duration_sum{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(servicegraph_request_duration_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1)`,
 		},
 		{
+			name: "system.disk.operations is rate-wrapped",
+			query: query.MetricQuery{
+				MetricName: "system.disk.operations",
+				EntityIDs:  []entities.EntityID{"node-1"},
+			},
+			expected: `rate(system_disk_operations{entity_id=~"node-1"}[1m])`,
+		},
+		{
+			name: "system.disk.operation_time is rate-wrapped",
+			query: query.MetricQuery{
+				MetricName: "system.disk.operation_time",
+			},
+			expected: `rate(system_disk_operation_time[1m])`,
+		},
+		{
+			name: "system.network.errors is rate-wrapped",
+			query: query.MetricQuery{
+				MetricName: "system.network.errors",
+			},
+			expected: `rate(system_network_errors[1m])`,
+		},
+		{
+			name: "system.network.dropped is rate-wrapped",
+			query: query.MetricQuery{
+				MetricName: "system.network.dropped",
+			},
+			expected: `rate(system_network_dropped[1m])`,
+		},
+		{
+			name: "system.network.packets is rate-wrapped",
+			query: query.MetricQuery{
+				MetricName: "system.network.packets",
+			},
+			expected: `rate(system_network_packets[1m])`,
+		},
+		{
 			name: "container health status composes ready and restart-rate per container",
 			query: query.MetricQuery{
 				MetricName: "oksg.container.health.status",
