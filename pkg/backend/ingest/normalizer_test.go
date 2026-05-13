@@ -291,6 +291,52 @@ func TestOTLPNormalizer_RawKubeClusterPodPhase(t *testing.T) {
 	assert.Equal(t, metrics.UnitCount, samples[0].Unit)
 }
 
+// TestOTLPNormalizer_RawKubeletContainerFilesystemUsage verifies that the
+// kubeletstats raw `container.filesystem.usage` wire name is translated to the
+// dotted catalog canonical `k8s.container.filesystem.usage` via KubeletDialect.
+func TestOTLPNormalizer_RawKubeletContainerFilesystemUsage(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC).UnixNano())
+	resource := map[string]string{
+		"k8s.namespace.name": "default",
+		"k8s.pod.name":       "test-pod",
+		"k8s.container.name": "app",
+	}
+
+	rm := makeGaugeRM("container.filesystem.usage", 4096, tsNano)
+	env := makeEnvelope(t, resource, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	expectedID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "test-pod", "app")
+	assert.Equal(t, "k8s.container.filesystem.usage", samples[0].MetricName)
+	assert.Equal(t, expectedID, samples[0].EntityID)
+	assert.InDelta(t, 4096.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitBytes, samples[0].Unit)
+}
+
+// TestOTLPNormalizer_RawKubeletPodNetworkIO verifies that the kubeletstats
+// pod-scope network throughput metric is accepted as the bare canonical
+// `k8s.pod.network.io` (direction is preserved as a label, not split into two
+// metric names).
+func TestOTLPNormalizer_RawKubeletPodNetworkIO(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 5, 9, 12, 0, 0, 0, time.UTC).UnixNano())
+
+	rm := makeGaugeRMWithAttr("k8s.pod.network.io", 1500, tsNano, "direction", "receive")
+	env := makeEnvelope(t, podResource(), rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	assert.Equal(t, "k8s.pod.network.io", samples[0].MetricName)
+	assert.InDelta(t, 1500.0, samples[0].Value, 1e-9)
+	assert.Equal(t, metrics.UnitBytesPerSecond, samples[0].Unit)
+}
+
 func TestOTLPNormalizer_RawKubeClusterContainerMemoryLimit(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC).UnixNano())

@@ -57,8 +57,11 @@ var PrometheusDialect = DialectMap{
 }
 
 var KubeletDialect = DialectMap{
-	"container.cpu.usage":    "k8s.container.cpu.usage",
-	"container.memory.usage": "k8s.container.memory.usage",
+	"container.cpu.usage":            "k8s.container.cpu.usage",
+	"container.memory.usage":         "k8s.container.memory.usage",
+	"container.filesystem.usage":     "k8s.container.filesystem.usage",
+	"container.filesystem.capacity":  "k8s.container.filesystem.capacity",
+	"container.filesystem.available": "k8s.container.filesystem.available",
 }
 
 // KubeClusterDialect translates k8s_cluster receiver wire names (with underscore
@@ -92,4 +95,6 @@ var IstioDialect = DialectMap{
 	"istio_response_messages_total":       "servicegraph.grpc.response.message.count",
 	"istio_tcp_connections_opened_total":  "servicegraph.tcp.connection.open.count",
 	"istio_tcp_connections_closed_total":  "servicegraph.tcp.connection.close.count",
+	"istio_tcp_sent_bytes_total":          "servicegraph.tcp.bytes.sent",
+	"istio_tcp_received_bytes_total":      "servicegraph.tcp.bytes.received",
 }

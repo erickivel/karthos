@@ -83,6 +83,52 @@ var OTLPSemconvMetrics = map[string]OTLPMetricMapping{
 	"servicegraph.grpc.response.message.count": {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
 	"servicegraph.tcp.connection.open.count":   {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
 	"servicegraph.tcp.connection.close.count":  {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"servicegraph.tcp.bytes.sent":              {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindCounter},
+	"servicegraph.tcp.bytes.received":          {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindCounter},
+
+	// Kubelet pod & node network (Sum, cumulative).
+	"k8s.pod.network.io":      {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindCounter},
+	"k8s.pod.network.errors":  {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"k8s.node.network.io":     {ConversionFactor: 1.0, Unit: UnitBytesPerSecond, Kind: MetricKindCounter},
+	"k8s.node.network.errors": {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+
+	// Kubelet filesystem at pod / node / container scopes (Gauge, bytes).
+	"k8s.pod.filesystem.usage":           {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.pod.filesystem.capacity":        {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.pod.filesystem.available":       {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.node.filesystem.usage":          {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.node.filesystem.capacity":       {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.node.filesystem.available":      {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.filesystem.usage":     {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.filesystem.capacity":  {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.filesystem.available": {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+
+	// Volume inodes total (free/used already mapped above).
+	"k8s.volume.inodes": {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+
+	// k8s_cluster node allocatable ephemeral storage. The container-scope
+	// k8s.container.ephemeral_storage_{request,limit} metrics listed in upstream
+	// metadata.yaml at v0.111.0 are NOT actually accepted by the running receiver
+	// (the binary rejects those keys with "invalid keys" on startup, even though
+	// the doc claims default-enabled). Verified on a kind cluster on 2026-05-10.
+	// They are intentionally absent from this map and the catalog.
+	"k8s.node.allocatable_ephemeral_storage": {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+
+	// Hostmetrics CPU time (Sum, seconds → ns to mirror system.disk.operation_time).
+	"system.cpu.time": {ConversionFactor: 1e9, Unit: UnitNanoseconds, Kind: MetricKindCounter},
+
+	// Hostmetrics disk saturation. io_time / weighted_io_time mirror operation_time
+	// (cumulative seconds → nanoseconds, query-side rate()). merged is a cumulative
+	// op count. pending_operations is an instantaneous queue depth (Gauge).
+	"system.disk.io_time":            {ConversionFactor: 1e9, Unit: UnitNanoseconds, Kind: MetricKindCounter},
+	"system.disk.weighted_io_time":   {ConversionFactor: 1e9, Unit: UnitNanoseconds, Kind: MetricKindCounter},
+	"system.disk.merged":             {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"system.disk.pending_operations": {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+
+	// Hostmetrics filesystem inodes / paging faults / network connections.
+	"system.filesystem.inodes.usage": {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"system.paging.faults":           {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
+	"system.network.connections":     {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	// Note: servicegraph.request.error.ratio is query-derived (see metric_store.buildPromQL)
 	// and intentionally NOT in this table — it never arrives as an OTLP sample.
 }

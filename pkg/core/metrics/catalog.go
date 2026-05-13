@@ -68,6 +68,47 @@ var defaultCatalog = []CanonicalMetric{
 	{Name: "k8s.daemonset.ready_nodes", DisplayName: "DaemonSet Ready Nodes", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Nodes with ready daemon pod instances.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 	{Name: "k8s.statefulset.desired_pods", DisplayName: "StatefulSet Desired Pods", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Desired pod replicas for a statefulset.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 	{Name: "k8s.statefulset.ready_pods", DisplayName: "StatefulSet Ready Pods", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Ready pods for a statefulset.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+
+	// Istio TCP byte throughput (cumulative bytes; rate()-derived at query time).
+	{Name: "servicegraph.tcp.bytes.sent", DisplayName: "Service Graph TCP Bytes Sent", Unit: UnitBytesPerSecond, Category: CategoryTraffic, Scopes: []MetricScope{ScopeEdge}, Description: "Observed TCP bytes-sent rate between graph edges.", Sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
+	{Name: "servicegraph.tcp.bytes.received", DisplayName: "Service Graph TCP Bytes Received", Unit: UnitBytesPerSecond, Category: CategoryTraffic, Scopes: []MetricScope{ScopeEdge}, Description: "Observed TCP bytes-received rate between graph edges.", Sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
+
+	// Kubelet pod & node network throughput / errors.
+	{Name: "k8s.pod.network.io", DisplayName: "Pod Network Throughput", Unit: UnitBytesPerSecond, Category: CategoryTraffic, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod network throughput from kubeletstats. Direction (receive/transmit) is carried in the data point's `direction` attribute.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.pod.network.errors", DisplayName: "Pod Network Errors", Unit: UnitPerSecond, Category: CategoryError, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod network error rate from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.node.network.io", DisplayName: "Node Network Throughput (Kubelet)", Unit: UnitBytesPerSecond, Category: CategoryTraffic, Scopes: []MetricScope{ScopeEntity}, Description: "Observed node network throughput from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.node.network.errors", DisplayName: "Node Network Errors (Kubelet)", Unit: UnitPerSecond, Category: CategoryError, Scopes: []MetricScope{ScopeEntity}, Description: "Observed node network error rate from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+
+	// Kubelet filesystem at pod / node / container scopes.
+	{Name: "k8s.pod.filesystem.usage", DisplayName: "Pod Filesystem Usage", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod-scope filesystem usage from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.pod.filesystem.capacity", DisplayName: "Pod Filesystem Capacity", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod-scope filesystem capacity from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.pod.filesystem.available", DisplayName: "Pod Filesystem Available", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod-scope filesystem available bytes from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.node.filesystem.usage", DisplayName: "Node Filesystem Usage (Kubelet)", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed node-scope filesystem usage from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.node.filesystem.capacity", DisplayName: "Node Filesystem Capacity (Kubelet)", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed node-scope filesystem capacity from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.node.filesystem.available", DisplayName: "Node Filesystem Available (Kubelet)", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed node-scope filesystem available bytes from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.container.filesystem.usage", DisplayName: "Container Filesystem Usage", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed container-scope filesystem usage from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.container.filesystem.capacity", DisplayName: "Container Filesystem Capacity", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed container-scope filesystem capacity from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+	{Name: "k8s.container.filesystem.available", DisplayName: "Container Filesystem Available", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Observed container-scope filesystem available bytes from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+
+	// Volume inodes total (free/used already cataloged above).
+	{Name: "k8s.volume.inodes", DisplayName: "Volume Inodes Total", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Total inodes on a persistent volume.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+
+	// k8s_cluster ephemeral & storage container resources + node allocatable ephemeral.
+	{Name: "k8s.node.allocatable_ephemeral_storage", DisplayName: "Node Allocatable Ephemeral Storage", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Node allocatable ephemeral storage in bytes.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+
+	// Hostmetrics: CPU time (cumulative seconds → ns to mirror system.disk.operation_time pattern).
+	{Name: "system.cpu.time", DisplayName: "Host CPU Time", Unit: UnitNanoseconds, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Cumulative host CPU time per CPU/state from hostmetrics.", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+
+	// Hostmetrics: disk saturation.
+	{Name: "system.disk.io_time", DisplayName: "Disk Active Time", Unit: UnitNanoseconds, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Cumulative time the disk spent active (active-seconds → ns).", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+	{Name: "system.disk.weighted_io_time", DisplayName: "Disk Weighted Active Time", Unit: UnitNanoseconds, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Cumulative active time multiplied by queue length.", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+	{Name: "system.disk.merged", DisplayName: "Disk Merged Operations", Unit: UnitPerSecond, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Disk reads/writes merged into single physical operations, per second.", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+	{Name: "system.disk.pending_operations", DisplayName: "Disk Pending Operations", Unit: UnitCount, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Instantaneous queue depth of pending disk I/O operations.", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+
+	// Hostmetrics: filesystem inodes / paging faults / network connections.
+	{Name: "system.filesystem.inodes.usage", DisplayName: "Filesystem Inodes Usage", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Inodes by state (free/used/reserved) per mount point.", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+	{Name: "system.paging.faults", DisplayName: "Page Faults", Unit: UnitPerSecond, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Page-fault rate (major/minor) per node.", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+	{Name: "system.network.connections", DisplayName: "Network Connections", Unit: UnitCount, Category: CategoryTraffic, Scopes: []MetricScope{ScopeEntity}, Description: "Instantaneous network connection counts by protocol/state.", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 }
 
 func DefaultCatalog() []CanonicalMetric {
@@ -148,6 +189,30 @@ var defaultAppliesTo = map[string][]entities.EntityKind{
 	"rpc.server.duration":                   appliesToService,
 	"servicegraph.request.error.count":      appliesToService,
 	"servicegraph.request.error.ratio":      appliesToService,
+
+	"k8s.pod.network.io":                     appliesToPod,
+	"k8s.pod.network.errors":                 appliesToPod,
+	"k8s.pod.filesystem.usage":               appliesToPod,
+	"k8s.pod.filesystem.capacity":            appliesToPod,
+	"k8s.pod.filesystem.available":           appliesToPod,
+	"k8s.node.network.io":                    appliesToNode,
+	"k8s.node.network.errors":                appliesToNode,
+	"k8s.node.filesystem.usage":              appliesToNode,
+	"k8s.node.filesystem.capacity":           appliesToNode,
+	"k8s.node.filesystem.available":          appliesToNode,
+	"k8s.container.filesystem.usage":         appliesToContainer,
+	"k8s.container.filesystem.capacity":      appliesToContainer,
+	"k8s.container.filesystem.available":     appliesToContainer,
+	"k8s.volume.inodes":                      appliesToPVC,
+	"k8s.node.allocatable_ephemeral_storage": appliesToNode,
+	"system.cpu.time":                        appliesToNode,
+	"system.disk.io_time":                    appliesToNode,
+	"system.disk.weighted_io_time":           appliesToNode,
+	"system.disk.merged":                     appliesToNode,
+	"system.disk.pending_operations":         appliesToNode,
+	"system.filesystem.inodes.usage":         appliesToNode,
+	"system.paging.faults":                   appliesToNode,
+	"system.network.connections":             appliesToNode,
 }
 
 func cloneEntityKinds(kinds []entities.EntityKind) []entities.EntityKind {

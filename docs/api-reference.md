@@ -246,7 +246,8 @@ Query metric samples with unit from catalog. Sorted by timestamp descending.
 Semconv metric names are the API contract. Query-time derivations currently include:
 
 - `http.server.request.count` / `rpc.server.request.count` / `servicegraph.request.count` -> `rate(...[1m])`
-- `servicegraph.request.error.count`, `servicegraph.grpc.request.message.count`, `servicegraph.grpc.response.message.count`, `servicegraph.tcp.connection.open.count`, and `servicegraph.tcp.connection.close.count` -> `rate(...[1m])`
+- `servicegraph.request.error.count`, `servicegraph.grpc.request.message.count`, `servicegraph.grpc.response.message.count`, `servicegraph.tcp.connection.open.count`, `servicegraph.tcp.connection.close.count`, `servicegraph.tcp.bytes.sent`, and `servicegraph.tcp.bytes.received` -> `rate(...[1m])`
+- Cumulative kubelet/host counters served as rates: `k8s.pod.network.io`, `k8s.pod.network.errors`, `k8s.node.network.io`, `k8s.node.network.errors`, `system.cpu.time`, `system.disk.io_time`, `system.disk.weighted_io_time`, `system.disk.merged`, and `system.paging.faults` -> `rate(...[1m])`
 - `servicegraph.request.error.ratio` -> `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`
 - `oksg.container.health.status` -> integer-encoded enum (1=healthy, 2=running_not_ready, 3=restarting) derived from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Priority order: restarting > not_ready > healthy. Empty result means no recent sample (treat as unknown).
 - `oksg.pod.health.status` -> integer-encoded enum (1=healthy, 4=pending, 5=succeeded, 6=failed, 7=unknown) derived from `k8s.pod.phase`. running_not_ready and restarting at pod scope are a follow-up — see `oksg.container.health.status` for those today.

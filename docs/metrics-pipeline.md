@@ -59,9 +59,11 @@ Important properties:
   appear in `OTLPSemconvMetrics` (`pkg/core/metrics/otel_mappings.go`); the
   test `TestDefaultCatalogMetricsHaveIngestOrQuerySupport` enforces this.
 - **Unsupported metrics stay out of the catalog.** Names that have no real
-  ingest path (e.g. `k8s.pod.network.io.*`, `k8s.node.*` capacity gauges) are
-  explicitly excluded by `TestDefaultCatalogExcludesUnsupportedMetrics` so
-  the UI never advertises a metric the backend cannot produce.
+  ingest path (e.g. the exploded `k8s.pod.network.io.{receive,transmit}` —
+  kubeletstats only emits the bare `k8s.pod.network.io` with a `direction`
+  attribute — and `k8s.node.*` capacity gauges) are explicitly excluded by
+  `TestDefaultCatalogExcludesUnsupportedMetrics` so the UI never advertises a
+  metric the backend cannot produce.
 
 The current categories are `resource`, `traffic`, `latency`, `error`,
 `capacity`, and `health`. Categories drive the Metrics Explorer tab layout.

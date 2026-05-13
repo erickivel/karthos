@@ -547,7 +547,7 @@ func buildOksgSourceTagger() map[string]any {
 		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.pod\\.(cpu|memory|filesystem|network)\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.volume\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^container\\.") and ` + guard,
-		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set") and ` + guard,
+		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set" or IsMatch(metric.name, "^k8s\\.node\\.(network|filesystem)\\.")) and ` + guard,
 		// hostmetrics receiver
 		`set(attributes["oksg_source"], "` + metrics.SourceHostOS + `") where IsMatch(metric.name, "^system\\.") and ` + guard,
 		// k8s_cluster receiver: cluster-level workload + capacity + condition + container/pod spec/status metrics.
