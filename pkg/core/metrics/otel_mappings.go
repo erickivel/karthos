@@ -26,6 +26,10 @@ var OTLPSemconvMetrics = map[string]OTLPMetricMapping{
 	"k8s.container.cpu.limit":                  {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
 	"k8s.container.memory.request":             {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
 	"k8s.container.memory.limit":               {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.storage.request":            {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.storage.limit":              {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.ephemeral_storage.request":  {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.container.ephemeral_storage.limit":    {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
 	"k8s.container.cpu.usage":                  {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
 	"k8s.container.memory.usage":               {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
 	"k8s.container.ready":                      {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
@@ -55,8 +59,12 @@ var OTLPSemconvMetrics = map[string]OTLPMetricMapping{
 	"system.paging.usage":                      {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
 	"system.paging.operations":                 {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindGauge},
 	"k8s.replicaset.desired":                   {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.replicaset.available":                 {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.replication_controller.desired":       {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.replication_controller.available":     {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.deployment.desired":                   {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.deployment.available":                 {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.cronjob.active_jobs":                  {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.namespace.phase":                      {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.pod.phase":                            {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.pod.status_reason":                    {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
@@ -66,10 +74,26 @@ var OTLPSemconvMetrics = map[string]OTLPMetricMapping{
 	"k8s.node.condition.disk_pressure":         {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.node.allocatable_cpu":                 {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
 	"k8s.node.allocatable_memory":              {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
+	"k8s.node.allocatable_pods":                {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.daemonset.desired_scheduled_nodes":    {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.daemonset.current_scheduled_nodes":    {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.daemonset.misscheduled_nodes":         {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.daemonset.ready_nodes":                {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.statefulset.desired_pods":             {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"k8s.statefulset.ready_pods":               {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.statefulset.current_pods":             {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.statefulset.updated_pods":             {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.hpa.max_replicas":                     {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.hpa.min_replicas":                     {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.hpa.current_replicas":                 {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.hpa.desired_replicas":                 {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.job.active_pods":                      {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.job.desired_successful_pods":          {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.job.failed_pods":                      {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.job.max_parallel_pods":                {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.job.successful_pods":                  {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.resource_quota.hard_limit":            {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
+	"k8s.resource_quota.used":                  {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 	"http.server.request.count":                {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
 	"http.server.request.duration":             {ConversionFactor: 1e9, Unit: UnitNanoseconds, Kind: MetricKindHistogram},
 	"rpc.server.request.count":                 {ConversionFactor: 1.0, Unit: UnitPerSecond, Kind: MetricKindCounter},
@@ -106,12 +130,7 @@ var OTLPSemconvMetrics = map[string]OTLPMetricMapping{
 	// Volume inodes total (free/used already mapped above).
 	"k8s.volume.inodes": {ConversionFactor: 1.0, Unit: UnitCount, Kind: MetricKindGauge},
 
-	// k8s_cluster node allocatable ephemeral storage. The container-scope
-	// k8s.container.ephemeral_storage_{request,limit} metrics listed in upstream
-	// metadata.yaml at v0.111.0 are NOT actually accepted by the running receiver
-	// (the binary rejects those keys with "invalid keys" on startup, even though
-	// the doc claims default-enabled). Verified on a kind cluster on 2026-05-10.
-	// They are intentionally absent from this map and the catalog.
+	// k8s_cluster node allocatable ephemeral storage.
 	"k8s.node.allocatable_ephemeral_storage": {ConversionFactor: 1.0, Unit: UnitBytes, Kind: MetricKindGauge},
 
 	// Hostmetrics CPU time (Sum, seconds → ns to mirror system.disk.operation_time).

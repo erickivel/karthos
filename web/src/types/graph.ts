@@ -11,6 +11,8 @@ export type EntityKind =
   | 'configmap'
   | 'secret'
   | 'pvc'
+  | 'hpa'
+  | 'resourcequota'
 
 export type RelationType =
   | 'calls'

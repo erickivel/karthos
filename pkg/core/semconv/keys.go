@@ -2,16 +2,21 @@ package semconv
 
 // Resource attribute keys from OTLP semantic conventions.
 const (
-	ResourceK8sClusterName     = "k8s.cluster.name"
-	ResourceK8sContainerName   = "k8s.container.name"
-	ResourceK8sDaemonSetName   = "k8s.daemonset.name"
-	ResourceK8sDeploymentName  = "k8s.deployment.name"
-	ResourceK8sNamespaceName   = "k8s.namespace.name"
-	ResourceK8sNodeName        = "k8s.node.name"
-	ResourceK8sPodName         = "k8s.pod.name"
-	ResourceK8sReplicaSetName  = "k8s.replicaset.name"
-	ResourceK8sStatefulSetName = "k8s.statefulset.name"
-	ResourceServiceName        = "service.name"
+	ResourceK8sClusterName               = "k8s.cluster.name"
+	ResourceK8sContainerName             = "k8s.container.name"
+	ResourceK8sCronJobName               = "k8s.cronjob.name"
+	ResourceK8sDaemonSetName             = "k8s.daemonset.name"
+	ResourceK8sDeploymentName            = "k8s.deployment.name"
+	ResourceK8sHPAName                   = "k8s.hpa.name"
+	ResourceK8sJobName                   = "k8s.job.name"
+	ResourceK8sNamespaceName             = "k8s.namespace.name"
+	ResourceK8sNodeName                  = "k8s.node.name"
+	ResourceK8sPodName                   = "k8s.pod.name"
+	ResourceK8sReplicationControllerName = "k8s.replicationcontroller.name"
+	ResourceK8sReplicaSetName            = "k8s.replicaset.name"
+	ResourceK8sResourceQuotaName         = "k8s.resourcequota.name"
+	ResourceK8sStatefulSetName           = "k8s.statefulset.name"
+	ResourceServiceName                  = "service.name"
 )
 
 // Metric datapoint attribute keys.

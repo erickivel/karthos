@@ -62,10 +62,14 @@ export function MetricsExplorer() {
 
   const selectedNode = isEntityMode && filter.entityId ? nodeById.get(filter.entityId) ?? null : null
   const selectedKind = selectedNode?.kind ?? null
+  const applicabilityContext = useMemo(
+    () => ({ labels: selectedNode?.labels }),
+    [selectedNode?.labels],
+  )
 
   const visibleCategories = useMemo(
-    () => visibleCategoriesForSelection(catalog?.metrics, isEntityMode ? selectedKind : null, mode),
-    [catalog?.metrics, isEntityMode, selectedKind, mode],
+    () => visibleCategoriesForSelection(catalog?.metrics, isEntityMode ? selectedKind : null, mode, applicabilityContext),
+    [catalog?.metrics, isEntityMode, selectedKind, mode, applicabilityContext],
   )
 
   const categoryMetrics = useMemo(
@@ -75,8 +79,9 @@ export function MetricsExplorer() {
         category,
         isEntityMode ? selectedKind : null,
         mode,
+        applicabilityContext,
       ),
-    [catalog?.metrics, category, mode, selectedKind, isEntityMode],
+    [catalog?.metrics, category, mode, selectedKind, isEntityMode, applicabilityContext],
   )
 
   const hasSelection = isEntityMode ? Boolean(selectedNode) : Boolean(edgeSourceId && edgeTargetId)

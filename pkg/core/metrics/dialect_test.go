@@ -59,6 +59,10 @@ func TestDefaultSourceDialectsTranslateKubeClusterContainerSpecs(t *testing.T) {
 	require.Equal(t, "k8s.container.cpu.limit", registry.Translate("k8s.container.cpu_limit"))
 	require.Equal(t, "k8s.container.memory.request", registry.Translate("k8s.container.memory_request"))
 	require.Equal(t, "k8s.container.memory.limit", registry.Translate("k8s.container.memory_limit"))
+	require.Equal(t, "k8s.container.storage.request", registry.Translate("k8s.container.storage_request"))
+	require.Equal(t, "k8s.container.storage.limit", registry.Translate("k8s.container.storage_limit"))
+	require.Equal(t, "k8s.container.ephemeral_storage.request", registry.Translate("k8s.container.ephemeralstorage_request"))
+	require.Equal(t, "k8s.container.ephemeral_storage.limit", registry.Translate("k8s.container.ephemeralstorage_limit"))
 }
 
 // TestKubeClusterDialect_CoverageForCatalogSources walks every catalog entry
@@ -81,18 +85,38 @@ func TestKubeClusterDialect_CoverageForCatalogSources(t *testing.T) {
 		"k8s.pod.phase":                          {},
 		"k8s.pod.status_reason":                  {},
 		"k8s.replicaset.desired":                 {},
+		"k8s.replicaset.available":               {},
+		"k8s.replication_controller.desired":     {},
+		"k8s.replication_controller.available":   {},
 		"k8s.deployment.desired":                 {},
 		"k8s.deployment.available":               {},
+		"k8s.cronjob.active_jobs":                {},
 		"k8s.daemonset.desired_scheduled_nodes":  {},
+		"k8s.daemonset.current_scheduled_nodes":  {},
+		"k8s.daemonset.misscheduled_nodes":       {},
 		"k8s.daemonset.ready_nodes":              {},
 		"k8s.statefulset.desired_pods":           {},
 		"k8s.statefulset.ready_pods":             {},
+		"k8s.statefulset.current_pods":           {},
+		"k8s.statefulset.updated_pods":           {},
+		"k8s.hpa.max_replicas":                   {},
+		"k8s.hpa.min_replicas":                   {},
+		"k8s.hpa.current_replicas":               {},
+		"k8s.hpa.desired_replicas":               {},
+		"k8s.job.active_pods":                    {},
+		"k8s.job.desired_successful_pods":        {},
+		"k8s.job.failed_pods":                    {},
+		"k8s.job.max_parallel_pods":              {},
+		"k8s.job.successful_pods":                {},
+		"k8s.resource_quota.hard_limit":          {},
+		"k8s.resource_quota.used":                {},
 		"k8s.node.condition.ready":               {},
 		"k8s.node.condition.memory_pressure":     {},
 		"k8s.node.condition.disk_pressure":       {},
 		"k8s.node.allocatable_cpu":               {},
 		"k8s.node.allocatable_memory":            {},
 		"k8s.node.allocatable_ephemeral_storage": {},
+		"k8s.node.allocatable_pods":              {},
 	}
 
 	dialectCanonicals := make(map[string]struct{}, len(KubeClusterDialect))

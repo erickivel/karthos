@@ -102,6 +102,23 @@ kubeletstats receiver emits a mix of `k8s.*` and upstream `container.*` names,
 so its source dialect maps container usage metrics onto the public
 `k8s.container.*` catalog names.
 
+The `kube-cluster` source is the metric-native Kubernetes API path. It covers
+controller/workload replica gauges (`deployment`, `replicaset`, `daemonset`,
+`statefulset`, `job`, `cronjob`, and legacy `replication_controller`), HPA
+replica gauges, ResourceQuota usage/limits, pod phases/reasons, container
+resource specs, and node allocatable resources. Object snapshots/events from
+the OTel `k8s_objects` receiver are intentionally out of scope for the metrics
+catalog because that receiver emits logs, not metric samples.
+
+`k8s_cluster` workload/controller metrics must resolve to entities already
+materialized by structural discovery. Discovery emits Deployment, StatefulSet,
+DaemonSet, ReplicaSet, Job, CronJob, ReplicationController, HPA, and
+ResourceQuota nodes with IDs matching `OTLPEntityResolver`; otherwise the
+Metrics Explorer cannot select the sample-bearing entity from `/api/v1/graph`.
+Workload nodes also carry `k8s.workload.type` so the frontend can hide
+controller-specific metric families that do not apply to the selected workload
+subtype.
+
 Source IDs are exported as constants so the catalog, dialect, and planner
 share a single contract:
 

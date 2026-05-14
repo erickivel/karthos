@@ -112,6 +112,8 @@ export const NODE_METRICS: Record<EntityKind, NodeMetricSpec[]> = {
   endpoint: [],
   configmap: [],
   secret: [],
+  hpa: [],
+  resourcequota: [],
 }
 
 function addMetricNames(names: Set<string>, selector: MetricSelector | undefined) {

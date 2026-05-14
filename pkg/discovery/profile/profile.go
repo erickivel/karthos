@@ -7,18 +7,20 @@ import (
 )
 
 type ClusterProfile struct {
-	ClusterID            entities.EntityID     `json:"cluster_id"`
-	ClusterName          string                `json:"cluster_name"`
-	DiscoveredAt         time.Time             `json:"discovered_at"`
-	Nodes                []entities.Node       `json:"nodes,omitempty"`
-	Namespaces           []entities.Namespace  `json:"namespaces,omitempty"`
-	Workloads            []entities.Workload   `json:"workloads,omitempty"`
-	Pods                 []entities.Pod        `json:"pods,omitempty"`
-	Services             []entities.Service    `json:"services,omitempty"`
-	Ingresses            []entities.Ingress    `json:"ingresses,omitempty"`
-	Sources              []ObservabilitySource `json:"sources,omitempty"`
-	CollectionPaths      []OTelCollectionPath  `json:"collection_paths,omitempty"`
-	RecommendedReceivers []string              `json:"recommended_receivers,omitempty"`
+	ClusterID            entities.EntityID        `json:"cluster_id"`
+	ClusterName          string                   `json:"cluster_name"`
+	DiscoveredAt         time.Time                `json:"discovered_at"`
+	Nodes                []entities.Node          `json:"nodes,omitempty"`
+	Namespaces           []entities.Namespace     `json:"namespaces,omitempty"`
+	Workloads            []entities.Workload      `json:"workloads,omitempty"`
+	HPAs                 []entities.HPA           `json:"hpas,omitempty"`
+	ResourceQuotas       []entities.ResourceQuota `json:"resource_quotas,omitempty"`
+	Pods                 []entities.Pod           `json:"pods,omitempty"`
+	Services             []entities.Service       `json:"services,omitempty"`
+	Ingresses            []entities.Ingress       `json:"ingresses,omitempty"`
+	Sources              []ObservabilitySource    `json:"sources,omitempty"`
+	CollectionPaths      []OTelCollectionPath     `json:"collection_paths,omitempty"`
+	RecommendedReceivers []string                 `json:"recommended_receivers,omitempty"`
 }
 
 type PrometheusTarget struct {

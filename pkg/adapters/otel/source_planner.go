@@ -215,7 +215,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		"k8s_cluster": map[string]any{
 			"collection_interval":         "30s",
 			"node_conditions_to_report":   []string{"Ready", "MemoryPressure", "DiskPressure"},
-			"allocatable_types_to_report": []string{"cpu", "memory", "ephemeral-storage"},
+			"allocatable_types_to_report": []string{"cpu", "memory", "ephemeral-storage", "pods"},
 			"metrics": map[string]any{
 				"k8s.node.condition": map[string]any{
 					"enabled": true,
@@ -557,7 +557,7 @@ func buildOksgSourceTagger() map[string]any {
 		// claim.
 		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.container\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.pod\\.") and ` + guard,
-		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.(replicaset|deployment|namespace|daemonset|statefulset)\\.") and ` + guard,
+		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.(replicaset|deployment|namespace|daemonset|statefulset|job|cronjob|hpa|resource_quota|replication_controller)\\.") and ` + guard,
 		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.node\\.(condition|allocatable|cpu\\.capacity|cpu\\.cores|cpu\\.frequency|memory\\.capacity|disk\\.capacity|network\\.bandwidth)") and ` + guard,
 		// spanmetrics connector
 		`set(attributes["oksg_source"], "` + metrics.SourceTracesSpanmetrics + `") where IsMatch(metric.name, "^traces\\.span\\.metrics\\.") and ` + guard,

@@ -108,6 +108,16 @@ const KIND_ENTRIES: Record<EntityKind, KindEntry> = {
     label: 'PVC',
     description: 'Persistent volume claim (storage)',
   },
+  hpa: {
+    kind: 'hpa',
+    label: 'HPA',
+    description: 'Horizontal pod autoscaler',
+  },
+  resourcequota: {
+    kind: 'resourcequota',
+    label: 'ResourceQuota',
+    description: 'Namespace resource quota',
+  },
 }
 
 const MODE_SECTIONS: ModeSection[] = [

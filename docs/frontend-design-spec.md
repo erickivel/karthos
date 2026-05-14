@@ -296,7 +296,7 @@ The Metrics Explorer must treat catalog `scopes` as authoritative:
 - edge mode renders only metrics whose scopes include `edge`
 - edge mode uses edge-capable catalog entries such as servicegraph and HTTP request metrics; unsupported pod-network metrics must not be requested or displayed
 
-**Applicability layer.** On top of `scopes`, the Explorer hides tabs and cards that are *structurally* inapplicable to the selected entity kind using catalog-owned `applies_to` metadata. `sources` describe metric producers and source arbitration only; the frontend must not infer entity applicability from source IDs.
+**Applicability layer.** On top of `scopes`, the Explorer hides tabs and cards that are *structurally* inapplicable to the selected entity kind using catalog-owned `applies_to` metadata. For workload entities, `k8s.workload.type` narrows controller-specific metric families so Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, and ReplicationController cards only appear on the matching subtype; missing subtype metadata fails open for older graph snapshots. `sources` describe metric producers and source arbitration only; the frontend must not infer entity applicability from source IDs.
 
 Cards that are applicable but currently empty render an informative empty state listing the metric's expected sources, distinguishing "no data right now" from "this never applies". Catalog responses missing `applies_to` fail open for compatibility and emit a single `console.warn` in dev. See `web/src/views/MetricsExplorer/applicability/README.md` for the full model and how to extend it.
 

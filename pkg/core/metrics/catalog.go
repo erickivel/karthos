@@ -95,6 +95,32 @@ var defaultCatalog = []CanonicalMetric{
 
 	// k8s_cluster ephemeral & storage container resources + node allocatable ephemeral.
 	{Name: "k8s.node.allocatable_ephemeral_storage", DisplayName: "Node Allocatable Ephemeral Storage", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Node allocatable ephemeral storage in bytes.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.node.allocatable_pods", DisplayName: "Node Allocatable Pods", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Node allocatable pod capacity.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+
+	// k8s_cluster workload/controller metrics.
+	{Name: "k8s.container.storage.request", DisplayName: "Container Storage Request", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Requested generic storage for a container.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.container.storage.limit", DisplayName: "Container Storage Limit", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Generic storage limit for a container.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.container.ephemeral_storage.request", DisplayName: "Container Ephemeral Storage Request", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Requested ephemeral storage for a container.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.container.ephemeral_storage.limit", DisplayName: "Container Ephemeral Storage Limit", Unit: UnitBytes, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Ephemeral storage limit for a container.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.cronjob.active_jobs", DisplayName: "CronJob Active Jobs", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Actively running jobs for a cronjob.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.daemonset.current_scheduled_nodes", DisplayName: "DaemonSet Current Scheduled Nodes", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Nodes currently running the daemon pod and expected to run it.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.daemonset.misscheduled_nodes", DisplayName: "DaemonSet Misscheduled Nodes", Unit: UnitCount, Category: CategoryError, Scopes: []MetricScope{ScopeEntity}, Description: "Nodes running the daemon pod but not expected to run it.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.hpa.max_replicas", DisplayName: "HPA Max Replicas", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Maximum replicas configured for a horizontal pod autoscaler.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.hpa.min_replicas", DisplayName: "HPA Min Replicas", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Minimum replicas configured for a horizontal pod autoscaler.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.hpa.current_replicas", DisplayName: "HPA Current Replicas", Unit: UnitCount, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Current replicas managed by a horizontal pod autoscaler.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.hpa.desired_replicas", DisplayName: "HPA Desired Replicas", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Desired replicas managed by a horizontal pod autoscaler.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.job.active_pods", DisplayName: "Job Active Pods", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Actively running pods for a job.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.job.desired_successful_pods", DisplayName: "Job Desired Successful Pods", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Desired successfully completed pods for a job.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.job.failed_pods", DisplayName: "Job Failed Pods", Unit: UnitCount, Category: CategoryError, Scopes: []MetricScope{ScopeEntity}, Description: "Pods that reached Failed phase for a job.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.job.max_parallel_pods", DisplayName: "Job Max Parallel Pods", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Maximum desired parallel pods for a job.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.job.successful_pods", DisplayName: "Job Successful Pods", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Pods that reached Succeeded phase for a job.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.replicaset.available", DisplayName: "ReplicaSet Available Replicas", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Available pods targeted by a replicaset.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.replication_controller.desired", DisplayName: "ReplicationController Desired Replicas", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Desired pods for a replication controller.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.replication_controller.available", DisplayName: "ReplicationController Available Replicas", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Available pods targeted by a replication controller.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.resource_quota.hard_limit", DisplayName: "ResourceQuota Hard Limit", Unit: UnitCount, Category: CategoryCapacity, Scopes: []MetricScope{ScopeEntity}, Description: "Configured hard limit for a resource quota resource. The `resource` label identifies the quota dimension.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.resource_quota.used", DisplayName: "ResourceQuota Used", Unit: UnitCount, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Current usage for a resource quota resource. The `resource` label identifies the quota dimension.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.statefulset.current_pods", DisplayName: "StatefulSet Current Pods", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Pods created by the StatefulSet controller from the current StatefulSet version.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+	{Name: "k8s.statefulset.updated_pods", DisplayName: "StatefulSet Updated Pods", Unit: UnitCount, Category: CategoryHealth, Scopes: []MetricScope{ScopeEntity}, Description: "Pods created by the StatefulSet controller from the updated StatefulSet version.", Sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 
 	// Hostmetrics: CPU time (cumulative seconds → ns to mirror system.disk.operation_time pattern).
 	{Name: "system.cpu.time", DisplayName: "Host CPU Time", Unit: UnitNanoseconds, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Cumulative host CPU time per CPU/state from hostmetrics.", Sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
@@ -121,13 +147,15 @@ func DefaultCatalog() []CanonicalMetric {
 }
 
 var (
-	appliesToNode      = []entities.EntityKind{entities.KindNode}
-	appliesToNamespace = []entities.EntityKind{entities.KindNamespace}
-	appliesToWorkload  = []entities.EntityKind{entities.KindWorkload}
-	appliesToPod       = []entities.EntityKind{entities.KindPod}
-	appliesToContainer = []entities.EntityKind{entities.KindContainer}
-	appliesToService   = []entities.EntityKind{entities.KindService}
-	appliesToPVC       = []entities.EntityKind{entities.KindPVC}
+	appliesToNode          = []entities.EntityKind{entities.KindNode}
+	appliesToNamespace     = []entities.EntityKind{entities.KindNamespace}
+	appliesToWorkload      = []entities.EntityKind{entities.KindWorkload}
+	appliesToPod           = []entities.EntityKind{entities.KindPod}
+	appliesToContainer     = []entities.EntityKind{entities.KindContainer}
+	appliesToService       = []entities.EntityKind{entities.KindService}
+	appliesToPVC           = []entities.EntityKind{entities.KindPVC}
+	appliesToHPA           = []entities.EntityKind{entities.KindHPA}
+	appliesToResourceQuota = []entities.EntityKind{entities.KindResourceQuota}
 )
 
 var defaultAppliesTo = map[string][]entities.EntityKind{
@@ -152,6 +180,7 @@ var defaultAppliesTo = map[string][]entities.EntityKind{
 	"k8s.node.condition.disk_pressure":      appliesToNode,
 	"k8s.node.allocatable_cpu":              appliesToNode,
 	"k8s.node.allocatable_memory":           appliesToNode,
+	"k8s.node.allocatable_pods":             appliesToNode,
 	"system.cpu.utilization":                appliesToNode,
 	"system.memory.usage":                   appliesToNode,
 	"system.disk.io.read":                   appliesToNode,
@@ -178,10 +207,29 @@ var defaultAppliesTo = map[string][]entities.EntityKind{
 	"k8s.deployment.available":              appliesToWorkload,
 	"k8s.deployment.desired":                appliesToWorkload,
 	"k8s.replicaset.desired":                appliesToWorkload,
+	"k8s.replicaset.available":              appliesToWorkload,
+	"k8s.replication_controller.desired":    appliesToWorkload,
+	"k8s.replication_controller.available":  appliesToWorkload,
 	"k8s.daemonset.desired_scheduled_nodes": appliesToWorkload,
+	"k8s.daemonset.current_scheduled_nodes": appliesToWorkload,
+	"k8s.daemonset.misscheduled_nodes":      appliesToWorkload,
 	"k8s.daemonset.ready_nodes":             appliesToWorkload,
 	"k8s.statefulset.desired_pods":          appliesToWorkload,
 	"k8s.statefulset.ready_pods":            appliesToWorkload,
+	"k8s.statefulset.current_pods":          appliesToWorkload,
+	"k8s.statefulset.updated_pods":          appliesToWorkload,
+	"k8s.job.active_pods":                   appliesToWorkload,
+	"k8s.job.desired_successful_pods":       appliesToWorkload,
+	"k8s.job.failed_pods":                   appliesToWorkload,
+	"k8s.job.max_parallel_pods":             appliesToWorkload,
+	"k8s.job.successful_pods":               appliesToWorkload,
+	"k8s.cronjob.active_jobs":               appliesToWorkload,
+	"k8s.hpa.max_replicas":                  appliesToHPA,
+	"k8s.hpa.min_replicas":                  appliesToHPA,
+	"k8s.hpa.current_replicas":              appliesToHPA,
+	"k8s.hpa.desired_replicas":              appliesToHPA,
+	"k8s.resource_quota.hard_limit":         appliesToResourceQuota,
+	"k8s.resource_quota.used":               appliesToResourceQuota,
 	"http.server.request.count":             appliesToService,
 	"rpc.server.request.count":              appliesToService,
 	"servicegraph.request.count":            appliesToService,
@@ -190,29 +238,33 @@ var defaultAppliesTo = map[string][]entities.EntityKind{
 	"servicegraph.request.error.count":      appliesToService,
 	"servicegraph.request.error.ratio":      appliesToService,
 
-	"k8s.pod.network.io":                     appliesToPod,
-	"k8s.pod.network.errors":                 appliesToPod,
-	"k8s.pod.filesystem.usage":               appliesToPod,
-	"k8s.pod.filesystem.capacity":            appliesToPod,
-	"k8s.pod.filesystem.available":           appliesToPod,
-	"k8s.node.network.io":                    appliesToNode,
-	"k8s.node.network.errors":                appliesToNode,
-	"k8s.node.filesystem.usage":              appliesToNode,
-	"k8s.node.filesystem.capacity":           appliesToNode,
-	"k8s.node.filesystem.available":          appliesToNode,
-	"k8s.container.filesystem.usage":         appliesToContainer,
-	"k8s.container.filesystem.capacity":      appliesToContainer,
-	"k8s.container.filesystem.available":     appliesToContainer,
-	"k8s.volume.inodes":                      appliesToPVC,
-	"k8s.node.allocatable_ephemeral_storage": appliesToNode,
-	"system.cpu.time":                        appliesToNode,
-	"system.disk.io_time":                    appliesToNode,
-	"system.disk.weighted_io_time":           appliesToNode,
-	"system.disk.merged":                     appliesToNode,
-	"system.disk.pending_operations":         appliesToNode,
-	"system.filesystem.inodes.usage":         appliesToNode,
-	"system.paging.faults":                   appliesToNode,
-	"system.network.connections":             appliesToNode,
+	"k8s.pod.network.io":                      appliesToPod,
+	"k8s.pod.network.errors":                  appliesToPod,
+	"k8s.pod.filesystem.usage":                appliesToPod,
+	"k8s.pod.filesystem.capacity":             appliesToPod,
+	"k8s.pod.filesystem.available":            appliesToPod,
+	"k8s.node.network.io":                     appliesToNode,
+	"k8s.node.network.errors":                 appliesToNode,
+	"k8s.node.filesystem.usage":               appliesToNode,
+	"k8s.node.filesystem.capacity":            appliesToNode,
+	"k8s.node.filesystem.available":           appliesToNode,
+	"k8s.container.filesystem.usage":          appliesToContainer,
+	"k8s.container.filesystem.capacity":       appliesToContainer,
+	"k8s.container.filesystem.available":      appliesToContainer,
+	"k8s.container.storage.request":           appliesToContainer,
+	"k8s.container.storage.limit":             appliesToContainer,
+	"k8s.container.ephemeral_storage.request": appliesToContainer,
+	"k8s.container.ephemeral_storage.limit":   appliesToContainer,
+	"k8s.volume.inodes":                       appliesToPVC,
+	"k8s.node.allocatable_ephemeral_storage":  appliesToNode,
+	"system.cpu.time":                         appliesToNode,
+	"system.disk.io_time":                     appliesToNode,
+	"system.disk.weighted_io_time":            appliesToNode,
+	"system.disk.merged":                      appliesToNode,
+	"system.disk.pending_operations":          appliesToNode,
+	"system.filesystem.inodes.usage":          appliesToNode,
+	"system.paging.faults":                    appliesToNode,
+	"system.network.connections":              appliesToNode,
 }
 
 func cloneEntityKinds(kinds []entities.EntityKind) []entities.EntityKind {

@@ -360,6 +360,114 @@ func TestOTLPNormalizer_RawKubeClusterContainerMemoryLimit(t *testing.T) {
 	assert.Equal(t, metrics.UnitBytes, samples[0].Unit)
 }
 
+func TestOTLPNormalizer_RawKubeClusterWorkloadMetrics(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC).UnixNano())
+
+	cases := []struct {
+		name       string
+		metricName string
+		resource   map[string]string
+		expected   string
+		entityID   entities.EntityID
+		unit       metrics.Unit
+	}{
+		{
+			name:       "container storage request",
+			metricName: "k8s.container.storage_request",
+			resource: map[string]string{
+				"k8s.namespace.name": "default",
+				"k8s.pod.name":       "test-pod",
+				"k8s.container.name": "app",
+			},
+			expected: "k8s.container.storage.request",
+			entityID: entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "test-pod", "app"),
+			unit:     metrics.UnitBytes,
+		},
+		{
+			name:       "job active pods",
+			metricName: "k8s.job.active_pods",
+			resource: map[string]string{
+				"k8s.namespace.name": "batch",
+				"k8s.job.name":       "daily-import",
+			},
+			expected: "k8s.job.active_pods",
+			entityID: entities.ComputeEntityID(entities.KindWorkload, testCluster, "batch", "job", "daily-import"),
+			unit:     metrics.UnitCount,
+		},
+		{
+			name:       "cronjob active jobs",
+			metricName: "k8s.cronjob.active_jobs",
+			resource: map[string]string{
+				"k8s.namespace.name": "batch",
+				"k8s.cronjob.name":   "daily-import",
+			},
+			expected: "k8s.cronjob.active_jobs",
+			entityID: entities.ComputeEntityID(entities.KindWorkload, testCluster, "batch", "cronjob", "daily-import"),
+			unit:     metrics.UnitCount,
+		},
+		{
+			name:       "hpa current replicas",
+			metricName: "k8s.hpa.current_replicas",
+			resource: map[string]string{
+				"k8s.namespace.name": "default",
+				"k8s.hpa.name":       "gateway",
+			},
+			expected: "k8s.hpa.current_replicas",
+			entityID: entities.ComputeEntityID(entities.KindHPA, testCluster, "default", "gateway"),
+			unit:     metrics.UnitCount,
+		},
+		{
+			name:       "resource quota used",
+			metricName: "k8s.resource_quota.used",
+			resource: map[string]string{
+				"k8s.namespace.name":     "default",
+				"k8s.resourcequota.name": "compute",
+			},
+			expected: "k8s.resource_quota.used",
+			entityID: entities.ComputeEntityID(entities.KindResourceQuota, testCluster, "default", "compute"),
+			unit:     metrics.UnitCount,
+		},
+		{
+			name:       "replication controller available",
+			metricName: "k8s.replication_controller.available",
+			resource: map[string]string{
+				"k8s.namespace.name":             "default",
+				"k8s.replicationcontroller.name": "legacy",
+			},
+			expected: "k8s.replication_controller.available",
+			entityID: entities.ComputeEntityID(entities.KindWorkload, testCluster, "default", "replication_controller", "legacy"),
+			unit:     metrics.UnitCount,
+		},
+		{
+			name:       "node allocatable pods",
+			metricName: "k8s.node.allocatable_pods",
+			resource: map[string]string{
+				"k8s.node.name": "worker-1",
+			},
+			expected: "k8s.node.allocatable_pods",
+			entityID: entities.ComputeEntityID(entities.KindNode, testCluster, "worker-1"),
+			unit:     metrics.UnitCount,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rm := makeGaugeRM(tc.metricName, 7, tsNano)
+			env := makeEnvelope(t, tc.resource, rm)
+
+			samples, err := normalizer.Normalize(context.Background(), env)
+			require.NoError(t, err)
+			require.Len(t, samples, 1)
+
+			assert.Equal(t, tc.expected, samples[0].MetricName)
+			assert.Equal(t, tc.entityID, samples[0].EntityID)
+			assert.InDelta(t, 7.0, samples[0].Value, 1e-9)
+			assert.Equal(t, tc.unit, samples[0].Unit)
+		})
+	}
+}
+
 func TestOTLPNormalizer_MemoryMetric(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())

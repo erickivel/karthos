@@ -5,6 +5,21 @@ export type ExplorerMode = 'entity' | 'edge'
 
 const ALL_CATEGORIES: MetricCategory[] = ['resource', 'traffic', 'latency', 'error', 'capacity', 'health']
 const EDGE_CATEGORIES: MetricCategory[] = ['traffic', 'latency', 'error']
+const WORKLOAD_TYPE_LABEL = 'k8s.workload.type'
+
+interface ApplicabilityContext {
+  labels?: Record<string, string>
+}
+
+const WORKLOAD_METRIC_PREFIX_BY_TYPE: Record<string, string> = {
+  deployment: 'k8s.deployment.',
+  statefulset: 'k8s.statefulset.',
+  daemonset: 'k8s.daemonset.',
+  replicaset: 'k8s.replicaset.',
+  job: 'k8s.job.',
+  cronjob: 'k8s.cronjob.',
+  replication_controller: 'k8s.replication_controller.',
+}
 
 const warnedMetrics = new Set<string>()
 
@@ -32,12 +47,13 @@ export function visibleCategoriesForSelection(
   metrics: CanonicalMetric[] | undefined,
   kind: EntityKind | null,
   mode: ExplorerMode,
+  context?: ApplicabilityContext,
 ): MetricCategory[] {
   if (!metrics) return mode === 'edge' ? EDGE_CATEGORIES : ALL_CATEGORIES
   if (mode === 'entity' && kind === null) return ALL_CATEGORIES
 
   const visible = ALL_CATEGORIES.filter((category) =>
-    applicableMetrics(metrics, category, kind, mode).length > 0,
+    applicableMetrics(metrics, category, kind, mode, context).length > 0,
   )
 
   if (visible.length > 0) return visible
@@ -54,13 +70,30 @@ export function visibleCategoriesForSelection(
 export function isMetricApplicableToKind(
   metric: CanonicalMetric,
   kind: EntityKind | null,
+  context?: ApplicabilityContext,
 ): boolean {
   if (kind === null) return true
   if (!metric.applies_to) {
     warnMissingAppliesToOnce(metric.name)
     return true
   }
+  if (kind === 'workload' && metric.applies_to.includes(kind) && !isMetricApplicableToWorkloadType(metric, context)) {
+    return false
+  }
   return metric.applies_to.includes(kind)
+}
+
+function isMetricApplicableToWorkloadType(metric: CanonicalMetric, context?: ApplicabilityContext): boolean {
+  const workloadType = context?.labels?.[WORKLOAD_TYPE_LABEL]
+  if (!workloadType) return true
+  const expectedPrefix = WORKLOAD_METRIC_PREFIX_BY_TYPE[workloadType]
+  if (!expectedPrefix) return true
+  if (!isControllerWorkloadMetric(metric.name)) return true
+  return metric.name.startsWith(expectedPrefix)
+}
+
+function isControllerWorkloadMetric(metricName: string): boolean {
+  return Object.values(WORKLOAD_METRIC_PREFIX_BY_TYPE).some((prefix) => metricName.startsWith(prefix))
 }
 
 /**
@@ -72,12 +105,13 @@ export function applicableMetrics(
   category: MetricCategory,
   kind: EntityKind | null,
   mode: ExplorerMode,
+  context?: ApplicabilityContext,
 ): CanonicalMetric[] {
   const requiredScope: MetricScope = mode === 'entity' ? 'entity' : 'edge'
   return (metrics ?? []).filter((metric) => {
     if (metric.category !== category) return false
     if (!metric.scopes.includes(requiredScope)) return false
-    if (mode === 'entity' && !isMetricApplicableToKind(metric, kind)) return false
+    if (mode === 'entity' && !isMetricApplicableToKind(metric, kind, context)) return false
     return true
   })
 }

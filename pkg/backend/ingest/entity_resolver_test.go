@@ -255,6 +255,76 @@ func TestOTLPEntityResolver_DaemonSet(t *testing.T) {
 	assert.Equal(t, expected, id)
 }
 
+func TestOTLPEntityResolver_Job(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.job.name":       "my-job",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindWorkload, testCluster, "my-namespace", "job", "my-job")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_CronJob(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.cronjob.name":   "my-cronjob",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindWorkload, testCluster, "my-namespace", "cronjob", "my-cronjob")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_HPA(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.hpa.name":       "my-hpa",
+		"k8s.namespace.name": "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindHPA, testCluster, "my-namespace", "my-hpa")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_ReplicationController(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.replicationcontroller.name": "my-rc",
+		"k8s.namespace.name":             "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindWorkload, testCluster, "my-namespace", "replication_controller", "my-rc")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
+func TestOTLPEntityResolver_ResourceQuota(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	resource := map[string]string{
+		"k8s.resourcequota.name": "my-quota",
+		"k8s.namespace.name":     "my-namespace",
+	}
+
+	expected := entities.ComputeEntityID(entities.KindResourceQuota, testCluster, "my-namespace", "my-quota")
+
+	id, err := resolver.Resolve(context.Background(), resource)
+	require.NoError(t, err)
+	assert.Equal(t, expected, id)
+}
+
 func TestOTLPEntityResolver_NamespaceOnly(t *testing.T) {
 	resolver := NewOTLPEntityResolver(testCluster)
 	resource := map[string]string{

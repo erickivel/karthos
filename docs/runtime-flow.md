@@ -231,6 +231,7 @@ What it does today:
 - receives OTLP over gRPC and HTTP
 - accepts exports from the agent
 - can also accept OTLP-native application telemetry
+- collects Kubernetes API-backed metrics with `k8s_cluster`, including workload/controller counts, HPA replicas, ResourceQuota usage, pod phases, node conditions, and node allocatable resources; structural discovery emits matching graph nodes for those controller, HPA, and ResourceQuota entity IDs
 - applies `memory_limiter` and `batch`
 - exports to the backend OTLP gRPC endpoint
 - uses send-queue and retry settings for basic transport resilience
@@ -343,15 +344,15 @@ Workloads / Kubelet
 Agent Collector
   - kubeletstats (pod, container, volume)
   - hostmetrics (CPU, memory, disk, network, load)
-  - k8scluster (replica counts, pod phases, node conditions)
   - prometheus (when discovered)
   - otlp (when discovered)
-  - spanmetrics connector (when OTLP traces present)
-  - servicegraph connector (when OTLP traces present)
         |
         v
 Gateway Collector
   - otlp receive
+  - k8s_cluster (workloads, jobs, HPAs, quotas, pod phases, node conditions)
+  - spanmetrics connector (when OTLP traces present)
+  - servicegraph connector (when OTLP traces present)
   - memory_limiter
   - batch
         |

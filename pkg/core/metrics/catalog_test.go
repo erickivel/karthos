@@ -96,6 +96,30 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.container.filesystem.available":       {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.volume.inodes":                        {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.node.allocatable_ephemeral_storage":   {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.node.allocatable_pods":                {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.storage.request":            {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.storage.limit":              {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.ephemeral_storage.request":  {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.ephemeral_storage.limit":    {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.cronjob.active_jobs":                  {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.daemonset.current_scheduled_nodes":    {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.daemonset.misscheduled_nodes":         {unit: UnitCount, category: CategoryError, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.hpa.max_replicas":                     {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.hpa.min_replicas":                     {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.hpa.current_replicas":                 {unit: UnitCount, category: CategoryResource, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.hpa.desired_replicas":                 {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.active_pods":                      {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.desired_successful_pods":          {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.failed_pods":                      {unit: UnitCount, category: CategoryError, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.max_parallel_pods":                {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.successful_pods":                  {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.replicaset.available":                 {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.replication_controller.desired":       {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.replication_controller.available":     {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.resource_quota.hard_limit":            {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.resource_quota.used":                  {unit: UnitCount, category: CategoryResource, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.statefulset.current_pods":             {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.statefulset.updated_pods":             {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"system.cpu.time":                          {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 		"system.disk.io_time":                      {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 		"system.disk.weighted_io_time":             {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
@@ -191,6 +215,8 @@ func TestDefaultCatalogApplicabilityTargetsExpectedKinds(t *testing.T) {
 	require.Equal(t, []entities.EntityKind{entities.KindNode}, catalog["k8s.node.cpu.usage"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindPVC}, catalog["k8s.volume.inodes.used"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindService}, catalog["servicegraph.request.count"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindHPA}, catalog["k8s.hpa.current_replicas"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindResourceQuota}, catalog["k8s.resource_quota.used"].AppliesTo)
 	require.Empty(t, catalog["servicegraph.request.duration"].AppliesTo)
 }
 

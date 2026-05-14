@@ -94,6 +94,26 @@ describe('isMetricApplicableToKind', () => {
     const m = metric({ applies_to: ['service'] })
     expect(isMetricApplicableToKind(m, null)).toBe(true)
   })
+
+  it('filters controller workload metrics by workload subtype', () => {
+    const deploymentMetric = metric({ name: 'k8s.deployment.available', applies_to: ['workload'] })
+    const jobMetric = metric({ name: 'k8s.job.active_pods', applies_to: ['workload'] })
+
+    expect(isMetricApplicableToKind(deploymentMetric, 'workload', {
+      labels: { 'k8s.workload.type': 'deployment' },
+    })).toBe(true)
+    expect(isMetricApplicableToKind(jobMetric, 'workload', {
+      labels: { 'k8s.workload.type': 'deployment' },
+    })).toBe(false)
+    expect(isMetricApplicableToKind(jobMetric, 'workload', {
+      labels: { 'k8s.workload.type': 'job' },
+    })).toBe(true)
+  })
+
+  it('fails open for workload nodes without subtype labels', () => {
+    const jobMetric = metric({ name: 'k8s.job.active_pods', applies_to: ['workload'] })
+    expect(isMetricApplicableToKind(jobMetric, 'workload')).toBe(true)
+  })
 })
 
 describe('applicableMetrics', () => {
@@ -105,6 +125,10 @@ describe('applicableMetrics', () => {
     metric({ name: 'volume.inodes', category: 'resource', scopes: ['entity'], applies_to: ['pvc'] }),
     metric({ name: 'svc.req', category: 'traffic', scopes: ['entity'], applies_to: ['service'] }),
     metric({ name: 'edge.req', category: 'traffic', scopes: ['edge'], applies_to: undefined }),
+    metric({ name: 'k8s.deployment.available', category: 'health', scopes: ['entity'], applies_to: ['workload'] }),
+    metric({ name: 'k8s.job.active_pods', category: 'health', scopes: ['entity'], applies_to: ['workload'] }),
+    metric({ name: 'k8s.hpa.current_replicas', category: 'resource', scopes: ['entity'], applies_to: ['hpa'] }),
+    metric({ name: 'k8s.resource_quota.used', category: 'resource', scopes: ['entity'], applies_to: ['resourcequota'] }),
   ]
 
   it('keeps category + scope + applicability filtering coherent', () => {
@@ -126,5 +150,23 @@ describe('applicableMetrics', () => {
 
   it('handles undefined catalog input', () => {
     expect(applicableMetrics(undefined, 'resource', 'pod', 'entity')).toEqual([])
+  })
+
+  it('shows only metrics for the selected workload subtype', () => {
+    expect(applicableMetrics(catalog, 'health', 'workload', 'entity', {
+      labels: { 'k8s.workload.type': 'deployment' },
+    }).map((m) => m.name)).toEqual(['k8s.deployment.available'])
+    expect(applicableMetrics(catalog, 'health', 'workload', 'entity', {
+      labels: { 'k8s.workload.type': 'job' },
+    }).map((m) => m.name)).toEqual(['k8s.job.active_pods'])
+  })
+
+  it('keeps HPA and ResourceQuota metrics gated by entity kind', () => {
+    expect(applicableMetrics(catalog, 'resource', 'hpa', 'entity').map((m) => m.name)).toEqual([
+      'k8s.hpa.current_replicas',
+    ])
+    expect(applicableMetrics(catalog, 'resource', 'resourcequota', 'entity').map((m) => m.name)).toEqual([
+      'k8s.resource_quota.used',
+    ])
   })
 })

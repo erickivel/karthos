@@ -8,6 +8,12 @@ declares whether a metric supports entity queries, edge queries, or both.
 `CanonicalMetric.applies_to` declares which graph entity kinds an entity-scoped
 metric is valid for.
 
+For `workload` entities, the graph label `k8s.workload.type` further narrows
+controller-specific metric families. A Deployment workload renders
+`k8s.deployment.*`, a Job renders `k8s.job.*`, and so on. Missing subtype
+metadata fails open so older graph snapshots keep the previous generic workload
+behavior.
+
 ## The Three Card States
 
 | State | Meaning | Driven by |
@@ -24,9 +30,9 @@ tabs are shown.
 ## Files
 
 - `applicability.ts` — pure functions consumed by the Explorer:
-  - `visibleCategoriesForSelection(metrics, kind, mode)`
-  - `isMetricApplicableToKind(metric, kind)`
-  - `applicableMetrics(metrics, category, kind, mode)`
+  - `visibleCategoriesForSelection(metrics, kind, mode, context)`
+  - `isMetricApplicableToKind(metric, kind, context)`
+  - `applicableMetrics(metrics, category, kind, mode, context)`
 - `applicability.test.ts` — unit tests covering the contract.
 
 ## How to Extend
@@ -44,6 +50,8 @@ tabs are shown.
 2. Add `applies_to` metadata for every entity kind the metric can be queried
    against. Edge-only metrics intentionally omit `applies_to`.
 3. Add or update frontend applicability tests for the expected entity kind.
+4. If the metric applies to `workload`, add or verify the `k8s.workload.type`
+   subtype rule when the metric is controller-specific.
 
 ### Add a New Metric Category
 

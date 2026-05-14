@@ -28,6 +28,7 @@ func (b *K8sStructuralTopologyBuilder) BuildStructural(_ context.Context, prof *
 	edgeMap := make(map[string]topology.Edge)
 	nodeMap := make(map[entities.EntityID]topology.Node)
 
+	b.buildDeclaredEntityNodes(prof, now, edgeMap, nodeMap)
 	b.buildExposesEdges(prof, now, edgeMap, nodeMap)
 	b.buildRoutesToEdges(prof, now, edgeMap, nodeMap)
 	b.buildUsesAndMountsEdges(prof, now, edgeMap, nodeMap)
@@ -44,6 +45,34 @@ func (b *K8sStructuralTopologyBuilder) BuildStructural(_ context.Context, prof *
 	}
 
 	return edges, nodes, nil
+}
+
+// buildDeclaredEntityNodes materializes Kubernetes API objects that may not
+// naturally appear in relation-derived topology yet but still own metrics.
+func (b *K8sStructuralTopologyBuilder) buildDeclaredEntityNodes(prof *profile.ClusterProfile, t time.Time, edges map[string]topology.Edge, nodes map[entities.EntityID]topology.Node) {
+	for _, w := range prof.Workloads {
+		addNode(nodes, workloadNode(w))
+		b.addNamespaceContains(w.ClusterName, w.Namespace, w.ID(), t, edges, nodes)
+	}
+	for _, hpa := range prof.HPAs {
+		addNode(nodes, hpaNode(hpa))
+		b.addNamespaceContains(hpa.ClusterName, hpa.Namespace, hpa.ID(), t, edges, nodes)
+	}
+	for _, quota := range prof.ResourceQuotas {
+		addNode(nodes, resourceQuotaNode(quota))
+		b.addNamespaceContains(quota.ClusterName, quota.Namespace, quota.ID(), t, edges, nodes)
+	}
+}
+
+func (b *K8sStructuralTopologyBuilder) addNamespaceContains(cluster, namespace string, target entities.EntityID, t time.Time, edges map[string]topology.Edge, nodes map[entities.EntityID]topology.Node) {
+	if namespace == "" {
+		return
+	}
+	nsID := entities.ComputeEntityID(entities.KindNamespace, cluster, namespace)
+	e := topology.NewEdge(nsID, target, topology.RelContains, t)
+	e.Provenance = []string{structuralProvenance}
+	edges[e.ID] = e
+	addNode(nodes, newNode(nsID, entities.KindNamespace, cluster, namespace, namespace, nil))
 }
 
 // buildExposesEdges matches Service selectors against Workload pod template labels.
@@ -242,11 +271,34 @@ func workloadNode(w entities.Workload) topology.Node {
 	)
 }
 
+func hpaNode(h entities.HPA) topology.Node {
+	return newNode(
+		h.ID(),
+		entities.KindHPA,
+		h.ClusterName,
+		h.Namespace,
+		h.Name,
+		h.Labels(),
+	)
+}
+
+func resourceQuotaNode(q entities.ResourceQuota) topology.Node {
+	return newNode(
+		q.ID(),
+		entities.KindResourceQuota,
+		q.ClusterName,
+		q.Namespace,
+		q.Name,
+		q.Labels(),
+	)
+}
+
 func workloadLabels(w entities.Workload) map[string]string {
 	labels := w.Labels()
 	if labels == nil {
 		labels = make(map[string]string)
 	}
+	labels[entities.WorkloadTypeLabel] = string(w.Type)
 	if w.Replicas > 0 {
 		labels["k8s.workload.replicas"] = strconv.FormatInt(int64(w.Replicas), 10)
 	}
