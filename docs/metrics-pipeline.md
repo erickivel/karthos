@@ -109,6 +109,10 @@ replica gauges, ResourceQuota usage/limits, pod phases/reasons, container
 resource specs, and node allocatable resources. Object snapshots/events from
 the OTel `k8s_objects` receiver are intentionally out of scope for the metrics
 catalog because that receiver emits logs, not metric samples.
+ResourceQuota catalog entries use the generic `resource` unit because each
+sample's `resource` label controls the physical unit: CPU quota values are
+stored as `millicores`, memory/storage quota values as `bytes`, object quotas
+as `count`, and unknown quota dimensions keep the generic `resource` unit.
 
 `k8s_cluster` workload/controller metrics must resolve to entities already
 materialized by structural discovery. Discovery emits Deployment, StatefulSet,
@@ -270,7 +274,10 @@ empty, which the API serves as "no recent sample" — equivalent to
 catalog. `OTLPSemconvMetrics` maps each canonical metric name to:
 
 - `ConversionFactor` — from the producer's unit to the canonical unit
-- `Unit` — canonical unit code, used by the API response
+- `Unit` — canonical unit code, used by the API response. For heterogeneous
+  families such as ResourceQuota, the catalog/mapping unit is `resource` and
+  `OTLPNormalizer` assigns a concrete sample unit from the datapoint labels
+  when possible.
 - `Kind` — gauge, sum, or histogram
 
 The normalizer reads this map after dialect translation to apply unit

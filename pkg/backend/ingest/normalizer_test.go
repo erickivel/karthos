@@ -426,7 +426,7 @@ func TestOTLPNormalizer_RawKubeClusterWorkloadMetrics(t *testing.T) {
 			},
 			expected: "k8s.resource_quota.used",
 			entityID: entities.ComputeEntityID(entities.KindResourceQuota, testCluster, "default", "compute"),
-			unit:     metrics.UnitCount,
+			unit:     metrics.UnitResource,
 		},
 		{
 			name:       "replication controller available",
@@ -463,6 +463,46 @@ func TestOTLPNormalizer_RawKubeClusterWorkloadMetrics(t *testing.T) {
 			assert.Equal(t, tc.expected, samples[0].MetricName)
 			assert.Equal(t, tc.entityID, samples[0].EntityID)
 			assert.InDelta(t, 7.0, samples[0].Value, 1e-9)
+			assert.Equal(t, tc.unit, samples[0].Unit)
+		})
+	}
+}
+
+func TestOTLPNormalizer_ResourceQuotaPreservesResourceAndMapsUnits(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC).UnixNano())
+	resourceAttrs := map[string]string{
+		"k8s.namespace.name":     "default",
+		"k8s.resourcequota.name": "compute",
+	}
+
+	cases := []struct {
+		name     string
+		resource string
+		unit     metrics.Unit
+	}{
+		{name: "cpu requests become millicores", resource: "requests.cpu", unit: metrics.UnitMillicores},
+		{name: "memory limits become bytes", resource: "limits.memory", unit: metrics.UnitBytes},
+		{name: "ephemeral storage becomes bytes", resource: "requests.ephemeral-storage", unit: metrics.UnitBytes},
+		{name: "storage class quota becomes bytes", resource: "fast.storageclass.storage.k8s.io/requests.storage", unit: metrics.UnitBytes},
+		{name: "pod object quota stays count", resource: "pods", unit: metrics.UnitCount},
+		{name: "count prefixed resources stay count", resource: "count/deployments.apps", unit: metrics.UnitCount},
+		{name: "unknown resources keep resource unit", resource: "example.com/widgets", unit: metrics.UnitResource},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rm := makeGaugeRMWithAttrs("k8s.resource_quota.used", 7, tsNano, map[string]string{
+				"resource": tc.resource,
+			})
+			env := makeEnvelope(t, resourceAttrs, rm)
+
+			samples, err := normalizer.Normalize(context.Background(), env)
+			require.NoError(t, err)
+			require.Len(t, samples, 1)
+
+			assert.Equal(t, "k8s.resource_quota.used", samples[0].MetricName)
+			assert.Equal(t, tc.resource, samples[0].Labels["resource"])
 			assert.Equal(t, tc.unit, samples[0].Unit)
 		})
 	}

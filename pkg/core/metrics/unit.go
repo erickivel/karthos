@@ -12,4 +12,5 @@ const (
 	UnitNanoseconds    Unit = "nanoseconds"
 	UnitHertz          Unit = "hertz"
 	UnitCount          Unit = "count"
+	UnitResource       Unit = "resource"
 )

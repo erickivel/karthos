@@ -37,6 +37,7 @@ const (
 	AttrNetworkProtocolName      = "network.protocol.name"
 	AttrOKSGSource               = "oksg.source"
 	AttrPeerService              = "peer.service"
+	AttrResource                 = "resource"
 	AttrServer                   = "server"
 	AttrServerNamespace          = "server_namespace"
 )

@@ -106,6 +106,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					applyMeshMetadataLabels(dp.Attributes, labels)
 					applyServiceGraphEdgeLabels(ctx, n.resolver, envelope.Resource, metric.Name, translatedName, dp.Attributes, labels)
 					factor := conversionFactor(metric.Name, mapping)
+					unit := sampleUnit(metricName, mapping, dp.Attributes)
 
 					samples = append(samples,
 						metrics.MetricSample{
@@ -114,7 +115,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 							Value:      *dp.Sum * factor,
 							Timestamp:  ts,
 							Labels:     labels,
-							Unit:       mapping.Unit,
+							Unit:       unit,
 						},
 						metrics.MetricSample{
 							MetricName: metricName + "_count",
@@ -122,7 +123,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 							Value:      float64(dp.Count),
 							Timestamp:  ts,
 							Labels:     cloneLabels(labels),
-							Unit:       mapping.Unit,
+							Unit:       unit,
 						},
 					)
 				}
@@ -160,7 +161,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					Value:      value,
 					Timestamp:  ts,
 					Labels:     labels,
-					Unit:       mapping.Unit,
+					Unit:       sampleUnit(metricName, mapping, dp.Attributes),
 				})
 				if shouldEmitIstioErrorCount(metric.Name, dp.Attributes) {
 					errorMapping := metrics.OTLPSemconvMetrics["servicegraph.request.error.count"]
@@ -330,6 +331,45 @@ func conversionFactor(metricName string, mapping metrics.OTLPMetricMapping) floa
 	return mapping.ConversionFactor
 }
 
+func sampleUnit(metricName string, mapping metrics.OTLPMetricMapping, attrs []*commonpb.KeyValue) metrics.Unit {
+	if isResourceQuotaMetric(metricName) {
+		return resourceQuotaUnit(kvString(attrs, semconv.AttrResource))
+	}
+	return mapping.Unit
+}
+
+func isResourceQuotaMetric(metricName string) bool {
+	return metricName == "k8s.resource_quota.hard_limit" || metricName == "k8s.resource_quota.used"
+}
+
+func resourceQuotaUnit(resource string) metrics.Unit {
+	switch strings.ToLower(resource) {
+	case "cpu", "requests.cpu", "limits.cpu":
+		return metrics.UnitMillicores
+	case "memory", "requests.memory", "limits.memory",
+		"ephemeral-storage", "requests.ephemeral-storage", "limits.ephemeral-storage",
+		"storage", "requests.storage":
+		return metrics.UnitBytes
+	case "pods", "services", "services.loadbalancers", "services.nodeports",
+		"configmaps", "secrets", "persistentvolumeclaims", "replicationcontrollers",
+		"resourcequotas", "requests.nvidia.com/gpu":
+		return metrics.UnitCount
+	}
+	if strings.HasPrefix(resource, "count/") {
+		return metrics.UnitCount
+	}
+	if strings.HasPrefix(resource, "requests.") && strings.HasSuffix(resource, "/storage") {
+		return metrics.UnitBytes
+	}
+	if strings.HasSuffix(resource, "/requests.storage") {
+		return metrics.UnitBytes
+	}
+	if strings.Contains(resource, "hugepages-") {
+		return metrics.UnitBytes
+	}
+	return metrics.UnitResource
+}
+
 func applyMeshMetadataLabels(attrs []*commonpb.KeyValue, labels map[string]string) {
 	for _, key := range []string{
 		semconv.AttrNetworkProtocolName,
@@ -351,6 +391,7 @@ func preserveTopologyMetricLabels(attrs []*commonpb.KeyValue, labels map[string]
 	for _, key := range []string{
 		semconv.AttrK8sPVCName,
 		semconv.AttrK8sVolumeName,
+		semconv.AttrResource,
 		semconv.ResourceK8sPodName,
 		semconv.ResourceK8sNamespaceName,
 	} {

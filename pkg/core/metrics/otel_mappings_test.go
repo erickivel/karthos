@@ -49,6 +49,18 @@ func TestOTLPSemconvMetricsStoresConditionVariantsAsSemconvStyleNames(t *testing
 	}
 }
 
+func TestOTLPSemconvMetricsResourceQuotaUsesResourceUnit(t *testing.T) {
+	for _, metricName := range []string{
+		"k8s.resource_quota.hard_limit",
+		"k8s.resource_quota.used",
+	} {
+		mapping, ok := OTLPSemconvMetrics[metricName]
+		require.True(t, ok, "expected %s to be present", metricName)
+		require.Equal(t, UnitResource, mapping.Unit)
+		require.Equal(t, MetricKindGauge, mapping.Kind)
+	}
+}
+
 func TestOTLPSemconvMetricsDoesNotKeepSourceDialectKeys(t *testing.T) {
 	for _, sourceName := range []string{
 		"http_requests_total",
