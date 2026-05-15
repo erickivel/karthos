@@ -3,6 +3,7 @@ package metrics
 import (
 	"testing"
 
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/stretchr/testify/require"
 )
 
@@ -78,6 +79,55 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.daemonset.ready_nodes":                {},
 		"k8s.statefulset.desired_pods":             {},
 		"k8s.statefulset.ready_pods":               {},
+		"servicegraph.tcp.bytes.sent":              {unit: UnitBytesPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
+		"servicegraph.tcp.bytes.received":          {unit: UnitBytesPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
+		"k8s.pod.network.io":                       {unit: UnitBytesPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.network.errors":                   {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.network.io":                      {unit: UnitBytesPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.network.errors":                  {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.filesystem.usage":                 {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.filesystem.capacity":              {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.filesystem.available":             {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.filesystem.usage":                {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.filesystem.capacity":             {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.filesystem.available":            {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.container.filesystem.usage":           {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.container.filesystem.capacity":        {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.container.filesystem.available":       {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.volume.inodes":                        {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.allocatable_ephemeral_storage":   {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.node.allocatable_pods":                {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.storage.request":            {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.storage.limit":              {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.ephemeral_storage.request":  {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.ephemeral_storage.limit":    {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.cronjob.active_jobs":                  {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.daemonset.current_scheduled_nodes":    {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.daemonset.misscheduled_nodes":         {unit: UnitCount, category: CategoryError, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.hpa.max_replicas":                     {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.hpa.min_replicas":                     {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.hpa.current_replicas":                 {unit: UnitCount, category: CategoryResource, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.hpa.desired_replicas":                 {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.active_pods":                      {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.desired_successful_pods":          {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.failed_pods":                      {unit: UnitCount, category: CategoryError, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.max_parallel_pods":                {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.job.successful_pods":                  {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.replicaset.available":                 {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.replication_controller.desired":       {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.replication_controller.available":     {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.resource_quota.hard_limit":            {unit: UnitResource, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.resource_quota.used":                  {unit: UnitResource, category: CategoryResource, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.statefulset.current_pods":             {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.statefulset.updated_pods":             {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"system.cpu.time":                          {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.disk.io_time":                      {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.disk.weighted_io_time":             {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.disk.merged":                       {unit: UnitPerSecond, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.disk.pending_operations":           {unit: UnitCount, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.filesystem.inodes.usage":           {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.paging.faults":                     {unit: UnitPerSecond, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.network.connections":               {unit: UnitCount, category: CategoryTraffic, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 	}
 
 	for _, metric := range DefaultCatalog() {
@@ -145,6 +195,31 @@ func TestDefaultCatalogEntriesHaveDisplayNames(t *testing.T) {
 	}
 }
 
+func TestDefaultCatalogEntityMetricsDeclareApplicableKinds(t *testing.T) {
+	for _, metric := range DefaultCatalog() {
+		if hasScope(metric, ScopeEntity) {
+			require.NotEmptyf(t, metric.AppliesTo, "entity metric %s declares no AppliesTo kinds", metric.Name)
+			continue
+		}
+		require.Emptyf(t, metric.AppliesTo, "edge-only metric %s must not declare entity AppliesTo kinds", metric.Name)
+	}
+}
+
+func TestDefaultCatalogApplicabilityTargetsExpectedKinds(t *testing.T) {
+	catalog := catalogByName(DefaultCatalog())
+
+	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["k8s.container.cpu.usage"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["k8s.container.ready"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["oksg.container.health.status"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindPod}, catalog["k8s.pod.cpu.usage"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindNode}, catalog["k8s.node.cpu.usage"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindPVC}, catalog["k8s.volume.inodes.used"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindService}, catalog["servicegraph.request.count"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindHPA}, catalog["k8s.hpa.current_replicas"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindResourceQuota}, catalog["k8s.resource_quota.used"].AppliesTo)
+	require.Empty(t, catalog["servicegraph.request.duration"].AppliesTo)
+}
+
 // Query-derived metrics — composed at query time from other catalog metrics
 // (see pkg/adapters/storage/victoriametrics/metric_store.go buildPromQL switch
 // arms, and the derivedHealthStatus helper for cross-entity composition).
@@ -179,4 +254,21 @@ func TestDefaultCatalogSourceRefsTargetKnownSources(t *testing.T) {
 			require.Truef(t, ok, "metric %s references unknown source %s", metric.Name, ref.ID)
 		}
 	}
+}
+
+func hasScope(metric CanonicalMetric, scope MetricScope) bool {
+	for _, candidate := range metric.Scopes {
+		if candidate == scope {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogByName(catalog []CanonicalMetric) map[string]CanonicalMetric {
+	out := make(map[string]CanonicalMetric, len(catalog))
+	for _, metric := range catalog {
+		out[metric.Name] = metric
+	}
+	return out
 }

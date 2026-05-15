@@ -1,89 +1,68 @@
-# Metrics Explorer applicability
+# Metrics Explorer Applicability
 
-This folder owns the rules that decide **which tabs and which cards the
+This folder owns the pure rules that decide **which tabs and which cards the
 Metrics Explorer should render** for a given selection.
 
-It exists so that the Explorer never shows a tab or a card that is
-*structurally impossible* for the selected entity (e.g. CPU on a ConfigMap,
-HTTP traffic on a PVC) and so that genuinely empty cards render an
-informative empty state instead of a blank chart.
+The backend metric catalog is the source of truth. `CanonicalMetric.scopes`
+declares whether a metric supports entity queries, edge queries, or both.
+`CanonicalMetric.applies_to` declares which graph entity kinds an entity-scoped
+metric is valid for.
 
-## The three card states
+For `workload` entities, the graph label `k8s.workload.type` further narrows
+controller-specific metric families. A Deployment workload renders
+`k8s.deployment.*`, a Job renders `k8s.job.*`, and so on. Missing subtype
+metadata fails open so older graph snapshots keep the previous generic workload
+behavior.
 
-| State                  | Meaning                                                                 | Driven by                                |
-| ---------------------- | ----------------------------------------------------------------------- | ---------------------------------------- |
-| **Hidden**             | Metric is structurally inapplicable to this kind. Card never renders.   | `KIND_CATEGORIES` + `SOURCE_KINDS`       |
-| **Shown with data**    | Metric is applicable and the API returned at least one sample.          | The query result.                        |
-| **Shown empty**        | Metric is applicable but the API returned zero samples in the window.   | Card-level empty state in `MetricCard`.  |
+## The Three Card States
 
-A category tab is hidden if `KIND_CATEGORIES[selectedKind]` does not
-include it. Within a visible tab, an individual card is hidden if none of
-its `metric.sources[].id` map to the selected kind via `SOURCE_KINDS`.
+| State | Meaning | Driven by |
+| --- | --- | --- |
+| **Hidden** | Metric is structurally inapplicable to this kind. Card never renders. | `scopes` + `applies_to` from `/api/v1/metrics/catalog` |
+| **Shown with data** | Metric is applicable and the API returned at least one sample. | The query result |
+| **Shown empty** | Metric is applicable but the API returned zero samples in the window. | Card-level empty state in `MetricCard` |
+
+Category tabs are derived from the applicable catalog metrics for the current
+selection. If a selected container has resource and health metrics, only those
+tabs are shown. If a selected ConfigMap has no applicable metrics, no category
+tabs are shown.
 
 ## Files
 
-- `kindCategories.ts` — coarse `EntityKind → MetricCategory[]`. Drives tab
-  visibility. Edit when an entity kind gains or loses an entire metric
-  category.
-- `sourceKinds.ts` — fine-grained `SourceId → EntityKind[] | '*'`. Drives
-  card visibility. Edit when a new metric source is introduced or an
-  existing source starts emitting for a new kind.
 - `applicability.ts` — pure functions consumed by the Explorer:
-  - `visibleCategoriesForKind(kind, mode)`
-  - `isMetricApplicableToKind(metric, kind)`
-  - `applicableMetrics(metrics, category, kind, mode)`
+  - `visibleCategoriesForSelection(metrics, kind, mode, context)`
+  - `isMetricApplicableToKind(metric, kind, context)`
+  - `applicableMetrics(metrics, category, kind, mode, context)`
 - `applicability.test.ts` — unit tests covering the contract.
 
-## How to extend
+## How to Extend
 
-### Add a new entity kind
+### Add a New Entity Kind
 
-1. Add the kind to `EntityKind` in `web/src/types/graph.ts` (if not already
-   present — the type is the source of truth).
-2. Add a row to `KIND_CATEGORIES` listing the categories that make sense
-   for this kind. An empty array is valid (e.g. `secret: []`).
-3. If any source in `SOURCE_KINDS` should also emit for this kind, append
-   the kind to that source's value.
+1. Add the kind to `EntityKind` in `web/src/types/graph.ts`.
+2. Add the backend entity kind in `pkg/core/entities/entity.go`.
+3. Add the kind to each relevant catalog metric's `applies_to` mapping in
+   `pkg/core/metrics/catalog.go`.
 
-### Add a new metric source
+### Add a New Metric
 
-1. Pick the source id used in `pkg/core/metrics/canonical.go` and surfaced
-   on `CanonicalMetric.sources[].id` (e.g. `"prometheus.app"`).
-2. Add a row to `SOURCE_KINDS` listing the kinds that source emits for.
-   Use `'*'` only as a deliberate escape hatch for catch-all exporters.
+1. Add the metric to the backend catalog with its `scopes`.
+2. Add `applies_to` metadata for every entity kind the metric can be queried
+   against. Edge-only metrics intentionally omit `applies_to`.
+3. Add or update frontend applicability tests for the expected entity kind.
+4. If the metric applies to `workload`, add or verify the `k8s.workload.type`
+   subtype rule when the metric is controller-specific.
 
-### Add a new metric category
+### Add a New Metric Category
 
 1. Update `MetricCategory` in `web/src/types/metrics.ts`.
-2. Add the new category to the `KIND_CATEGORIES` rows where it should
-   appear.
-3. Update the `ALL_CATEGORIES` constant in `applicability.ts`.
+2. Update the `ALL_CATEGORIES` constant in `applicability.ts`.
+3. Add catalog metrics using the new category; tabs will appear automatically
+   when those metrics apply to the current selection.
 
-## The `'*'` wildcard
+## Drift Detection
 
-A wildcard in `SOURCE_KINDS` means *"this source can emit for any entity
-kind, do not gate cards by kind"*. Use it sparingly — it disables the
-fine-grained filter for every metric whose sources include it. Reasonable
-uses: generic Prometheus jobs, a future "user-supplied" source. Avoid for
-sources whose targets are statically knowable.
-
-## Drift detection
-
-Adding a metric to the backend catalog without listing its source id in
-`SOURCE_KINDS` is a recurring failure mode. Two safeguards:
-
-1. **Fail-open in production.** Unknown source ids are treated as
-   applicable to every kind, so the worst case is a card showing where it
-   shouldn't, never the reverse.
-2. **`console.warn` in dev mode.** The first time `isMetricApplicableToKind`
-   sees an unknown source id during a `vite dev` session it logs a single
-   warning naming the source id and pointing at this folder. Watch the
-   browser console after a backend catalog change.
-
-## Future migration path
-
-When the backend source registry exposes a `produces_kinds` field per
-source (server-of-truth), replace the static `SOURCE_KINDS` map with an
-API fetch (e.g. `/api/v1/metrics/sources`) and a small hook. The function
-signatures in `applicability.ts` stay identical, so consumers do not
-change.
+Current backend tests require every entity-scoped catalog metric to declare at
+least one `applies_to` kind. The frontend keeps a compatibility fail-open path
+for older catalog responses and logs a dev-only warning when that metadata is
+missing.

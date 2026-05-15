@@ -6,12 +6,16 @@ import (
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/erickivel/oksg/pkg/core/entities"
 )
 
 func TestDiscoverDetectsIstioMeshSource(t *testing.T) {
@@ -273,6 +277,103 @@ func TestDiscoverExtractsPodTemplateLabelsAndRefs(t *testing.T) {
 	require.Equal(t, []string{"gateway-config"}, w.ConfigMapRefs) // deduped
 	require.Equal(t, []string{"gateway-secret"}, w.SecretRefs)
 	require.Equal(t, []string{"data-pvc"}, w.PVCRefs)
+}
+
+func TestDiscoverExtractsWorkloadControllerHPAsAndResourceQuotas(t *testing.T) {
+	client := fake.NewClientset(
+		&appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "oksg-demo"},
+			Spec: appsv1.StatefulSetSpec{
+				Replicas: int32Ptr(2),
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "db"}},
+				},
+			},
+		},
+		&appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "agent", Namespace: "oksg-system"},
+			Spec: appsv1.DaemonSetSpec{
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "agent"}},
+				},
+			},
+		},
+		&appsv1.ReplicaSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-abc123", Namespace: "oksg-demo"},
+			Spec: appsv1.ReplicaSetSpec{
+				Replicas: int32Ptr(3),
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}},
+				},
+			},
+		},
+		&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{Name: "import-once", Namespace: "batch"},
+			Spec: batchv1.JobSpec{
+				Completions: int32Ptr(1),
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"job": "import-once"}},
+				},
+			},
+		},
+		&batchv1.CronJob{
+			ObjectMeta: metav1.ObjectMeta{Name: "nightly", Namespace: "batch"},
+			Spec: batchv1.CronJobSpec{
+				JobTemplate: batchv1.JobTemplateSpec{
+					Spec: batchv1.JobSpec{
+						Template: corev1.PodTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"cron": "nightly"}},
+						},
+					},
+				},
+			},
+		},
+		&corev1.ReplicationController{
+			ObjectMeta: metav1.ObjectMeta{Name: "legacy", Namespace: "default"},
+			Spec: corev1.ReplicationControllerSpec{
+				Replicas: int32Ptr(2),
+				Template: &corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "legacy"}},
+				},
+			},
+		},
+		&autoscalingv2.HorizontalPodAutoscaler{
+			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "oksg-demo"},
+		},
+		&corev1.ResourceQuota{
+			ObjectMeta: metav1.ObjectMeta{Name: "compute", Namespace: "oksg-demo"},
+		},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	prof, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	workloadsByID := make(map[entities.EntityID]entities.Workload)
+	for _, workload := range prof.Workloads {
+		workloadsByID[workload.ID()] = workload
+	}
+
+	expectedWorkloads := map[entities.EntityID]entities.WorkloadType{
+		entities.ComputeEntityID(entities.KindWorkload, "kind-test", "oksg-demo", "statefulset", "db"):              entities.WorkloadStatefulSet,
+		entities.ComputeEntityID(entities.KindWorkload, "kind-test", "oksg-system", "daemonset", "agent"):           entities.WorkloadDaemonSet,
+		entities.ComputeEntityID(entities.KindWorkload, "kind-test", "oksg-demo", "replicaset", "api-abc123"):       entities.WorkloadReplicaSet,
+		entities.ComputeEntityID(entities.KindWorkload, "kind-test", "batch", "job", "import-once"):                 entities.WorkloadJob,
+		entities.ComputeEntityID(entities.KindWorkload, "kind-test", "batch", "cronjob", "nightly"):                 entities.WorkloadCronJob,
+		entities.ComputeEntityID(entities.KindWorkload, "kind-test", "default", "replication_controller", "legacy"): entities.WorkloadReplicationController,
+	}
+	require.Len(t, prof.Workloads, len(expectedWorkloads))
+	for id, workloadType := range expectedWorkloads {
+		workload, ok := workloadsByID[id]
+		require.True(t, ok, "missing workload %s", id)
+		require.Equal(t, workloadType, workload.Type)
+		require.Equal(t, string(workloadType), workload.Labels()[entities.WorkloadTypeLabel])
+	}
+
+	require.Len(t, prof.HPAs, 1)
+	require.Equal(t, entities.ComputeEntityID(entities.KindHPA, "kind-test", "oksg-demo", "api"), prof.HPAs[0].ID())
+	require.Len(t, prof.ResourceQuotas, 1)
+	require.Equal(t, entities.ComputeEntityID(entities.KindResourceQuota, "kind-test", "oksg-demo", "compute"), prof.ResourceQuotas[0].ID())
 }
 
 func TestDiscoverSkipsTerminatingPods(t *testing.T) {

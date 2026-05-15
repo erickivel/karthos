@@ -57,8 +57,11 @@ var PrometheusDialect = DialectMap{
 }
 
 var KubeletDialect = DialectMap{
-	"container.cpu.usage":    "k8s.container.cpu.usage",
-	"container.memory.usage": "k8s.container.memory.usage",
+	"container.cpu.usage":            "k8s.container.cpu.usage",
+	"container.memory.usage":         "k8s.container.memory.usage",
+	"container.filesystem.usage":     "k8s.container.filesystem.usage",
+	"container.filesystem.capacity":  "k8s.container.filesystem.capacity",
+	"container.filesystem.available": "k8s.container.filesystem.available",
 }
 
 // KubeClusterDialect translates k8s_cluster receiver wire names (with underscore
@@ -66,10 +69,14 @@ var KubeletDialect = DialectMap{
 // Container ready/restarts already use single-segment names that match the
 // catalog directly and need no translation.
 var KubeClusterDialect = DialectMap{
-	"k8s.container.cpu_request":    "k8s.container.cpu.request",
-	"k8s.container.cpu_limit":      "k8s.container.cpu.limit",
-	"k8s.container.memory_request": "k8s.container.memory.request",
-	"k8s.container.memory_limit":   "k8s.container.memory.limit",
+	"k8s.container.cpu_request":              "k8s.container.cpu.request",
+	"k8s.container.cpu_limit":                "k8s.container.cpu.limit",
+	"k8s.container.memory_request":           "k8s.container.memory.request",
+	"k8s.container.memory_limit":             "k8s.container.memory.limit",
+	"k8s.container.storage_request":          "k8s.container.storage.request",
+	"k8s.container.storage_limit":            "k8s.container.storage.limit",
+	"k8s.container.ephemeralstorage_request": "k8s.container.ephemeral_storage.request",
+	"k8s.container.ephemeralstorage_limit":   "k8s.container.ephemeral_storage.limit",
 }
 
 var SpanmetricsDialect = DialectMap{
@@ -92,4 +99,6 @@ var IstioDialect = DialectMap{
 	"istio_response_messages_total":       "servicegraph.grpc.response.message.count",
 	"istio_tcp_connections_opened_total":  "servicegraph.tcp.connection.open.count",
 	"istio_tcp_connections_closed_total":  "servicegraph.tcp.connection.close.count",
+	"istio_tcp_sent_bytes_total":          "servicegraph.tcp.bytes.sent",
+	"istio_tcp_received_bytes_total":      "servicegraph.tcp.bytes.received",
 }

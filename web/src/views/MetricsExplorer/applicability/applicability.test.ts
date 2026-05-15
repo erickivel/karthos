@@ -4,9 +4,8 @@ import {
   __resetApplicabilityWarnings,
   applicableMetrics,
   isMetricApplicableToKind,
-  visibleCategoriesForKind,
+  visibleCategoriesForSelection,
 } from './applicability'
-import { KIND_CATEGORIES } from './kindCategories'
 
 function metric(partial: Partial<CanonicalMetric>): CanonicalMetric {
   return {
@@ -17,80 +16,119 @@ function metric(partial: Partial<CanonicalMetric>): CanonicalMetric {
     scopes: ['entity'],
     description: '',
     sources: [],
+    applies_to: ['pod'],
     ...partial,
   }
 }
 
 beforeEach(() => __resetApplicabilityWarnings())
 
-describe('visibleCategoriesForKind', () => {
-  it('returns the configured categories for a known kind', () => {
-    expect(visibleCategoriesForKind('pod', 'entity')).toBe(KIND_CATEGORIES.pod)
-    expect(visibleCategoriesForKind('configmap', 'entity')).toEqual([])
-    expect(visibleCategoriesForKind('service', 'entity')).toContain('traffic')
+describe('visibleCategoriesForSelection', () => {
+  const catalog: CanonicalMetric[] = [
+    metric({ name: 'pod.cpu', category: 'resource', applies_to: ['pod'] }),
+    metric({ name: 'pod.health', category: 'health', applies_to: ['pod'] }),
+    metric({ name: 'container.cpu', category: 'resource', applies_to: ['container'] }),
+    metric({ name: 'container.health', category: 'health', applies_to: ['container'] }),
+    metric({ name: 'svc.req', category: 'traffic', applies_to: ['service'] }),
+    metric({ name: 'edge.req', category: 'traffic', scopes: ['edge'], applies_to: undefined }),
+  ]
+
+  it('derives entity tabs from applicable catalog metrics', () => {
+    expect(visibleCategoriesForSelection(catalog, 'pod', 'entity')).toEqual(['resource', 'health'])
+    expect(visibleCategoriesForSelection(catalog, 'container', 'entity')).toEqual(['resource', 'health'])
+    expect(visibleCategoriesForSelection(catalog, 'configmap', 'entity')).toEqual([])
+    expect(visibleCategoriesForSelection(catalog, 'service', 'entity')).toEqual(['traffic'])
   })
 
   it('returns the union of all categories when no entity is selected', () => {
-    const result = visibleCategoriesForKind(null, 'entity')
+    const result = visibleCategoriesForSelection(catalog, null, 'entity')
     expect(result).toEqual(['resource', 'traffic', 'latency', 'error', 'capacity', 'health'])
   })
 
-  it('always returns edge categories in edge mode regardless of kind', () => {
-    expect(visibleCategoriesForKind('configmap', 'edge')).toEqual(['traffic', 'latency', 'error'])
-    expect(visibleCategoriesForKind(null, 'edge')).toEqual(['traffic', 'latency', 'error'])
+  it('derives edge tabs from edge-scoped catalog metrics', () => {
+    expect(visibleCategoriesForSelection(catalog, 'configmap', 'edge')).toEqual(['traffic'])
+    expect(visibleCategoriesForSelection(catalog, null, 'edge')).toEqual(['traffic'])
   })
 
-  it('covers every EntityKind defined in the type', () => {
-    // Sanity: each declared kind has an entry, even if empty.
-    const kinds = Object.keys(KIND_CATEGORIES) as Array<keyof typeof KIND_CATEGORIES>
-    expect(kinds).toContain('pod')
-    expect(kinds).toContain('configmap')
-    expect(kinds).toContain('pvc')
+  it('uses broad defaults while the catalog is loading', () => {
+    expect(visibleCategoriesForSelection(undefined, 'container', 'entity')).toEqual([
+      'resource',
+      'traffic',
+      'latency',
+      'error',
+      'capacity',
+      'health',
+    ])
+    expect(visibleCategoriesForSelection(undefined, null, 'edge')).toEqual(['traffic', 'latency', 'error'])
   })
 })
 
 describe('isMetricApplicableToKind', () => {
-  it('matches when a source id maps to the kind', () => {
-    const m = metric({ sources: [{ id: 'kubelet', priority: 1 }] })
+  it('matches when applies_to includes the selected kind', () => {
+    const m = metric({ applies_to: ['pod'] })
     expect(isMetricApplicableToKind(m, 'pod')).toBe(true)
     expect(isMetricApplicableToKind(m, 'service')).toBe(false)
   })
 
-  it('matches every kind for an Istio-only metric only on services', () => {
-    const m = metric({ sources: [{ id: 'mesh.istio', priority: 1 }] })
+  it('uses backend applicability instead of source ids', () => {
+    const m = metric({ sources: [{ id: 'kubelet', priority: 1 }], applies_to: ['container'] })
+    expect(isMetricApplicableToKind(m, 'container')).toBe(true)
+    expect(isMetricApplicableToKind(m, 'pod')).toBe(false)
+    expect(isMetricApplicableToKind(m, 'pvc')).toBe(false)
+  })
+
+  it('supports service-scoped traffic metrics', () => {
+    const m = metric({ sources: [{ id: 'mesh.istio', priority: 1 }], applies_to: ['service'] })
     expect(isMetricApplicableToKind(m, 'service')).toBe(true)
     expect(isMetricApplicableToKind(m, 'pod')).toBe(false)
     expect(isMetricApplicableToKind(m, 'configmap')).toBe(false)
   })
 
-  it('matches every kind when any source is wildcarded', () => {
-    const m = metric({ sources: [{ id: 'kubelet', priority: 1 }, { id: 'mesh.istio', priority: 2 }] })
-    expect(isMetricApplicableToKind(m, 'pod')).toBe(true)
-    expect(isMetricApplicableToKind(m, 'service')).toBe(true)
-  })
-
-  it('treats unknown source ids as applicable (fail-open)', () => {
-    const m = metric({ sources: [{ id: 'totally-made-up', priority: 1 }] })
+  it('treats missing applies_to as applicable for older catalog responses', () => {
+    const m = metric({ applies_to: undefined })
     expect(isMetricApplicableToKind(m, 'pod')).toBe(true)
     expect(isMetricApplicableToKind(m, 'configmap')).toBe(true)
   })
 
-  it('treats metrics with no sources as applicable', () => {
-    const m = metric({ sources: [] })
-    expect(isMetricApplicableToKind(m, 'pod')).toBe(true)
+  it('returns true when kind is null', () => {
+    const m = metric({ applies_to: ['service'] })
+    expect(isMetricApplicableToKind(m, null)).toBe(true)
   })
 
-  it('returns true when kind is null', () => {
-    const m = metric({ sources: [{ id: 'mesh.istio', priority: 1 }] })
-    expect(isMetricApplicableToKind(m, null)).toBe(true)
+  it('filters controller workload metrics by workload subtype', () => {
+    const deploymentMetric = metric({ name: 'k8s.deployment.available', applies_to: ['workload'] })
+    const jobMetric = metric({ name: 'k8s.job.active_pods', applies_to: ['workload'] })
+
+    expect(isMetricApplicableToKind(deploymentMetric, 'workload', {
+      labels: { 'k8s.workload.type': 'deployment' },
+    })).toBe(true)
+    expect(isMetricApplicableToKind(jobMetric, 'workload', {
+      labels: { 'k8s.workload.type': 'deployment' },
+    })).toBe(false)
+    expect(isMetricApplicableToKind(jobMetric, 'workload', {
+      labels: { 'k8s.workload.type': 'job' },
+    })).toBe(true)
+  })
+
+  it('fails open for workload nodes without subtype labels', () => {
+    const jobMetric = metric({ name: 'k8s.job.active_pods', applies_to: ['workload'] })
+    expect(isMetricApplicableToKind(jobMetric, 'workload')).toBe(true)
   })
 })
 
 describe('applicableMetrics', () => {
   const catalog: CanonicalMetric[] = [
-    metric({ name: 'pod.cpu', category: 'resource', scopes: ['entity'], sources: [{ id: 'kubelet', priority: 1 }] }),
-    metric({ name: 'svc.req', category: 'traffic', scopes: ['entity'], sources: [{ id: 'mesh.istio', priority: 1 }] }),
-    metric({ name: 'edge.req', category: 'traffic', scopes: ['edge'], sources: [{ id: 'mesh.istio', priority: 1 }] }),
+    metric({ name: 'pod.cpu', category: 'resource', scopes: ['entity'], applies_to: ['pod'] }),
+    metric({ name: 'container.cpu', category: 'resource', scopes: ['entity'], applies_to: ['container'] }),
+    metric({ name: 'container.health', category: 'health', scopes: ['entity'], applies_to: ['container'] }),
+    metric({ name: 'node.cpu', category: 'resource', scopes: ['entity'], applies_to: ['node'] }),
+    metric({ name: 'volume.inodes', category: 'resource', scopes: ['entity'], applies_to: ['pvc'] }),
+    metric({ name: 'svc.req', category: 'traffic', scopes: ['entity'], applies_to: ['service'] }),
+    metric({ name: 'edge.req', category: 'traffic', scopes: ['edge'], applies_to: undefined }),
+    metric({ name: 'k8s.deployment.available', category: 'health', scopes: ['entity'], applies_to: ['workload'] }),
+    metric({ name: 'k8s.job.active_pods', category: 'health', scopes: ['entity'], applies_to: ['workload'] }),
+    metric({ name: 'k8s.hpa.current_replicas', category: 'resource', scopes: ['entity'], applies_to: ['hpa'] }),
+    metric({ name: 'k8s.resource_quota.used', category: 'resource', scopes: ['entity'], applies_to: ['resourcequota'] }),
   ]
 
   it('keeps category + scope + applicability filtering coherent', () => {
@@ -99,11 +137,36 @@ describe('applicableMetrics', () => {
     expect(applicableMetrics(catalog, 'traffic', 'configmap', 'entity')).toEqual([])
   })
 
+  it('shows container health and excludes pod, node, and PVC metrics for containers', () => {
+    expect(applicableMetrics(catalog, 'resource', 'container', 'entity').map((m) => m.name)).toEqual(['container.cpu'])
+    expect(applicableMetrics(catalog, 'health', 'container', 'entity').map((m) => m.name)).toEqual([
+      'container.health',
+    ])
+  })
+
   it('filters by edge scope in edge mode and ignores kind applicability', () => {
     expect(applicableMetrics(catalog, 'traffic', 'configmap', 'edge').map((m) => m.name)).toEqual(['edge.req'])
   })
 
   it('handles undefined catalog input', () => {
     expect(applicableMetrics(undefined, 'resource', 'pod', 'entity')).toEqual([])
+  })
+
+  it('shows only metrics for the selected workload subtype', () => {
+    expect(applicableMetrics(catalog, 'health', 'workload', 'entity', {
+      labels: { 'k8s.workload.type': 'deployment' },
+    }).map((m) => m.name)).toEqual(['k8s.deployment.available'])
+    expect(applicableMetrics(catalog, 'health', 'workload', 'entity', {
+      labels: { 'k8s.workload.type': 'job' },
+    }).map((m) => m.name)).toEqual(['k8s.job.active_pods'])
+  })
+
+  it('keeps HPA and ResourceQuota metrics gated by entity kind', () => {
+    expect(applicableMetrics(catalog, 'resource', 'hpa', 'entity').map((m) => m.name)).toEqual([
+      'k8s.hpa.current_replicas',
+    ])
+    expect(applicableMetrics(catalog, 'resource', 'resourcequota', 'entity').map((m) => m.name)).toEqual([
+      'k8s.resource_quota.used',
+    ])
   })
 })

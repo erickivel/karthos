@@ -251,7 +251,7 @@ Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped 
 2. **Global entity search** (`filter/GlobalEntitySearch.tsx`): full-width input with a `⌘K` shortcut. Fuzzy text search across name, namespace, kind, and status against the latest snapshot. Arrow keys + Enter pick.
 3. **Breadcrumb / Builder filter** (`filter/FilterBreadcrumbBuilder.tsx`): path-style `Namespace / Kind / Entity` segments backed by `SearchablePopover`. An "Edit Filters" toggle expands an advanced builder with `SCOPE` (namespace, kind), `WHERE` (status, name-contains query), and `SELECT` (entity) rows. "Reset" clears all state. Each picker is fed by `applyFilters(allNodes, ...)` minus its own field, so the namespace, kind, and entity dropdowns only ever list options that are still viable under the *other* active filters; if a previously-selected entity falls out of the new candidate set, it auto-clears. Popovers dismiss on outside click or `Escape` (`useClickOutside` hook).
 4. **Selection summary** (`SelectionSummary.tsx`): card with health dot, entity name, kind badge, namespace/cluster/status chips, and the segmented time-range control (`5m / 15m / 1h / 6h / 24h`).
-5. **Category tabs**: filtered to categories applicable to the selected kind via `applicability/kindCategories.ts`.
+5. **Category tabs**: derived from catalog metrics whose `scopes` and `applies_to` match the current selection.
 6. **Chart grid**: one `MetricCard` per applicable canonical metric. Cards share a Recharts `syncId` so the hover cursor mirrors across cards even though only a single entity is selected.
 7. **Raw Samples table**: scrollable, scope column shows `namespace/name` for entity samples and `src → tgt` for edge samples.
 
@@ -286,7 +286,7 @@ Scrollable table with columns: Metric, Scope, Source, (Mesh — only when mesh-l
 **Data sources:**
 - `GET /api/v1/metrics/series?metric_name={name}&entity_id[]={id}&from=&to=` → entity metric series
 - `GET /api/v1/metrics/series?metric_name={name}&edge_source_id={id}&edge_target_id={id}&from=&to=` → edge metric series
-- `GET /api/v1/metrics/catalog?category=` → canonical metric definitions, including per-metric `scopes`
+- `GET /api/v1/metrics/catalog?category=` → canonical metric definitions, including per-metric `scopes` and `applies_to`
 - `GET /api/v1/graph` → graph edges for the edge selector
 - `GET /api/v1/graph` → live graph nodes for the global search and breadcrumb filter
 
@@ -296,12 +296,9 @@ The Metrics Explorer must treat catalog `scopes` as authoritative:
 - edge mode renders only metrics whose scopes include `edge`
 - edge mode uses edge-capable catalog entries such as servicegraph and HTTP request metrics; unsupported pod-network metrics must not be requested or displayed
 
-**Applicability layer.** On top of `scopes`, the Explorer hides tabs and cards that are *structurally* inapplicable to the selected entity kind via two small frontend config files:
+**Applicability layer.** On top of `scopes`, the Explorer hides tabs and cards that are *structurally* inapplicable to the selected entity kind using catalog-owned `applies_to` metadata. For workload entities, `k8s.workload.type` narrows controller-specific metric families so Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, and ReplicationController cards only appear on the matching subtype; missing subtype metadata fails open for older graph snapshots. `sources` describe metric producers and source arbitration only; the frontend must not infer entity applicability from source IDs.
 
-- `web/src/views/MetricsExplorer/applicability/kindCategories.ts` — `EntityKind → MetricCategory[]`, drives **tab visibility** (e.g. ConfigMap exposes no tabs).
-- `web/src/views/MetricsExplorer/applicability/sourceKinds.ts` — `SourceId → EntityKind[] | '*'`, drives **card visibility** (e.g. an `mesh.istio`-only metric is hidden when a Pod is selected).
-
-Cards that are applicable but currently empty render an informative empty state listing the metric's expected sources, distinguishing "no data right now" from "this never applies". Unknown source ids fail open and emit a single `console.warn` in dev. See `web/src/views/MetricsExplorer/applicability/README.md` for the full model and how to extend it.
+Cards that are applicable but currently empty render an informative empty state listing the metric's expected sources, distinguishing "no data right now" from "this never applies". Catalog responses missing `applies_to` fail open for compatibility and emit a single `console.warn` in dev. See `web/src/views/MetricsExplorer/applicability/README.md` for the full model and how to extend it.
 
 ### 5.4 Status Bar
 

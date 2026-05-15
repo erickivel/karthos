@@ -118,6 +118,32 @@ func (i *StructuralTopologyIngestor) upsertStructuralEntities(ctx context.Contex
 		}
 	}
 
+	for _, hpa := range prof.HPAs {
+		if err := upsert(newStoredEntity(
+			hpa.ID(),
+			entities.KindHPA,
+			hpa.ClusterName,
+			hpa.Namespace,
+			hpa.Name,
+			hpa.Labels(),
+		)); err != nil {
+			return err
+		}
+	}
+
+	for _, quota := range prof.ResourceQuotas {
+		if err := upsert(newStoredEntity(
+			quota.ID(),
+			entities.KindResourceQuota,
+			quota.ClusterName,
+			quota.Namespace,
+			quota.Name,
+			quota.Labels(),
+		)); err != nil {
+			return err
+		}
+	}
+
 	for _, pod := range prof.Pods {
 		if err := upsert(newStoredEntity(
 			pod.ID(),

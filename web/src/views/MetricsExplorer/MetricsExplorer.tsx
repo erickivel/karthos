@@ -13,7 +13,7 @@ import { GlobalEntitySearch } from './filter/GlobalEntitySearch'
 import { FilterBreadcrumbBuilder } from './filter/FilterBreadcrumbBuilder'
 import { EdgeSelector } from './edge/EdgeSelector'
 import { EMPTY_FILTER, type FilterState } from './filter/types'
-import { applicableMetrics, visibleCategoriesForKind, type ExplorerMode } from './applicability/applicability'
+import { applicableMetrics, visibleCategoriesForSelection, type ExplorerMode } from './applicability/applicability'
 import type { GraphNode } from '@/types/graph'
 import type { MetricCategory, MetricSample, MetricSeries } from '@/types/metrics'
 import styles from './MetricsExplorer.module.css'
@@ -62,10 +62,14 @@ export function MetricsExplorer() {
 
   const selectedNode = isEntityMode && filter.entityId ? nodeById.get(filter.entityId) ?? null : null
   const selectedKind = selectedNode?.kind ?? null
+  const applicabilityContext = useMemo(
+    () => ({ labels: selectedNode?.labels }),
+    [selectedNode?.labels],
+  )
 
   const visibleCategories = useMemo(
-    () => visibleCategoriesForKind(isEntityMode ? selectedKind : null, mode),
-    [isEntityMode, selectedKind, mode],
+    () => visibleCategoriesForSelection(catalog?.metrics, isEntityMode ? selectedKind : null, mode, applicabilityContext),
+    [catalog?.metrics, isEntityMode, selectedKind, mode, applicabilityContext],
   )
 
   const categoryMetrics = useMemo(
@@ -75,8 +79,9 @@ export function MetricsExplorer() {
         category,
         isEntityMode ? selectedKind : null,
         mode,
+        applicabilityContext,
       ),
-    [catalog?.metrics, category, mode, selectedKind, isEntityMode],
+    [catalog?.metrics, category, mode, selectedKind, isEntityMode, applicabilityContext],
   )
 
   const hasSelection = isEntityMode ? Boolean(selectedNode) : Boolean(edgeSourceId && edgeTargetId)

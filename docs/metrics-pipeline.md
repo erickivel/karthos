@@ -26,6 +26,7 @@ type CanonicalMetric struct {
     Unit            Unit            // canonical unit (millicores, bytes, ns, ratio, ...)
     Category        MetricCategory  // resource | traffic | latency | error | capacity | health
     Scopes          []MetricScope   // entity, edge, or both
+    AppliesTo       []EntityKind    // entity kinds valid for entity-scope queries
     Description     string
     Sources         []SourceRef     // {ID, Priority} — which logical sources can produce it
     SelectionPolicy SelectionPolicy // priority (default), disjoint, all
@@ -40,6 +41,10 @@ Important properties:
 - **Scopes are authoritative for the API and UI.** A metric in `scopes:["edge"]`
   must only be requested with `edge_source_id` / `edge_target_id` filters; the
   Metrics Explorer enforces this at query time.
+- **AppliesTo is authoritative for entity-kind applicability.** `applies_to`
+  answers "which graph entity kinds can this metric be queried against?" and is
+  distinct from `Sources`, which answers "which collector or tool can produce
+  this metric?" The frontend must not infer entity applicability from source IDs.
 - **Sources drive arbitration**, not detection. A metric with several entries
   in `Sources` declares more than one possible producer; the resolver picks
   exactly one per cluster.
@@ -54,9 +59,11 @@ Important properties:
   appear in `OTLPSemconvMetrics` (`pkg/core/metrics/otel_mappings.go`); the
   test `TestDefaultCatalogMetricsHaveIngestOrQuerySupport` enforces this.
 - **Unsupported metrics stay out of the catalog.** Names that have no real
-  ingest path (e.g. `k8s.pod.network.io.*`, `k8s.node.*` capacity gauges) are
-  explicitly excluded by `TestDefaultCatalogExcludesUnsupportedMetrics` so
-  the UI never advertises a metric the backend cannot produce.
+  ingest path (e.g. the exploded `k8s.pod.network.io.{receive,transmit}` —
+  kubeletstats only emits the bare `k8s.pod.network.io` with a `direction`
+  attribute — and `k8s.node.*` capacity gauges) are explicitly excluded by
+  `TestDefaultCatalogExcludesUnsupportedMetrics` so the UI never advertises a
+  metric the backend cannot produce.
 
 The current categories are `resource`, `traffic`, `latency`, `error`,
 `capacity`, and `health`. Categories drive the Metrics Explorer tab layout.
@@ -94,6 +101,27 @@ A `nil` dialect means the source already emits canonical-shaped names. The
 kubeletstats receiver emits a mix of `k8s.*` and upstream `container.*` names,
 so its source dialect maps container usage metrics onto the public
 `k8s.container.*` catalog names.
+
+The `kube-cluster` source is the metric-native Kubernetes API path. It covers
+controller/workload replica gauges (`deployment`, `replicaset`, `daemonset`,
+`statefulset`, `job`, `cronjob`, and legacy `replication_controller`), HPA
+replica gauges, ResourceQuota usage/limits, pod phases/reasons, container
+resource specs, and node allocatable resources. Object snapshots/events from
+the OTel `k8s_objects` receiver are intentionally out of scope for the metrics
+catalog because that receiver emits logs, not metric samples.
+ResourceQuota catalog entries use the generic `resource` unit because each
+sample's `resource` label controls the physical unit: CPU quota values are
+stored as `millicores`, memory/storage quota values as `bytes`, object quotas
+as `count`, and unknown quota dimensions keep the generic `resource` unit.
+
+`k8s_cluster` workload/controller metrics must resolve to entities already
+materialized by structural discovery. Discovery emits Deployment, StatefulSet,
+DaemonSet, ReplicaSet, Job, CronJob, ReplicationController, HPA, and
+ResourceQuota nodes with IDs matching `OTLPEntityResolver`; otherwise the
+Metrics Explorer cannot select the sample-bearing entity from `/api/v1/graph`.
+Workload nodes also carry `k8s.workload.type` so the frontend can hide
+controller-specific metric families that do not apply to the selected workload
+subtype.
 
 Source IDs are exported as constants so the catalog, dialect, and planner
 share a single contract:
@@ -246,7 +274,10 @@ empty, which the API serves as "no recent sample" — equivalent to
 catalog. `OTLPSemconvMetrics` maps each canonical metric name to:
 
 - `ConversionFactor` — from the producer's unit to the canonical unit
-- `Unit` — canonical unit code, used by the API response
+- `Unit` — canonical unit code, used by the API response. For heterogeneous
+  families such as ResourceQuota, the catalog/mapping unit is `resource` and
+  `OTLPNormalizer` assigns a concrete sample unit from the datapoint labels
+  when possible.
 - `Kind` — gauge, sum, or histogram
 
 The normalizer reads this map after dialect translation to apply unit

@@ -290,6 +290,8 @@ func TestPlanBaselineAlwaysIncludesHostmetricsAndKubeletstatsVolume(t *testing.T
 	// and pod.status_reason (all default-disabled or recently default-flipped
 	// in v0.111+; explicit enables make the contract visible in the plan).
 	k8sCluster := plan.GatewayConfig.Receivers["k8s_cluster"].(map[string]any)
+	allocatableTypes := k8sCluster["allocatable_types_to_report"].([]string)
+	require.Contains(t, allocatableTypes, "pods")
 	enabledMetrics := k8sCluster["metrics"].(map[string]any)
 	require.Contains(t, enabledMetrics, "k8s.container.ready")
 	require.Contains(t, enabledMetrics, "k8s.container.restarts")
@@ -544,6 +546,32 @@ func TestPlanTagsK8sContainerMetricsAsKubeCluster(t *testing.T) {
 	)
 }
 
+// TestPlanTagsKubeletNodeNetworkAndFilesystemAsKubelet verifies that
+// k8s.node.network.* and k8s.node.filesystem.* (emitted by the kubeletstats
+// receiver at v0.111+ when metric_groups includes "node") are tagged kubelet.
+// Without this, the broader kube-cluster k8s.node.* allocatable/condition rule
+// or no rule at all would let them flow through unlabeled and the backend
+// shouldDropForSource would silently drop every datapoint.
+func TestPlanTagsKubeletNodeNetworkAndFilesystemAsKubelet(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	tagger := plan.AgentConfig.Processors[oksgSourceTaggerProcessor].(map[string]any)
+	metricStatements := tagger["metric_statements"].([]map[string]any)
+	require.Len(t, metricStatements, 1)
+	statements := metricStatements[0]["statements"].([]string)
+
+	require.Contains(t, statements,
+		`set(attributes["oksg_source"], "`+metrics.SourceKubelet+`") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set" or IsMatch(metric.name, "^k8s\\.node\\.(network|filesystem)\\.")) and attributes["oksg_source"] == nil`,
+	)
+}
+
 // TestPlanTagsK8sPodPhaseAsKubeCluster verifies that k8s.pod.phase (and any
 // other pod-scope status signal from the k8s_cluster receiver) is tagged
 // kube-cluster. The kubelet pod rule is tightened to match only the metric
@@ -572,5 +600,25 @@ func TestPlanTagsK8sPodPhaseAsKubeCluster(t *testing.T) {
 	// Broad kube-cluster pod rule that catches phase/status_reason/etc.
 	require.Contains(t, statements,
 		`set(attributes["oksg_source"], "`+metrics.SourceKubeCluster+`") where IsMatch(metric.name, "^k8s\\.pod\\.") and attributes["oksg_source"] == nil`,
+	)
+}
+
+func TestPlanTagsKubeClusterWorkloadFamiliesAsKubeCluster(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources:     []profile.ObservabilitySource{},
+	})
+	require.NoError(t, err)
+
+	tagger := plan.GatewayConfig.Processors[oksgSourceTaggerProcessor].(map[string]any)
+	metricStatements := tagger["metric_statements"].([]map[string]any)
+	require.Len(t, metricStatements, 1)
+	statements := metricStatements[0]["statements"].([]string)
+
+	require.Contains(t, statements,
+		`set(attributes["oksg_source"], "`+metrics.SourceKubeCluster+`") where IsMatch(metric.name, "^k8s\\.(replicaset|deployment|namespace|daemonset|statefulset|job|cronjob|hpa|resource_quota|replication_controller)\\.") and attributes["oksg_source"] == nil`,
 	)
 }

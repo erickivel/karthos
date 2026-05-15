@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EntityKind, GraphNode } from '@/types/graph'
+import { entityKindLabel } from '@/utils/entityDisplay'
 import { SearchablePopover } from './SearchablePopover'
 import {
   applyFilters,
@@ -30,6 +31,8 @@ const KIND_COLOR: Record<EntityKind, string> = {
   configmap: 'var(--kind-configmap)',
   secret: 'var(--kind-secret)',
   pvc: 'var(--kind-pvc)',
+  hpa: 'var(--kind-workload)',
+  resourcequota: 'var(--kind-namespace)',
 }
 
 type PickerId = 'namespace' | 'kind' | 'entity' | 'status' | null
@@ -95,7 +98,7 @@ export function FilterBreadcrumbBuilder({ nodes, state, setState }: Props) {
       ...sorted.map((n) => ({
         label: n.name,
         value: n.id,
-        meta: `${n.namespace || 'cluster'} / ${n.kind}`,
+        meta: `${n.namespace || 'cluster'} / ${entityKindLabel(n)}`,
         health: nodeHealth(n.status),
         color: KIND_COLOR[n.kind],
       })),

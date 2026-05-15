@@ -33,9 +33,8 @@ func TestStructuralTopologyIngestor_WritesSnapshotToGraphStore(t *testing.T) {
 	snapshot, err := store.GetLatest(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
-	require.Len(t, snapshot.Graph.Edges, 1)
-	require.Equal(t, topology.RelExposes, snapshot.Graph.Edges[0].Relation)
-	require.Len(t, snapshot.Graph.Nodes, 2)
+	require.Len(t, findEdgesByRelation(snapshot.Graph.Edges, topology.RelExposes), 1)
+	require.Len(t, snapshot.Graph.Nodes, 3)
 }
 
 func TestStructuralTopologyIngestor_EmptyProfileWritesNothing(t *testing.T) {
@@ -78,6 +77,12 @@ func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
 		Ingresses: []entities.Ingress{
 			entities.NewIngress("test", "demo", "gateway", "gateway.demo.local", map[string]string{"name": "gateway", "namespace": "demo"}),
 		},
+		HPAs: []entities.HPA{
+			entities.NewHPA("test", "demo", "gateway-hpa", nil),
+		},
+		ResourceQuotas: []entities.ResourceQuota{
+			entities.NewResourceQuota("test", "demo", "compute", nil),
+		},
 	}
 	prof.Ingresses[0].BackendServices = []entities.IngressBackend{{ServiceName: "gateway-go", ServicePort: 8080}}
 
@@ -103,6 +108,8 @@ func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
 	workloadID := prof.Workloads[0].ID()
 	serviceID := prof.Services[0].ID()
 	ingressID := prof.Ingresses[0].ID()
+	hpaID := prof.HPAs[0].ID()
+	resourceQuotaID := prof.ResourceQuotas[0].ID()
 	configMapID := entities.ComputeEntityID(entities.KindConfigMap, "test", "demo", "gateway-config")
 	secretID := entities.ComputeEntityID(entities.KindSecret, "test", "demo", "gateway-secret")
 	pvcID := entities.ComputeEntityID(entities.KindPVC, "test", "demo", "gateway-cache")
@@ -111,6 +118,8 @@ func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
 	assertEntity(workloadID, entities.KindWorkload, "gateway-go", "demo")
 	assertEntity(serviceID, entities.KindService, "gateway-go", "demo")
 	assertEntity(ingressID, entities.KindIngress, "gateway", "demo")
+	assertEntity(hpaID, entities.KindHPA, "gateway-hpa", "demo")
+	assertEntity(resourceQuotaID, entities.KindResourceQuota, "compute", "demo")
 	assertEntity(configMapID, entities.KindConfigMap, "gateway-config", "demo")
 	assertEntity(secretID, entities.KindSecret, "gateway-secret", "demo")
 	assertEntity(pvcID, entities.KindPVC, "gateway-cache", "demo")
@@ -120,4 +129,5 @@ func TestStructuralTopologyIngestor_UpsertsStructuralEntities(t *testing.T) {
 	require.NoError(t, err)
 	storedWorkload := workloadEntity.(persistence.StoredEntity)
 	require.Equal(t, "3", storedWorkload.Metadata["k8s.workload.replicas"])
+	require.Equal(t, "deployment", storedWorkload.Metadata[entities.WorkloadTypeLabel])
 }

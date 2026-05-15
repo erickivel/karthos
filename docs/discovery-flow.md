@@ -33,7 +33,7 @@ sequenceDiagram
 
     User->>CLI: discovery-job --mode=plan --profile=profile.json
     CLI->>SP: Plan(ctx, ClusterProfile)
-    SP->>SP: Always add kubeletstats, hostmetrics, k8scluster
+    SP->>SP: Always add agent kubeletstats/hostmetrics and gateway k8scluster
     alt Prometheus targets found
         SP->>SP: Add prometheus receiver and scrape configs
     end
@@ -101,7 +101,8 @@ Either condition is sufficient for a service to be included as an OTLP source in
 
 The source planner turns the profile into collector intent:
 
-- agent always includes `kubeletstats` (expanded to include volume metrics), `hostmetrics`, and `k8scluster`
+- agent always includes `kubeletstats` (expanded to include volume metrics) and `hostmetrics`
+- gateway always includes `k8scluster` for Kubernetes API-backed workload, controller, HPA, ResourceQuota, pod phase, node condition, and allocatable metrics
 - agent adds `prometheus` only when targets were discovered
 - agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
 - gateway enables `spanmetrics` and `servicegraph` connectors when OTLP traces are enabled
@@ -116,7 +117,7 @@ The source planner turns the profile into collector intent:
 
 Baseline vs enriched plans:
 
-- a **baseline** plan (no Prometheus targets, no OTLP sources) enables only `kubeletstats`, `hostmetrics`, and `k8scluster`
+- a **baseline** plan (no Prometheus targets, no OTLP sources) enables `kubeletstats` and `hostmetrics` on the agent plus `k8scluster` on the gateway
 - an **enriched** plan adds `prometheus`, `otlp`, `spanmetrics`, `servicegraph`, and/or the `mesh-istio` scrape job based on what was discovered
 
 Source detection contract: the `Detector` interface in
@@ -171,17 +172,21 @@ The Helm chart is responsible for:
 The backend pod mounts the generated `profile.json` at `/etc/oksg/profile.json`
 and runs `StructuralTopologyIngestor.IngestProfile` once at startup. This
 seeds the `EntityRegistry` with every entity discovered in the profile
-(namespaces, workloads, services, pods, containers, and their supporting
-objects) and writes an initial structural snapshot to the `GraphStore`, so
-the topology API returns discovered entities even before any runtime
-telemetry arrives.
+(namespaces, workloads, HPAs, ResourceQuotas, services, pods, containers, and
+their supporting objects) and writes an initial structural snapshot to the
+`GraphStore`, so the topology API returns discovered entities even before any
+runtime telemetry arrives.
 
+Structural discovery materializes Deployments, StatefulSets, DaemonSets,
+ReplicaSets, Jobs, CronJobs, ReplicationControllers, HPAs, and ResourceQuotas
+so `k8s_cluster` metric entity IDs are selectable from `/api/v1/graph`.
 Workloads carry the discovered desired replica count as graph metadata under
-`k8s.workload.replicas`. Pods discovered from Kubernetes are linked back to
-their owning workload when their owner reference or workload pod-template
-selector can be matched. That structural `contains` edge lets runtime and
-traffic topology views expand workload cards into their participating pods
-without guessing from metric samples alone.
+`k8s.workload.replicas` and the controller subtype under
+`k8s.workload.type`. Pods discovered from Kubernetes are linked back to their
+owning workload when their owner reference or workload pod-template selector can
+be matched. That structural `contains` edge lets runtime and traffic topology
+views expand workload cards into their participating pods without guessing from
+metric samples alone.
 
 Pods that are terminating, succeeded, or failed are skipped during discovery so
 rolling demo deployments do not seed stale pod cards into the structural graph.

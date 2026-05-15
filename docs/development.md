@@ -104,7 +104,7 @@ web/
       MetricsExplorer/  single-entity / single-edge explorer
         filter/        GlobalEntitySearch (⌘K), FilterBreadcrumbBuilder, SearchablePopover, applyFilters
         edge/          EdgeSelector (calls-edge picker)
-        applicability/ kindCategories + sourceKinds gating tabs and cards by selected kind
+        applicability/ catalog `scopes` + `applies_to` gating tabs and cards by selected kind plus workload subtype
         SelectionSummary, MetricCard, InfoTooltip, RawSamplesTable, CategoryTabs, TimeRangeSelector
     components/
       Shell/          floating TopBar, Sidebar, StatusBar
@@ -325,12 +325,12 @@ A successful write line in backend logs looks like:
 {"level":"info","msg":"wrote metric samples","source":"otlp/grpc","count":3}
 ```
 
-A skipped envelope (expected for k8s_cluster workload-object metrics and raw host metrics without node context) looks like:
+A skipped envelope (expected for raw host metrics without node context or unsupported future Kubernetes resource attributes) looks like:
 ```json
 {"level":"warn","msg":"skipping envelope: unresolvable entity","source":"otlp/grpc","resource":{"k8s.deployment.name":"..."}}
 ```
 
-Skips for `k8s.namespace`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset` resources are expected — these entity kinds are not yet part of the canonical model. Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet).
+Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet). `k8s_cluster` workload/controller resources such as deployments, daemonsets, statefulsets, replicasets, jobs, cronjobs, HPAs, ResourceQuotas, and replication controllers are part of the canonical model and should resolve.
 
 ## REST API (Layer 6)
 

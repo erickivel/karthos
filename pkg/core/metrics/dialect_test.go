@@ -38,8 +38,8 @@ func TestBuiltInDialectsTranslateKnownMetrics(t *testing.T) {
 	require.Equal(t, "servicegraph.grpc.response.message.count", registry.Translate("istio_response_messages_total"))
 	require.Equal(t, "servicegraph.tcp.connection.open.count", registry.Translate("istio_tcp_connections_opened_total"))
 	require.Equal(t, "servicegraph.tcp.connection.close.count", registry.Translate("istio_tcp_connections_closed_total"))
-	require.Equal(t, "istio_tcp_sent_bytes_total", registry.Translate("istio_tcp_sent_bytes_total"))
-	require.Equal(t, "istio_tcp_received_bytes_total", registry.Translate("istio_tcp_received_bytes_total"))
+	require.Equal(t, "servicegraph.tcp.bytes.sent", registry.Translate("istio_tcp_sent_bytes_total"))
+	require.Equal(t, "servicegraph.tcp.bytes.received", registry.Translate("istio_tcp_received_bytes_total"))
 }
 
 func TestDefaultSourceDialectsTranslateKubeletContainerMetrics(t *testing.T) {
@@ -47,6 +47,9 @@ func TestDefaultSourceDialectsTranslateKubeletContainerMetrics(t *testing.T) {
 
 	require.Equal(t, "k8s.container.cpu.usage", registry.Translate("container.cpu.usage"))
 	require.Equal(t, "k8s.container.memory.usage", registry.Translate("container.memory.usage"))
+	require.Equal(t, "k8s.container.filesystem.usage", registry.Translate("container.filesystem.usage"))
+	require.Equal(t, "k8s.container.filesystem.capacity", registry.Translate("container.filesystem.capacity"))
+	require.Equal(t, "k8s.container.filesystem.available", registry.Translate("container.filesystem.available"))
 }
 
 func TestDefaultSourceDialectsTranslateKubeClusterContainerSpecs(t *testing.T) {
@@ -56,6 +59,10 @@ func TestDefaultSourceDialectsTranslateKubeClusterContainerSpecs(t *testing.T) {
 	require.Equal(t, "k8s.container.cpu.limit", registry.Translate("k8s.container.cpu_limit"))
 	require.Equal(t, "k8s.container.memory.request", registry.Translate("k8s.container.memory_request"))
 	require.Equal(t, "k8s.container.memory.limit", registry.Translate("k8s.container.memory_limit"))
+	require.Equal(t, "k8s.container.storage.request", registry.Translate("k8s.container.storage_request"))
+	require.Equal(t, "k8s.container.storage.limit", registry.Translate("k8s.container.storage_limit"))
+	require.Equal(t, "k8s.container.ephemeral_storage.request", registry.Translate("k8s.container.ephemeralstorage_request"))
+	require.Equal(t, "k8s.container.ephemeral_storage.limit", registry.Translate("k8s.container.ephemeralstorage_limit"))
 }
 
 // TestKubeClusterDialect_CoverageForCatalogSources walks every catalog entry
@@ -72,23 +79,44 @@ func TestKubeClusterDialect_CoverageForCatalogSources(t *testing.T) {
 	// emits with the exact catalog spelling — no dialect translation needed.
 	// Keep this list aligned with the comment block on KubeClusterDialect.
 	kubeClusterPassthroughs := map[string]struct{}{
-		"k8s.container.ready":                   {},
-		"k8s.container.restarts":                {},
-		"k8s.namespace.phase":                   {},
-		"k8s.pod.phase":                         {},
-		"k8s.pod.status_reason":                 {},
-		"k8s.replicaset.desired":                {},
-		"k8s.deployment.desired":                {},
-		"k8s.deployment.available":              {},
-		"k8s.daemonset.desired_scheduled_nodes": {},
-		"k8s.daemonset.ready_nodes":             {},
-		"k8s.statefulset.desired_pods":          {},
-		"k8s.statefulset.ready_pods":            {},
-		"k8s.node.condition.ready":              {},
-		"k8s.node.condition.memory_pressure":    {},
-		"k8s.node.condition.disk_pressure":      {},
-		"k8s.node.allocatable_cpu":              {},
-		"k8s.node.allocatable_memory":           {},
+		"k8s.container.ready":                    {},
+		"k8s.container.restarts":                 {},
+		"k8s.namespace.phase":                    {},
+		"k8s.pod.phase":                          {},
+		"k8s.pod.status_reason":                  {},
+		"k8s.replicaset.desired":                 {},
+		"k8s.replicaset.available":               {},
+		"k8s.replication_controller.desired":     {},
+		"k8s.replication_controller.available":   {},
+		"k8s.deployment.desired":                 {},
+		"k8s.deployment.available":               {},
+		"k8s.cronjob.active_jobs":                {},
+		"k8s.daemonset.desired_scheduled_nodes":  {},
+		"k8s.daemonset.current_scheduled_nodes":  {},
+		"k8s.daemonset.misscheduled_nodes":       {},
+		"k8s.daemonset.ready_nodes":              {},
+		"k8s.statefulset.desired_pods":           {},
+		"k8s.statefulset.ready_pods":             {},
+		"k8s.statefulset.current_pods":           {},
+		"k8s.statefulset.updated_pods":           {},
+		"k8s.hpa.max_replicas":                   {},
+		"k8s.hpa.min_replicas":                   {},
+		"k8s.hpa.current_replicas":               {},
+		"k8s.hpa.desired_replicas":               {},
+		"k8s.job.active_pods":                    {},
+		"k8s.job.desired_successful_pods":        {},
+		"k8s.job.failed_pods":                    {},
+		"k8s.job.max_parallel_pods":              {},
+		"k8s.job.successful_pods":                {},
+		"k8s.resource_quota.hard_limit":          {},
+		"k8s.resource_quota.used":                {},
+		"k8s.node.condition.ready":               {},
+		"k8s.node.condition.memory_pressure":     {},
+		"k8s.node.condition.disk_pressure":       {},
+		"k8s.node.allocatable_cpu":               {},
+		"k8s.node.allocatable_memory":            {},
+		"k8s.node.allocatable_ephemeral_storage": {},
+		"k8s.node.allocatable_pods":              {},
 	}
 
 	dialectCanonicals := make(map[string]struct{}, len(KubeClusterDialect))

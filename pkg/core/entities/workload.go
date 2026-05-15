@@ -3,10 +3,14 @@ package entities
 type WorkloadType string
 
 const (
-	WorkloadDeployment  WorkloadType = "deployment"
-	WorkloadStatefulSet WorkloadType = "statefulset"
-	WorkloadDaemonSet   WorkloadType = "daemonset"
-	WorkloadJob         WorkloadType = "job"
+	WorkloadTypeLabel                          = "k8s.workload.type"
+	WorkloadDeployment            WorkloadType = "deployment"
+	WorkloadStatefulSet           WorkloadType = "statefulset"
+	WorkloadDaemonSet             WorkloadType = "daemonset"
+	WorkloadReplicaSet            WorkloadType = "replicaset"
+	WorkloadJob                   WorkloadType = "job"
+	WorkloadCronJob               WorkloadType = "cronjob"
+	WorkloadReplicationController WorkloadType = "replication_controller"
 )
 
 type Workload struct {
@@ -24,13 +28,18 @@ type Workload struct {
 }
 
 func NewWorkload(clusterName, namespace, name string, workloadType WorkloadType, labels map[string]string) Workload {
+	metadata := cloneLabels(labels)
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[WorkloadTypeLabel] = string(workloadType)
 	return Workload{
 		EntityID:    ComputeEntityID(KindWorkload, clusterName, namespace, string(workloadType), name),
 		ClusterName: clusterName,
 		Namespace:   namespace,
 		Name:        name,
 		Type:        workloadType,
-		Metadata:    cloneLabels(labels),
+		Metadata:    metadata,
 	}
 }
 

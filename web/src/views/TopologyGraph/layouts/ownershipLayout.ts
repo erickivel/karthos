@@ -10,6 +10,8 @@ const OWNERSHIP_TREE = {
   namespacePaddingX: 48,
   namespacePaddingTop: 82,
   namespacePaddingBottom: 48,
+  emptyNamespaceWidth: 360,
+  emptyNamespaceHeight: 180,
   componentGap: 180,
   siblingGap: 62,
   rankGap: 250,
@@ -70,7 +72,7 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
 
   const parentIdSet = new Set(groupOf.values())
   const parentNodes = graphNodes.filter(
-    (n) => n.kind === parentKind && parentIdSet.has(n.id),
+    (n) => n.kind === parentKind && (parentKind === 'namespace' || parentIdSet.has(n.id)),
   )
   const parentIds = new Set(parentNodes.map((n) => n.id))
   const parentById = new Map(parentNodes.map((n) => [n.id, n]))
@@ -113,8 +115,6 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
 
   for (const parent of parentOrder) {
     const namespaceNodes = sortOwnershipNodes(nodesByParent.get(parent.id) ?? [])
-    if (namespaceNodes.length === 0) continue
-
     const namespaceNodeIds = new Set(namespaceNodes.map((node) => node.id))
     const namespaceEdges = contentEdges.filter(
       (edge) => namespaceNodeIds.has(edge.source) && namespaceNodeIds.has(edge.target),
@@ -123,17 +123,25 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
       .map((componentNodes) => buildComponentModel(componentNodes, namespaceEdges))
       .map(layoutOwnershipComponent)
 
-    const contentWidth = components.reduce(
-      (sum, component, index) =>
-        sum + component.width + (index > 0 ? OWNERSHIP_TREE.componentGap : 0),
-      0,
-    )
-    const contentHeight = Math.max(...components.map((component) => component.height))
-    const namespaceWidth = contentWidth + OWNERSHIP_TREE.namespacePaddingX * 2
-    const namespaceHeight =
-      contentHeight +
-      OWNERSHIP_TREE.namespacePaddingTop +
-      OWNERSHIP_TREE.namespacePaddingBottom
+    const hasContent = components.length > 0
+    const contentWidth = hasContent
+      ? components.reduce(
+          (sum, component, index) =>
+            sum + component.width + (index > 0 ? OWNERSHIP_TREE.componentGap : 0),
+          0,
+        )
+      : 0
+    const contentHeight = hasContent
+      ? Math.max(...components.map((component) => component.height))
+      : 0
+    const namespaceWidth = hasContent
+      ? contentWidth + OWNERSHIP_TREE.namespacePaddingX * 2
+      : OWNERSHIP_TREE.emptyNamespaceWidth
+    const namespaceHeight = hasContent
+      ? contentHeight +
+        OWNERSHIP_TREE.namespacePaddingTop +
+        OWNERSHIP_TREE.namespacePaddingBottom
+      : OWNERSHIP_TREE.emptyNamespaceHeight
     const namespaceX = 0
     const namespaceY = nextNamespaceY
     const isRootGroup = parent.id === '__root__'

@@ -44,7 +44,7 @@ typed Helm values. Receivers and connectors:
 
 - `kubeletstats` (always; pod, container, volume metrics)
 - `hostmetrics` (always; per-node CPU, memory, disk, network, load)
-- `k8scluster` (always; replica counts, pod phases, node conditions)
+- `k8scluster` (always on the gateway; workload/controller counts, pod phases, node conditions, resource quotas, HPA replica counts)
 - `prometheus` (when discovered targets exist; scrape jobs stamp `oksg_source=prometheus.app`)
 - `mesh-istio` Prometheus job (when sidecar mode is detected; scrapes `istio-proxy:15020/stats/prometheus`, rewrites Istio labels into servicegraph `client`/`server` edge attributes, stamps `oksg_source=mesh.istio`)
 - `otlp` receivers (when discovery finds workloads with `oksg.io/otlp-traces: "true"` or ports `4317`/`4318`)
