@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useClickOutside } from '@/hooks/useClickOutside'
 import type { GraphNode } from '@/types/graph'
+import { entityKindLabel } from '@/utils/entityDisplay'
 import { applyFilters, nodeHealth, type NodeHealth } from './types'
 import styles from './GlobalEntitySearch.module.css'
 
@@ -99,7 +100,7 @@ export function GlobalEntitySearch({ nodes, onSelect }: Props) {
               aria-selected={i === hi}
             >
               <HealthDot health={nodeHealth(node.status)} />
-              <KindBadge kind={node.kind} />
+              <KindBadge kind={node.kind} label={entityKindLabel(node)} />
               <span className={styles.name}>{node.name}</span>
               <span className={styles.ns}>{node.namespace || 'cluster'}</span>
               <span className={styles.status}>{node.status}</span>
@@ -115,11 +116,11 @@ function HealthDot({ health }: { health: NodeHealth }) {
   return <span className={styles.healthDot} data-health={health} aria-label={`status ${health}`} />
 }
 
-function KindBadge({ kind }: { kind: string }) {
+function KindBadge({ kind, label }: { kind: string; label: string }) {
   return (
     <span className={styles.kindBadge} data-kind={kind}>
       <span className={styles.kindSwatch} style={{ background: `var(--kind-${kind}, var(--color-text-muted))` }} />
-      {kind}
+      {label}
     </span>
   )
 }

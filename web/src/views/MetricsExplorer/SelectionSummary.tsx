@@ -1,4 +1,5 @@
 import type { GraphNode } from '@/types/graph'
+import { entityKindLabel } from '@/utils/entityDisplay'
 import { TimeRangeSelector, type TimeRange } from './TimeRangeSelector'
 import { nodeHealth } from './filter/types'
 import styles from './SelectionSummary.module.css'
@@ -38,7 +39,7 @@ function EntityBlock({ node }: { node: GraphNode }) {
       <div className={styles.titleRow}>
         <span className={styles.healthDot} data-health={health} />
         <span className={styles.title}>{node.name}</span>
-        <KindBadge kind={node.kind} />
+        <KindBadge kind={node.kind} label={entityKindLabel(node)} />
       </div>
       <div className={styles.chipRow}>
         {node.namespace && <Chip label="ns" value={node.namespace} />}
@@ -77,11 +78,11 @@ function EdgeBlock({ source, target, relation }: Omit<EdgeSummaryProps, 'kind' |
   )
 }
 
-function KindBadge({ kind }: { kind: string }) {
+function KindBadge({ kind, label }: { kind: string; label: string }) {
   return (
     <span className={styles.kindBadge}>
       <span className={styles.kindSwatch} style={{ background: `var(--kind-${kind}, var(--color-text-muted))` }} />
-      {kind}
+      {label}
     </span>
   )
 }

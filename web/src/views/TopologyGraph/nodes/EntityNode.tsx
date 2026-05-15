@@ -3,6 +3,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { Activity } from "lucide-react";
 import { useAppStore } from "@/stores/useAppStore";
 import type { GraphNode, EntityKind } from "@/types/graph";
+import { entityKindLabel } from "@/utils/entityDisplay";
 import type { NodeMetricValues } from "@/hooks/useNodeMetrics";
 import { topologyEntityTestId } from "../testIds";
 import { getNodeMetricSpecs, type MetricSelector } from "../nodeMetrics";
@@ -46,7 +47,7 @@ function getHeaderColor(
 const SMALL_KINDS: EntityKind[] = ["configmap", "secret", "pvc"];
 
 function getDisplayName(node: GraphNode): string {
-  return `${node.kind}_${node.name}`
+  return `${entityKindLabel(node)}_${node.name}`
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .toUpperCase();

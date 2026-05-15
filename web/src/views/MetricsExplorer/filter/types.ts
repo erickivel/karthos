@@ -1,4 +1,5 @@
 import type { EntityKind, GraphNode } from '@/types/graph'
+import { entityKindSearchText } from '@/utils/entityDisplay'
 
 /**
  * Single-entity filter state. URL holds only `entityId` (the shareable bit);
@@ -74,7 +75,7 @@ export function applyFilters(nodes: GraphNode[] | undefined, state: FilterState)
     if (state.status && nodeHealth(node.status) !== state.status) return false
     if (state.query) {
       const q = state.query.toLowerCase()
-      const hay = `${node.name} ${node.namespace} ${node.kind} ${node.status ?? ''}`.toLowerCase()
+      const hay = `${node.name} ${node.namespace} ${entityKindSearchText(node)} ${node.status ?? ''}`.toLowerCase()
       if (!hay.includes(q)) return false
     }
     return true
