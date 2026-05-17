@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/metrics"
@@ -348,6 +349,57 @@ func TestVMMetricStore_QueryEmptyMetricName(t *testing.T) {
 	samples, err := store.Query(context.Background(), query.MetricQuery{})
 	assert.NoError(t, err)
 	assert.Nil(t, samples)
+}
+
+func TestVMMetricStore_QueryCatalogStats(t *testing.T) {
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v1/query", r.URL.Path)
+		q := r.URL.Query().Get("query")
+		queries = append(queries, q)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(q, "sum by") {
+			// count response: 2 samples for k8s_pod_memory_working_set from
+			// kubelet, 1 sample for servicegraph_request_count from mesh.istio.
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"__name__":"k8s_pod_memory_working_set","source":"kubelet"},"value":[1747396800,"2"]},
+				{"metric":{"__name__":"servicegraph_request_count","source":"mesh.istio"},"value":[1747396800,"1"]}
+			]}}`))
+			return
+		}
+		// last_seen response: timestamps as scalar seconds.
+		lastSeenTs := strconv.FormatInt(now.Add(-5*time.Minute).Unix(), 10)
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[
+			{"metric":{"__name__":"k8s_pod_memory_working_set","source":"kubelet"},"value":[1747396800,"` + lastSeenTs + `"]},
+			{"metric":{"__name__":"servicegraph_request_count","source":"mesh.istio"},"value":[1747396800,"` + lastSeenTs + `"]}
+		]}}`))
+	}))
+	defer srv.Close()
+
+	store := NewVMMetricStore(srv.URL)
+	stats, err := store.QueryCatalogStats(context.Background(), time.Hour)
+	require.NoError(t, err)
+	require.Len(t, queries, 2)
+	assert.Contains(t, queries[0], "count_over_time")
+	assert.Contains(t, queries[0], "[3600s]")
+	assert.Contains(t, queries[0], "keep_metric_names")
+	assert.Contains(t, queries[1], "tlast_over_time")
+	assert.Contains(t, queries[1], "keep_metric_names")
+
+	byMetric := map[string]persistence.SourceStat{}
+	for _, s := range stats {
+		require.Len(t, s.BySource, 1)
+		byMetric[s.MetricName] = s.BySource[0]
+	}
+	memory := byMetric["k8s.pod.memory.working_set"]
+	assert.Equal(t, "kubelet", memory.SourceID)
+	assert.EqualValues(t, 2, memory.SampleCount)
+	assert.Equal(t, now.Add(-5*time.Minute).Unix(), memory.LastSeenAt.Unix())
+
+	traffic := byMetric["servicegraph.request.count"]
+	assert.Equal(t, "mesh.istio", traffic.SourceID)
+	assert.EqualValues(t, 1, traffic.SampleCount)
 }
 
 func TestVMMetricStore_Ping(t *testing.T) {

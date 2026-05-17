@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/metrics"
@@ -146,6 +147,182 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 	}
 
 	return samples, nil
+}
+
+// QueryCatalogStats issues two instant PromQL queries against VictoriaMetrics
+// to aggregate per-(canonical metric, source) sample counts and last-seen
+// timestamps over the lookback window. Uses VictoriaMetrics' `tlast_over_time`
+// rollup for last-seen — this is VM-specific (not stock Prometheus) and
+// matches our deployment target.
+func (s *VMMetricStore) QueryCatalogStats(ctx context.Context, lookback time.Duration) ([]persistence.CatalogStat, error) {
+	regex := catalogPromNameRegex()
+	if regex == "" {
+		return nil, nil
+	}
+	lookbackExpr := strconv.FormatInt(int64(lookback.Seconds()), 10) + "s"
+
+	// Rollups (count_over_time / tlast_over_time) strip __name__ in
+	// VictoriaMetrics / Prometheus, which would erase the metric dimension we
+	// aggregate by. VM-specific `keep_metric_names` preserves __name__ across
+	// the rollup so the `sum by (__name__, source)` aggregation can group on it.
+	countQL := fmt.Sprintf(
+		`sum by (__name__, source) (count_over_time({__name__=~"%s"}[%s]) keep_metric_names)`,
+		regex, lookbackExpr,
+	)
+	lastSeenQL := fmt.Sprintf(
+		`max by (__name__, source) (tlast_over_time({__name__=~"%s"}[%s]) keep_metric_names)`,
+		regex, lookbackExpr,
+	)
+
+	countSeries, err := s.instantQuery(ctx, countQL)
+	if err != nil {
+		return nil, fmt.Errorf("vm catalog-stats count: %w", err)
+	}
+	lastSeenSeries, err := s.instantQuery(ctx, lastSeenQL)
+	if err != nil {
+		return nil, fmt.Errorf("vm catalog-stats last_seen: %w", err)
+	}
+
+	type key struct {
+		metric string
+		source string
+	}
+	type agg struct {
+		count    int64
+		lastSeen time.Time
+	}
+	buckets := map[key]*agg{}
+	promNameToCanonical := catalogPromNameLookup()
+	keyOf := func(promName, source string) key {
+		canonical, ok := promNameToCanonical[promName]
+		if !ok {
+			canonical = semconvMetricName(promName)
+		}
+		return key{metric: canonical, source: source}
+	}
+
+	for _, v := range countSeries {
+		k := keyOf(v.PromName, v.Source)
+		b, ok := buckets[k]
+		if !ok {
+			b = &agg{}
+			buckets[k] = b
+		}
+		b.count = int64(v.Value)
+	}
+	for _, v := range lastSeenSeries {
+		k := keyOf(v.PromName, v.Source)
+		b, ok := buckets[k]
+		if !ok {
+			b = &agg{}
+			buckets[k] = b
+		}
+		b.lastSeen = time.Unix(int64(v.Value), 0).UTC()
+	}
+
+	grouped := map[string][]persistence.SourceStat{}
+	for k, b := range buckets {
+		grouped[k.metric] = append(grouped[k.metric], persistence.SourceStat{
+			SourceID:    k.source,
+			SampleCount: b.count,
+			LastSeenAt:  b.lastSeen,
+		})
+	}
+	result := make([]persistence.CatalogStat, 0, len(grouped))
+	for name, sources := range grouped {
+		result = append(result, persistence.CatalogStat{MetricName: name, BySource: sources})
+	}
+	return result, nil
+}
+
+// instantVectorEntry is one (metric, source, value) row from an instant query
+// result. Returned to QueryCatalogStats which composes counts and last-seen.
+type instantVectorEntry struct {
+	PromName string
+	Source   string
+	Value    float64
+}
+
+// instantQuery issues a single PromQL instant query (`/api/v1/query`) and
+// extracts the __name__ + source labels alongside the scalar value.
+func (s *VMMetricStore) instantQuery(ctx context.Context, promql string) ([]instantVectorEntry, error) {
+	params := url.Values{"query": {promql}}
+	reqURL := s.baseURL + "/api/v1/query?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("vm instant: %w", err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("vm instant: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("vm instant: unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var parsed struct {
+		Status string `json:"status"`
+		Data   struct {
+			ResultType string `json:"resultType"`
+			Result     []struct {
+				Metric map[string]string `json:"metric"`
+				Value  []interface{}     `json:"value"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, fmt.Errorf("vm instant: parse: %w", err)
+	}
+	if parsed.Status != "success" {
+		return nil, fmt.Errorf("vm instant: response status %q", parsed.Status)
+	}
+
+	out := make([]instantVectorEntry, 0, len(parsed.Data.Result))
+	for _, r := range parsed.Data.Result {
+		if len(r.Value) != 2 {
+			continue
+		}
+		valStr, ok := r.Value[1].(string)
+		if !ok {
+			continue
+		}
+		val, err := strconv.ParseFloat(valStr, 64)
+		if err != nil {
+			continue
+		}
+		out = append(out, instantVectorEntry{
+			PromName: r.Metric["__name__"],
+			Source:   r.Metric["source"],
+			Value:    val,
+		})
+	}
+	return out, nil
+}
+
+// catalogPromNameRegex returns a `|`-joined regex of every canonical metric's
+// Prometheus-form name (dots → underscores). Computed once per call; the
+// catalog is static so this allocation is cheap relative to the HTTP cost.
+func catalogPromNameRegex() string {
+	catalog := metrics.DefaultCatalog()
+	if len(catalog) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(catalog))
+	for _, m := range catalog {
+		names = append(names, promMetricName(m.Name))
+	}
+	return strings.Join(names, "|")
+}
+
+func catalogPromNameLookup() map[string]string {
+	catalog := metrics.DefaultCatalog()
+	lookup := make(map[string]string, len(catalog))
+	for _, m := range catalog {
+		lookup[promMetricName(m.Name)] = m.Name
+	}
+	return lookup
 }
 
 // samplesToPrometheusText converts MetricSamples to Prometheus text exposition
