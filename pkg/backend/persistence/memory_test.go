@@ -154,6 +154,52 @@ func TestMetricStore_FilterByEdgeIDs(t *testing.T) {
 	assert.Equal(t, string(targetB), got[0].Labels["edge_server_id"])
 }
 
+func TestMetricStore_QueryCatalogStats(t *testing.T) {
+	store := NewInMemoryMetricStore()
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	store.nowFn = func() time.Time { return now }
+	ctx := context.Background()
+
+	idA := svc("a")
+	idB := svc("b")
+	require.NoError(t, store.Write(ctx, []metrics.MetricSample{
+		// In window, kubelet source × 3 samples for cpu.usage
+		{MetricName: "k8s.pod.cpu.usage", EntityID: idA, Value: 0.1, Timestamp: now.Add(-30 * time.Minute), Labels: map[string]string{"source": "kubelet"}},
+		{MetricName: "k8s.pod.cpu.usage", EntityID: idA, Value: 0.2, Timestamp: now.Add(-20 * time.Minute), Labels: map[string]string{"source": "kubelet"}},
+		{MetricName: "k8s.pod.cpu.usage", EntityID: idB, Value: 0.3, Timestamp: now.Add(-5 * time.Minute), Labels: map[string]string{"source": "kubelet"}},
+		// In window, mesh.istio source × 1 sample for request.count
+		{MetricName: "servicegraph.request.count", EntityID: idA, Value: 1.0, Timestamp: now.Add(-10 * time.Minute), Labels: map[string]string{"source": "mesh.istio"}},
+		// Out of window — must be excluded
+		{MetricName: "k8s.pod.cpu.usage", EntityID: idA, Value: 9.9, Timestamp: now.Add(-2 * time.Hour), Labels: map[string]string{"source": "kubelet"}},
+		// No source label — collapses to SourceID ""
+		{MetricName: "k8s.pod.memory.working_set", EntityID: idA, Value: 1024, Timestamp: now.Add(-1 * time.Minute)},
+	}))
+
+	stats, err := store.QueryCatalogStats(ctx, time.Hour)
+	require.NoError(t, err)
+
+	byMetric := make(map[string][]SourceStat, len(stats))
+	for _, s := range stats {
+		byMetric[s.MetricName] = s.BySource
+	}
+
+	cpu := byMetric["k8s.pod.cpu.usage"]
+	require.Len(t, cpu, 1)
+	assert.Equal(t, "kubelet", cpu[0].SourceID)
+	assert.EqualValues(t, 3, cpu[0].SampleCount)
+	assert.Equal(t, now.Add(-5*time.Minute), cpu[0].LastSeenAt)
+
+	traffic := byMetric["servicegraph.request.count"]
+	require.Len(t, traffic, 1)
+	assert.Equal(t, "mesh.istio", traffic[0].SourceID)
+	assert.EqualValues(t, 1, traffic[0].SampleCount)
+
+	mem := byMetric["k8s.pod.memory.working_set"]
+	require.Len(t, mem, 1)
+	assert.Equal(t, "", mem[0].SourceID)
+	assert.EqualValues(t, 1, mem[0].SampleCount)
+}
+
 // ─── GraphStore tests ─────────────────────────────────────────────────────────
 
 func TestGraphStore_PutAndGetLatest(t *testing.T) {

@@ -434,6 +434,26 @@ Response:
 }
 ```
 
+### GET /api/v1/metrics/catalog/stats
+
+Return per-`(canonical metric, source)` sample counts and last-seen timestamps over a fixed 1h lookback. One entry per canonical metric is always returned, zero-filled across the metric's declared sources so the frontend renders coverage badges without a second round-trip. The window is hard-coded (`catalogStatsLookback` in `handler_metrics.go`); take no parameters.
+
+```bash
+curl -s http://localhost:18081/api/v1/metrics/catalog/stats | jq '.data.stats[] | select(.metric_name == "servicegraph.request.count")'
+```
+
+```json
+{
+  "metric_name": "servicegraph.request.count",
+  "by_source": [
+    { "source_id": "mesh.istio",          "priority": 1, "sample_count": 1842, "last_seen_at": "2026-05-16T11:34:56Z" },
+    { "source_id": "traces.servicegraph", "priority": 2, "sample_count": 0,    "last_seen_at": null }
+  ]
+}
+```
+
+The endpoint backs the **Catalog** tab in the Metrics Explorer (`/metrics?mode=catalog`), which surfaces coverage badges (live / stale / no-data / derived) so silent advertised-but-not-flowing metrics become visible.
+
 ## Entities
 
 ### GET /api/v1/entities

@@ -242,12 +242,12 @@ Appears when a node is clicked. Contents:
 
 ### 5.3 Metrics Explorer (`/metrics`)
 
-Entity and edge time-series exploration across the canonical metric categories.
+Entity and edge time-series exploration across the canonical metric categories, plus a Catalog mode for inspecting every advertised metric and its recent source coverage.
 
 Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped and removed in favour of a tighter selection UX with a global keyboard search.
 
 **Layout (entity mode):**
-1. Header: page title + Entity / Edge mode tabs
+1. Header: page title + Entity / Edge / Catalog mode tabs
 2. **Global entity search** (`filter/GlobalEntitySearch.tsx`): full-width input with a `⌘K` shortcut. Fuzzy text search across name, namespace, kind, and status against the latest snapshot. Arrow keys + Enter pick.
 3. **Breadcrumb / Builder filter** (`filter/FilterBreadcrumbBuilder.tsx`): path-style `Namespace / Kind / Entity` segments backed by `SearchablePopover`. An "Edit Filters" toggle expands an advanced builder with `SCOPE` (namespace, kind), `WHERE` (status, name-contains query), and `SELECT` (entity) rows. "Reset" clears all state. Each picker is fed by `applyFilters(allNodes, ...)` minus its own field, so the namespace, kind, and entity dropdowns only ever list options that are still viable under the *other* active filters; if a previously-selected entity falls out of the new candidate set, it auto-clears. Popovers dismiss on outside click or `Escape` (`useClickOutside` hook).
 4. **Selection summary** (`SelectionSummary.tsx`): card with health dot, entity name, kind badge, namespace/cluster/status chips, and the segmented time-range control (`5m / 15m / 1h / 6h / 24h`).
@@ -262,9 +262,16 @@ Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped 
 4. Tabs are fixed to traffic, latency, error (the categories defined for `MetricScope = 'edge'`).
 5. Same chart grid + raw samples.
 
+**Layout (catalog mode):**
+1. Same header, mode tab on Catalog.
+2. `MetricCatalogTable` lists every canonical metric with category, unit, scopes, applies-to count, declared sources, last-hour sample count, last-seen age, and coverage badge.
+3. Expanding a row shows the description, applies-to chips, per-source sample counts, and an action to open the metric's family in Entity or Edge mode.
+4. Catalog mode does not issue entity/edge series queries; it uses catalog definitions plus `/api/v1/metrics/catalog/stats`.
+
 **URL state:**
 - Entity: `/metrics?mode=entity&entity={id}` (single id; the multi-id `entity=a,b,c` shape was retired with multi-compare).
 - Edge: `/metrics?mode=edge&edgeSource={id}&edgeTarget={id}` (unchanged).
+- Catalog: `/metrics?mode=catalog`.
 - Deep-links from the topology `NodeInspector` (`entityMetricsUrl` / `edgeMetricsUrl` in `web/src/lib/links.ts`) are preserved.
 
 **Chart Cards (`MetricCard.tsx`):**
@@ -287,6 +294,7 @@ Scrollable table with columns: Metric, Scope, Source, (Mesh — only when mesh-l
 - `GET /api/v1/metrics/series?metric_name={name}&entity_id[]={id}&from=&to=` → entity metric series
 - `GET /api/v1/metrics/series?metric_name={name}&edge_source_id={id}&edge_target_id={id}&from=&to=` → edge metric series
 - `GET /api/v1/metrics/catalog?category=` → canonical metric definitions, including per-metric `scopes` and `applies_to`
+- `GET /api/v1/metrics/catalog/stats` → catalog-mode per-source sample counts and last-seen timestamps over the fixed 1h window
 - `GET /api/v1/graph` → graph edges for the edge selector
 - `GET /api/v1/graph` → live graph nodes for the global search and breadcrumb filter
 
@@ -385,6 +393,7 @@ TanStack Query hooks are the **only** data consumers. Components never fetch dir
 | Metrics (when visible) | 30s | `GET /api/v1/metrics` |
 | Node detail | On demand | `GET /api/v1/graph/nodes/{id}` |
 | Metric catalog | Once (stale: Infinity) | `GET /api/v1/metrics/catalog` |
+| Metric catalog stats | 30s | `GET /api/v1/metrics/catalog/stats` |
 
 ---
 

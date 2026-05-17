@@ -14,19 +14,23 @@ import { FilterBreadcrumbBuilder } from './filter/FilterBreadcrumbBuilder'
 import { EdgeSelector } from './edge/EdgeSelector'
 import { EMPTY_FILTER, type FilterState } from './filter/types'
 import { applicableMetrics, visibleCategoriesForSelection, type ExplorerMode } from './applicability/applicability'
+import { MetricCatalogTable } from './catalog/MetricCatalogTable'
 import type { GraphNode } from '@/types/graph'
-import type { MetricCategory, MetricSample, MetricSeries } from '@/types/metrics'
+import type { CanonicalMetric, MetricCategory, MetricSample, MetricSeries } from '@/types/metrics'
 import styles from './MetricsExplorer.module.css'
 
 const SYNCED_CURSOR_ID = 'metrics-explorer'
 
 export function MetricsExplorer() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const mode = (searchParams.get('mode') as ExplorerMode | null) ?? 'entity'
+  const rawMode = (searchParams.get('mode') as ExplorerMode | null) ?? 'entity'
+  const mode: ExplorerMode = rawMode === 'edge' || rawMode === 'catalog' ? rawMode : 'entity'
   const entityId = searchParams.get('entity') ?? ''
   const edgeSourceId = searchParams.get('edgeSource') ?? ''
   const edgeTargetId = searchParams.get('edgeTarget') ?? ''
   const isEntityMode = mode === 'entity'
+  const isEdgeMode = mode === 'edge'
+  const isCatalogMode = mode === 'catalog'
 
   const [timeRange, setTimeRange] = useState<TimeRange>('15m')
   const [category, setCategory] = useState<MetricCategory>('resource')
@@ -84,7 +88,7 @@ export function MetricsExplorer() {
     [catalog?.metrics, category, mode, selectedKind, isEntityMode, applicabilityContext],
   )
 
-  const hasSelection = isEntityMode ? Boolean(selectedNode) : Boolean(edgeSourceId && edgeTargetId)
+  const hasSelection = isEntityMode ? Boolean(selectedNode) : isEdgeMode ? Boolean(edgeSourceId && edgeTargetId) : false
 
   // Snap to a still-visible category whenever the visibility set changes.
   useEffect(() => {
@@ -116,7 +120,7 @@ export function MetricsExplorer() {
               from,
               to,
             }),
-      enabled: hasSelection,
+      enabled: !isCatalogMode && hasSelection,
       refetchInterval: 30_000,
     })),
   })
@@ -149,11 +153,31 @@ export function MetricsExplorer() {
         // share-link copied after toggling Edge → Entity points at the
         // entity the user was viewing rather than to nothing.
         if (filter.entityId) np.set('entity', filter.entityId)
+      } else if (next === 'edge') {
+        np.delete('entity')
       } else {
         np.delete('entity')
+        np.delete('edgeSource')
+        np.delete('edgeTarget')
       }
       return np
     })
+  }
+
+  const handleOpenInExplorer = (metric: CanonicalMetric, targetMode: 'entity' | 'edge') => {
+    // Catalog → samples view: switch the URL mode and pre-set the category
+    // tab so the user sees the metric's family. Entity/edge selection is
+    // left for the user — applicability already restricts metrics to what
+    // can apply once they pick something.
+    setSearchParams((prev) => {
+      const np = new URLSearchParams(prev)
+      np.set('mode', targetMode)
+      np.delete('entity')
+      np.delete('edgeSource')
+      np.delete('edgeTarget')
+      return np
+    })
+    setCategory(metric.category)
   }
 
   const writeEntityToUrl = (id: string) => {
@@ -220,9 +244,9 @@ export function MetricsExplorer() {
           <button
             type="button"
             role="tab"
-            aria-selected={!isEntityMode}
+            aria-selected={isEdgeMode}
             className={styles.modeButton}
-            data-active={!isEntityMode}
+            data-active={isEdgeMode}
             onClick={() => setMode('edge')}
           >
             <EdgeIcon />
@@ -231,10 +255,26 @@ export function MetricsExplorer() {
               <span className={styles.modeHint}>traffic between</span>
             </span>
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isCatalogMode}
+            className={styles.modeButton}
+            data-active={isCatalogMode}
+            onClick={() => setMode('catalog')}
+          >
+            <CatalogIcon />
+            <span className={styles.modeLabel}>
+              <span className={styles.modeName}>Catalog</span>
+              <span className={styles.modeHint}>all metrics</span>
+            </span>
+          </button>
         </div>
       </header>
 
-      {isEntityMode ? (
+      {isCatalogMode ? (
+        <MetricCatalogTable onOpenInExplorer={handleOpenInExplorer} />
+      ) : isEntityMode ? (
         <>
           <GlobalEntitySearch nodes={nodes} onSelect={handleGlobalSelect} />
           <FilterBreadcrumbBuilder nodes={nodes} state={filter} setState={handleFilterChange} />
@@ -249,7 +289,7 @@ export function MetricsExplorer() {
         />
       )}
 
-      {isEntityMode && selectedNode && (
+      {!isCatalogMode && isEntityMode && selectedNode && (
         <SelectionSummary
           kind="entity"
           node={selectedNode}
@@ -257,7 +297,7 @@ export function MetricsExplorer() {
           onTimeRangeChange={setTimeRange}
         />
       )}
-      {!isEntityMode && edgeSourceId && edgeTargetId && (
+      {!isCatalogMode && !isEntityMode && edgeSourceId && edgeTargetId && (
         <SelectionSummary
           kind="edge"
           source={nodeById.get(edgeSourceId) ?? null}
@@ -268,7 +308,7 @@ export function MetricsExplorer() {
         />
       )}
 
-      {!hasSelection && (
+      {!isCatalogMode && !hasSelection && (
         <div className={styles.prompt}>
           {isEntityMode ? (
             <>
@@ -288,17 +328,17 @@ export function MetricsExplorer() {
         </div>
       )}
 
-      {hasSelection && visibleCategories.length > 0 && (
+      {!isCatalogMode && hasSelection && visibleCategories.length > 0 && (
         <CategoryTabs active={category} categories={visibleCategories} onChange={setCategory} />
       )}
 
-      {hasSelection && visibleCategories.length === 0 && (
+      {!isCatalogMode && hasSelection && visibleCategories.length === 0 && (
         <div className={styles.prompt}>
           No metric categories apply to {selectedKind ?? 'this selection'}
         </div>
       )}
 
-      {hasSelection && visibleCategories.length > 0 && categoryMetrics.length > 0 && (
+      {!isCatalogMode && hasSelection && visibleCategories.length > 0 && categoryMetrics.length > 0 && (
         <div className={styles.chartGrid}>
           {categoryMetrics.map((metric) => {
             const series = seriesByMetric.get(metric.name)
@@ -317,11 +357,11 @@ export function MetricsExplorer() {
         </div>
       )}
 
-      {hasSelection && visibleCategories.length > 0 && categoryMetrics.length === 0 && (
+      {!isCatalogMode && hasSelection && visibleCategories.length > 0 && categoryMetrics.length === 0 && (
         <div className={styles.prompt}>No metrics defined for this category</div>
       )}
 
-      {allSamples.length > 0 && (
+      {!isCatalogMode && allSamples.length > 0 && (
         <RawSamplesTable
           samples={allSamples}
           scopeFor={(sample) => {
@@ -357,6 +397,28 @@ function EntityIcon() {
       <circle cx="10" cy="10" r="3.2" fill="currentColor" fillOpacity="0.18" />
       <circle cx="10" cy="10" r="3.2" />
       <circle cx="10" cy="10" r="7.5" strokeOpacity="0.45" strokeDasharray="2 2.5" />
+    </svg>
+  )
+}
+
+function CatalogIcon() {
+  return (
+    <svg
+      className={styles.modeIcon}
+      width={20}
+      height={20}
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="3" y="3.5" width="14" height="13" rx="1.5" />
+      <path d="M3 7.5h14" />
+      <path d="M3 11.5h14" />
+      <path d="M7.5 3.5v13" />
     </svg>
   )
 }

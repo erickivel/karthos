@@ -69,6 +69,23 @@ export interface MetricCatalogResponse {
   total: number
 }
 
+export interface CatalogStatSource {
+  source_id: string
+  priority?: number
+  sample_count: number
+  last_seen_at: string | null
+}
+
+export interface CatalogStatEntry {
+  metric_name: string
+  by_source: CatalogStatSource[]
+}
+
+export interface CatalogStatsResponse {
+  lookback_seconds: number
+  stats: CatalogStatEntry[]
+}
+
 export interface MetricQueryParams {
   metric_name: string
   entity_id?: string[]

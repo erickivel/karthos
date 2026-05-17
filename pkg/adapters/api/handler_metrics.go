@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/backend/query"
@@ -12,6 +13,11 @@ import (
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/semconv"
 )
+
+// catalogStatsLookback is the fixed window used by the /api/v1/metrics/catalog/stats
+// endpoint. One hour is short enough that "no data" rows reliably mean a metric
+// is not flowing, and long enough that low-rate signals still register.
+const catalogStatsLookback = time.Hour
 
 // MetricsHandler serves metric query and catalog endpoints.
 type MetricsHandler struct {
@@ -37,6 +43,7 @@ func newMetricsHandler(store persistence.MetricStore, logger *logging.Logger) *M
 func (h *MetricsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/metrics", h.handleQueryMetrics)
 	mux.HandleFunc("GET /api/v1/metrics/catalog", h.handleGetCatalog)
+	mux.HandleFunc("GET /api/v1/metrics/catalog/stats", h.handleGetCatalogStats)
 	mux.HandleFunc("GET /api/v1/metrics/series", h.handleGetMetricSeries)
 }
 
@@ -172,6 +179,105 @@ func (h *MetricsHandler) handleGetCatalog(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{
 		"metrics": catalog,
 		"total":   len(catalog),
+	})
+}
+
+// catalogStatsResponse is the JSON shape returned by GET /api/v1/metrics/catalog/stats.
+// Always contains one entry per canonical metric (zero-filled across declared
+// sources) so the frontend renders coverage badges without a second request.
+type catalogStatsResponse struct {
+	LookbackSeconds int                 `json:"lookback_seconds"`
+	Stats           []catalogStatsEntry `json:"stats"`
+}
+
+type catalogStatsEntry struct {
+	MetricName string                 `json:"metric_name"`
+	BySource   []catalogStatsBySource `json:"by_source"`
+}
+
+type catalogStatsBySource struct {
+	SourceID    string `json:"source_id"`
+	Priority    int    `json:"priority,omitempty"`
+	SampleCount int64  `json:"sample_count"`
+	// LastSeenAt is RFC3339 if any sample was observed in the window, otherwise nil.
+	LastSeenAt *string `json:"last_seen_at"`
+}
+
+func (h *MetricsHandler) handleGetCatalogStats(w http.ResponseWriter, r *http.Request) {
+	if h.metricStore == nil {
+		writeError(w, http.StatusNotFound, "metric store not configured")
+		return
+	}
+
+	rawStats, err := h.metricStore.QueryCatalogStats(r.Context(), catalogStatsLookback)
+	if err != nil {
+		h.logger.Warn("failed to query catalog stats", logging.Error(err))
+		writeError(w, http.StatusInternalServerError, "failed to query catalog stats")
+		return
+	}
+
+	// Index store output by (metric, source) for O(1) lookup during zero-fill.
+	type srcKey struct{ metric, source string }
+	indexed := map[srcKey]persistence.SourceStat{}
+	for _, cs := range rawStats {
+		for _, ss := range cs.BySource {
+			indexed[srcKey{metric: cs.MetricName, source: ss.SourceID}] = ss
+		}
+	}
+
+	formatLastSeen := func(t time.Time) *string {
+		if t.IsZero() {
+			return nil
+		}
+		s := t.UTC().Format(time.RFC3339)
+		return &s
+	}
+
+	catalog := metrics.DefaultCatalog()
+	entries := make([]catalogStatsEntry, 0, len(catalog))
+	for _, m := range catalog {
+		entry := catalogStatsEntry{MetricName: m.Name}
+		seen := map[string]struct{}{}
+		// One row per declared source — zero-fill if nothing arrived.
+		for _, src := range m.Sources {
+			ss := indexed[srcKey{metric: m.Name, source: src.ID}]
+			entry.BySource = append(entry.BySource, catalogStatsBySource{
+				SourceID:    src.ID,
+				Priority:    src.Priority,
+				SampleCount: ss.SampleCount,
+				LastSeenAt:  formatLastSeen(ss.LastSeenAt),
+			})
+			seen[src.ID] = struct{}{}
+		}
+		// Surface any unexpected sources observed in storage that aren't in
+		// the catalog declaration (e.g. legacy producers, or samples with no
+		// `source` label which collapse to SourceID ""). Drop the SourceID ""
+		// case entirely when the metric has any declared source — it's noise
+		// next to the canonical breakdown.
+		for _, cs := range rawStats {
+			if cs.MetricName != m.Name {
+				continue
+			}
+			for _, ss := range cs.BySource {
+				if _, declared := seen[ss.SourceID]; declared {
+					continue
+				}
+				if ss.SourceID == "" && len(m.Sources) > 0 {
+					continue
+				}
+				entry.BySource = append(entry.BySource, catalogStatsBySource{
+					SourceID:    ss.SourceID,
+					SampleCount: ss.SampleCount,
+					LastSeenAt:  formatLastSeen(ss.LastSeenAt),
+				})
+			}
+		}
+		entries = append(entries, entry)
+	}
+
+	writeJSON(w, http.StatusOK, catalogStatsResponse{
+		LookbackSeconds: int(catalogStatsLookback.Seconds()),
+		Stats:           entries,
 	})
 }
 

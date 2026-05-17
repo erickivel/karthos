@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
@@ -318,4 +320,75 @@ func TestMetricSeriesGroupsEdgeMetricsPerEdge(t *testing.T) {
 	require.EqualValues(t, 2, data["total"])
 	series := data["series"].([]any)
 	require.Len(t, series, 2)
+}
+
+func TestCatalogStatsZeroFillsAndJoins(t *testing.T) {
+	ms := persistence.NewInMemoryMetricStore()
+	// Pick a metric whose catalog declaration has a single source (kubelet),
+	// and one with multiple sources (servicegraph.request.count: mesh.istio +
+	// traces.servicegraph). Write samples for the kubelet metric, leave the
+	// traces.servicegraph entry of the second metric empty to exercise zero-fill.
+	now := time.Now().UTC()
+	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "k8s.pod.cpu.usage", EntityID: "e1", Value: 0.5, Timestamp: now.Add(-10 * time.Minute), Labels: map[string]string{"source": "kubelet"}},
+		{MetricName: "k8s.pod.cpu.usage", EntityID: "e1", Value: 0.6, Timestamp: now.Add(-5 * time.Minute), Labels: map[string]string{"source": "kubelet"}},
+		{MetricName: "servicegraph.request.count", EntityID: "e2", Value: 1, Timestamp: now.Add(-1 * time.Minute), Labels: map[string]string{"source": "mesh.istio"}},
+	}))
+
+	srv := newTestServer(t, Config{MetricStore: ms})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/metrics/catalog/stats")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var envelope struct {
+		Data struct {
+			LookbackSeconds int `json:"lookback_seconds"`
+			Stats           []struct {
+				MetricName string `json:"metric_name"`
+				BySource   []struct {
+					SourceID    string  `json:"source_id"`
+					Priority    int     `json:"priority"`
+					SampleCount int64   `json:"sample_count"`
+					LastSeenAt  *string `json:"last_seen_at"`
+				} `json:"by_source"`
+			} `json:"stats"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&envelope))
+	body := envelope.Data
+	require.Equal(t, 3600, body.LookbackSeconds)
+
+	byName := map[string]int{}
+	for i, e := range body.Stats {
+		byName[e.MetricName] = i
+	}
+
+	// Catalog has 100+ entries; just verify the two we exercised plus zero-fill.
+	cpu := body.Stats[byName["k8s.pod.cpu.usage"]]
+	require.Len(t, cpu.BySource, 1)
+	assert.Equal(t, "kubelet", cpu.BySource[0].SourceID)
+	assert.EqualValues(t, 2, cpu.BySource[0].SampleCount)
+	require.NotNil(t, cpu.BySource[0].LastSeenAt)
+
+	traffic := body.Stats[byName["servicegraph.request.count"]]
+	require.Len(t, traffic.BySource, 2)
+	// mesh.istio populated, traces.servicegraph zero-filled.
+	var meshCount, tracesCount int64
+	var meshSeen, tracesSeen *string
+	for _, s := range traffic.BySource {
+		switch s.SourceID {
+		case "mesh.istio":
+			meshCount = s.SampleCount
+			meshSeen = s.LastSeenAt
+		case "traces.servicegraph":
+			tracesCount = s.SampleCount
+			tracesSeen = s.LastSeenAt
+		}
+	}
+	assert.EqualValues(t, 1, meshCount)
+	require.NotNil(t, meshSeen)
+	assert.EqualValues(t, 0, tracesCount)
+	assert.Nil(t, tracesSeen)
 }

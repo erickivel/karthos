@@ -1,0 +1,58 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  border: 1px solid var(--surface-divider);
+  background: var(--surface-module);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.badge[data-state='live'] {
+  color: var(--color-signal);
+  border-color: rgba(8, 220, 125, 0.4);
+  background: rgba(8, 220, 125, 0.08);
+}
+.badge[data-state='live'] .dot {
+  background: var(--color-signal);
+  box-shadow: 0 0 6px rgba(8, 220, 125, 0.6);
+}
+
+.badge[data-state='stale'] {
+  color: var(--color-warn);
+  border-color: rgba(242, 183, 58, 0.4);
+  background: rgba(242, 183, 58, 0.08);
+}
+.badge[data-state='stale'] .dot {
+  background: var(--color-warn);
+}
+
+.badge[data-state='no-data'] {
+  color: var(--color-alert);
+  border-color: rgba(198, 45, 47, 0.45);
+  background: rgba(198, 45, 47, 0.08);
+}
+.badge[data-state='no-data'] .dot {
+  background: var(--color-alert);
+}
+
+.badge[data-state='derived'] {
+  color: var(--color-info);
+  border-color: rgba(62, 154, 223, 0.35);
+  background: rgba(62, 154, 223, 0.08);
+}
+.badge[data-state='derived'] .dot {
+  background: var(--color-info);
+}

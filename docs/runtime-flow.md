@@ -142,7 +142,7 @@ sequenceDiagram
 | `pkg/backend/ingest/structural_topology_ingestor.go` | `StructuralTopologyIngestor` | Ingests K8s structural topology from ClusterProfile into GraphStore |
 | `pkg/core/metrics/{catalog,sources,dialect,resolver}.go` | Metrics pipeline | Catalog, source registry, dialect translation, and priority-based source arbitration |
 | `pkg/core/semconv/keys.go` | Attribute keys | OTLP semantic-convention attribute key constants shared across ingest and topology |
-| `pkg/backend/persistence/memory.go` | `MetricStore` | Thread-safe in-memory `MetricStore`; supports write and time-range queries |
+| `pkg/backend/persistence/memory.go` | `MetricStore` | Thread-safe in-memory `MetricStore`; supports write, time-range queries, and catalog stats |
 | `pkg/backend/persistence/memory.go` | `GraphStore` | Thread-safe in-memory `GraphStore`; accumulates edges and nodes, updates `LastSeen` on re-observation |
 | `pkg/adapters/storage/victoriametrics/` | `VMMetricStore` | `MetricStore` backed by VictoriaMetrics HTTP API (Prometheus text import + PromQL query) |
 | `pkg/adapters/storage/postgresql/` | `PostgresGraphStore` | `GraphStore` backed by PostgreSQL with accumulated edge upserts |
@@ -318,7 +318,7 @@ Metric path:
 
 - `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label use the PVC identity before the generic resource fallback. Entity resolution errors fail the envelope.
 - `OTLPNormalizer` first translates source dialects into semconv-style metric names, then maps each recognized OTLP metric name to a semconv-native `MetricSample` using the registered `OTLPSemconvMetrics`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. ResourceQuota samples preserve the `resource` label and derive concrete sample units from it when possible (`millicores`, `bytes`, or `count`; otherwise `resource`). Servicegraph connector and Istio mesh metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Istio request-duration histograms are converted from milliseconds to nanoseconds, histograms are stored as `_sum`/`_count`, and `servicegraph.request.error.ratio` remains query-derived. Unrecognized metric names are silently skipped.
-- `MetricStore` stores the resulting samples in memory. Supports time-range, entity-filtered, and edge-filtered queries.
+- `MetricStore` stores the resulting samples in memory or VictoriaMetrics. Supports time-range, entity-filtered, edge-filtered, and catalog-stats queries.
 - `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. `MeshMetricTopologyBuilder` parses servicegraph-shaped mesh metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response metadata. Mesh `calls` edges take `FirstSeen`/`LastSeen` from the metric datapoint timestamp, falling back to the envelope timestamp only when the datapoint has no timestamp.
 - `GraphStore` accumulates edges and nodes across snapshots. Re-observed edges have their `LastSeen` updated; nodes are merged by entity ID.
 
@@ -385,6 +385,7 @@ REST API Server (:8080) — all list endpoints support cursor-based pagination
   - /api/v1/graph/nodes/id → GraphStore + EntityRegistry → node detail + enriched edges
   - /api/v1/graph/edges    → GraphStore → filtered edge list
   - /api/v1/metrics        → MetricStore → samples with unit from catalog
+  - /api/v1/metrics/catalog/stats → MetricStore → per-canonical-metric source counts and last-seen timestamps
   - /api/v1/metrics/series → MetricStore → samples grouped by metric name + catalog metadata
   - /api/v1/entities       → EntityRegistry → filtered entity list
 ```

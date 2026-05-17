@@ -1,7 +1,7 @@
 import type { EntityKind } from '@/types/graph'
 import type { CanonicalMetric, MetricCategory, MetricScope } from '@/types/metrics'
 
-export type ExplorerMode = 'entity' | 'edge'
+export type ExplorerMode = 'entity' | 'edge' | 'catalog'
 
 const ALL_CATEGORIES: MetricCategory[] = ['resource', 'traffic', 'latency', 'error', 'capacity', 'health']
 const EDGE_CATEGORIES: MetricCategory[] = ['traffic', 'latency', 'error']
@@ -49,6 +49,7 @@ export function visibleCategoriesForSelection(
   mode: ExplorerMode,
   context?: ApplicabilityContext,
 ): MetricCategory[] {
+  if (mode === 'catalog') return []
   if (!metrics) return mode === 'edge' ? EDGE_CATEGORIES : ALL_CATEGORIES
   if (mode === 'entity' && kind === null) return ALL_CATEGORIES
 
@@ -107,6 +108,7 @@ export function applicableMetrics(
   mode: ExplorerMode,
   context?: ApplicabilityContext,
 ): CanonicalMetric[] {
+  if (mode === 'catalog') return []
   const requiredScope: MetricScope = mode === 'entity' ? 'entity' : 'edge'
   return (metrics ?? []).filter((metric) => {
     if (metric.category !== category) return false

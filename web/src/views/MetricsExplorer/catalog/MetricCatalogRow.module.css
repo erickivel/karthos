@@ -1,0 +1,163 @@
+.row {
+  background: var(--surface-module);
+  border-bottom: 1px solid var(--surface-divider);
+  cursor: pointer;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.row:hover {
+  background: var(--surface-active);
+  box-shadow: inset 2px 0 0 var(--color-signal);
+}
+.row:hover .toggle {
+  color: var(--color-signal);
+}
+.row:focus-visible {
+  outline: none;
+  background: var(--surface-active);
+  box-shadow: inset 2px 0 0 var(--color-signal);
+}
+.row[data-expanded='true'] {
+  background: var(--surface-active);
+  box-shadow: inset 2px 0 0 var(--color-signal);
+}
+.row[data-expanded='true'] .toggle {
+  color: var(--color-signal);
+}
+
+.row td {
+  padding: var(--space-sm) var(--space-sm);
+  vertical-align: middle;
+  color: var(--color-text-primary);
+}
+
+.toggleCell {
+  width: 28px;
+}
+
+.toggle {
+  display: inline-block;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  transition: color 120ms ease;
+  user-select: none;
+}
+
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.displayName {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+.canonical {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+.numeric {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.chipRow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  font-size: var(--text-label);
+  background: var(--surface-active);
+  color: var(--color-text-muted);
+}
+.sourceChip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  font-size: var(--text-label);
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-active);
+  color: var(--color-info);
+  white-space: nowrap;
+}
+
+.detailRow {
+  background: var(--surface-base);
+  cursor: default;
+}
+.detailRow td {
+  padding: 0;
+}
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-left: 2px solid var(--color-signal);
+  background: var(--surface-module);
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--text-body);
+  line-height: 1.5;
+}
+
+.detailSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.detailLabel {
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.sourceTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body);
+}
+.sourceTable th {
+  text-align: left;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--text-label);
+  letter-spacing: var(--letter-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--surface-divider);
+}
+.sourceTable td {
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--surface-divider);
+}
+
+.detailActions {
+  display: flex;
+  justify-content: flex-end;
+}
+.openButton {
+  padding: 6px 14px;
+  font-family: var(--font-family);
+  font-size: var(--text-body);
+  color: var(--color-text-primary);
+  background: var(--surface-active);
+  border: 1px solid var(--color-signal);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.openButton:hover {
+  background: rgba(8, 220, 125, 0.15);
+}

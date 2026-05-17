@@ -7,6 +7,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
@@ -14,11 +15,12 @@ import (
 type InMemoryMetricStore struct {
 	mu      sync.RWMutex
 	samples []metrics.MetricSample
+	nowFn   func() time.Time
 }
 
 // NewInMemoryMetricStore returns a new empty InMemoryMetricStore.
 func NewInMemoryMetricStore() *InMemoryMetricStore {
-	return &InMemoryMetricStore{}
+	return &InMemoryMetricStore{nowFn: func() time.Time { return time.Now().UTC() }}
 }
 
 // Write appends samples to the store.
@@ -77,6 +79,61 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 		for i := range result {
 			result[i].ValueLabel = metrics.HealthLabel(q.MetricName, result[i].Value)
 		}
+	}
+	return result, nil
+}
+
+// QueryCatalogStats aggregates per-(metric, source) sample counts and
+// last-seen timestamps across samples that fall inside [now-lookback, now].
+// The source dimension is read from semconv.LabelSource on each sample;
+// samples with no source label collapse to SourceID "".
+func (s *InMemoryMetricStore) QueryCatalogStats(_ context.Context, lookback time.Duration) ([]CatalogStat, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := s.nowFn()
+	cutoff := now.Add(-lookback)
+
+	type key struct {
+		metric string
+		source string
+	}
+	type agg struct {
+		count    int64
+		lastSeen time.Time
+	}
+	buckets := map[key]*agg{}
+
+	for _, sample := range s.samples {
+		if sample.Timestamp.Before(cutoff) || sample.Timestamp.After(now) {
+			continue
+		}
+		k := key{metric: sample.MetricName, source: sample.Labels[semconv.LabelSource]}
+		b, ok := buckets[k]
+		if !ok {
+			b = &agg{}
+			buckets[k] = b
+		}
+		b.count++
+		if sample.Timestamp.After(b.lastSeen) {
+			b.lastSeen = sample.Timestamp
+		}
+	}
+
+	// Group by metric name. We don't sort here — the API layer joins against
+	// the catalog and decides the surfaced ordering.
+	grouped := map[string][]SourceStat{}
+	for k, b := range buckets {
+		grouped[k.metric] = append(grouped[k.metric], SourceStat{
+			SourceID:    k.source,
+			SampleCount: b.count,
+			LastSeenAt:  b.lastSeen,
+		})
+	}
+
+	result := make([]CatalogStat, 0, len(grouped))
+	for name, sources := range grouped {
+		result = append(result, CatalogStat{MetricName: name, BySource: sources})
 	}
 	return result, nil
 }

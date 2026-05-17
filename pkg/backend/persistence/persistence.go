@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/metrics"
@@ -12,6 +13,27 @@ import (
 type MetricStore interface {
 	Write(ctx context.Context, samples []metrics.MetricSample) error
 	Query(ctx context.Context, q query.MetricQuery) ([]metrics.MetricSample, error)
+	// QueryCatalogStats returns per-(canonical metric, source) sample counts and
+	// last-seen timestamps over the given lookback window. The source dimension
+	// is read from the `source` label on samples (semconv.LabelSource).
+	// Metrics not present in the store during the window are omitted; the API
+	// layer is responsible for zero-filling against the catalog.
+	QueryCatalogStats(ctx context.Context, lookback time.Duration) ([]CatalogStat, error)
+}
+
+// CatalogStat aggregates per-source sample stats for a single canonical metric.
+type CatalogStat struct {
+	MetricName string
+	BySource   []SourceStat
+}
+
+// SourceStat is the per-source count and last-seen for one canonical metric.
+// A SourceID of "" represents samples that arrived without a source label
+// (legacy / partially-instrumented producers).
+type SourceStat struct {
+	SourceID    string
+	SampleCount int64
+	LastSeenAt  time.Time
 }
 
 type GraphStore interface {

@@ -169,6 +169,7 @@ implementations.
 | GET | `/api/v1/metrics` | Metric samples (filter: `entity_id`, `metric_name`, `edge_*_id`, `from`, `to`) |
 | GET | `/api/v1/metrics/series` | Samples grouped by metric name with catalog metadata |
 | GET | `/api/v1/metrics/catalog` | Canonical metric definitions (filter: `category`) |
+| GET | `/api/v1/metrics/catalog/stats` | Per-source catalog sample counts and last-seen timestamps |
 | GET | `/api/v1/entities` | Entity list (filter: `kind`, `namespace`) |
 | GET | `/api/v1/entities/{id}` | Single entity |
 
@@ -192,7 +193,7 @@ reverse-proxied to `oksg-backend:8080`. Three views:
 
 - `/` Cluster Overview — KPI row, entity breakdown, relation types, runtime health summary, discovery sources
 - `/topology` Topology Graph — React Flow canvas with three projection modes (Ownership, Infrastructure, Traffic) and three granularity levels; per-mode layout strategies under `web/src/views/TopologyGraph/layouts/` are selected via `LAYOUT_REGISTRY` (custom tree for Ownership, `@dagrejs/dagre` for Infrastructure, `elkjs` layered orthogonal for Traffic)
-- `/metrics` Metrics Explorer — Entity/Edge mode toggle, ⌘K global entity search, breadcrumb/builder hybrid filter (entity), edge selector (edge), selection summary with segmented time range, applicability-gated category tabs, restyled MetricCard charts (gridlines + value/unit + info tooltip), and raw samples table
+- `/metrics` Metrics Explorer — Entity/Edge/Catalog mode toggle, ⌘K global entity search, breadcrumb/builder hybrid filter (entity), edge selector (edge), selection summary with segmented time range, applicability-gated category tabs, restyled MetricCard charts (gridlines + value/unit + info tooltip), raw samples table, and a catalog table with recent source coverage badges
 
 State: TanStack Query for polling, Zustand for cross-view selection.
 Theming: CSS custom properties only — no hardcoded hex in components.
