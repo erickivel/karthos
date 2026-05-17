@@ -361,18 +361,25 @@ func TestVMMetricStore_QueryCatalogStats(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasPrefix(q, "sum by") {
 			// count response: 2 samples for k8s_pod_memory_working_set from
-			// kubelet, 1 sample for servicegraph_request_count from mesh.istio.
+			// kubelet, 1 sample for servicegraph_request_count from mesh.istio,
+			// and a histogram-backed duration metric represented by _sum/_count.
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"__name__":"k8s_pod_memory_working_set","source":"kubelet"},"value":[1747396800,"2"]},
-				{"metric":{"__name__":"servicegraph_request_count","source":"mesh.istio"},"value":[1747396800,"1"]}
+				{"metric":{"__name__":"servicegraph_request_count","source":"mesh.istio"},"value":[1747396800,"1"]},
+				{"metric":{"__name__":"servicegraph_request_duration_sum","source":"mesh.istio"},"value":[1747396800,"4"]},
+				{"metric":{"__name__":"servicegraph_request_duration_count","source":"mesh.istio"},"value":[1747396800,"4"]}
 			]}}`))
 			return
 		}
 		// last_seen response: timestamps as scalar seconds.
 		lastSeenTs := strconv.FormatInt(now.Add(-5*time.Minute).Unix(), 10)
+		histogramSumLastSeenTs := strconv.FormatInt(now.Add(-7*time.Minute).Unix(), 10)
+		histogramCountLastSeenTs := strconv.FormatInt(now.Add(-2*time.Minute).Unix(), 10)
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[
 			{"metric":{"__name__":"k8s_pod_memory_working_set","source":"kubelet"},"value":[1747396800,"` + lastSeenTs + `"]},
-			{"metric":{"__name__":"servicegraph_request_count","source":"mesh.istio"},"value":[1747396800,"` + lastSeenTs + `"]}
+			{"metric":{"__name__":"servicegraph_request_count","source":"mesh.istio"},"value":[1747396800,"` + lastSeenTs + `"]},
+			{"metric":{"__name__":"servicegraph_request_duration_sum","source":"mesh.istio"},"value":[1747396800,"` + histogramSumLastSeenTs + `"]},
+			{"metric":{"__name__":"servicegraph_request_duration_count","source":"mesh.istio"},"value":[1747396800,"` + histogramCountLastSeenTs + `"]}
 		]}}`))
 	}))
 	defer srv.Close()
@@ -400,6 +407,11 @@ func TestVMMetricStore_QueryCatalogStats(t *testing.T) {
 	traffic := byMetric["servicegraph.request.count"]
 	assert.Equal(t, "mesh.istio", traffic.SourceID)
 	assert.EqualValues(t, 1, traffic.SampleCount)
+
+	duration := byMetric["servicegraph.request.duration"]
+	assert.Equal(t, "mesh.istio", duration.SourceID)
+	assert.EqualValues(t, 4, duration.SampleCount)
+	assert.Equal(t, now.Add(-2*time.Minute).Unix(), duration.LastSeenAt.Unix())
 }
 
 func TestVMMetricStore_Ping(t *testing.T) {

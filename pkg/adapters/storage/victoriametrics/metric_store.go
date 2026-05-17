@@ -208,7 +208,7 @@ func (s *VMMetricStore) QueryCatalogStats(ctx context.Context, lookback time.Dur
 			b = &agg{}
 			buckets[k] = b
 		}
-		b.count = int64(v.Value)
+		b.count = max(b.count, int64(v.Value))
 	}
 	for _, v := range lastSeenSeries {
 		k := keyOf(v.PromName, v.Source)
@@ -217,7 +217,10 @@ func (s *VMMetricStore) QueryCatalogStats(ctx context.Context, lookback time.Dur
 			b = &agg{}
 			buckets[k] = b
 		}
-		b.lastSeen = time.Unix(int64(v.Value), 0).UTC()
+		lastSeen := time.Unix(int64(v.Value), 0).UTC()
+		if lastSeen.After(b.lastSeen) {
+			b.lastSeen = lastSeen
+		}
 	}
 
 	grouped := map[string][]persistence.SourceStat{}
@@ -312,6 +315,9 @@ func catalogPromNameRegex() string {
 	names := make([]string, 0, len(catalog))
 	for _, m := range catalog {
 		names = append(names, promMetricName(m.Name))
+		if _, ok := histogramDerivedMeanMetrics[m.Name]; ok {
+			names = append(names, promMetricName(m.Name+"_sum"), promMetricName(m.Name+"_count"))
+		}
 	}
 	return strings.Join(names, "|")
 }
@@ -321,6 +327,10 @@ func catalogPromNameLookup() map[string]string {
 	lookup := make(map[string]string, len(catalog))
 	for _, m := range catalog {
 		lookup[promMetricName(m.Name)] = m.Name
+		if _, ok := histogramDerivedMeanMetrics[m.Name]; ok {
+			lookup[promMetricName(m.Name+"_sum")] = m.Name
+			lookup[promMetricName(m.Name+"_count")] = m.Name
+		}
 	}
 	return lookup
 }
