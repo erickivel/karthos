@@ -5,6 +5,7 @@ import type {
   MetricCatalogResponse,
   MetricQueryParams,
   MetricCategory,
+  CatalogStatsResponse,
 } from '@/types/metrics'
 
 export function getSamples(params: MetricQueryParams): Promise<MetricSamplesResponse> {
@@ -35,4 +36,8 @@ export function getSeries(params: MetricQueryParams): Promise<MetricSeriesRespon
 
 export function getCatalog(category?: MetricCategory): Promise<MetricCatalogResponse> {
   return request<MetricCatalogResponse>('/api/v1/metrics/catalog', { category })
+}
+
+export function getCatalogStats(): Promise<CatalogStatsResponse> {
+  return request<CatalogStatsResponse>('/api/v1/metrics/catalog/stats', {})
 }

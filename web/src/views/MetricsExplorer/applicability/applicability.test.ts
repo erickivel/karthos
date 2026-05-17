@@ -50,6 +50,11 @@ describe('visibleCategoriesForSelection', () => {
     expect(visibleCategoriesForSelection(catalog, null, 'edge')).toEqual(['traffic'])
   })
 
+  it('does not expose chart categories in catalog mode', () => {
+    expect(visibleCategoriesForSelection(catalog, null, 'catalog')).toEqual([])
+    expect(visibleCategoriesForSelection(undefined, null, 'catalog')).toEqual([])
+  })
+
   it('uses broad defaults while the catalog is loading', () => {
     expect(visibleCategoriesForSelection(undefined, 'container', 'entity')).toEqual([
       'resource',
@@ -146,6 +151,10 @@ describe('applicableMetrics', () => {
 
   it('filters by edge scope in edge mode and ignores kind applicability', () => {
     expect(applicableMetrics(catalog, 'traffic', 'configmap', 'edge').map((m) => m.name)).toEqual(['edge.req'])
+  })
+
+  it('does not return sample metrics in catalog mode', () => {
+    expect(applicableMetrics(catalog, 'traffic', null, 'catalog')).toEqual([])
   })
 
   it('handles undefined catalog input', () => {
