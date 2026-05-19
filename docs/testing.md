@@ -43,7 +43,7 @@ Key coverage areas:
 
 ```bash
 task test:e2e:setup
-task test:e2e:deploy VARIANT=with-prometheus
+VARIANT=with-prometheus task test:e2e:deploy
 task test:e2e:discover
 task test:e2e:plan
 task test:e2e:apply-otel
@@ -52,6 +52,15 @@ task test:e2e:verify
 
 `task test:e2e:setup` provisions one control-plane node and one worker
 node so topology QA can validate cross-node placement in the live cluster.
+
+> **Migration note:** `e2e:deploy` reads `VARIANT` from the shell
+> environment, not from Task's CLI variables. The previous form
+> `task test:e2e:deploy VARIANT=with-prometheus` no longer propagates —
+> use the env-var prefix shown above (`VARIANT=… task …`).
+
+The same `task test:e2e:*` commands work against a remote k3s cluster
+reached over SSH — set `CLUSTER_PROFILE` in `.env` (see
+[remote-cluster.md](remote-cluster.md)).
 
 What each stage does:
 

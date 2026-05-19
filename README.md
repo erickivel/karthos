@@ -71,6 +71,9 @@ task test:e2e:scenario:istio              # Istio sidecar mesh scrape
 task test:e2e:scenario:fallback           # bare services, kubeletstats only
 ```
 
+Targeting a remote k3s cluster (or any other supported cell) is a
+`CLUSTER_PROFILE` switch in `.env` — see [docs/remote-cluster.md](docs/remote-cluster.md).
+
 Step-by-step (`deploy → discover → plan → apply-otel → verify`) is documented
 in [docs/testing.md](docs/testing.md).
 
