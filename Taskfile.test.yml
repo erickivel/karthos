@@ -1,21 +1,37 @@
 version: "3"
 
 vars:
-  KIND_CLUSTER_NAME: oksg-test
-  KIND_REGISTRY_NAME: oksg-kind-registry
-  KIND_REGISTRY_PORT: "5001"
+  CLUSTER_PROFILE:
+    sh: . test/e2e/cluster/profile.sh && echo "$CLUSTER_PROFILE"
+  CLUSTER_ENGINE:
+    sh: . test/e2e/cluster/profile.sh && echo "$CLUSTER_ENGINE"
+  CLUSTER_LOCATION:
+    sh: . test/e2e/cluster/profile.sh && echo "$CLUSTER_LOCATION"
+  REGISTRY_HOST:
+    sh: . test/e2e/cluster/profile.sh && echo "$REGISTRY_HOST"
+  IMAGE_TAG:
+    sh: . test/e2e/cluster/profile.sh && echo "$IMAGE_TAG"
+  IMAGE_PLATFORM:
+    sh: . test/e2e/cluster/profile.sh && echo "$IMAGE_PLATFORM"
+  KUBECONFIG:
+    sh: . test/e2e/cluster/profile.sh && echo "$KUBECONFIG"
+  KIND_CLUSTER_NAME:
+    sh: . test/e2e/cluster/profile.sh && echo "${KIND_CLUSTER_NAME:-oksg-test}"
+  KIND_REGISTRY_NAME:
+    sh: . test/e2e/cluster/profile.sh && echo "${KIND_REGISTRY_NAME:-oksg-kind-registry}"
+  KIND_REGISTRY_PORT:
+    sh: . test/e2e/cluster/profile.sh && echo "${KIND_REGISTRY_PORT:-5001}"
   KIND_NAMESPACE: oksg-system
   HELM_RELEASE_NAME: oksg-otel
   HELM_CHART_PATH: ./deploy/helm/oksg-otel
   TARGET_NAMESPACE: oksg-demo
   SPARSE_NAMESPACE: oksg-sparse
-  BACKEND_IMAGE_REPOSITORY: localhost:{{.KIND_REGISTRY_PORT}}/oksg-backend
-  BACKEND_IMAGE_TAG: latest
+  BACKEND_IMAGE_REPOSITORY: '{{.REGISTRY_HOST}}/oksg-backend'
+  BACKEND_IMAGE_TAG: '{{.IMAGE_TAG}}'
   BACKEND_IMAGE_PULL_POLICY: Always
-  FRONTEND_IMAGE_REPOSITORY: localhost:{{.KIND_REGISTRY_PORT}}/oksg-frontend
-  FRONTEND_IMAGE_TAG: latest
+  FRONTEND_IMAGE_REPOSITORY: '{{.REGISTRY_HOST}}/oksg-frontend'
+  FRONTEND_IMAGE_TAG: '{{.IMAGE_TAG}}'
   FRONTEND_IMAGE_PULL_POLICY: Always
-  VARIANT: base
   E2E_OUTPUT_DIR: ./bin/e2e
   PROFILE_PATH: ./bin/e2e/profile.json
   VALUES_PATH: ./bin/e2e/otel-values.yaml
@@ -26,25 +42,39 @@ vars:
   GATEWAY_LOCAL_PORT: "18080"
   TRAFFIC_REQUESTS_DEFAULT: "20"
   TRAFFIC_INTERVAL_DEFAULT: "0.5"
-  KUBECONFIG:
-    sh: echo "${KUBECONFIG:-$HOME/.kube/config}"
+
+env:
+  KUBECONFIG: '{{.KUBECONFIG}}'
 
 tasks:
   e2e:setup:
-    desc: Create kind cluster with local registry
+    desc: Provision the cluster for the active CLUSTER_PROFILE (kind+local default; k3s+ssh for remote)
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - ./test/e2e/kind/setup.sh {{.KIND_CLUSTER_NAME}}
+      - |
+        case "{{.CLUSTER_ENGINE}}" in
+          kind) ./test/e2e/kind/setup.sh {{.KIND_CLUSTER_NAME}} ;;
+          k3s)  ./test/e2e/cluster/k3s/setup.sh ;;
+          *)    echo "unsupported CLUSTER_ENGINE: {{.CLUSTER_ENGINE}}" >&2; exit 1 ;;
+        esac
 
   e2e:teardown:
-    desc: Destroy kind cluster and registry
+    desc: Tear down the cluster (kind) or OKSG resources on it (k3s)
     cmds:
-      - ./test/e2e/kind/teardown.sh {{.KIND_CLUSTER_NAME}}
+      - |
+        case "{{.CLUSTER_ENGINE}}" in
+          kind) ./test/e2e/kind/teardown.sh {{.KIND_CLUSTER_NAME}} ;;
+          k3s)  ./test/e2e/cluster/k3s/teardown.sh ;;
+          *)    echo "unsupported CLUSTER_ENGINE: {{.CLUSTER_ENGINE}}" >&2; exit 1 ;;
+        esac
 
   e2e:deploy:
-    desc: Build and deploy test apps to cluster (use VARIANT=base, VARIANT=with-prometheus, or VARIANT=with-istio)
+    desc: "Build and deploy test apps to cluster (set VARIANT env var; defaults to base. Accepts: base, with-prometheus, with-istio)"
     cmds:
-      - KIND_REGISTRY_PORT={{.KIND_REGISTRY_PORT}} ./test/e2e/apps/deploy.sh {{.VARIANT}}
+      # VARIANT is read from the shell env (no Task-CLI-var form). Scenarios
+      # invoke this task with `env: { VARIANT: ... }`; CLI users pass it as
+      # an env-var prefix, e.g. `VARIANT=with-prometheus task test:e2e:deploy`.
+      - ./test/e2e/apps/deploy.sh "${VARIANT:-base}"
 
   e2e:install-istio:
     desc: Install minimal Istio control plane for mesh telemetry e2e scenarios
@@ -68,7 +98,7 @@ tasks:
     deps: [e2e:ensure-build]
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - "{{.DISCOVERY_JOB_BIN}} --mode=discover --kubeconfig={{.KUBECONFIG}} --cluster-name={{.KIND_CLUSTER_NAME}} --output={{.PROFILE_PATH}} --namespace={{.KIND_NAMESPACE}} --target-namespace={{.TARGET_NAMESPACE}}"
+      - "{{.DISCOVERY_JOB_BIN}} --mode=discover --kubeconfig={{.KUBECONFIG}} --cluster-name={{.CLUSTER_PROFILE}} --output={{.PROFILE_PATH}} --namespace={{.KIND_NAMESPACE}} --target-namespace={{.TARGET_NAMESPACE}}"
 
   e2e:plan:
     desc: Generate Helm values from discovery output
@@ -136,28 +166,43 @@ tasks:
       - task: e2e:reset-apps
 
   e2e:ensure-cluster:
-    desc: Ensure kind cluster and registry are running
+    desc: Verify the active cluster is reachable and ready (engine-aware)
     cmds:
       - |
-        if ! kind get clusters 2>/dev/null | grep -qx "{{.KIND_CLUSTER_NAME}}"; then
-          echo "Cluster not found. Run 'task test:e2e:setup' first."
-          exit 1
-        fi
-      - |
-        if ! docker inspect -f '{{`{{.State.Running}}`}}' {{.KIND_REGISTRY_NAME}} 2>/dev/null | grep -q true; then
-          echo "Registry not running. Run 'task test:e2e:setup' first."
-          exit 1
-        fi
+        case "{{.CLUSTER_ENGINE}}" in
+          kind)
+            if ! kind get clusters 2>/dev/null | grep -qx "{{.KIND_CLUSTER_NAME}}"; then
+              echo "Cluster not found. Run 'task test:e2e:setup' first."
+              exit 1
+            fi
+            if ! docker inspect -f '{{`{{.State.Running}}`}}' {{.KIND_REGISTRY_NAME}} 2>/dev/null | grep -q true; then
+              echo "Registry not running. Run 'task test:e2e:setup' first."
+              exit 1
+            fi
+            ;;
+          k3s)
+            if ! kubectl --kubeconfig "{{.KUBECONFIG}}" get nodes >/dev/null 2>&1; then
+              echo "kubectl cannot reach the cluster (KUBECONFIG={{.KUBECONFIG}}). Run 'task test:e2e:setup' and 'task test:cluster:doctor'."
+              exit 1
+            fi
+            if ! curl -fsS --max-time 5 "http://{{.REGISTRY_HOST}}/v2/" >/dev/null 2>&1; then
+              echo "registry not reachable at {{.REGISTRY_HOST}}. Start the tunnel: 'task test:cluster:tunnel'."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "unsupported CLUSTER_ENGINE: {{.CLUSTER_ENGINE}}" >&2
+            exit 1
+            ;;
+        esac
     silent: true
 
   e2e:scenario:prometheus:
     desc: Run Prometheus discovery scenario with gateway traffic (full pipeline including spanmetrics/servicegraph)
     deps: [e2e:ensure-cluster]
-    vars:
-      VARIANT: with-prometheus
     cmds:
       - task: e2e:deploy
-        vars: { VARIANT: "with-prometheus" }
+        env: { VARIANT: with-prometheus }
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
@@ -174,7 +219,7 @@ tasks:
     cmds:
       - task: e2e:install-istio
       - task: e2e:deploy
-        vars: { VARIANT: "with-istio" }
+        env: { VARIANT: with-istio }
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
@@ -188,11 +233,9 @@ tasks:
   e2e:scenario:fallback:
     desc: Run no-telemetry fallback scenario (full pipeline)
     deps: [e2e:ensure-cluster]
-    vars:
-      VARIANT: base
     cmds:
       - task: e2e:deploy
-        vars: { VARIANT: "base" }
+        env: { VARIANT: base }
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
@@ -278,3 +321,52 @@ tasks:
           curl -sf http://localhost:{{.GATEWAY_LOCAL_PORT}}/ | jq -c '{gateway: .service, results: [.results[] | {s: .service, status: .status}]}' 2>/dev/null || echo "(request failed)"
           sleep {{.TRAFFIC_INTERVAL}}
         done
+
+  cluster:profile:
+    desc: Print the resolved cluster profile variables for the active CLUSTER_PROFILE
+    cmds:
+      - |
+        echo "CLUSTER_PROFILE={{.CLUSTER_PROFILE}}"
+        echo "CLUSTER_ENGINE={{.CLUSTER_ENGINE}}"
+        echo "CLUSTER_LOCATION={{.CLUSTER_LOCATION}}"
+        echo "REGISTRY_HOST={{.REGISTRY_HOST}}"
+        echo "IMAGE_TAG={{.IMAGE_TAG}}"
+        echo "IMAGE_PLATFORM={{.IMAGE_PLATFORM}}"
+        echo "KUBECONFIG={{.KUBECONFIG}}"
+
+  cluster:tunnel:
+    desc: Open the SSH registry tunnel for k3s+ssh profiles (foreground; Ctrl-C to stop)
+    cmds:
+      - |
+        case "{{.CLUSTER_ENGINE}}" in
+          k3s)  ./test/e2e/cluster/k3s/tunnel.sh ;;
+          kind) echo "tunnel not required for CLUSTER_ENGINE=kind"; exit 0 ;;
+          *)    echo "unsupported CLUSTER_ENGINE: {{.CLUSTER_ENGINE}}" >&2; exit 1 ;;
+        esac
+
+  cluster:doctor:
+    desc: Run pre-flight checks against the active cluster profile
+    cmds:
+      - |
+        case "{{.CLUSTER_ENGINE}}" in
+          k3s)
+            ./test/e2e/cluster/k3s/doctor.sh
+            ;;
+          kind)
+            # Same checks as e2e:ensure-cluster's kind arm — kept inline
+            # so cluster:doctor never re-enters the `task` CLI.
+            if ! kind get clusters 2>/dev/null | grep -qx "{{.KIND_CLUSTER_NAME}}"; then
+              echo "Cluster not found. Run 'task test:e2e:setup' first." >&2
+              exit 1
+            fi
+            if ! docker inspect -f '{{`{{.State.Running}}`}}' {{.KIND_REGISTRY_NAME}} 2>/dev/null | grep -q true; then
+              echo "Registry not running. Run 'task test:e2e:setup' first." >&2
+              exit 1
+            fi
+            echo "kind+local cluster looks healthy"
+            ;;
+          *)
+            echo "unsupported CLUSTER_ENGINE: {{.CLUSTER_ENGINE}}" >&2
+            exit 1
+            ;;
+        esac

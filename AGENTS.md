@@ -9,6 +9,9 @@ This repository builds an observability-driven Kubernetes system graph. See [REA
 - `task fmt` -- format code
 - `task build` -- compile all binaries
 - `task generate` -- regenerate JSON Schema output after schema changes
+- `task test:cluster:profile` -- print the resolved cluster profile variables
+- `task test:cluster:tunnel` -- open the SSH registry tunnel (k3s+ssh profiles only)
+- `task test:cluster:doctor` -- engine-aware pre-flight checks for the active profile
 
 ## Documentation Map
 
@@ -26,6 +29,7 @@ All implementation details live in `docs/`. Use and update these files when impl
 | [docs/development.md](docs/development.md) | Project structure, tech stack, common commands, Helm ownership | Adding packages, changing structure, or modifying workflows |
 | [docs/metrics-pipeline.md](docs/metrics-pipeline.md) | Catalog, dialect, source registry, resolver, source arbitration end-to-end | Changing canonical metrics, dialects, sources, or arbitration rules |
 | [docs/frontend-design-spec.md](docs/frontend-design-spec.md) | Frontend tech stack, views, design system, projection modes, layout strategies | Changing frontend views, projection logic, layout strategies, or theme tokens |
+| [docs/remote-cluster.md](docs/remote-cluster.md) | `CLUSTER_PROFILE` model, supported cells (kind+local, k3s+ssh), setup / teardown / tunnel / doctor flow | Adding or changing a cluster cell, profile variables, or engine dispatch |
 
 ## After-Change Checklist
 

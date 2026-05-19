@@ -19,6 +19,11 @@ schemas/
 .env.local
 .env.*.local
 
+# Cluster profile files; keep the default and any *.example.env templates
+.env.d/*.env
+!.env.d/oksg-test.env
+!.env.d/*.example.env
+
 # Helm subchart downloads (re-fetch with: helm dependency build)
 deploy/helm/oksg-otel/charts/
 

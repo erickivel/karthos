@@ -213,6 +213,12 @@ kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
 
 The dev server reads the API base URL at startup. After you change `.env`, Vite config, or anything the container reads only on boot, stop `task web:dev` and re-run it so the changes take effect. Source file edits continue to hot-reload without a restart.
 
+`task web:dev` is profile-agnostic: `kubectl port-forward` goes through the
+API server, so the same command works against the local kind cluster or a
+remote k3s cluster reached over SSH. To switch which cluster the dev loop
+targets, change `CLUSTER_PROFILE` in `.env` — see
+[remote-cluster.md](remote-cluster.md).
+
 ### Topology layout strategies
 
 `web/src/views/TopologyGraph/layouts/` holds one strategy per projection mode, registered through `registry.ts` (`LAYOUT_REGISTRY`). Each strategy implements the `LayoutStrategy` interface (`layouts/types.ts`) and may return either a `LayoutResult` synchronously or a `Promise<LayoutResult>`. Keep strategies synchronous unless the layout engine is genuinely async; do not wrap synchronous layouts in `useEffect` + `setState`, because React Query metric maps can change identity and create route churn. Per-mode algorithms:

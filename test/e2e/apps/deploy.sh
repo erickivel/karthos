@@ -2,31 +2,67 @@
 
 set -euo pipefail
 
-VARIANT="${1:-base}"
-REGISTRY_PORT="${KIND_REGISTRY_PORT:-5001}"
-REGISTRY="localhost:${REGISTRY_PORT}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VARIANT_DIR="${SCRIPT_DIR}/${VARIANT}"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+cd "${REPO_ROOT}"
+# shellcheck disable=SC1091
+. "${REPO_ROOT}/test/e2e/cluster/profile.sh"
+
+VARIANT="${1:-base}"
+VARIANT_DIR="${SCRIPT_DIR}/${VARIANT}"
+IMAGE_LOAD="${REPO_ROOT}/test/e2e/cluster/image.sh"
+RENDERED_DIR="$(mktemp -d -t oksg-e2e-apps.XXXXXX)"
+trap 'rm -rf "${RENDERED_DIR}"' EXIT
 
 if [[ ! -d "${VARIANT_DIR}" ]]; then
   echo "unknown app variant: ${VARIANT}" >&2
   exit 1
 fi
 
-docker build -t "${REGISTRY}/gateway-go:latest" "${VARIANT_DIR}/gateway-go"
-docker build -t "${REGISTRY}/service-a-python:latest" "${VARIANT_DIR}/service-a-python"
-docker build -t "${REGISTRY}/service-b-node:latest" "${VARIANT_DIR}/service-b-node"
-docker build -t "${REGISTRY}/oksg-backend:latest" -f "${REPO_ROOT}/deploy/images/backend/Dockerfile" "${REPO_ROOT}"
-docker build -t "${REGISTRY}/oksg-frontend:latest" "${REPO_ROOT}/web"
+build_and_load() {
+  local tag="$1"
+  local context="$2"
+  local dockerfile="${3:-}"
+  local platform_args=()
+  if [[ -n "${IMAGE_PLATFORM:-}" ]]; then
+    platform_args=(--platform "${IMAGE_PLATFORM}")
+  fi
+  # `"${arr[@]+"${arr[@]}"}"` expands to nothing when the array is empty
+  # and to its elements otherwise. Required because bash 3.2 (macOS system
+  # bash) under `set -u` treats `"${arr[@]}"` on an empty array as unbound.
+  if [[ -n "${dockerfile}" ]]; then
+    docker build "${platform_args[@]+"${platform_args[@]}"}" -t "${tag}" -f "${dockerfile}" "${context}"
+  else
+    docker build "${platform_args[@]+"${platform_args[@]}"}" -t "${tag}" "${context}"
+  fi
+  "${IMAGE_LOAD}" push_or_load "${tag}"
+}
 
-docker push "${REGISTRY}/gateway-go:latest"
-docker push "${REGISTRY}/service-a-python:latest"
-docker push "${REGISTRY}/service-b-node:latest"
-docker push "${REGISTRY}/oksg-backend:latest"
-docker push "${REGISTRY}/oksg-frontend:latest"
+build_and_load "${REGISTRY_HOST}/gateway-go:${IMAGE_TAG}" "${VARIANT_DIR}/gateway-go"
+build_and_load "${REGISTRY_HOST}/service-a-python:${IMAGE_TAG}" "${VARIANT_DIR}/service-a-python"
+build_and_load "${REGISTRY_HOST}/service-b-node:${IMAGE_TAG}" "${VARIANT_DIR}/service-b-node"
+build_and_load "${REGISTRY_HOST}/oksg-backend:${IMAGE_TAG}" "${REPO_ROOT}" "${REPO_ROOT}/deploy/images/backend/Dockerfile"
+build_and_load "${REGISTRY_HOST}/oksg-frontend:${IMAGE_TAG}" "${REPO_ROOT}/web"
 
-kubectl apply -k "${VARIANT_DIR}"
+RENDERED_APPS="${RENDERED_DIR}/apps.yaml"
+kubectl kustomize "${VARIANT_DIR}" >"${RENDERED_APPS}"
+
+if [[ "${CLUSTER_ENGINE}" == "k3s" ]]; then
+  REMOTE_NODE_NAME="${K3S_NODE_NAME:-$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')}"
+  if [[ -z "${REMOTE_NODE_NAME}" ]]; then
+    echo "could not resolve remote k3s node name for app placement" >&2
+    exit 1
+  fi
+  echo "remote k3s profile: mapping kind fixture node selectors to ${REMOTE_NODE_NAME}"
+  sed -i.bak \
+    -e "s/oksg-test-control-plane/${REMOTE_NODE_NAME}/g" \
+    -e "s/oksg-test-worker/${REMOTE_NODE_NAME}/g" \
+    "${RENDERED_APPS}"
+  rm -f "${RENDERED_APPS}.bak"
+  kubectl delete pod ops-toolbox -n oksg-sparse --ignore-not-found
+fi
+
+kubectl apply -f "${RENDERED_APPS}"
 while IFS= read -r deployment; do
   kubectl rollout restart -n oksg-demo "${deployment}"
 done < <(kubectl get deployments -n oksg-demo -o name)
