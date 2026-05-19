@@ -27,10 +27,13 @@ build_and_load() {
   if [[ -n "${IMAGE_PLATFORM:-}" ]]; then
     platform_args=(--platform "${IMAGE_PLATFORM}")
   fi
+  # `"${arr[@]+"${arr[@]}"}"` expands to nothing when the array is empty
+  # and to its elements otherwise. Required because bash 3.2 (macOS system
+  # bash) under `set -u` treats `"${arr[@]}"` on an empty array as unbound.
   if [[ -n "${dockerfile}" ]]; then
-    docker build "${platform_args[@]}" -t "${tag}" -f "${dockerfile}" "${context}"
+    docker build "${platform_args[@]+"${platform_args[@]}"}" -t "${tag}" -f "${dockerfile}" "${context}"
   else
-    docker build "${platform_args[@]}" -t "${tag}" "${context}"
+    docker build "${platform_args[@]+"${platform_args[@]}"}" -t "${tag}" "${context}"
   fi
   "${IMAGE_LOAD}" push_or_load "${tag}"
 }

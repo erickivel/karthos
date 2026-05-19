@@ -69,12 +69,12 @@ tasks:
         esac
 
   e2e:deploy:
-    desc: Build and deploy test apps to cluster (use VARIANT=base, VARIANT=with-prometheus, or VARIANT=with-istio)
-    vars:
-      VARIANT:
-        sh: echo "${VARIANT:-base}"
+    desc: "Build and deploy test apps to cluster (set VARIANT env var; defaults to base. Accepts: base, with-prometheus, with-istio)"
     cmds:
-      - ./test/e2e/apps/deploy.sh {{.VARIANT}}
+      # VARIANT is read from the shell env (no Task-CLI-var form). Scenarios
+      # invoke this task with `env: { VARIANT: ... }`; CLI users pass it as
+      # an env-var prefix, e.g. `VARIANT=with-prometheus task test:e2e:deploy`.
+      - ./test/e2e/apps/deploy.sh "${VARIANT:-base}"
 
   e2e:install-istio:
     desc: Install minimal Istio control plane for mesh telemetry e2e scenarios
@@ -200,11 +200,9 @@ tasks:
   e2e:scenario:prometheus:
     desc: Run Prometheus discovery scenario with gateway traffic (full pipeline including spanmetrics/servicegraph)
     deps: [e2e:ensure-cluster]
-    vars:
-      VARIANT: with-prometheus
     cmds:
       - task: e2e:deploy
-        vars: { VARIANT: "with-prometheus" }
+        env: { VARIANT: with-prometheus }
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
@@ -221,7 +219,7 @@ tasks:
     cmds:
       - task: e2e:install-istio
       - task: e2e:deploy
-        vars: { VARIANT: "with-istio" }
+        env: { VARIANT: with-istio }
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
@@ -235,11 +233,9 @@ tasks:
   e2e:scenario:fallback:
     desc: Run no-telemetry fallback scenario (full pipeline)
     deps: [e2e:ensure-cluster]
-    vars:
-      VARIANT: base
     cmds:
       - task: e2e:deploy
-        vars: { VARIANT: "base" }
+        env: { VARIANT: base }
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel

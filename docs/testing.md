@@ -53,10 +53,13 @@ task test:e2e:verify
 `task test:e2e:setup` provisions one control-plane node and one worker
 node so topology QA can validate cross-node placement in the live cluster.
 
-> **Migration note:** `e2e:deploy` reads `VARIANT` from the shell
-> environment, not from Task's CLI variables. The previous form
-> `task test:e2e:deploy VARIANT=with-prometheus` no longer propagates —
-> use the env-var prefix shown above (`VARIANT=… task …`).
+> **`VARIANT` contract:** `e2e:deploy` reads `VARIANT` from the shell
+> environment only. There is no Task-CLI-var form — the previous
+> `task test:e2e:deploy VARIANT=with-prometheus` syntax does not
+> propagate. Pass it as an env-var prefix on the CLI
+> (`VARIANT=… task …`); internal scenarios pass it via Task's `env:`
+> directive (e.g. `task: e2e:deploy` with `env: { VARIANT: with-istio }`),
+> never via `vars:`.
 
 The same `task test:e2e:*` commands work against a remote k3s cluster
 reached over SSH — set `CLUSTER_PROFILE` in `.env` (see
