@@ -166,9 +166,9 @@ export function MetricsExplorer() {
 
   const handleOpenInExplorer = (metric: CanonicalMetric, targetMode: 'entity' | 'edge') => {
     // Catalog → samples view: switch the URL mode and pre-set the category
-    // tab so the user sees the metric's family. Entity/edge selection is
-    // left for the user — applicability already restricts metrics to what
-    // can apply once they pick something.
+    // tab so the user sees the metric's family. Entity metrics with one
+    // applicable kind also pre-scope the entity picker, while clearing any
+    // stale entity/edge selection from the previous view.
     setSearchParams((prev) => {
       const np = new URLSearchParams(prev)
       np.set('mode', targetMode)
@@ -177,6 +177,15 @@ export function MetricsExplorer() {
       np.delete('edgeTarget')
       return np
     })
+    if (targetMode === 'entity') {
+      const appliesTo = metric.applies_to ?? []
+      setFilter({
+        ...EMPTY_FILTER,
+        kind: appliesTo.length === 1 ? appliesTo[0]! : '',
+      })
+    } else {
+      setFilter(EMPTY_FILTER)
+    }
     setCategory(metric.category)
   }
 

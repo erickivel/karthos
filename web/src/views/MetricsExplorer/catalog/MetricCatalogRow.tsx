@@ -82,9 +82,16 @@ export function MetricCatalogRow({
           {appliesTo.length === 0 ? (
             <span className={styles.muted}>—</span>
           ) : (
-            <span className={styles.muted} title={appliesTo.join(', ')}>
-              {appliesTo.length}
-            </span>
+            <div className={styles.appliesCompact} title={appliesTo.join(', ')}>
+              {appliesTo.slice(0, 2).map((k) => (
+                <span key={k} className={styles.appliesChip}>
+                  {k}
+                </span>
+              ))}
+              {appliesTo.length > 2 && (
+                <span className={styles.appliesMore}>+{appliesTo.length - 2}</span>
+              )}
+            </div>
           )}
         </td>
         <td>
@@ -117,7 +124,7 @@ export function MetricCatalogRow({
                   <div className={styles.detailLabel}>Applies to</div>
                   <div className={styles.chipRow}>
                     {appliesTo.map((k) => (
-                      <span key={k} className={styles.chip}>
+                      <span key={k} className={styles.appliesChip}>
                         {k}
                       </span>
                     ))}
@@ -167,7 +174,14 @@ export function MetricCatalogRow({
               </div>
 
               <div className={styles.detailActions}>
-                <button type="button" className={styles.openButton} onClick={onOpenInExplorer}>
+                <button
+                  type="button"
+                  className={styles.openButton}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onOpenInExplorer()
+                  }}
+                >
                   Open in {openMode === 'edge' ? 'Edges' : 'Entities'}
                 </button>
               </div>
