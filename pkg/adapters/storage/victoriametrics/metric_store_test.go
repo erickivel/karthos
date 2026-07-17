@@ -29,6 +29,7 @@ func TestSamplesToPrometheusText(t *testing.T) {
 			Value:      42.5,
 			Timestamp:  ts,
 			Labels:     map[string]string{"source": "otlp"},
+			Unit:       metrics.UnitMillicores,
 		},
 	}
 
@@ -37,6 +38,7 @@ func TestSamplesToPrometheusText(t *testing.T) {
 	assert.Contains(t, got, "k8s_pod_cpu_usage{")
 	assert.Contains(t, got, `entity_id="abc123"`)
 	assert.Contains(t, got, `source="otlp"`)
+	assert.Contains(t, got, `oksg_unit="millicores"`)
 	assert.Contains(t, got, "42.5")
 	// Verify timestamp is present as milliseconds.
 	expectedTsMs := strconv.FormatInt(ts.UnixMilli(), 10)
@@ -57,6 +59,72 @@ func TestSamplesToPrometheusText_EscapesLabelValues(t *testing.T) {
 
 	got := string(samplesToPrometheusText(samples))
 	assert.Contains(t, got, `has \"quotes\" and\\back`)
+}
+
+func TestSamplesToPrometheusText_PreservesSourceDimensions(t *testing.T) {
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	samples := []metrics.MetricSample{
+		{
+			MetricName: "http.server.request.count",
+			EntityID:   entities.EntityID("svc1"),
+			Value:      7,
+			Timestamp:  ts,
+			Labels: map[string]string{
+				"source":           "prometheus.app",
+				"namespace":        "oksg-demo",
+				"service":          "gateway-go",
+				"pod":              "gateway-go-abc123",
+				"method":           "GET",
+				"http_status_code": "500",
+			},
+		},
+	}
+
+	got := string(samplesToPrometheusText(samples))
+
+	assert.Contains(t, got, `source="prometheus.app"`)
+	assert.Contains(t, got, `namespace="oksg-demo"`)
+	assert.Contains(t, got, `service="gateway-go"`)
+	assert.Contains(t, got, `pod="gateway-go-abc123"`)
+	assert.Contains(t, got, `method="GET"`)
+	assert.Contains(t, got, `http_status_code="500"`)
+}
+
+func TestSamplesToPrometheusText_PreservesDistinctServicegraphContexts(t *testing.T) {
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	baseLabels := map[string]string{
+		"source":          "traces.servicegraph",
+		"edge_client":     "service-a",
+		"edge_client_id":  "svc-a",
+		"edge_server":     "service-b",
+		"edge_server_id":  "svc-b",
+		"connection_type": "database",
+		"virtual_node":    "server",
+		"failed":          "false",
+	}
+	labelsFor := func(method string) map[string]string {
+		labels := make(map[string]string, len(baseLabels)+2)
+		for key, value := range baseLabels {
+			labels[key] = value
+		}
+		labels["client_http_method"] = method
+		labels["server_http_method"] = method
+		return labels
+	}
+	samples := []metrics.MetricSample{
+		{MetricName: "servicegraph.request.count", EntityID: "svc-a", Value: 4, Timestamp: ts, Labels: labelsFor("GET")},
+		{MetricName: "servicegraph.request.count", EntityID: "svc-a", Value: 7, Timestamp: ts, Labels: labelsFor("POST")},
+	}
+
+	got := string(samplesToPrometheusText(samples))
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[0]+lines[1], `failed="false"`)
+	assert.Contains(t, lines[0]+lines[1], `connection_type="database"`)
+	assert.Contains(t, lines[0]+lines[1], `virtual_node="server"`)
+	assert.Contains(t, got, `client_http_method="GET"`)
+	assert.Contains(t, got, `client_http_method="POST"`)
+	assert.NotEqual(t, lines[0], lines[1])
 }
 
 func TestSamplesToPrometheusText_Empty(t *testing.T) {
@@ -97,108 +165,6 @@ func TestBuildPromQL(t *testing.T) {
 			expected: `k8s_pod_memory_working_set{entity_id=~"abc|def"}`,
 		},
 		{
-			name: "scalar metric with edge source and target filters",
-			query: query.MetricQuery{
-				MetricName:   "servicegraph.request.error.count",
-				EdgeSourceID: entities.EntityID("svc-a"),
-				EdgeTargetID: entities.EntityID("svc-b"),
-			},
-			expected: `rate(servicegraph_request_error_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m])`,
-		},
-		{
-			name: "request rate metric uses one minute rate window",
-			query: query.MetricQuery{
-				MetricName: "servicegraph.request.count",
-			},
-			expected: `rate(servicegraph_request_count[1m])`,
-		},
-		{
-			name: "request rate metric keeps entity filters inside rate query",
-			query: query.MetricQuery{
-				MetricName: "servicegraph.request.count",
-				EntityIDs:  []entities.EntityID{"abc123"},
-			},
-			expected: `rate(servicegraph_request_count{entity_id=~"abc123"}[1m])`,
-		},
-		{
-			name: "request rate metric keeps edge filters inside rate query",
-			query: query.MetricQuery{
-				MetricName:   "servicegraph.request.count",
-				EdgeSourceID: entities.EntityID("svc-a"),
-				EdgeTargetID: entities.EntityID("svc-b"),
-			},
-			expected: `rate(servicegraph_request_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m])`,
-		},
-		{
-			name: "error rate metric uses one minute rate window",
-			query: query.MetricQuery{
-				MetricName: "servicegraph.request.error.count",
-			},
-			expected: `rate(servicegraph_request_error_count[1m])`,
-		},
-		{
-			name: "error ratio uses request and error rate expressions",
-			query: query.MetricQuery{
-				MetricName:   "servicegraph.request.error.ratio",
-				EdgeSourceID: entities.EntityID("svc-a"),
-				EdgeTargetID: entities.EntityID("svc-b"),
-			},
-			expected: `rate(servicegraph_request_error_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(servicegraph_request_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1e-9)`,
-		},
-		{
-			name: "http.server.request.duration derives rate-weighted mean from sum/count",
-			query: query.MetricQuery{
-				MetricName: "http.server.request.duration",
-				EntityIDs:  []entities.EntityID{"svc-1"},
-			},
-			expected: `rate(http_server_request_duration_sum{entity_id=~"svc-1"}[1m]) / clamp_min(rate(http_server_request_duration_count{entity_id=~"svc-1"}[1m]), 1)`,
-		},
-		{
-			name: "servicegraph.request.duration derives rate-weighted mean from sum/count with edge filters",
-			query: query.MetricQuery{
-				MetricName:   "servicegraph.request.duration",
-				EdgeSourceID: entities.EntityID("svc-a"),
-				EdgeTargetID: entities.EntityID("svc-b"),
-			},
-			expected: `rate(servicegraph_request_duration_sum{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]) / clamp_min(rate(servicegraph_request_duration_count{edge_client_id="svc-a",edge_server_id="svc-b"}[1m]), 1)`,
-		},
-		{
-			name: "system.disk.operations is rate-wrapped",
-			query: query.MetricQuery{
-				MetricName: "system.disk.operations",
-				EntityIDs:  []entities.EntityID{"node-1"},
-			},
-			expected: `rate(system_disk_operations{entity_id=~"node-1"}[1m])`,
-		},
-		{
-			name: "system.disk.operation_time is rate-wrapped",
-			query: query.MetricQuery{
-				MetricName: "system.disk.operation_time",
-			},
-			expected: `rate(system_disk_operation_time[1m])`,
-		},
-		{
-			name: "system.network.errors is rate-wrapped",
-			query: query.MetricQuery{
-				MetricName: "system.network.errors",
-			},
-			expected: `rate(system_network_errors[1m])`,
-		},
-		{
-			name: "system.network.dropped is rate-wrapped",
-			query: query.MetricQuery{
-				MetricName: "system.network.dropped",
-			},
-			expected: `rate(system_network_dropped[1m])`,
-		},
-		{
-			name: "system.network.packets is rate-wrapped",
-			query: query.MetricQuery{
-				MetricName: "system.network.packets",
-			},
-			expected: `rate(system_network_packets[1m])`,
-		},
-		{
 			name: "container health status composes ready and restart-rate per container",
 			query: query.MetricQuery{
 				MetricName: "oksg.container.health.status",
@@ -218,10 +184,104 @@ func TestBuildPromQL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildPromQL(tt.query)
-			assert.Equal(t, tt.expected, got)
+			assert.Equal(t, tt.expected, buildPromQL(tt.query))
 		})
 	}
+}
+
+func TestBuildPromQLDefaultCountersUseExactWindowAndPreserveFilters(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    query.MetricQuery
+		selector string
+	}{
+		{
+			name:     "unfiltered request count",
+			query:    query.MetricQuery{MetricName: "servicegraph.request.count"},
+			selector: "servicegraph_request_count",
+		},
+		{
+			name: "entity-filtered host counter",
+			query: query.MetricQuery{
+				MetricName: "system.disk.operations",
+				EntityIDs:  []entities.EntityID{"node-1"},
+			},
+			selector: `system_disk_operations{entity_id=~"node-1",temporality!="delta"}`,
+		},
+		{
+			name: "edge-filtered error count",
+			query: query.MetricQuery{
+				MetricName:   "servicegraph.request.error.count",
+				EdgeSourceID: entities.EntityID("svc-a"),
+				EdgeTargetID: entities.EntityID("svc-b"),
+			},
+			selector: `servicegraph_request_error_count{edge_client_id="svc-a",edge_server_id="svc-b",temporality!="delta"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildPromQL(tt.query)
+			assert.Contains(t, got, "increase(")
+			assert.Contains(t, got, tt.selector)
+			assert.Contains(t, got, "count_over_time(")
+			assert.Contains(t, got, "tfirst_over_time(")
+			assert.Contains(t, got, `temporality="delta"`)
+			assert.Contains(t, got, "/ 60)")
+		})
+	}
+}
+
+func TestBuildPromQLErrorRatioUsesCanonicalContextAndCompleteBranches(t *testing.T) {
+	got := buildPromQL(query.MetricQuery{
+		MetricName:   "servicegraph.request.error.ratio",
+		EdgeSourceID: entities.EntityID("svc-a"),
+		EdgeTargetID: entities.EntityID("svc-b"),
+	})
+
+	context := strings.Join(query.ServicegraphRequestContextLabels(), ",")
+	assert.Contains(t, got, "sum by ("+context+")")
+	assert.Contains(t, got, "servicegraph_request_error_count")
+	assert.Contains(t, got, "servicegraph_request_count")
+	assert.Contains(t, got, `edge_client_id="svc-a",edge_server_id="svc-b"`)
+	assert.Contains(t, got, "last_over_time(")
+	assert.Contains(t, got, "== count by")
+}
+
+func TestBuildPromQLExplicitCounterModes(t *testing.T) {
+	base := query.MetricQuery{MetricName: "servicegraph.request.count", Window: 90 * time.Second}
+
+	base.Aggregation = metrics.AggregationIncrease
+	increase := buildPromQL(base)
+	assert.Contains(t, increase, "increase(servicegraph_request_count")
+	assert.Contains(t, increase, "[90s]")
+	assert.Contains(t, increase, "[180s]")
+	assert.Contains(t, increase, ">= 90")
+	assert.Contains(t, increase, "sum_over_time(")
+
+	base.Aggregation = metrics.AggregationWindowRate
+	assert.Contains(t, buildPromQL(base), "/ 90)")
+
+	base.Aggregation = metrics.AggregationActiveRate
+	active := buildPromQL(base)
+	assert.Contains(t, active, "rate(servicegraph_request_count")
+	assert.NotContains(t, active, `temporality="delta"`)
+
+	base.Aggregation = metrics.AggregationLatest
+	assert.Equal(t, "servicegraph_request_count", buildPromQL(base))
+}
+
+func TestBuildPromQLWindowMeanRequiresPositiveCountIncrease(t *testing.T) {
+	got := buildPromQL(query.MetricQuery{
+		MetricName:  "http.server.request.duration",
+		Aggregation: metrics.AggregationWindowMean,
+		Window:      time.Minute,
+	})
+
+	assert.Contains(t, got, "http_server_request_duration_sum")
+	assert.Contains(t, got, "http_server_request_duration_count")
+	assert.Contains(t, got, "> 0")
+	assert.NotContains(t, got, "clamp_min")
 }
 
 func TestParseQueryRangeResponse(t *testing.T) {
@@ -233,7 +293,8 @@ func TestParseQueryRangeResponse(t *testing.T) {
 				"metric": {
 					"__name__": "k8s_pod_cpu_usage",
 					"entity_id": "abc123",
-					"source": "otlp"
+					"source": "otlp",
+					"oksg_unit": "millicores"
 				},
 				"values": [
 					[1742644800, "42.5"],
@@ -251,8 +312,31 @@ func TestParseQueryRangeResponse(t *testing.T) {
 	assert.Equal(t, entities.EntityID("abc123"), samples[0].EntityID)
 	assert.Equal(t, 42.5, samples[0].Value)
 	assert.Equal(t, "otlp", samples[0].Labels["source"])
+	assert.Equal(t, metrics.UnitMillicores, samples[0].Unit)
 	assert.NotContains(t, samples[0].Labels, "__name__")
 	assert.NotContains(t, samples[0].Labels, "entity_id")
+	assert.NotContains(t, samples[0].Labels, "oksg_unit")
+}
+
+func TestParseQueryRangeResponse_HidesInvalidOrMissingStoredUnit(t *testing.T) {
+	respJSON := `{
+		"status": "success",
+		"data": {
+			"resultType": "matrix",
+			"result": [
+				{"metric": {"__name__": "k8s_resource_quota_used", "entity_id": "quota", "resource": "cpu", "oksg_unit": "cores"}, "values": [[1742644800, "2"]]},
+				{"metric": {"__name__": "k8s_resource_quota_used", "entity_id": "quota", "resource": "pods"}, "values": [[1742644800, "3"]]}
+			]
+		}
+	}`
+
+	samples, err := parseQueryRangeResponse(strings.NewReader(respJSON))
+	require.NoError(t, err)
+	require.Len(t, samples, 2)
+	for _, sample := range samples {
+		assert.Empty(t, sample.Unit)
+		assert.NotContains(t, sample.Labels, "oksg_unit")
+	}
 }
 
 func TestParseQueryRangeResponse_ErrorStatus(t *testing.T) {
@@ -260,6 +344,32 @@ func TestParseQueryRangeResponse_ErrorStatus(t *testing.T) {
 	_, err := parseQueryRangeResponse(strings.NewReader(respJSON))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "error")
+}
+
+func TestParseQueryRangeResponse_SkipsNonFiniteValues(t *testing.T) {
+	respJSON := `{
+		"status": "success",
+		"data": {
+			"resultType": "matrix",
+			"result": [{
+				"metric": {
+					"__name__": "rpc_server_request_count",
+					"entity_id": "svc1",
+					"source": "traces.spanmetrics"
+				},
+				"values": [
+					[1742644800, "+Inf"],
+					[1742644815, "NaN"],
+					[1742644830, "42"]
+				]
+			}]
+		}
+	}`
+
+	samples, err := parseQueryRangeResponse(strings.NewReader(respJSON))
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	assert.Equal(t, 42.0, samples[0].Value)
 }
 
 func TestVMMetricStore_Write(t *testing.T) {
@@ -310,6 +420,7 @@ func TestVMMetricStore_Query(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/query_range", r.URL.Path)
 		assert.Equal(t, "cpu_usage", r.URL.Query().Get("query"))
+		assert.Equal(t, "1", r.URL.Query().Get("nocache"))
 
 		resp := queryRangeResponse{Status: "success"}
 		resp.Data.ResultType = "matrix"

@@ -58,6 +58,7 @@ func TestContainerHealthLabel(t *testing.T) {
 func TestIsHealthStatusMetric(t *testing.T) {
 	require.True(t, IsHealthStatusMetric("oksg.pod.health.status"))
 	require.True(t, IsHealthStatusMetric("oksg.container.health.status"))
+	require.True(t, IsHealthStatusMetric("k8s.pod.status_reason"))
 	require.False(t, IsHealthStatusMetric("k8s.pod.phase"))
 	require.False(t, IsHealthStatusMetric("k8s.container.ready"))
 	require.False(t, IsHealthStatusMetric(""))
@@ -68,4 +69,18 @@ func TestHealthLabelDispatch(t *testing.T) {
 	require.Equal(t, HealthRestarting, HealthLabel("oksg.container.health.status", 3))
 	require.Equal(t, "", HealthLabel("k8s.pod.phase", 2))
 	require.Equal(t, "", HealthLabel("", 1))
+}
+
+func TestPodStatusReasonLabel(t *testing.T) {
+	cases := map[float64]string{
+		1: "evicted",
+		2: "node_affinity",
+		3: "node_lost",
+		4: "shutdown",
+		5: "unexpected_admission_error",
+		6: "unknown",
+	}
+	for value, expected := range cases {
+		require.Equal(t, expected, HealthLabel("k8s.pod.status_reason", value))
+	}
 }

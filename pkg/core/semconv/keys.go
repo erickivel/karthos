@@ -25,10 +25,12 @@ const (
 	AttrClientNamespace          = "client_namespace"
 	AttrCondition                = "condition"
 	AttrDirection                = "direction"
+	AttrInterface                = "interface"
 	AttrGRPCStatusCode           = "rpc.grpc.status_code"
 	AttrHTTPStatusCode           = "http.response.status_code"
 	AttrK8sPVCName               = "k8s.persistentvolumeclaim.name"
 	AttrK8sVolumeName            = "k8s.volume.name"
+	AttrK8sVolumeType            = "k8s.volume.type"
 	AttrMeshID                   = "mesh.id"
 	AttrMeshPolicy               = "mesh.security.policy"
 	AttrMeshResponseFlags        = "mesh.envoy.response_flags"
@@ -57,9 +59,13 @@ const (
 
 // Internal labels derived during normalization.
 const (
-	LabelEdgeClient   = "edge_client"
-	LabelEdgeClientID = "edge_client_id"
-	LabelEdgeServer   = "edge_server"
-	LabelEdgeServerID = "edge_server_id"
-	LabelSource       = "source"
+	LabelEdgeClient           = "edge_client"
+	LabelEdgeClientID         = "edge_client_id"
+	LabelEdgeServer           = "edge_server"
+	LabelEdgeServerID         = "edge_server_id"
+	LabelNetworkInterfaceName = "network_interface_name"
+	LabelPVCName              = "persistentvolumeclaim_name"
+	LabelSource               = "source"
+	LabelVolumeName           = "volume_name"
+	LabelVolumeType           = "volume_type"
 )

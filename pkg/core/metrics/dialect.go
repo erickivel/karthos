@@ -65,7 +65,7 @@ var KubeletDialect = DialectMap{
 }
 
 // KubeClusterDialect translates k8s_cluster receiver wire names (with underscore
-// segments per its v0.111+ metadata.yaml) into the dotted catalog canonicals.
+// segments per its v0.156 metadata.yaml) into the dotted catalog canonicals.
 // Container ready/restarts already use single-segment names that match the
 // catalog directly and need no translation.
 var KubeClusterDialect = DialectMap{
@@ -73,8 +73,6 @@ var KubeClusterDialect = DialectMap{
 	"k8s.container.cpu_limit":                "k8s.container.cpu.limit",
 	"k8s.container.memory_request":           "k8s.container.memory.request",
 	"k8s.container.memory_limit":             "k8s.container.memory.limit",
-	"k8s.container.storage_request":          "k8s.container.storage.request",
-	"k8s.container.storage_limit":            "k8s.container.storage.limit",
 	"k8s.container.ephemeralstorage_request": "k8s.container.ephemeral_storage.request",
 	"k8s.container.ephemeralstorage_limit":   "k8s.container.ephemeral_storage.limit",
 }
@@ -85,6 +83,9 @@ var SpanmetricsDialect = DialectMap{
 }
 
 var ServicegraphDialect = DialectMap{
+	"traces_service_graph_request_total":        "servicegraph.request.count",
+	"traces_service_graph_request_server":       "servicegraph.request.duration",
+	"traces_service_graph_request_failed_total": "servicegraph.request.error.count",
 	"traces.service.graph.request.total":        "servicegraph.request.count",
 	"traces.service.graph.request.server":       "servicegraph.request.duration",
 	"traces.service.graph.request_failed_total": "servicegraph.request.error.count",

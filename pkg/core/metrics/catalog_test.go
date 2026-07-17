@@ -97,8 +97,6 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.volume.inodes":                        {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.node.allocatable_ephemeral_storage":   {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"k8s.node.allocatable_pods":                {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.container.storage.request":            {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.container.storage.limit":              {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"k8s.container.ephemeral_storage.request":  {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"k8s.container.ephemeral_storage.limit":    {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"k8s.cronjob.active_jobs":                  {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
@@ -213,11 +211,19 @@ func TestDefaultCatalogApplicabilityTargetsExpectedKinds(t *testing.T) {
 	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["oksg.container.health.status"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindPod}, catalog["k8s.pod.cpu.usage"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindNode}, catalog["k8s.node.cpu.usage"].AppliesTo)
-	require.Equal(t, []entities.EntityKind{entities.KindPVC}, catalog["k8s.volume.inodes.used"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindPVC, entities.KindPod}, catalog["k8s.volume.inodes.used"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindService}, catalog["servicegraph.request.count"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindHPA}, catalog["k8s.hpa.current_replicas"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindResourceQuota}, catalog["k8s.resource_quota.used"].AppliesTo)
 	require.Empty(t, catalog["servicegraph.request.duration"].AppliesTo)
+}
+
+func TestDefaultCatalogRemovesGenericContainerStorageMetrics(t *testing.T) {
+	catalog := catalogByName(DefaultCatalog())
+	require.NotContains(t, catalog, "k8s.container.storage.request")
+	require.NotContains(t, catalog, "k8s.container.storage.limit")
+	require.Contains(t, catalog, "k8s.container.ephemeral_storage.request")
+	require.Contains(t, catalog, "k8s.container.ephemeral_storage.limit")
 }
 
 // Query-derived metrics — composed at query time from other catalog metrics

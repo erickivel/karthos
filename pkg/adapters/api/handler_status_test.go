@@ -3,14 +3,17 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
+	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/core/metrics"
@@ -18,6 +21,34 @@ import (
 	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
+
+type recordingMetricStore struct {
+	samples map[string][]metrics.MetricSample
+	errors  map[string]error
+	queries []query.MetricQuery
+}
+
+func (s *recordingMetricStore) Write(_ context.Context, samples []metrics.MetricSample) error {
+	if s.samples == nil {
+		s.samples = map[string][]metrics.MetricSample{}
+	}
+	for _, sample := range samples {
+		s.samples[sample.MetricName] = append(s.samples[sample.MetricName], sample)
+	}
+	return nil
+}
+
+func (s *recordingMetricStore) Query(_ context.Context, q query.MetricQuery) ([]metrics.MetricSample, error) {
+	s.queries = append(s.queries, q)
+	if err := s.errors[q.MetricName]; err != nil {
+		return nil, err
+	}
+	return s.samples[q.MetricName], nil
+}
+
+func (*recordingMetricStore) QueryCatalogStats(context.Context, time.Duration) ([]persistence.CatalogStat, error) {
+	return nil, nil
+}
 
 func TestLatestSamplePerEntity(t *testing.T) {
 	t.Parallel()
@@ -187,6 +218,9 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 		Graph: topology.Graph{
 			Timestamp: now,
 			Nodes: []topology.Node{
+				{ID: "node-1", Kind: entities.KindNode},
+				{ID: "node-2", Kind: entities.KindNode},
+				{ID: "node-3", Kind: entities.KindNode},
 				{ID: "pod-1", Kind: entities.KindPod},
 				{ID: "pod-2", Kind: entities.KindPod},
 				{ID: "pod-3", Kind: entities.KindPod},
@@ -231,12 +265,16 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 
 	hs, ok := data["health_summary"].(map[string]any)
 	require.True(t, ok, "expected health_summary in status response")
+	require.Equal(t, "complete", hs["status"])
 
 	nodes := hs["nodes"].(map[string]any)
+	require.Equal(t, "complete", nodes["status"])
 	require.EqualValues(t, 2, nodes["healthy"])
 	require.EqualValues(t, 1, nodes["unhealthy"])
+	require.EqualValues(t, 0, nodes["unknown"])
 
 	pods := hs["pods"].(map[string]any)
+	require.Equal(t, "complete", pods["status"])
 	require.EqualValues(t, 2, pods["healthy"])
 	require.EqualValues(t, 1, pods["pending"])
 	require.EqualValues(t, 1, pods["failed"])
@@ -249,9 +287,19 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 	require.Equal(t, "degraded", data["system_status"])
 }
 
-func TestStatusHealthSummaryOmittedWithoutMetricStore(t *testing.T) {
+func TestStatusHealthSummaryUnavailableWithoutMetricStore(t *testing.T) {
+	now := time.Now().UTC()
+	gs := persistence.NewInMemoryGraphStore()
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		Version: schema.CurrentVersion, CreatedAt: now,
+		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
+			{ID: "node-1", Kind: entities.KindNode},
+			{ID: "pod-1", Kind: entities.KindPod},
+			{ID: "pod-2", Kind: entities.KindPod},
+		}},
+	}))
 	srv := newTestServer(t, Config{
-		GraphStore:     freshGraphStore(t),
+		GraphStore:     gs,
 		MetadataStore:  persistence.NewInMemoryMetadataStore(),
 		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
 	})
@@ -261,8 +309,69 @@ func TestStatusHealthSummaryOmittedWithoutMetricStore(t *testing.T) {
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data := parseResponseData(t, resp)
-	_, hasHealthSummary := data["health_summary"]
-	require.False(t, hasHealthSummary, "health_summary should be absent when metric store is nil")
+	hs := data["health_summary"].(map[string]any)
+	require.Equal(t, "unavailable", hs["status"])
+	nodes := hs["nodes"].(map[string]any)
+	require.Equal(t, "unavailable", nodes["status"])
+	require.EqualValues(t, 1, nodes["unknown"])
+	pods := hs["pods"].(map[string]any)
+	require.Equal(t, "unavailable", pods["status"])
+	require.EqualValues(t, 2, pods["unknown"])
+}
+
+func TestStatusBulkHealthQueriesDoNotEmbedEntityIDs(t *testing.T) {
+	now := time.Now().UTC()
+	nodes := make([]topology.Node, 0, 1001)
+	nodes = append(nodes, topology.Node{ID: "node-1", Kind: entities.KindNode})
+	for i := 0; i < 1000; i++ {
+		nodes = append(nodes, topology.Node{ID: entities.EntityID("pod-" + strconv.Itoa(i+1)), Kind: entities.KindPod})
+	}
+	gs := persistence.NewInMemoryGraphStore()
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		Version: schema.CurrentVersion, CreatedAt: now, Graph: topology.Graph{Timestamp: now, Nodes: nodes},
+	}))
+	ms := &recordingMetricStore{samples: map[string][]metrics.MetricSample{}}
+	srv := newTestServer(t, Config{MetricStore: ms, GraphStore: gs, MetadataStore: persistence.NewInMemoryMetadataStore(), EntityRegistry: persistence.NewInMemoryEntityRegistry()})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/status")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, ms.queries, 2)
+	for _, q := range ms.queries {
+		require.Empty(t, q.EntityIDs, "snapshot-wide health queries must have constant query text")
+	}
+}
+
+func TestStatusDegradesWhenPodHealthBranchFails(t *testing.T) {
+	now := time.Now().UTC()
+	gs := persistence.NewInMemoryGraphStore()
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		Version: schema.CurrentVersion, CreatedAt: now,
+		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
+			{ID: "node-1", Kind: entities.KindNode}, {ID: "pod-1", Kind: entities.KindPod},
+		}},
+	}))
+	ms := &recordingMetricStore{
+		samples: map[string][]metrics.MetricSample{
+			"k8s.node.condition.ready": {{MetricName: "k8s.node.condition.ready", EntityID: "node-1", Value: 1, Timestamp: now}},
+		},
+		errors: map[string]error{"oksg.pod.health.status": errors.New("query too long")},
+	}
+	srv := newTestServer(t, Config{MetricStore: ms, GraphStore: gs, MetadataStore: persistence.NewInMemoryMetadataStore(), EntityRegistry: persistence.NewInMemoryEntityRegistry()})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/status")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	data := parseResponseData(t, resp)
+	require.Equal(t, "degraded", data["system_status"])
+	require.Contains(t, data["reasons"], "pod health summary unavailable")
+	hs := data["health_summary"].(map[string]any)
+	require.Equal(t, "partial", hs["status"])
+	require.Equal(t, "complete", hs["nodes"].(map[string]any)["status"])
+	pods := hs["pods"].(map[string]any)
+	require.Equal(t, "unavailable", pods["status"])
+	require.EqualValues(t, 1, pods["unknown"])
 }
 
 func TestDiscoveryReturnsProfileSummary(t *testing.T) {

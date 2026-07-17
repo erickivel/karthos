@@ -61,13 +61,36 @@ func TestOTLPSemconvMetricsResourceQuotaUsesResourceUnit(t *testing.T) {
 	}
 }
 
+func TestOTLPSemconvMetricsRemovesGenericContainerStorage(t *testing.T) {
+	require.NotContains(t, OTLPSemconvMetrics, "k8s.container.storage.request")
+	require.NotContains(t, OTLPSemconvMetrics, "k8s.container.storage.limit")
+	require.Contains(t, OTLPSemconvMetrics, "k8s.container.ephemeral_storage.request")
+	require.Contains(t, OTLPSemconvMetrics, "k8s.container.ephemeral_storage.limit")
+}
+
+func TestOTLPSemconvMetricsHostByteAndPagingSumsAreCounters(t *testing.T) {
+	for _, metricName := range []string{
+		"system.disk.io",
+		"system.disk.io.read",
+		"system.disk.io.write",
+		"system.network.io",
+		"system.network.io.receive",
+		"system.network.io.transmit",
+		"system.paging.operations",
+	} {
+		mapping, ok := OTLPSemconvMetrics[metricName]
+		require.True(t, ok, "expected %s to be present", metricName)
+		require.Equal(t, MetricKindCounter, mapping.Kind, "%s must preserve its cumulative monotonic sum contract", metricName)
+	}
+}
+
 func TestOTLPSemconvMetricsDoesNotKeepSourceDialectKeys(t *testing.T) {
 	for _, sourceName := range []string{
 		"http_requests_total",
 		"http_request_duration_seconds",
 		"container_cpu_usage_seconds_total",
 		"traces.span.metrics.calls",
-		"traces.service.graph.request.total",
+		"traces_service_graph_request_total",
 		"istio_requests_total",
 		"istio_request_duration_milliseconds",
 	} {

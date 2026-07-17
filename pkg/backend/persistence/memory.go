@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 
@@ -38,7 +40,30 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Build entity ID set for O(1) lookup when filter is non-empty.
+	if q.Aggregation != "" && q.Aggregation != metrics.AggregationLatest {
+		if q.Aggregation == metrics.AggregationWindowRatio && q.MetricName == "servicegraph.request.error.ratio" {
+			return s.queryErrorRatio(q), nil
+		}
+		if q.Aggregation == metrics.AggregationWindowMean {
+			return s.queryWindowMean(q), nil
+		}
+		return aggregateMemorySamples(s.filteredSamples(q, false), q), nil
+	}
+
+	result := s.filteredSamples(q, true)
+	// Mirror VMMetricStore: populate the public string label for health-status
+	// enum metrics so consumers (incl. tests) see the same shape regardless of
+	// backing store. Storage writes hold integer values only; the label is an
+	// API/store-boundary derivation.
+	if metrics.IsHealthStatusMetric(q.MetricName) {
+		for i := range result {
+			result[i].ValueLabel = metrics.HealthLabel(q.MetricName, result[i].Value)
+		}
+	}
+	return result, nil
+}
+
+func (s *InMemoryMetricStore) filteredSamples(q query.MetricQuery, applyFrom bool) []metrics.MetricSample {
 	var entitySet map[string]struct{}
 	if len(q.EntityIDs) > 0 {
 		entitySet = make(map[string]struct{}, len(q.EntityIDs))
@@ -63,7 +88,7 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 		if q.EdgeTargetID != "" && sample.Labels["edge_server_id"] != string(q.EdgeTargetID) {
 			continue
 		}
-		if !q.From.IsZero() && sample.Timestamp.Before(q.From) {
+		if applyFrom && !q.From.IsZero() && sample.Timestamp.Before(q.From) {
 			continue
 		}
 		if !q.To.IsZero() && sample.Timestamp.After(q.To) {
@@ -71,16 +96,240 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 		}
 		result = append(result, sample)
 	}
-	// Mirror VMMetricStore: populate the public string label for health-status
-	// enum metrics so consumers (incl. tests) see the same shape regardless of
-	// backing store. Storage writes hold integer values only; the label is an
-	// API/store-boundary derivation.
-	if metrics.IsHealthStatusMetric(q.MetricName) {
-		for i := range result {
-			result[i].ValueLabel = metrics.HealthLabel(q.MetricName, result[i].Value)
+	return result
+}
+
+func aggregateMemorySamples(samples []metrics.MetricSample, q query.MetricQuery) []metrics.MetricSample {
+	groups := map[string][]metrics.MetricSample{}
+	for _, sample := range samples {
+		groups[memorySeriesKey(sample, false)] = append(groups[memorySeriesKey(sample, false)], sample)
+	}
+	var result []metrics.MetricSample
+	for _, series := range groups {
+		if sample, ok := aggregateMemorySeries(series, q); ok {
+			result = append(result, sample)
 		}
 	}
-	return result, nil
+	return result
+}
+
+func aggregateMemorySeries(series []metrics.MetricSample, q query.MetricQuery) (metrics.MetricSample, bool) {
+	sort.Slice(series, func(i, j int) bool { return series[i].Timestamp.Before(series[j].Timestamp) })
+	end := q.To
+	if end.IsZero() {
+		end = series[len(series)-1].Timestamp
+	}
+	start := end.Add(-q.Window)
+	delta := series[0].Labels["temporality"] == "delta"
+	var current []metrics.MetricSample
+	for _, sample := range series {
+		if !sample.Timestamp.Before(start) && !sample.Timestamp.After(end) {
+			current = append(current, sample)
+		}
+	}
+	if len(current) == 0 || (delta && q.Aggregation == metrics.AggregationActiveRate) {
+		return metrics.MetricSample{}, false
+	}
+	out := current[len(current)-1]
+	out.Timestamp, out.Unit = end, q.Unit
+	if delta {
+		out.Value = 0
+		for _, sample := range current {
+			out.Value += sample.Value
+		}
+	} else if q.Aggregation == metrics.AggregationActiveRate {
+		if len(current) < 2 {
+			return metrics.MetricSample{}, false
+		}
+		elapsed := current[len(current)-1].Timestamp.Sub(current[0].Timestamp).Seconds()
+		if elapsed <= 0 {
+			return metrics.MetricSample{}, false
+		}
+		out.Value = resetAwareIncrease(current) / elapsed
+	} else {
+		historyStart := end.Add(-2 * q.Window)
+		baseline := -1
+		historyFirst := -1
+		historyLast := -1
+		for i := range series {
+			if series[i].Timestamp.Before(historyStart) || series[i].Timestamp.After(end) {
+				continue
+			}
+			if historyFirst < 0 {
+				historyFirst = i
+			}
+			historyLast = i
+			if !series[i].Timestamp.After(start) {
+				baseline = i
+			}
+		}
+		if baseline < 0 || len(current) < 2 || historyFirst < 0 || historyLast < 0 ||
+			series[historyLast].Timestamp.Sub(series[historyFirst].Timestamp) < q.Window {
+			return metrics.MetricSample{}, false
+		}
+		windowSeries := append([]metrics.MetricSample(nil), series[baseline])
+		for _, sample := range series[baseline+1:] {
+			if !sample.Timestamp.After(end) {
+				windowSeries = append(windowSeries, sample)
+			}
+		}
+		out.Value = resetAwareIncrease(windowSeries)
+	}
+	if q.Aggregation == metrics.AggregationWindowRate {
+		out.Value /= q.Window.Seconds()
+	}
+	return out, true
+}
+
+func resetAwareIncrease(series []metrics.MetricSample) float64 {
+	var total float64
+	for i := 1; i < len(series); i++ {
+		if series[i].Value >= series[i-1].Value {
+			total += series[i].Value - series[i-1].Value
+		} else {
+			total += series[i].Value
+		}
+	}
+	return total
+}
+
+func (s *InMemoryMetricStore) queryErrorRatio(q query.MetricQuery) []metrics.MetricSample {
+	requestsQ := q
+	requestsQ.MetricName = "servicegraph.request.count"
+	requestsQ.Aggregation = metrics.AggregationIncrease
+	requestsQ.Unit = metrics.UnitCount
+	errorsQ := requestsQ
+	errorsQ.MetricName = "servicegraph.request.error.count"
+	return completeMemoryRatios(s.filteredSamples(errorsQ, false), s.filteredSamples(requestsQ, false), q)
+}
+
+func (s *InMemoryMetricStore) queryWindowMean(q query.MetricQuery) []metrics.MetricSample {
+	branch := func(suffix string) map[string]metrics.MetricSample {
+		branchQuery := q
+		branchQuery.MetricName = q.MetricName + suffix
+		branchQuery.Aggregation = metrics.AggregationIncrease
+		grouped := map[string][]metrics.MetricSample{}
+		for _, sample := range s.filteredSamples(branchQuery, false) {
+			grouped[memorySeriesKey(sample, false)] = append(grouped[memorySeriesKey(sample, false)], sample)
+		}
+		result := make(map[string]metrics.MetricSample, len(grouped))
+		for _, series := range grouped {
+			sample, ok := aggregateMemorySeries(series, query.MetricQuery{
+				Aggregation: metrics.AggregationIncrease,
+				Window:      q.Window,
+				To:          q.To,
+				Unit:        q.Unit,
+			})
+			if !ok {
+				continue
+			}
+			sample.MetricName = q.MetricName
+			result[memorySeriesKey(sample, false)] = sample
+		}
+		return result
+	}
+
+	sums := branch("_sum")
+	counts := branch("_count")
+	result := make([]metrics.MetricSample, 0, len(sums))
+	for key, sum := range sums {
+		count, ok := counts[key]
+		if !ok || count.Value <= 0 {
+			continue
+		}
+		sum.Value = sum.Value / count.Value
+		sum.MetricName = q.MetricName
+		sum.Unit = q.Unit
+		result = append(result, sum)
+	}
+	return result
+}
+
+func completeMemoryRatios(errorRaw, requestRaw []metrics.MetricSample, q query.MetricQuery) []metrics.MetricSample {
+	aggregate := func(raw []metrics.MetricSample) (map[string]float64, map[string]int, map[string]int, map[string]metrics.MetricSample) {
+		totals, observed, mature := map[string]float64{}, map[string]int{}, map[string]int{}
+		representatives := map[string]metrics.MetricSample{}
+		full := map[string][]metrics.MetricSample{}
+		for _, sample := range raw {
+			full[memorySeriesKey(sample, false)] = append(full[memorySeriesKey(sample, false)], sample)
+		}
+		for _, series := range full {
+			if !memorySeriesObservedInWindow(series, q) {
+				continue
+			}
+			contextKey := memoryContextKey(series[0])
+			observed[contextKey]++
+			if value, ok := aggregateMemorySeries(series, query.MetricQuery{Aggregation: metrics.AggregationIncrease, Window: q.Window, To: q.To, Unit: metrics.UnitCount}); ok {
+				mature[contextKey]++
+				totals[contextKey] += value.Value
+				value.Labels = memoryContextLabels(value.Labels)
+				representatives[contextKey] = value
+			}
+		}
+		return totals, observed, mature, representatives
+	}
+	errors, errorObserved, errorMature, reps := aggregate(errorRaw)
+	requests, requestObserved, requestMature, _ := aggregate(requestRaw)
+	var result []metrics.MetricSample
+	for key, denominator := range requests {
+		if denominator <= 0 || requestObserved[key] != requestMature[key] || errorObserved[key] == 0 || errorObserved[key] != errorMature[key] {
+			continue
+		}
+		sample := reps[key]
+		sample.MetricName, sample.Value, sample.Unit = q.MetricName, errors[key]/denominator, q.Unit
+		result = append(result, sample)
+	}
+	return result
+}
+
+func memorySeriesObservedInWindow(series []metrics.MetricSample, q query.MetricQuery) bool {
+	if len(series) == 0 {
+		return false
+	}
+	end := q.To
+	if end.IsZero() {
+		end = series[0].Timestamp
+		for _, sample := range series[1:] {
+			if sample.Timestamp.After(end) {
+				end = sample.Timestamp
+			}
+		}
+	}
+	start := end.Add(-q.Window)
+	for _, sample := range series {
+		if !sample.Timestamp.Before(start) && !sample.Timestamp.After(end) {
+			return true
+		}
+	}
+	return false
+}
+
+func memorySeriesKey(sample metrics.MetricSample, excludeFailed bool) string {
+	labels := make(map[string]string, len(sample.Labels))
+	for key, value := range sample.Labels {
+		if excludeFailed && key == "failed" {
+			continue
+		}
+		labels[key] = value
+	}
+	encoded, _ := json.Marshal(labels)
+	return sample.MetricName + "|" + string(sample.EntityID) + "|" + string(encoded)
+}
+
+func memoryContextKey(sample metrics.MetricSample) string {
+	labels := memoryContextLabels(sample.Labels)
+	encoded, _ := json.Marshal(labels)
+	return string(sample.EntityID) + "|" + string(encoded)
+}
+
+func memoryContextLabels(labels map[string]string) map[string]string {
+	contextLabels := make(map[string]string, len(labels))
+	for _, key := range query.ServicegraphRequestContextLabels() {
+		if value, ok := labels[key]; ok {
+			contextLabels[key] = value
+		}
+	}
+	return contextLabels
 }
 
 // QueryCatalogStats aggregates per-(metric, source) sample counts and

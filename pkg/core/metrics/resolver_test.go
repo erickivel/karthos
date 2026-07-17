@@ -72,6 +72,32 @@ func TestResolveTracesServicegraphWinsWhenIstioAbsent(t *testing.T) {
 	require.True(t, selected.Has(SourceTracesServicegraph))
 }
 
+func TestResolveTracesServicegraphWinsWhenIstioHasNoInjectedNamespaces(t *testing.T) {
+	catalog := []CanonicalMetric{
+		{Name: "servicegraph.request.count", Sources: []SourceRef{
+			{ID: SourceMeshIstio, Priority: 1},
+			{ID: SourceTracesServicegraph, Priority: 2},
+		}},
+	}
+
+	prof := &profile.ClusterProfile{
+		Sources: []profile.ObservabilitySource{
+			{
+				Type:    "istio",
+				Present: true,
+				Mesh:    &profile.MeshSource{Flavor: "istio", Mode: "sidecar"},
+			},
+			{Type: "otlp", Present: true, OTLP: &profile.OTLPSource{TracesEnabled: true}},
+		},
+	}
+
+	assignment, selected, err := Resolve(catalog, DefaultLogicalSources(), prof)
+	require.NoError(t, err)
+	require.Equal(t, SourceTracesServicegraph, assignment["servicegraph.request.count"])
+	require.False(t, selected.Has(SourceMeshIstio))
+	require.True(t, selected.Has(SourceTracesServicegraph))
+}
+
 func TestResolveErrorsOnUnknownSource(t *testing.T) {
 	catalog := []CanonicalMetric{
 		{Name: "made.up", Sources: []SourceRef{{ID: "nope", Priority: 1}}},
@@ -124,7 +150,7 @@ func emptyProfile() *profile.ClusterProfile { return &profile.ClusterProfile{} }
 func profileWithIstioAndTraces() *profile.ClusterProfile {
 	return &profile.ClusterProfile{
 		Sources: []profile.ObservabilitySource{
-			{Type: "istio", Present: true, Mesh: &profile.MeshSource{Flavor: "istio"}},
+			{Type: "istio", Present: true, Mesh: &profile.MeshSource{Flavor: "istio", InjectedNamespaces: []string{"oksg-demo"}}},
 			{Type: "otlp", Present: true, OTLP: &profile.OTLPSource{TracesEnabled: true}},
 		},
 	}

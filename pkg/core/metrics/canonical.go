@@ -28,6 +28,7 @@ type CanonicalMetric struct {
 	Description     string                `json:"description"`
 	Sources         []SourceRef           `json:"sources,omitempty"`
 	SelectionPolicy SelectionPolicy       `json:"selection_policy,omitempty"`
+	Aggregation     *AggregationSpec      `json:"aggregation,omitempty"`
 }
 
 // SourceRef binds a canonical metric to a logical source that can produce it.

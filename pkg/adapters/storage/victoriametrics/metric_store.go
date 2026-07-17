@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -110,6 +111,10 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 		"start": {strconv.FormatInt(from.Unix(), 10)},
 		"end":   {strconv.FormatInt(to.Unix(), 10)},
 		"step":  {"15s"},
+		// API reads describe live observability state. Reusing a cached range
+		// can hide a counter increase that arrived after the same aligned query
+		// was evaluated, so always ask VictoriaMetrics for current storage truth.
+		"nocache": {"1"},
 	}
 
 	reqURL := s.baseURL + "/api/v1/query_range?" + params.Encode()
@@ -315,7 +320,7 @@ func catalogPromNameRegex() string {
 	names := make([]string, 0, len(catalog))
 	for _, m := range catalog {
 		names = append(names, promMetricName(m.Name))
-		if _, ok := histogramDerivedMeanMetrics[m.Name]; ok {
+		if metrics.IsWindowedMeanMetric(m.Name) {
 			names = append(names, promMetricName(m.Name+"_sum"), promMetricName(m.Name+"_count"))
 		}
 	}
@@ -327,7 +332,7 @@ func catalogPromNameLookup() map[string]string {
 	lookup := make(map[string]string, len(catalog))
 	for _, m := range catalog {
 		lookup[promMetricName(m.Name)] = m.Name
-		if _, ok := histogramDerivedMeanMetrics[m.Name]; ok {
+		if metrics.IsWindowedMeanMetric(m.Name) {
 			lookup[promMetricName(m.Name+"_sum")] = m.Name
 			lookup[promMetricName(m.Name+"_count")] = m.Name
 		}
@@ -339,6 +344,8 @@ func catalogPromNameLookup() map[string]string {
 // format suitable for /api/v1/import/prometheus.
 //
 // Format: metric_name{label1="val1",label2="val2"} value timestamp_ms
+const storedUnitLabel = "oksg_unit"
+
 func samplesToPrometheusText(samples []metrics.MetricSample) []byte {
 	var buf bytes.Buffer
 	for _, s := range samples {
@@ -347,7 +354,15 @@ func samplesToPrometheusText(samples []metrics.MetricSample) []byte {
 		buf.WriteString(`entity_id="`)
 		buf.WriteString(string(s.EntityID))
 		buf.WriteByte('"')
+		if metrics.IsValidUnit(s.Unit) {
+			buf.WriteString(`,` + storedUnitLabel + `="`)
+			buf.WriteString(string(s.Unit))
+			buf.WriteByte('"')
+		}
 		for k, v := range s.Labels {
+			if k == storedUnitLabel {
+				continue
+			}
 			buf.WriteByte(',')
 			buf.WriteString(k)
 			buf.WriteString(`="`)
@@ -371,17 +386,7 @@ func escapeLabelValue(v string) string {
 	return v
 }
 
-// histogramDerivedMeanMetrics maps a canonical metric name to the pair of cumulative
-// counters emitted by the normalizer (see pkg/backend/ingest/normalizer.go histogram
-// path). A query for the base name is served as rate(sum)/rate(count), yielding a
-// rate-weighted mean in the metric's native units.
-var histogramDerivedMeanMetrics = map[string]struct{}{
-	"http.server.request.duration":    {},
-	"rpc.server.duration":             {},
-	"servicegraph.request.duration":   {},
-	"servicegraph.request.body.size":  {},
-	"servicegraph.response.body.size": {},
-}
+var servicegraphRequestContext = strings.Join(query.ServicegraphRequestContextLabels(), ",")
 
 // buildPromQL constructs a PromQL selector from a MetricQuery.
 func buildPromQL(q query.MetricQuery) string {
@@ -389,43 +394,29 @@ func buildPromQL(q query.MetricQuery) string {
 		return ""
 	}
 
-	if _, ok := histogramDerivedMeanMetrics[q.MetricName]; ok {
-		sumSelector := metricSelector(withMetricName(q, q.MetricName+"_sum"))
-		countSelector := metricSelector(withMetricName(q, q.MetricName+"_count"))
-		return fmt.Sprintf("rate(%s[1m]) / clamp_min(rate(%s[1m]), 1)", sumSelector, countSelector)
+	q = resolveQueryDefaults(q)
+	if metrics.IsWindowedMeanMetric(q.MetricName) {
+		sumIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_sum"))
+		countIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_count"))
+		return fmt.Sprintf("%s / (%s > 0)", sumIncrease, countIncrease)
 	}
 
 	selector := metricSelector(q)
+	if mapping, ok := metrics.OTLPSemconvMetrics[q.MetricName]; ok && mapping.Kind == metrics.MetricKindCounter {
+		switch q.Aggregation {
+		case metrics.AggregationLatest:
+			return selector
+		case metrics.AggregationIncrease:
+			return exactWindowIncrease(q)
+		case metrics.AggregationWindowRate:
+			return fmt.Sprintf("(%s / %d)", exactWindowIncrease(q), int64(q.Window.Seconds()))
+		case metrics.AggregationActiveRate:
+			return activeCounterRate(q)
+		}
+	}
 	switch q.MetricName {
-	case "http.server.request.count",
-		"rpc.server.request.count",
-		"servicegraph.request.count",
-		"servicegraph.request.error.count",
-		"servicegraph.grpc.request.message.count",
-		"servicegraph.grpc.response.message.count",
-		"servicegraph.tcp.connection.open.count",
-		"servicegraph.tcp.connection.close.count",
-		"servicegraph.tcp.bytes.sent",
-		"servicegraph.tcp.bytes.received",
-		"system.cpu.time",
-		"system.disk.operations",
-		"system.disk.operation_time",
-		"system.disk.io_time",
-		"system.disk.weighted_io_time",
-		"system.disk.merged",
-		"system.network.errors",
-		"system.network.dropped",
-		"system.network.packets",
-		"system.paging.faults",
-		"k8s.pod.network.io",
-		"k8s.pod.network.errors",
-		"k8s.node.network.io",
-		"k8s.node.network.errors":
-		return fmt.Sprintf("rate(%s[1m])", selector)
 	case "servicegraph.request.error.ratio":
-		errorRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "servicegraph.request.error.count")))
-		requestRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "servicegraph.request.count")))
-		return fmt.Sprintf("%s / clamp_min(%s, 1e-9)", errorRate, requestRate)
+		return servicegraphErrorRatio(q)
 	case "oksg.container.health.status":
 		// Per-container composite. Priority order: restarting > not_ready > healthy.
 		// Each clause uses the `(predicate) * 0 + N` idiom so a clause emits
@@ -460,6 +451,10 @@ func buildPromQL(q query.MetricQuery) string {
 }
 
 func metricSelector(q query.MetricQuery) string {
+	return metricSelectorWithMatchers(q)
+}
+
+func metricSelectorWithMatchers(q query.MetricQuery, extraMatchers ...string) string {
 	var matchers []string
 	if len(q.EntityIDs) > 0 {
 		ids := make([]string, 0, len(q.EntityIDs))
@@ -474,10 +469,64 @@ func metricSelector(q query.MetricQuery) string {
 	if q.EdgeTargetID != "" {
 		matchers = append(matchers, fmt.Sprintf(`edge_server_id="%s"`, q.EdgeTargetID))
 	}
+	matchers = append(matchers, extraMatchers...)
 	if len(matchers) == 0 {
 		return promMetricName(q.MetricName)
 	}
 	return fmt.Sprintf(`%s{%s}`, promMetricName(q.MetricName), strings.Join(matchers, ","))
+}
+
+func resolveQueryDefaults(q query.MetricQuery) query.MetricQuery {
+	if q.Aggregation != "" {
+		return q
+	}
+	metric, ok := metrics.CatalogByName()[q.MetricName]
+	if !ok {
+		return q
+	}
+	resolved, err := metrics.ResolveAggregation(metric, "", "")
+	if err == nil {
+		q.Aggregation, q.Window, q.Unit = resolved.Mode, resolved.Window, resolved.Unit
+	}
+	return q
+}
+
+func exactWindowIncrease(q query.MetricQuery) string {
+	window := durationExpr(q.Window)
+	historyWindow := durationExpr(2 * q.Window)
+	cumulative := metricSelectorWithMatchers(q, `temporality!="delta"`)
+	delta := metricSelectorWithMatchers(q, `temporality="delta"`)
+	gate := fmt.Sprintf("(count_over_time(%s[%s]) >= 2) and ((tlast_over_time(%s[%s]) - tfirst_over_time(%s[%s])) >= %d)", cumulative, window, cumulative, historyWindow, cumulative, historyWindow, int64(q.Window.Seconds()))
+	return fmt.Sprintf("((increase(%s[%s]) and %s) or sum_over_time(%s[%s]))", cumulative, window, gate, delta, window)
+}
+
+func activeCounterRate(q query.MetricQuery) string {
+	window := durationExpr(q.Window)
+	cumulative := metricSelectorWithMatchers(q, `temporality!="delta"`)
+	return fmt.Sprintf("(rate(%s[%s]) and (count_over_time(%s[%s]) >= 2))", cumulative, window, cumulative, window)
+}
+
+func servicegraphErrorRatio(q query.MetricQuery) string {
+	errorsQ := withMetricName(q, "servicegraph.request.error.count")
+	requestsQ := withMetricName(q, "servicegraph.request.count")
+	errors := exactWindowIncrease(errorsQ)
+	requests := exactWindowIncrease(requestsQ)
+	errorTotal := fmt.Sprintf("sum by (%s) (%s)", servicegraphRequestContext, errors)
+	requestTotal := fmt.Sprintf("sum by (%s) (%s)", servicegraphRequestContext, requests)
+	errorCoverage := completeBranchGate(errorsQ, errors)
+	requestCoverage := completeBranchGate(requestsQ, requests)
+	return fmt.Sprintf("(%s / clamp_min(%s, 1e-9)) and on (%s) %s and on (%s) %s", errorTotal, requestTotal, servicegraphRequestContext, errorCoverage, servicegraphRequestContext, requestCoverage)
+}
+
+func completeBranchGate(q query.MetricQuery, mature string) string {
+	window := durationExpr(q.Window)
+	observed := fmt.Sprintf("count by (%s) (last_over_time(%s[%s]))", servicegraphRequestContext, metricSelector(q), window)
+	matureCount := fmt.Sprintf("count by (%s) (%s)", servicegraphRequestContext, mature)
+	return fmt.Sprintf("(%s == %s)", observed, matureCount)
+}
+
+func durationExpr(window time.Duration) string {
+	return strconv.FormatInt(int64(window.Seconds()), 10) + "s"
 }
 
 func withMetricName(q query.MetricQuery, metricName string) query.MetricQuery {
@@ -521,11 +570,15 @@ func parseQueryRangeResponse(body io.Reader) ([]metrics.MetricSample, error) {
 	for _, series := range resp.Data.Result {
 		metricName := semconvMetricName(series.Metric["__name__"])
 		entityID := entities.EntityID(series.Metric["entity_id"])
+		unit := metrics.Unit(series.Metric[storedUnitLabel])
+		if !metrics.IsValidUnit(unit) {
+			unit = ""
+		}
 
 		// Build labels excluding __name__ and entity_id.
 		labels := make(map[string]string)
 		for k, v := range series.Metric {
-			if k == "__name__" || k == "entity_id" {
+			if k == "__name__" || k == "entity_id" || k == storedUnitLabel {
 				continue
 			}
 			labels[k] = v
@@ -547,6 +600,9 @@ func parseQueryRangeResponse(body io.Reader) ([]metrics.MetricSample, error) {
 			if err != nil {
 				continue
 			}
+			if math.IsInf(val, 0) || math.IsNaN(val) {
+				continue
+			}
 
 			samples = append(samples, metrics.MetricSample{
 				MetricName: metricName,
@@ -554,6 +610,7 @@ func parseQueryRangeResponse(body io.Reader) ([]metrics.MetricSample, error) {
 				Value:      val,
 				Timestamp:  time.Unix(int64(ts), 0),
 				Labels:     labels,
+				Unit:       unit,
 			})
 		}
 	}

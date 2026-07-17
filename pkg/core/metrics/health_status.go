@@ -2,8 +2,8 @@ package metrics
 
 import "math"
 
-// Health-status labels are the public, plain-text representation of the
-// integer-encoded oksg.{pod,container}.health.status metrics. They are the
+// Health-status labels are the public, plain-text representation of
+// integer-encoded health and pod-reason metrics. They are the
 // only form that ever leaves the API: storage and PromQL composition keep
 // the integer encoding (see metric_store.buildPromQL), and the API boundary
 // translates to one of these strings via PodHealthLabel / ContainerHealthLabel.
@@ -11,13 +11,18 @@ import "math"
 // New consumers (frontends, dashboards, exporters) MUST read the string label
 // and never the integer.
 const (
-	HealthHealthy         = "healthy"
-	HealthRunningNotReady = "running_not_ready"
-	HealthRestarting      = "restarting"
-	HealthPending         = "pending"
-	HealthSucceeded       = "succeeded"
-	HealthFailed          = "failed"
-	HealthUnknown         = "unknown"
+	HealthHealthy                           = "healthy"
+	HealthRunningNotReady                   = "running_not_ready"
+	HealthRestarting                        = "restarting"
+	HealthPending                           = "pending"
+	HealthSucceeded                         = "succeeded"
+	HealthFailed                            = "failed"
+	HealthUnknown                           = "unknown"
+	PodStatusReasonEvicted                  = "evicted"
+	PodStatusReasonNodeAffinity             = "node_affinity"
+	PodStatusReasonNodeLost                 = "node_lost"
+	PodStatusReasonShutdown                 = "shutdown"
+	PodStatusReasonUnexpectedAdmissionError = "unexpected_admission_error"
 )
 
 // PodHealthLabel translates the integer-encoded oksg.pod.health.status value
@@ -65,10 +70,31 @@ func ContainerHealthLabel(value float64) string {
 	}
 }
 
-// IsHealthStatusMetric reports whether the metric name is one of the derived
-// health-status enum metrics that carry a string ValueLabel on the wire.
+// PodStatusReasonLabel translates the k8s_cluster receiver's integer pod
+// status-reason encoding into the public API representation.
+func PodStatusReasonLabel(value float64) string {
+	switch roundEnum(value) {
+	case 1:
+		return PodStatusReasonEvicted
+	case 2:
+		return PodStatusReasonNodeAffinity
+	case 3:
+		return PodStatusReasonNodeLost
+	case 4:
+		return PodStatusReasonShutdown
+	case 5:
+		return PodStatusReasonUnexpectedAdmissionError
+	default:
+		return HealthUnknown
+	}
+}
+
+// IsHealthStatusMetric reports whether the metric name is one of the enum
+// metrics that carry a string ValueLabel on the wire.
 func IsHealthStatusMetric(name string) bool {
-	return name == "oksg.pod.health.status" || name == "oksg.container.health.status"
+	return name == "oksg.pod.health.status" ||
+		name == "oksg.container.health.status" ||
+		name == "k8s.pod.status_reason"
 }
 
 // HealthLabel dispatches to PodHealthLabel or ContainerHealthLabel based on the
@@ -80,6 +106,8 @@ func HealthLabel(metricName string, value float64) string {
 		return PodHealthLabel(value)
 	case "oksg.container.health.status":
 		return ContainerHealthLabel(value)
+	case "k8s.pod.status_reason":
+		return PodStatusReasonLabel(value)
 	default:
 		return ""
 	}

@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
 // StatusHandler serves system status and discovery profile endpoints.
@@ -59,12 +59,14 @@ func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, r *http.Request) 
 
 	// Snapshot freshness.
 	var lastSnapshotAt *time.Time
+	var snapshot *topology.Snapshot
 	var snapshotFreshness float64
 	dataStale := true
 
 	if h.graphStore != nil {
 		snap, err := h.graphStore.GetLatest(r.Context())
 		if err == nil && snap != nil {
+			snapshot = snap
 			lastSnapshotAt = &snap.CreatedAt
 			snapshotFreshness = time.Since(snap.CreatedAt).Seconds()
 			dataStale = snapshotFreshness > h.staleThreshold.Seconds()
@@ -114,62 +116,111 @@ func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, r *http.Request) 
 		resp["last_discovery_at"] = *lastDiscoveryAt
 	}
 
-	// Health summary from metric store.
-	if h.metricStore != nil {
-		if hs := h.computeHealthSummary(r.Context()); hs != nil {
-			resp["health_summary"] = hs
-			if hs.Nodes.Unhealthy > 0 {
-				if systemStatus == "nominal" {
-					systemStatus = "degraded"
-					resp["system_status"] = systemStatus
-				}
-				reasons = append(reasons, "unhealthy nodes detected")
-				resp["reasons"] = reasons
+	// Health summary is derived from current graph entities. A missing or
+	// failing metric store is represented explicitly instead of masquerading as
+	// legitimate unknown telemetry.
+	if snapshot != nil {
+		hs := h.computeHealthSummary(r.Context(), snapshot.Graph.Nodes)
+		resp["health_summary"] = hs
+		if hs.Nodes.Unhealthy > 0 {
+			if systemStatus == "nominal" {
+				systemStatus = "degraded"
+				resp["system_status"] = systemStatus
 			}
+			reasons = append(reasons, "unhealthy nodes detected")
 		}
+		if hs.Nodes.Status == healthQualityUnavailable {
+			reasons = append(reasons, "node health summary unavailable")
+		}
+		if hs.Pods.Status == healthQualityUnavailable {
+			reasons = append(reasons, "pod health summary unavailable")
+		}
+		if hs.Status != healthQualityComplete && systemStatus == "nominal" {
+			systemStatus = "degraded"
+			resp["system_status"] = systemStatus
+		}
+		resp["reasons"] = reasons
 	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
 type healthSummary struct {
-	Nodes nodeSummary `json:"nodes"`
-	Pods  podSummary  `json:"pods"`
+	Status healthQuality `json:"status"`
+	Nodes  nodeSummary   `json:"nodes"`
+	Pods   podSummary    `json:"pods"`
 }
 
 type nodeSummary struct {
-	Healthy   int `json:"healthy"`
-	Unhealthy int `json:"unhealthy"`
+	Status    healthQuality `json:"status"`
+	Healthy   int           `json:"healthy"`
+	Unhealthy int           `json:"unhealthy"`
+	Unknown   int           `json:"unknown"`
 }
 
 // podSummary buckets pods by their oksg.pod.health.status string label.
 // Field names match the public string set documented at
 // pkg/core/metrics/health_status.go and in docs/api-reference.md.
 type podSummary struct {
-	Healthy         int `json:"healthy"`
-	RunningNotReady int `json:"running_not_ready"`
-	Restarting      int `json:"restarting"`
-	Pending         int `json:"pending"`
-	Succeeded       int `json:"succeeded"`
-	Failed          int `json:"failed"`
-	Unknown         int `json:"unknown"`
+	Status          healthQuality `json:"status"`
+	Healthy         int           `json:"healthy"`
+	RunningNotReady int           `json:"running_not_ready"`
+	Restarting      int           `json:"restarting"`
+	Pending         int           `json:"pending"`
+	Succeeded       int           `json:"succeeded"`
+	Failed          int           `json:"failed"`
+	Unknown         int           `json:"unknown"`
 }
 
-func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary {
-	now := time.Now().UTC()
-	from := now.Add(-5 * time.Minute)
+func (h *StatusHandler) computeHealthSummary(ctx context.Context, graphNodes []topology.Node) *healthSummary {
+	var nodeIDs, podIDs []entities.EntityID
+	for _, node := range graphNodes {
+		switch node.Kind {
+		case entities.KindNode:
+			nodeIDs = append(nodeIDs, node.ID)
+		case entities.KindPod:
+			podIDs = append(podIDs, node.ID)
+		}
+	}
+	if h.metricStore == nil {
+		return &healthSummary{
+			Status: healthQualityUnavailable,
+			Nodes:  nodeSummary{Status: healthQualityUnavailable, Unknown: len(nodeIDs)},
+			Pods:   podSummary{Status: healthQualityUnavailable, Unknown: len(podIDs)},
+		}
+	}
 
-	hs := &healthSummary{}
+	nodeResult := queryHealthSamples(ctx, h.metricStore, "k8s.node.condition.ready", nodeIDs, false)
+	podResult := queryHealthSamples(ctx, h.metricStore, "oksg.pod.health.status", podIDs, false)
+	applicable := make([]healthQuality, 0, 2)
+	if len(nodeIDs) > 0 {
+		applicable = append(applicable, nodeResult.quality)
+	}
+	if len(podIDs) > 0 {
+		applicable = append(applicable, podResult.quality)
+	}
+	overall := healthQualityComplete
+	if len(applicable) > 0 {
+		overall = combineHealthQuality(applicable...)
+	}
+	hs := &healthSummary{
+		Status: overall,
+		Nodes:  nodeSummary{Status: nodeResult.quality},
+		Pods:   podSummary{Status: podResult.quality},
+	}
 
-	// Node health from k8s.node.condition.ready.
-	nodeSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
-		MetricName: "k8s.node.condition.ready",
-		From:       from,
-		To:         now,
-	})
-	if err == nil {
-		for _, v := range latestSamplePerEntity(nodeSamples) {
-			if v >= 1.0 {
+	if nodeResult.err != nil {
+		h.logger.Warn("node health-status query failed", logging.Error(nodeResult.err))
+	}
+	if nodeResult.quality == healthQualityUnavailable {
+		hs.Nodes.Unknown = len(nodeIDs)
+	} else {
+		latest := latestSamplePerEntity(nodeResult.samples)
+		for _, id := range nodeIDs {
+			value, ok := latest[id]
+			if !ok {
+				hs.Nodes.Unknown++
+			} else if value >= 1.0 {
 				hs.Nodes.Healthy++
 			} else {
 				hs.Nodes.Unhealthy++
@@ -177,62 +228,34 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context) *healthSummary
 		}
 	}
 
-	// Pod health from the derived oksg.pod.health.status enum (string label
-	// already populated on each sample by the metric store).
-	if podIDs := h.podEntityIDs(ctx); len(podIDs) > 0 {
-		podSamples, err := h.metricStore.Query(ctx, query.MetricQuery{
-			MetricName: "oksg.pod.health.status",
-			EntityIDs:  podIDs,
-			From:       from,
-			To:         now,
-		})
-		if err == nil {
-			latestLabel := latestLabelPerEntity(podSamples)
-			for _, id := range podIDs {
-				switch latestLabel[id] {
-				case metrics.HealthHealthy:
-					hs.Pods.Healthy++
-				case metrics.HealthRunningNotReady:
-					hs.Pods.RunningNotReady++
-				case metrics.HealthRestarting:
-					hs.Pods.Restarting++
-				case metrics.HealthPending:
-					hs.Pods.Pending++
-				case metrics.HealthSucceeded:
-					hs.Pods.Succeeded++
-				case metrics.HealthFailed:
-					hs.Pods.Failed++
-				default:
-					hs.Pods.Unknown++
-				}
+	if podResult.err != nil {
+		h.logger.Warn("pod health-status query failed", logging.Error(podResult.err))
+	}
+	if podResult.quality == healthQualityUnavailable {
+		hs.Pods.Unknown = len(podIDs)
+	} else {
+		latestLabel := latestLabelPerEntity(podResult.samples)
+		for _, id := range podIDs {
+			switch latestLabel[id] {
+			case metrics.HealthHealthy:
+				hs.Pods.Healthy++
+			case metrics.HealthRunningNotReady:
+				hs.Pods.RunningNotReady++
+			case metrics.HealthRestarting:
+				hs.Pods.Restarting++
+			case metrics.HealthPending:
+				hs.Pods.Pending++
+			case metrics.HealthSucceeded:
+				hs.Pods.Succeeded++
+			case metrics.HealthFailed:
+				hs.Pods.Failed++
+			default:
+				hs.Pods.Unknown++
 			}
-		} else {
-			h.logger.Warn("pod health-status query failed", logging.Error(err))
-			hs.Pods.Unknown += len(podIDs)
 		}
 	}
 
 	return hs
-}
-
-// podEntityIDs returns the IDs of every Pod in the latest topology snapshot.
-// Used as the multi-match filter on the health-status query so the metric
-// store only returns samples for currently-known pods.
-func (h *StatusHandler) podEntityIDs(ctx context.Context) []entities.EntityID {
-	if h.graphStore == nil {
-		return nil
-	}
-	snap, err := h.graphStore.GetLatest(ctx)
-	if err != nil || snap == nil {
-		return nil
-	}
-	var ids []entities.EntityID
-	for _, node := range snap.Graph.Nodes {
-		if node.Kind == entities.KindPod {
-			ids = append(ids, node.ID)
-		}
-	}
-	return ids
 }
 
 // latestLabelPerEntity collapses a list of MetricSamples to one ValueLabel per

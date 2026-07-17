@@ -135,22 +135,23 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 
-	var normalizerOpts []ingest.NormalizerOption
+	var assignment metrics.Assignment
 	if loadedProfile != nil {
-		assignment, _, err := metrics.Resolve(metrics.DefaultCatalog(), metrics.DefaultLogicalSources(), loadedProfile)
+		var err error
+		assignment, _, err = metrics.Resolve(metrics.DefaultCatalog(), metrics.DefaultLogicalSources(), loadedProfile)
 		if err != nil {
 			return fmt.Errorf("resolve metric source assignment: %w", err)
 		}
-		normalizerOpts = append(normalizerOpts, ingest.WithAssignment(assignment))
 		logger.Info("metric source assignment loaded",
 			logging.Any("metric_count", len(assignment)),
 		)
 	}
 
-	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, normalizerOpts...)
+	sourcePolicy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), assignment)
+	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithSourcePolicy(sourcePolicy))
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
-	meshMetricTopoBuilder := ingest.NewMeshMetricTopologyBuilder(dialect, cfg.ClusterName)
+	meshMetricTopoBuilder := ingest.NewMeshMetricTopologyBuilder(dialect, cfg.ClusterName, sourcePolicy)
 
 	bufferedTopo := ingest.NewBufferedTopologyIngestor(
 		map[schema.SignalType]ingest.TopologyBuilder{

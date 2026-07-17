@@ -71,6 +71,12 @@ type availableFilters struct {
 	Relations  []string `json:"relations"`
 }
 
+type healthEnrichmentQuality struct {
+	Status     healthQuality `json:"status"`
+	Pods       healthQuality `json:"pods"`
+	Containers healthQuality `json:"containers"`
+}
+
 // --- helpers ---
 
 // enrichNodeFrom builds an enrichedNode from a topology node, a pre-resolved
@@ -117,19 +123,10 @@ func (h *GraphHandler) batchEntities(ctx context.Context, ids []entities.EntityI
 	return resolved
 }
 
-// resolveHealthStatus issues at most two metric-store queries (one per
-// derived health-status metric) for the supplied node IDs and returns a map
-// of entity ID to its public string label. Missing entries (no recent
-// sample, no metric store, query error) are absent from the returned map;
-// the caller defaults to metrics.HealthUnknown.
-//
-// The lookup is per-snapshot (not per-node) and uses the multi-match
-// entity_id=~"..." filter that metricSelector already supports, so this is
-// O(2 queries) regardless of node count.
-func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node) map[entities.EntityID]string {
-	if h.metricStore == nil || len(nodes) == 0 {
-		return nil
-	}
+// resolveHealthStatus issues at most two metric-store queries. Snapshot-wide
+// callers omit entity matchers and intersect in memory, keeping query text
+// bounded as the graph grows. Single-node callers retain exact filtering.
+func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node, exact bool) (map[entities.EntityID]string, healthEnrichmentQuality) {
 	var podIDs, containerIDs []entities.EntityID
 	for _, n := range nodes {
 		switch n.Kind {
@@ -140,37 +137,38 @@ func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology
 		}
 	}
 	resolved := make(map[entities.EntityID]string)
-	h.fillHealthStatus(ctx, "oksg.pod.health.status", podIDs, resolved)
-	h.fillHealthStatus(ctx, "oksg.container.health.status", containerIDs, resolved)
-	return resolved
+	podQuality := h.fillHealthStatus(ctx, "oksg.pod.health.status", podIDs, exact, resolved)
+	containerQuality := h.fillHealthStatus(ctx, "oksg.container.health.status", containerIDs, exact, resolved)
+
+	applicable := make([]healthQuality, 0, 2)
+	if len(podIDs) > 0 {
+		applicable = append(applicable, podQuality)
+	}
+	if len(containerIDs) > 0 {
+		applicable = append(applicable, containerQuality)
+	}
+	status := healthQualityComplete
+	if len(applicable) > 0 {
+		status = combineHealthQuality(applicable...)
+	}
+	return resolved, healthEnrichmentQuality{Status: status, Pods: podQuality, Containers: containerQuality}
 }
 
-func (h *GraphHandler) fillHealthStatus(ctx context.Context, metricName string, ids []entities.EntityID, into map[entities.EntityID]string) {
-	if len(ids) == 0 {
-		return
+func (h *GraphHandler) fillHealthStatus(ctx context.Context, metricName string, ids []entities.EntityID, exact bool, into map[entities.EntityID]string) healthQuality {
+	result := queryHealthSamples(ctx, h.metricStore, metricName, ids, exact)
+	if result.err != nil {
+		h.logger.Warn("health-status query failed", logging.Error(result.err), logging.String("metric", metricName))
+		return result.quality
 	}
-	now := time.Now()
-	samples, err := h.metricStore.Query(ctx, query.MetricQuery{
-		MetricName: metricName,
-		EntityIDs:  ids,
-		From:       now.Add(-5 * time.Minute),
-		To:         now,
-	})
-	if err != nil {
-		h.logger.Warn("health-status query failed", logging.Error(err), logging.String("metric", metricName))
-		return
-	}
-	// Keep the most recent sample per entity (samples come back in
-	// descending time order from the store).
-	for _, s := range samples {
-		if _, seen := into[s.EntityID]; seen {
+	// Select by timestamp because MetricStore implementations do not guarantee
+	// result ordering.
+	for id, label := range latestLabelPerEntity(result.samples) {
+		if label == "" {
 			continue
 		}
-		if s.ValueLabel == "" {
-			continue
-		}
-		into[s.EntityID] = s.ValueLabel
+		into[id] = label
 	}
+	return result.quality
 }
 
 func summaryFrom(entity entities.Entity) *relatedEntitySummary {
@@ -274,7 +272,7 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, n.ID)
 	}
 	resolved := h.batchEntities(r.Context(), ids)
-	healthByID := h.resolveHealthStatus(r.Context(), nodes)
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), nodes, false)
 
 	enrichedNodes := make([]enrichedNode, 0, len(nodes))
 	for _, n := range nodes {
@@ -291,6 +289,7 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 			"nodes":     enrichedNodes,
 			"edges":     edges,
 		},
+		"health_enrichment": healthQuality,
 		"summary": map[string]any{
 			"node_count":           len(nodes),
 			"edge_count":           len(edges),
@@ -319,7 +318,15 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if snap == nil {
-		writeJSONPaginated(w, http.StatusOK, map[string]any{"nodes": []enrichedNode{}, "total": 0}, "")
+		writeJSONPaginated(w, http.StatusOK, map[string]any{
+			"nodes": []enrichedNode{},
+			"total": 0,
+			"health_enrichment": healthEnrichmentQuality{
+				Status:     healthQualityComplete,
+				Pods:       healthQualityComplete,
+				Containers: healthQualityComplete,
+			},
+		}, "")
 		return
 	}
 
@@ -340,7 +347,7 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		candidateIDs = append(candidateIDs, n.ID)
 	}
 	resolved := h.batchEntities(r.Context(), candidateIDs)
-	healthByID := h.resolveHealthStatus(r.Context(), candidates)
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), candidates, false)
 
 	var filtered []enrichedNode
 	for _, n := range candidates {
@@ -366,8 +373,9 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	page, nextToken := applyPagination(filtered, pag)
 
 	writeJSONPaginated(w, http.StatusOK, map[string]any{
-		"nodes": page,
-		"total": total,
+		"nodes":             page,
+		"total":             total,
+		"health_enrichment": healthQuality,
 	}, nextToken)
 }
 
@@ -427,7 +435,7 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, id)
 	}
 	resolved := h.batchEntities(r.Context(), ids)
-	healthByID := h.resolveHealthStatus(r.Context(), []topology.Node{*found})
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), []topology.Node{*found}, true)
 
 	enriched := enrichNodeFrom(*found, resolved[nodeID], healthByID[nodeID])
 
@@ -441,7 +449,8 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"node": enriched,
+		"node":              enriched,
+		"health_enrichment": healthQuality,
 		"edges": map[string]any{
 			"outbound": outboundEnriched,
 			"inbound":  inboundEnriched,

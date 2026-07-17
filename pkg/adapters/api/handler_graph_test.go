@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
@@ -64,7 +67,7 @@ func seedEntityRegistry(t *testing.T) *persistence.InMemoryEntityRegistry {
 
 func TestGetGraphReturnsSnapshot(t *testing.T) {
 	gs := seedGraph(t)
-	srv := newTestServer(t, Config{GraphStore: gs})
+	srv := newTestServer(t, Config{GraphStore: gs, MetricStore: persistence.NewInMemoryMetricStore()})
 	defer srv.cancel()
 
 	resp := doGet(t, srv, "/api/v1/graph")
@@ -72,6 +75,8 @@ func TestGetGraphReturnsSnapshot(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parseResponseData(t, resp)
+	health := data["health_enrichment"].(map[string]any)
+	require.Equal(t, "complete", health["status"])
 	summary := data["summary"].(map[string]any)
 	require.EqualValues(t, 4, summary["node_count"])
 	require.EqualValues(t, 2, summary["edge_count"])
@@ -96,6 +101,69 @@ func TestGetGraphReturnsSnapshot(t *testing.T) {
 	require.Contains(t, filters["relations"], "calls")
 }
 
+func TestGetGraphReportsUnavailableHealthEnrichmentWithoutMetricStore(t *testing.T) {
+	srv := newTestServer(t, Config{GraphStore: seedGraph(t)})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/graph")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	health := parseResponseData(t, resp)["health_enrichment"].(map[string]any)
+	require.Equal(t, "unavailable", health["status"])
+}
+
+func TestGetGraphHealthQueriesStayConstantSize(t *testing.T) {
+	gs := persistence.NewInMemoryGraphStore()
+	now := time.Now().UTC()
+	nodes := make([]topology.Node, 0, 2000)
+	for i := 0; i < 1000; i++ {
+		nodes = append(nodes,
+			topology.Node{ID: entities.EntityID("pod-" + strconv.Itoa(i)), Kind: entities.KindPod},
+			topology.Node{ID: entities.EntityID("container-" + strconv.Itoa(i)), Kind: entities.KindContainer},
+		)
+	}
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		CreatedAt: now,
+		Graph:     topology.Graph{Timestamp: now, Nodes: nodes},
+	}))
+	store := &recordingMetricStore{samples: map[string][]metrics.MetricSample{}}
+	srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/graph")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, store.queries, 2)
+	for _, q := range store.queries {
+		require.Empty(t, q.EntityIDs, "snapshot-wide health query must not grow with graph size")
+	}
+}
+
+func TestGetGraphReportsPartialHealthEnrichment(t *testing.T) {
+	gs := persistence.NewInMemoryGraphStore()
+	now := time.Now().UTC()
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+		CreatedAt: now,
+		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
+			{ID: "pod-1", Kind: entities.KindPod},
+			{ID: "container-1", Kind: entities.KindContainer},
+		}},
+	}))
+	store := &recordingMetricStore{
+		samples: map[string][]metrics.MetricSample{},
+		errors:  map[string]error{"oksg.pod.health.status": errors.New("pod query failed")},
+	}
+	srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/graph")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	health := parseResponseData(t, resp)["health_enrichment"].(map[string]any)
+	require.Equal(t, "partial", health["status"])
+	require.Equal(t, "unavailable", health["pods"])
+	require.Equal(t, "complete", health["containers"])
+}
+
 func TestGetGraphReturns404WhenEmpty(t *testing.T) {
 	gs := persistence.NewInMemoryGraphStore()
 	srv := newTestServer(t, Config{GraphStore: gs})
@@ -116,7 +184,28 @@ func TestListNodesFilterByKind(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parsePaginatedData(t, resp)
+	health := data["health_enrichment"].(map[string]any)
+	require.Equal(t, "complete", health["status"])
 	require.EqualValues(t, 2, data["total"])
+}
+
+func TestListNodesWithoutSnapshotIncludesHealthEnrichment(t *testing.T) {
+	srv := newTestServer(t, Config{
+		GraphStore:  persistence.NewInMemoryGraphStore(),
+		MetricStore: persistence.NewInMemoryMetricStore(),
+	})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/graph/nodes")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parsePaginatedData(t, resp)
+	require.EqualValues(t, 0, data["total"])
+	health := data["health_enrichment"].(map[string]any)
+	require.Equal(t, "complete", health["status"])
+	require.Equal(t, "complete", health["pods"])
+	require.Equal(t, "complete", health["containers"])
 }
 
 func TestListNodesFilterByNamespace(t *testing.T) {
@@ -200,6 +289,76 @@ func TestGetNodeReturnsEnrichedEdges(t *testing.T) {
 	related := edge["related_node"].(map[string]any)
 	require.Equal(t, "svc-b", related["name"])
 	require.Equal(t, "service", related["kind"])
+}
+
+func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testing.T) {
+	now := time.Now().UTC()
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "health-order")
+	orders := []struct {
+		name    string
+		path    string
+		extract func(*testing.T, map[string]any) string
+		samples []metrics.MetricSample
+	}{
+		{
+			name: "full graph ascending",
+			path: "/api/v1/graph",
+			extract: func(t *testing.T, data map[string]any) string {
+				t.Helper()
+				nodes := data["graph"].(map[string]any)["nodes"].([]any)
+				return nodes[0].(map[string]any)["status"].(string)
+			},
+			samples: []metrics.MetricSample{
+				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthPending, Timestamp: now.Add(-time.Minute)},
+				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthHealthy, Timestamp: now},
+			},
+		},
+		{
+			name: "node list descending",
+			path: "/api/v1/graph/nodes?kind=pod",
+			extract: func(t *testing.T, data map[string]any) string {
+				t.Helper()
+				nodes := data["nodes"].([]any)
+				return nodes[0].(map[string]any)["status"].(string)
+			},
+			samples: []metrics.MetricSample{
+				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthHealthy, Timestamp: now},
+				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthPending, Timestamp: now.Add(-time.Minute)},
+			},
+		},
+		{
+			name: "single node mixed",
+			path: "/api/v1/graph/nodes/" + string(podID),
+			extract: func(t *testing.T, data map[string]any) string {
+				t.Helper()
+				return data["node"].(map[string]any)["status"].(string)
+			},
+			samples: []metrics.MetricSample{
+				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthPending, Timestamp: now.Add(-time.Minute)},
+				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthHealthy, Timestamp: now},
+				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthFailed, Timestamp: now.Add(-30 * time.Second)},
+			},
+		},
+	}
+
+	for _, tt := range orders {
+		t.Run(tt.name, func(t *testing.T) {
+			gs := persistence.NewInMemoryGraphStore()
+			require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+				CreatedAt: now,
+				Graph:     topology.Graph{Timestamp: now, Nodes: []topology.Node{{ID: podID, Kind: entities.KindPod}}},
+			}))
+			store := &recordingMetricStore{samples: map[string][]metrics.MetricSample{"oksg.pod.health.status": tt.samples}}
+			srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
+			defer srv.cancel()
+
+			resp := doGet(t, srv, tt.path)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			data := parseResponseData(t, resp)
+			require.Equal(t, metrics.HealthHealthy, tt.extract(t, data))
+		})
+	}
 }
 
 // countingEntityRegistry wraps an EntityRegistry and counts per-id and batch

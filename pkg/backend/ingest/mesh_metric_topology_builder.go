@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -16,17 +17,26 @@ import (
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
-const meshIstioSource = "mesh.istio"
+func isServiceGraphEdgeMetric(metricName, translatedName string) bool {
+	return strings.HasPrefix(metricName, "traces.service.graph.") ||
+		strings.HasPrefix(metricName, "traces_service_graph_") ||
+		strings.HasPrefix(metricName, "istio_") ||
+		strings.HasPrefix(translatedName, "servicegraph.")
+}
 
 // MeshMetricTopologyBuilder derives calls edges from mesh metrics that have
 // already been rewritten to the servicegraph edge attribute shape.
 type MeshMetricTopologyBuilder struct {
-	dialect     *metrics.DialectRegistry
-	clusterName string
+	dialect      *metrics.DialectRegistry
+	clusterName  string
+	sourcePolicy *MetricSourcePolicy
 }
 
-func NewMeshMetricTopologyBuilder(dialect *metrics.DialectRegistry, clusterName string) *MeshMetricTopologyBuilder {
-	return &MeshMetricTopologyBuilder{dialect: dialect, clusterName: clusterName}
+func NewMeshMetricTopologyBuilder(dialect *metrics.DialectRegistry, clusterName string, policy *MetricSourcePolicy) *MeshMetricTopologyBuilder {
+	if policy == nil {
+		policy = NewMetricSourcePolicy(metrics.DefaultLogicalSources(), nil)
+	}
+	return &MeshMetricTopologyBuilder{dialect: dialect, clusterName: clusterName, sourcePolicy: policy}
 }
 
 func (b *MeshMetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnvelope) ([]topology.Edge, error) {
@@ -42,7 +52,13 @@ func (b *MeshMetricTopologyBuilder) Build(_ context.Context, envelope schema.Raw
 			if !isServiceGraphEdgeMetric(metric.Name, translated) {
 				continue
 			}
+			if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
+				continue
+			}
 			for _, dp := range metricAttributeSets(metric) {
+				if !b.sourcePolicy.Validate(translated, dp.Attributes).Accepted() {
+					continue
+				}
 				edge, ok := b.edgeFromAttributes(metricTimestamp(envelope.Timestamp, dp.TimeUnixNano), dp.Attributes)
 				if !ok {
 					continue
@@ -81,7 +97,13 @@ func (b *MeshMetricTopologyBuilder) BuildNodes(_ context.Context, envelope schem
 			if !isServiceGraphEdgeMetric(metric.Name, translated) {
 				continue
 			}
+			if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
+				continue
+			}
 			for _, dp := range metricAttributeSets(metric) {
+				if !b.sourcePolicy.Validate(translated, dp.Attributes).Accepted() {
+					continue
+				}
 				client := kvString(dp.Attributes, semconv.AttrClient)
 				server := kvString(dp.Attributes, semconv.AttrServer)
 				clientNamespace := kvString(dp.Attributes, semconv.AttrClientNamespace)
@@ -159,10 +181,7 @@ func metricTimestamp(fallback time.Time, timeUnixNano uint64) time.Time {
 }
 
 func sourceFromAttrs(attrs []*commonpb.KeyValue) string {
-	if source := firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm); source != "" {
-		return source
-	}
-	return meshIstioSource
+	return firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm)
 }
 
 func meshMetadata(attrs []*commonpb.KeyValue) map[string]string {
