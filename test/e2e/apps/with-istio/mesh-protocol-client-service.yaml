@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-protocol-client
+  namespace: oksg-demo
+spec:
+  selector:
+    app: mesh-protocol-client
+  ports:
+    - name: grpc-client
+      port: 50052
+      targetPort: 50052
+      appProtocol: grpc

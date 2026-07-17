@@ -2,7 +2,12 @@
 
 set -euo pipefail
 
-task test:e2e:scenario:prometheus
+# Standalone commands below use kubectl directly, so load the same active
+# cluster profile and KUBECONFIG as the Taskfile.
+# shellcheck disable=SC1091
+. "$(pwd)/test/e2e/cluster/profile.sh"
+
+task test:e2e:scenario:prometheus:prepare
 
 python3 - <<'PY'
 import json
@@ -22,103 +27,315 @@ assert len(prom_source["prometheus_targets"]) >= 1, "Expected at least one prome
 print("✓ Discovery profile valid")
 PY
 
-# Verify the generated collector values wire up the servicegraph/spanmetrics connectors.
+# Verify the generated collector values wire up the v0.156 compatibility-first
+# service graph and span metrics connector instances.
 python3 - <<'PY'
 from pathlib import Path
 
 values = Path("bin/e2e/otel-values.yaml").read_text()
-assert "servicegraph:" in values, "generated Helm values should include the servicegraph connector"
-assert "spanmetrics:" in values, "generated Helm values should include the spanmetrics connector"
-print("✓ Generated collector values include servicegraph/spanmetrics connector wiring")
+assert "service_graph:" in values, "generated Helm values should include the service_graph connector"
+assert "span_metrics:" in values, "generated Helm values should include the span_metrics connector"
+assert "otlp_grpc:" in values, "generated Helm values should use the non-deprecated OTLP gRPC exporter ID"
+assert 'set(datapoint.attributes["oksg_source"]' in values, "source tagging must use explicit datapoint context"
+assert 'set(attributes["oksg_source"]' not in values, "ambiguous OTTL attribute paths must not be generated"
+assert "metrics_flush_interval: 15s" in values, "servicegraph should flush on the configured 15s ticker"
+assert "-connector.spanmetrics.includeCollectorInstanceID" in values, "spanmetrics instance identity must remain disabled"
+print("✓ Generated collector values include compatibility-first service_graph/span_metrics wiring")
 PY
 
-# Wait for telemetry (including gateway traffic from the scenario) to flow through the pipeline.
-echo "Waiting 60s for telemetry to flow through pipeline..."
-sleep 60
+# Create every success/error branch, then let the cumulative series span the
+# minimum query window before capturing the controlled-traffic baseline.
+task test:e2e:traffic TRAFFIC_REQUESTS=1 TRAFFIC_ERROR_REQUESTS=1 TRAFFIC_INTERVAL=0.2 TRAFFIC_INTERLEAVE_ERRORS=true
+sleep 65
 
-# Port-forward to backend health and API endpoints.
+# Port-forward before traffic so the v0.156 servicegraph cumulative-counter
+# baselines can be captured. The exact raw truth is the post-traffic increase.
 lsof -ti :13133 | xargs kill 2>/dev/null || true
 lsof -ti :18081 | xargs kill 2>/dev/null || true
+lsof -ti :18428 | xargs kill 2>/dev/null || true
 kubectl port-forward -n oksg-system deployment/oksg-backend 13133:13133 &
 PF_HEALTH_PID=$!
 kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
 PF_API_PID=$!
-trap "kill $PF_HEALTH_PID $PF_API_PID 2>/dev/null || true" EXIT
+kubectl port-forward -n oksg-system svc/oksg-otel-victoria-metrics-single-server 18428:8428 &
+PF_VM_PID=$!
+trap "kill $PF_HEALTH_PID $PF_API_PID $PF_VM_PID 2>/dev/null || true" EXIT
 sleep 3
 
-# Verify backend received metric samples and inspect the graph.
+python3 - <<'PY'
+import json
+import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+expected_edges = {
+    ("gateway-go", "service-a-python"),
+    ("gateway-go", "service-b-node"),
+    ("service-a-python", "service-b-node"),
+}
+
+def query(metric):
+    selectors = " or ".join(
+        f'{metric}{{source="traces.servicegraph",temporality!="delta",oksg_unit="per_second",edge_client="{client}",edge_server="{server}"}}'
+        for client, server in sorted(expected_edges)
+    )
+    promql = (
+        'sum by (edge_client,edge_server) '
+        f'({selectors})'
+    )
+    url = "http://localhost:18428/api/v1/query?" + urllib.parse.urlencode({"query": promql})
+    result = json.loads(urllib.request.urlopen(url, timeout=5).read())["data"]["result"]
+    return [
+        {
+            "edge_client": item["metric"].get("edge_client"),
+            "edge_server": item["metric"].get("edge_server"),
+            "value": float(item["value"][1]),
+        }
+        for item in result
+    ]
+
+deadline = time.time() + 120
+requests = []
+errors = []
+while time.time() < deadline:
+    requests = query("servicegraph_request_count")
+    errors = query("servicegraph_request_error_count")
+    request_edges = {(item["edge_client"], item["edge_server"]) for item in requests}
+    error_edges = {(item["edge_client"], item["edge_server"]) for item in errors}
+    if request_edges == expected_edges and error_edges == expected_edges:
+        break
+    time.sleep(3)
+
+request_edges = {(item["edge_client"], item["edge_server"]) for item in requests}
+error_edges = {(item["edge_client"], item["edge_server"]) for item in errors}
+assert request_edges == expected_edges, f"incomplete servicegraph request baseline: {requests}"
+assert error_edges == expected_edges, f"incomplete servicegraph error baseline: {errors}"
+
+Path("bin/e2e/servicegraph-baseline.json").write_text(json.dumps({
+    "requests": requests,
+    "errors": errors,
+}))
+print("✓ Captured servicegraph cumulative-counter baselines")
+PY
+
+# Generate one bounded traffic window so every rate and ratio has a known truth set.
+task test:e2e:traffic TRAFFIC_REQUESTS=30 TRAFFIC_ERROR_REQUESTS=10 TRAFFIC_INTERVAL=0.5 TRAFFIC_INTERLEAVE_ERRORS=true
+
+# Inspect the graph. External metric storage intentionally leaves the legacy
+# /debug/metrics in-memory endpoint empty; the VM and public API checks below
+# are the metric ingestion assertions for this scenario.
 python3 - <<'PY'
 import json
 import urllib.request
-import sys
-
-metrics_resp = urllib.request.urlopen("http://localhost:13133/debug/metrics")
-metrics = json.loads(metrics_resp.read())
-assert len(metrics) > 0, f"Expected metric samples in backend, got empty list"
-names = sorted({m["metric_name"] for m in metrics})
-print(f"✓ Backend has {len(metrics)} metric samples")
-print(f"  First 5 metric names: {names[:5]}")
 
 graph_resp = urllib.request.urlopen("http://localhost:13133/debug/graph")
 graph = json.loads(graph_resp.read())
-if graph:
-    edges = graph.get("graph", {}).get("edges", [])
-    nodes = graph.get("graph", {}).get("nodes", [])
-    print(f"✓ Backend graph: {len(nodes)} nodes, {len(edges)} edges")
-    if edges:
-        relations = sorted({e.get("relation") for e in edges})
-        print(f"  Edge relations: {relations}")
-
-    # Validate runtime edges from OTLP telemetry.
-    runtime_relations = {"calls", "runs_on", "contains"}
-    found_runtime = {e["relation"] for e in edges} & runtime_relations
-    for rel in found_runtime:
-        count = sum(1 for e in edges if e["relation"] == rel)
-        print(f"  ✓ Found {count} '{rel}' edge(s)")
-
-    # Validate structural edges from K8s API.
-    structural_relations = {"exposes", "routes_to", "uses"}
-    found_structural = {e["relation"] for e in edges} & structural_relations
-    for rel in found_structural:
-        count = sum(1 for e in edges if e["relation"] == rel)
-        print(f"  ✓ Found {count} '{rel}' edge(s)")
-
-    # Validate node kinds include structural entities.
-    node_kinds = {n.get("kind") for n in nodes}
-    print(f"  Node kinds: {sorted(node_kinds)}")
-else:
-    print("⚠ No graph snapshot yet (traces may not have flowed)")
+edges = graph.get("graph", {}).get("edges", [])
+nodes = graph.get("graph", {}).get("nodes", [])
+assert nodes and edges, f"expected non-empty graph snapshot, got {len(nodes)} nodes and {len(edges)} edges"
+identities = {
+    node["id"]: (
+        node.get("labels", {}).get("namespace", ""),
+        node.get("labels", {}).get("name", ""),
+    )
+    for node in nodes
+}
+all_calls = [
+    (
+        identities.get(edge.get("source"), ("", "")),
+        identities.get(edge.get("target"), ("", "")),
+    )
+    for edge in edges
+    if edge.get("relation") == "calls"
+]
+controlled_participants = {
+    ("oksg-demo", "gateway-go"),
+    ("oksg-demo", "service-a-python"),
+    ("oksg-demo", "service-b-node"),
+}
+calls = [
+    edge
+    for edge in all_calls
+    if edge[0] in controlled_participants and edge[1] in controlled_participants
+]
+expected_calls = [
+    (("oksg-demo", "gateway-go"), ("oksg-demo", "service-a-python")),
+    (("oksg-demo", "gateway-go"), ("oksg-demo", "service-b-node")),
+    (("oksg-demo", "service-a-python"), ("oksg-demo", "service-b-node")),
+]
+assert sorted(calls) == sorted(expected_calls), \
+    f"calls graph gate mismatch (including duplicates): {calls} != {expected_calls}"
+print(f"✓ Backend graph contains the exact three controlled calls edges ({len(nodes)} nodes total)")
+unrelated_calls = [edge for edge in all_calls if edge not in calls]
+if unrelated_calls:
+    print(f"  diagnostic: ignored {len(unrelated_calls)} unrelated stored calls edge(s): {sorted(unrelated_calls)}")
+for relation in sorted({edge.get("relation") for edge in edges} - {"calls"}):
+    count = sum(1 for edge in edges if edge.get("relation") == relation)
+    print(f"  diagnostic: {count} '{relation}' edge(s)")
 PY
 
-# Validate servicegraph-derived metrics exposed through the public REST API.
+# Validate raw delta totals in VictoriaMetrics, then verify the public API's
+# temporality-aware rates, duration means, and error ratios.
 python3 - <<'PY'
 import json
+import math
+import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
-metrics = [
-    "servicegraph.request.count",
-    "servicegraph.request.duration",
-    "servicegraph.request.error.count",
-]
+expected_edges = {
+    ("gateway-go", "service-a-python"),
+    ("gateway-go", "service-b-node"),
+    ("service-a-python", "service-b-node"),
+}
+def vm_query(promql):
+    url = "http://localhost:18428/api/v1/query?" + urllib.parse.urlencode({"query": promql})
+    payload = json.loads(urllib.request.urlopen(url, timeout=5).read())
+    assert payload.get("status") == "success", payload
+    return payload["data"]["result"]
 
-for metric in metrics:
-    url = "http://localhost:18081/api/v1/metrics?" + urllib.parse.urlencode({
+def edge_values(result):
+    return {
+        (item["metric"].get("edge_client"), item["metric"].get("edge_server")): float(item["value"][1])
+        for item in result
+    }
+
+def exact_edge_query(metric):
+    selectors = " or ".join(
+        f'{metric}{{source="traces.servicegraph",temporality!="delta",oksg_unit="per_second",edge_client="{client}",edge_server="{server}"}}'
+        for client, server in sorted(expected_edges)
+    )
+    return f"sum by (edge_client,edge_server) ({selectors})"
+
+def baseline_values(name):
+    payload = json.loads(Path("bin/e2e/servicegraph-baseline.json").read_text())
+    return {
+        (item["edge_client"], item["edge_server"]): float(item["value"])
+        for item in payload[name]
+    }
+
+baseline_requests = baseline_values("requests")
+baseline_errors = baseline_values("errors")
+
+deadline = time.time() + 120
+raw_requests = {}
+raw_errors = {}
+while time.time() < deadline:
+    request_query = exact_edge_query("servicegraph_request_count")
+    error_query = exact_edge_query("servicegraph_request_error_count")
+    current_requests = edge_values(vm_query(request_query))
+    current_errors = edge_values(vm_query(error_query))
+    raw_requests = {edge: value - baseline_requests.get(edge, 0) for edge, value in current_requests.items()}
+    raw_errors = {edge: value - baseline_errors.get(edge, 0) for edge, value in current_errors.items()}
+    if all(raw_requests.get(edge) == 40 for edge in expected_edges) and all(raw_errors.get(edge) == 10 for edge in expected_edges):
+        break
+    time.sleep(5)
+
+assert set(raw_requests) == expected_edges, f"unexpected request edges: {raw_requests}"
+assert set(raw_errors) == expected_edges, f"unexpected error edges: {raw_errors}"
+for edge in sorted(expected_edges):
+    assert raw_requests[edge] == 40, f"{edge} request total: {raw_requests[edge]} != 40"
+    assert raw_errors[edge] == 10, f"{edge} error total: {raw_errors[edge]} != 10"
+print("✓ VM raw cumulative-counter increases match 40 requests and 10 errors on all internal edges")
+
+def api_payload(metric, aggregation=None, window="1m"):
+    params = {
         "metric_name": metric,
         "page_size": "1000",
-    })
-    payload = json.loads(urllib.request.urlopen(url).read())
-    samples = payload.get("samples") or payload.get("data", {}).get("samples", [])
-    assert len(samples) > 0, f"expected at least one sample for {metric}"
-    print(f"✓ {metric}: {len(samples)} sample(s)")
+    }
+    if aggregation:
+        params["aggregation"] = aggregation
+    if window:
+        params["window"] = window
+    url = "http://localhost:18081/api/v1/metrics?" + urllib.parse.urlencode(params)
+    payload = json.loads(urllib.request.urlopen(url, timeout=5).read())
+    return payload.get("data", payload)
 
-ratio_url = "http://localhost:18081/api/v1/metrics?" + urllib.parse.urlencode({
-    "metric_name": "servicegraph.request.error.ratio",
-    "page_size": "1000",
-})
-ratio_payload = json.loads(urllib.request.urlopen(ratio_url).read())
-ratio_samples = ratio_payload.get("samples") or ratio_payload.get("data", {}).get("samples", [])
-print(f"✓ servicegraph.request.error.ratio query returned {len(ratio_samples)} sample(s)")
+def api_samples(metric, aggregation=None, window="1m"):
+    return api_payload(metric, aggregation, window).get("samples", [])
+
+def latest_by_edge(samples):
+    latest = {}
+    for sample in samples:
+        labels = sample.get("labels", {})
+        if labels.get("source") != "traces.servicegraph":
+            continue
+        edge = (labels.get("edge_client"), labels.get("edge_server"))
+        if edge not in expected_edges:
+            continue
+        if edge not in latest or sample["timestamp"] > latest[edge]["timestamp"]:
+            latest[edge] = sample
+    return latest
+
+def latest_aggregate_by_edge(samples):
+    grouped = {}
+    for sample in samples:
+        labels = sample.get("labels", {})
+        if labels.get("source") != "traces.servicegraph":
+            continue
+        edge = (labels.get("edge_client"), labels.get("edge_server"))
+        if edge not in expected_edges:
+            continue
+        timestamp = sample["timestamp"]
+        current = grouped.get(edge)
+        if current is None or timestamp > current[0]:
+            grouped[edge] = (timestamp, float(sample["value"]))
+        elif timestamp == current[0]:
+            grouped[edge] = (timestamp, current[1] + float(sample["value"]))
+    return {edge: value for edge, (_, value) in grouped.items()}
+
+api_deadline = time.time() + 60
+request_increase_payload = {}
+error_increase_payload = {}
+request_increases = {}
+error_increases = {}
+while time.time() < api_deadline:
+    request_increase_payload = api_payload("servicegraph.request.count", "increase")
+    error_increase_payload = api_payload("servicegraph.request.error.count", "increase")
+    request_increases = latest_aggregate_by_edge(request_increase_payload["samples"])
+    error_increases = latest_aggregate_by_edge(error_increase_payload["samples"])
+    if all(request_increases.get(edge) == 40 for edge in expected_edges) and all(error_increases.get(edge) == 10 for edge in expected_edges):
+        break
+    time.sleep(2)
+
+assert all(request_increases.get(edge) == 40 for edge in expected_edges), request_increases
+assert all(error_increases.get(edge) == 10 for edge in expected_edges), error_increases
+assert all(sample["unit"] == "count" for sample in request_increase_payload["samples"])
+
+default_requests_payload = api_payload("servicegraph.request.count")
+assert default_requests_payload["query"] == {"aggregation": "window_rate", "window": "1m"}
+request_rates = latest_aggregate_by_edge(default_requests_payload["samples"])
+error_rates = latest_aggregate_by_edge(api_samples("servicegraph.request.error.count", "window_rate"))
+assert set(request_rates) == expected_edges, f"request rate missing internal edges: {request_rates.keys()}"
+assert set(error_rates) == expected_edges, f"error rate missing internal edges: {error_rates.keys()}"
+for edge in sorted(expected_edges):
+    request_rate = request_rates[edge]
+    error_rate = error_rates[edge]
+    assert abs(request_rate - 40/60) <= 0.02, f"window request rate for {edge}: {request_rate} != 0.667"
+    assert abs(error_rate - 10/60) <= 0.02, f"window error rate for {edge}: {error_rate} != 0.167"
+assert all(sample["unit"] == "per_second" for sample in default_requests_payload["samples"])
+
+active_rates = latest_aggregate_by_edge(api_samples("servicegraph.request.count", "active_rate"))
+assert set(active_rates) == expected_edges, f"active rate missing cumulative servicegraph edges: {active_rates}"
+assert all(math.isfinite(value) and value > 0 for value in active_rates.values())
+print("✓ API exact increases, default/explicit window rates, active rates, metadata, and units are correct")
+
+ratios = latest_by_edge(api_samples("servicegraph.request.error.ratio"))
+assert set(ratios) == expected_edges, f"error ratio missing internal edges: {ratios.keys()}"
+for edge, sample in ratios.items():
+    value = float(sample["value"])
+    assert math.isfinite(value), f"error ratio {edge} is not finite: {value}"
+    assert abs(value - 0.25) <= 0.02, f"error ratio {edge}: {value} != 0.25 ± 0.02"
+print("✓ servicegraph.request.error.ratio matches controlled traffic on all internal edges")
+
+durations = latest_by_edge(api_samples("servicegraph.request.duration"))
+assert set(durations) == expected_edges, f"duration missing internal edges: {durations.keys()}"
+for edge, sample in durations.items():
+    value = float(sample["value"])
+    assert math.isfinite(value) and 0 < value < 5_000_000_000, f"implausible duration for {edge}: {value}ns"
+print("✓ servicegraph.request.duration is finite and plausible on all internal edges")
 PY
 
 echo "✓ E2E prometheus scenario passed"

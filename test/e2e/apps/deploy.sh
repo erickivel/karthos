@@ -10,6 +10,10 @@ cd "${REPO_ROOT}"
 
 VARIANT="${1:-base}"
 VARIANT_DIR="${SCRIPT_DIR}/${VARIANT}"
+APP_SOURCE_DIR="${VARIANT_DIR}"
+if [[ "${VARIANT}" == "with-prometheus" || "${VARIANT}" == "with-istio" ]]; then
+  APP_SOURCE_DIR="${SCRIPT_DIR}/instrumented"
+fi
 IMAGE_LOAD="${REPO_ROOT}/test/e2e/cluster/image.sh"
 RENDERED_DIR="$(mktemp -d -t oksg-e2e-apps.XXXXXX)"
 trap 'rm -rf "${RENDERED_DIR}"' EXIT
@@ -18,6 +22,8 @@ if [[ ! -d "${VARIANT_DIR}" ]]; then
   echo "unknown app variant: ${VARIANT}" >&2
   exit 1
 fi
+
+echo "deploying e2e app variant: ${VARIANT}"
 
 build_and_load() {
   local tag="$1"
@@ -38,9 +44,12 @@ build_and_load() {
   "${IMAGE_LOAD}" push_or_load "${tag}"
 }
 
-build_and_load "${REGISTRY_HOST}/gateway-go:${IMAGE_TAG}" "${VARIANT_DIR}/gateway-go"
-build_and_load "${REGISTRY_HOST}/service-a-python:${IMAGE_TAG}" "${VARIANT_DIR}/service-a-python"
-build_and_load "${REGISTRY_HOST}/service-b-node:${IMAGE_TAG}" "${VARIANT_DIR}/service-b-node"
+build_and_load "${REGISTRY_HOST}/gateway-go:${IMAGE_TAG}" "${APP_SOURCE_DIR}/gateway-go"
+build_and_load "${REGISTRY_HOST}/service-a-python:${IMAGE_TAG}" "${APP_SOURCE_DIR}/service-a-python"
+build_and_load "${REGISTRY_HOST}/service-b-node:${IMAGE_TAG}" "${APP_SOURCE_DIR}/service-b-node"
+if [[ "${VARIANT}" == "with-istio" ]]; then
+  build_and_load "${REGISTRY_HOST}/mesh-protocol-go:${IMAGE_TAG}" "${SCRIPT_DIR}/mesh-protocol-go"
+fi
 build_and_load "${REGISTRY_HOST}/oksg-backend:${IMAGE_TAG}" "${REPO_ROOT}" "${REPO_ROOT}/deploy/images/backend/Dockerfile"
 build_and_load "${REGISTRY_HOST}/oksg-frontend:${IMAGE_TAG}" "${REPO_ROOT}/web"
 

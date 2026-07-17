@@ -43,6 +43,14 @@ tasks:
     cmds:
       - go test -race -coverprofile=coverage.out ./...
 
+  test:fixtures:
+    desc: Run repository-owned nested fixture test suites
+    cmds:
+      - go -C test/e2e/apps/instrumented/gateway-go test ./...
+      - go -C test/e2e/apps/mesh-protocol-go test ./...
+      - bash test/e2e/scripts/traffic_schedule_test.sh
+      - python3 test/e2e/scenarios/istio-available/verify_protocol_metrics_test.py
+
   build:
     desc: Build all binaries into bin/ (never write binaries to repo root)
     deps:
@@ -84,6 +92,7 @@ tasks:
       - task: vet
       - task: lint
       - task: test:race
+      - task: test:fixtures
       - task: build:check
       - task: web:build
 

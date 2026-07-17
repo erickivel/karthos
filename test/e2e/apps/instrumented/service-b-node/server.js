@@ -1,5 +1,5 @@
 import express from "express";
-import { context, propagation, trace, SpanKind } from "@opentelemetry/api";
+import { context, propagation, trace, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import resources from "@opentelemetry/resources";
 import sdkTraceBase from "@opentelemetry/sdk-trace-base";
@@ -68,6 +68,9 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     requestCounter.inc({ method: req.method, path: req.path, status: String(res.statusCode) });
     span.setAttribute("http.status_code", res.statusCode);
+    if (res.statusCode >= 500) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: String(res.statusCode) });
+    }
     span.end();
     end();
   });
@@ -75,7 +78,16 @@ app.use((req, res, next) => {
   context.with(spanContext, () => next());
 });
 
-app.get("/compute", (_req, res) => {
+app.get("/compute", (req, res) => {
+  if (req.query.force_error === "true") {
+    res.status(500).json({
+      service: "service-b-node",
+      status: "intentional-error",
+      error: "forced servicegraph error fixture",
+    });
+    return;
+  }
+
   res.json({
     service: "service-b-node",
     result: 42,

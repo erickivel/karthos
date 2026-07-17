@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -109,6 +111,19 @@ func main() {
 			"results": results,
 		})
 	})
+	mux.HandleFunc("/error", func(w http.ResponseWriter, r *http.Request) {
+		results := []downstreamResponse{
+			callDownstream(r.Context(), "service-a-python", errorURL(serviceAURL)),
+			callDownstream(r.Context(), "service-b-node", errorURL(serviceBURL)),
+		}
+
+		writeJSON(w, statusForResults(results), map[string]any{
+			"service": "gateway-go",
+			"path":    r.URL.Path,
+			"mode":    "intentional-error",
+			"results": results,
+		})
+	})
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{
@@ -134,6 +149,26 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+func errorURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Set("force_error", "true")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func statusForResults(results []downstreamResponse) int {
+	for _, result := range results {
+		if result.Error != "" || result.Status >= http.StatusInternalServerError {
+			return http.StatusBadGateway
+		}
+	}
+	return http.StatusOK
+}
+
 func callDownstream(ctx context.Context, serviceName, url string) downstreamResponse {
 	tracer := otel.Tracer("gateway-go")
 	spanCtx, span := tracer.Start(ctx, "call-"+serviceName,
@@ -145,6 +180,7 @@ func callDownstream(ctx context.Context, serviceName, url string) downstreamResp
 	req, err := http.NewRequestWithContext(spanCtx, http.MethodGet, url, nil) //nolint:gosec // test application request path
 	if err != nil {
 		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return downstreamResponse{Service: serviceName, Error: err.Error()}
 	}
 	// Inject W3C trace context into outgoing request headers.
@@ -154,12 +190,18 @@ func callDownstream(ctx context.Context, serviceName, url string) downstreamResp
 	resp, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return downstreamResponse{Service: serviceName, Error: err.Error()}
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusInternalServerError {
+		span.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
+	}
 
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return downstreamResponse{Service: serviceName, Status: resp.StatusCode, Error: err.Error()}
 	}
 
@@ -195,7 +237,12 @@ func tracingMiddleware(next http.Handler) http.Handler {
 		)
 		defer span.End()
 
-		next.ServeHTTP(w, r.WithContext(spanCtx))
+		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(recorder, r.WithContext(spanCtx))
+		span.SetAttributes(attribute.Int("http.status_code", recorder.statusCode))
+		if recorder.statusCode >= http.StatusInternalServerError {
+			span.SetStatus(codes.Error, http.StatusText(recorder.statusCode))
+		}
 	})
 }
 

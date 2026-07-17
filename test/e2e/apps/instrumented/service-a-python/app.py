@@ -1,5 +1,6 @@
 import os
 import time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 from flask import Flask, Response, jsonify, request
@@ -9,7 +10,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import SpanKind, Status, StatusCode
 from prometheus_client import Counter, Histogram, generate_latest
 
 
@@ -43,6 +44,13 @@ REQUEST_LATENCY = Histogram(
 )
 
 
+def with_force_error(raw_url):
+    parts = urlsplit(raw_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["force_error"] = "true"
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 @app.before_request
 def start_request_span():
     if request.path == "/metrics":
@@ -70,6 +78,8 @@ def finish_request_span(response):
         span.set_attribute("http.method", request.method)
         span.set_attribute("http.route", request.path)
         span.set_attribute("http.status_code", response.status_code)
+        if response.status_code >= 500:
+            span.set_status(Status(StatusCode.ERROR, str(response.status_code)))
         span.end()
     if token is not None:
         otel_context.detach(token)
@@ -82,13 +92,17 @@ def process():
         span.set_attribute("peer.service", "service-b-node")
         headers = {}
         propagate.inject(headers)
+        downstream_url = with_force_error(SERVICE_B_URL) if request.args.get("force_error") == "true" else SERVICE_B_URL
 
         try:
-            response = requests.get(SERVICE_B_URL, timeout=3, headers=headers)
+            response = requests.get(downstream_url, timeout=3, headers=headers)
             downstream = response.json()
             status_code = response.status_code
+            if status_code >= 500:
+                span.set_status(Status(StatusCode.ERROR, str(status_code)))
         except Exception as exc:  # pragma: no cover - test app fallback
             span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
             downstream = {"error": str(exc)}
             status_code = 502
 

@@ -9,3 +9,5 @@ resources:
   - config-bundle.yaml
   - orphan-pod.yaml
   - traffic-policy.yaml
+  - mesh-protocol-client-service.yaml
+  - mesh-protocol-server.yaml
