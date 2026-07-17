@@ -335,6 +335,9 @@ func (d *DiscoveryAdapter) istioSource(ctx context.Context, namespaces []corev1.
 		return profile.ObservabilitySource{}, false
 	}
 	sort.Strings(injected)
+	if len(injected) == 0 {
+		return profile.ObservabilitySource{}, false
+	}
 
 	return profile.ObservabilitySource{
 		Name:    "istio",
@@ -361,7 +364,8 @@ func hasMutatingWebhook(items []admissionv1.MutatingWebhookConfiguration, name s
 
 func hasIstioSource(sources []profile.ObservabilitySource) bool {
 	for _, source := range sources {
-		if source.Type == "istio" && source.Present && source.Mesh != nil && source.Mesh.Flavor == "istio" {
+		if source.Type == "istio" && source.Present && source.Mesh != nil &&
+			source.Mesh.Flavor == "istio" && len(source.Mesh.InjectedNamespaces) > 0 {
 			return true
 		}
 	}
@@ -386,11 +390,14 @@ func (d *DiscoveryAdapter) prometheusTarget(ctx context.Context, service corev1.
 		return profile.PrometheusTarget{}, false
 	}
 
-	port := firstServicePort(service)
-	if rawPort := service.Annotations[prometheusAnnotationPort]; rawPort != "" {
-		if parsed, err := strconv.Atoi(rawPort); err == nil && parsed >= 1 && parsed <= 65535 {
-			port = int32(parsed) //#nosec G115 G109 -- range validated: 1-65535 fits safely in int32
-		}
+	rawPort := service.Annotations[prometheusAnnotationPort]
+	parsed, err := strconv.Atoi(rawPort)
+	if err != nil || parsed < 1 || parsed > 65535 {
+		return profile.PrometheusTarget{}, false
+	}
+	port := int32(parsed) //#nosec G115 G109 -- range validated: 1-65535 fits safely in int32
+	if !serviceDeclaresPort(service, port) {
+		return profile.PrometheusTarget{}, false
 	}
 
 	path := service.Annotations[prometheusAnnotationPath]
@@ -440,11 +447,13 @@ func otlpSource(service corev1.Service) (profile.ObservabilitySource, bool) {
 	}, true
 }
 
-func firstServicePort(service corev1.Service) int32 {
-	if len(service.Spec.Ports) == 0 {
-		return 80
+func serviceDeclaresPort(service corev1.Service, port int32) bool {
+	for _, declared := range service.Spec.Ports {
+		if declared.Port == port {
+			return true
+		}
 	}
-	return service.Spec.Ports[0].Port
+	return false
 }
 
 func sortNodes(items []corev1.Node) []corev1.Node {

@@ -137,7 +137,9 @@
         { "$ref": "#/definitions/component" },
         {
           "type": "object",
+          "required": ["hostNetwork"],
           "properties": {
+            "hostNetwork": { "type": "boolean" },
             "tolerations": {
               "type": "array",
               "items": { "type": "object" }

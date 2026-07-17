@@ -33,6 +33,7 @@ func TestClusterProfileIncludesRecommendedReceiversAndPrometheusTargets(t *testi
 
 	require.Contains(t, string(payload), "recommended_receivers")
 	require.Contains(t, string(payload), "prometheus_targets")
+	require.NotContains(t, string(payload), "selector")
 }
 
 func TestClusterProfileIncludesOTLPCapabilitiesAndSignalClasses(t *testing.T) {

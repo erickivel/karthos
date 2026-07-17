@@ -22,6 +22,8 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: otel-collector-agent
+      hostNetwork: {{ .Values.agent.hostNetwork }}
+      dnsPolicy: {{ ternary "ClusterFirstWithHostNet" "ClusterFirst" .Values.agent.hostNetwork }}
       containers:
         - name: otel-collector-agent
           image: {{ include "oksg-otel.image" . }}

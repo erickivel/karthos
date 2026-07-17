@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/stretchr/testify/require"
@@ -46,6 +47,26 @@ func TestDiscoverDetectsIstioMeshSource(t *testing.T) {
 	require.Contains(t, profile.RecommendedReceivers, "prometheus")
 }
 
+func TestDiscoverIgnoresIstioControlPlaneWithoutInjectedNamespaces(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "oksg-demo"}},
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "istio-sidecar-injector"}},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	for _, source := range profile.Sources {
+		require.NotEqual(t, "istio", source.Type)
+	}
+	require.NotContains(t, profile.RecommendedReceivers, "prometheus")
+	for _, path := range profile.CollectionPaths {
+		require.NotEqual(t, "prometheus/mesh-istio", path.ReceiverType)
+	}
+}
+
 func TestDiscoverBuildsClusterProfileWithPrometheusTargets(t *testing.T) {
 	client := fake.NewClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "kind-control-plane"}},
@@ -66,8 +87,9 @@ func TestDiscoverBuildsClusterProfileWithPrometheusTargets(t *testing.T) {
 			},
 			Spec: corev1.ServiceSpec{
 				ClusterIP: "10.96.0.10",
+				Selector:  map[string]string{"app": "gateway-go"},
 				Ports: []corev1.ServicePort{
-					{Port: 8080},
+					{Port: 8080, TargetPort: intstr.FromInt32(9090)},
 				},
 			},
 		},
@@ -89,7 +111,48 @@ func TestDiscoverBuildsClusterProfileWithPrometheusTargets(t *testing.T) {
 	require.Len(t, profile.Sources, 1)
 	require.True(t, profile.Sources[0].Present)
 	require.Len(t, profile.Sources[0].PrometheusTargets, 1)
-	require.True(t, profile.Sources[0].PrometheusTargets[0].Reachable)
+	target := profile.Sources[0].PrometheusTargets[0]
+	require.True(t, target.Reachable)
+	require.Equal(t, int32(8080), target.Port, "prometheus.io/port identifies the Service port, not targetPort")
+}
+
+func TestDiscoverRejectsPrometheusTargetWithoutDeclaredServicePort(t *testing.T) {
+	tests := []struct {
+		name string
+		port string
+	}{
+		{name: "missing annotation"},
+		{name: "malformed annotation", port: "metrics"},
+		{name: "undeclared numeric port", port: "9090"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			annotations := map[string]string{"prometheus.io/scrape": "true"}
+			if tt.port != "" {
+				annotations["prometheus.io/port"] = tt.port
+			}
+			client := fake.NewClientset(&corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "api", Namespace: "oksg-demo", Annotations: annotations,
+				},
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.96.0.20",
+					Ports:     []corev1.ServicePort{{Port: 8080, TargetPort: intstr.FromInt32(9090)}},
+				},
+			})
+
+			adapter := NewDiscoveryAdapter(client, "kind-test", func(context.Context, string) bool {
+				t.Fatal("invalid target must be rejected before reachability probing")
+				return false
+			})
+			prof, err := adapter.Discover(context.Background())
+			require.NoError(t, err)
+			require.Len(t, prof.Sources, 1)
+			require.False(t, prof.Sources[0].Present)
+			require.Empty(t, prof.Sources[0].PrometheusTargets)
+		})
+	}
 }
 
 func TestDiscoverFallsBackToKubeletstatsWhenPrometheusAbsent(t *testing.T) {

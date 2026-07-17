@@ -25,8 +25,8 @@ func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 				"health_check": map[string]any{"endpoint": "0.0.0.0:13133"},
 			},
 			Receivers: map[string]any{
-				"kubeletstats": map[string]any{"collection_interval": "30s"},
-				"prometheus":   map[string]any{"config": map[string]any{"scrape_configs": []any{}}},
+				"kubelet_stats": map[string]any{"collection_interval": "30s"},
+				"prometheus":    map[string]any{"config": map[string]any{"scrape_configs": []any{}}},
 			},
 			Processors: map[string]any{"batch": map[string]any{}},
 			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
@@ -34,7 +34,7 @@ func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 				Extensions: []string{"health_check"},
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {
-						Receivers:  []string{"kubeletstats", "prometheus"},
+						Receivers:  []string{"kubelet_stats", "prometheus"},
 						Processors: []string{"batch"},
 						Exporters:  []string{"otlp"},
 					},
@@ -80,9 +80,21 @@ func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 	require.Contains(t, string(values), "backend:")
 	require.Contains(t, string(values), "grpcEndpoint: oksg-backend:4317")
 	require.Contains(t, string(values), "featureGates:")
-	require.Contains(t, string(values), "receiver.kubeletstats.enableCPUUsageMetrics")
+	require.NotContains(t, string(values), "enableCPUUsageMetrics")
+	require.Contains(t, string(values), "-connector.spanmetrics.includeCollectorInstanceID")
 	require.Contains(t, string(values), "enabledSignals:")
 	require.Contains(t, string(values), "- trace")
+}
+
+func TestBuildUsesV0156CompatibilityFeatureGates(t *testing.T) {
+	renderer := NewGenerator()
+	values, err := renderer.Build(otel.Plan{})
+	require.NoError(t, err)
+
+	require.Equal(t, "0.156.0", values.Global.Image.Tag)
+	require.True(t, values.Agent.HostNetwork)
+	require.Empty(t, values.Agent.FeatureGates)
+	require.Equal(t, []string{"-connector.spanmetrics.includeCollectorInstanceID"}, values.Gateway.FeatureGates)
 }
 
 func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
@@ -99,8 +111,8 @@ func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
 		},
 		AgentConfig: otel.CollectorConfig{
 			Receivers: map[string]any{
-				"kubeletstats": map[string]any{"collection_interval": "30s"},
-				"hostmetrics": map[string]any{
+				"kubelet_stats": map[string]any{"collection_interval": "30s"},
+				"host_metrics": map[string]any{
 					"collection_interval": "30s",
 					"root_path":           "/hostfs",
 					"scrapers": map[string]any{
@@ -114,7 +126,7 @@ func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {
-						Receivers:  []string{"kubeletstats", "hostmetrics"},
+						Receivers:  []string{"kubelet_stats", "host_metrics"},
 						Processors: []string{"batch"},
 						Exporters:  []string{"otlp"},
 					},
@@ -133,9 +145,9 @@ func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Contains(t, string(values), "hostmetrics:")
+	require.Contains(t, string(values), "host_metrics:")
 	require.Contains(t, string(values), "root_path: /hostfs")
-	require.Contains(t, string(values), "kubeletstats:")
+	require.Contains(t, string(values), "kubelet_stats:")
 }
 
 func TestGenerateIncludesK8sclusterInGatewayConfig(t *testing.T) {
@@ -151,12 +163,12 @@ func TestGenerateIncludesK8sclusterInGatewayConfig(t *testing.T) {
 			HTTPEndpoint: "0.0.0.0:4318",
 		},
 		AgentConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"kubeletstats": map[string]any{"collection_interval": "30s"}},
+			Receivers:  map[string]any{"kubelet_stats": map[string]any{"collection_interval": "30s"}},
 			Processors: map[string]any{"batch": map[string]any{}},
 			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
+					"metrics": {Receivers: []string{"kubelet_stats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
 				},
 			},
 		},
@@ -196,17 +208,17 @@ func TestGenerateIncludesConnectorsWhenPresent(t *testing.T) {
 		},
 		AgentConfig: otel.CollectorConfig{
 			Receivers: map[string]any{
-				"otlp":         map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}},
-				"kubeletstats": map[string]any{"collection_interval": "30s"},
+				"otlp":          map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}},
+				"kubelet_stats": map[string]any{"collection_interval": "30s"},
 			},
 			Processors: map[string]any{"batch": map[string]any{}},
 			Connectors: map[string]any{
-				"spanmetrics": map[string]any{
+				"span_metrics": map[string]any{
 					"histogram": map[string]any{
 						"explicit": map[string]any{"buckets": []string{"100ms", "250ms", "500ms"}},
 					},
 				},
-				"servicegraph": map[string]any{
+				"service_graph": map[string]any{
 					"latency_histogram_buckets": []string{"100ms", "500ms", "1s"},
 				},
 			},
@@ -214,14 +226,14 @@ func TestGenerateIncludesConnectorsWhenPresent(t *testing.T) {
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {
-						Receivers:  []string{"kubeletstats", "spanmetrics", "servicegraph"},
+						Receivers:  []string{"kubelet_stats", "span_metrics", "service_graph"},
 						Processors: []string{"batch"},
 						Exporters:  []string{"otlp"},
 					},
 					"traces": {
 						Receivers:  []string{"otlp"},
 						Processors: []string{"batch"},
-						Exporters:  []string{"otlp", "spanmetrics", "servicegraph"},
+						Exporters:  []string{"otlp", "span_metrics", "service_graph"},
 					},
 				},
 			},
@@ -240,8 +252,8 @@ func TestGenerateIncludesConnectorsWhenPresent(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Contains(t, string(values), "connectors:")
-	require.Contains(t, string(values), "spanmetrics:")
-	require.Contains(t, string(values), "servicegraph:")
+	require.Contains(t, string(values), "span_metrics:")
+	require.Contains(t, string(values), "service_graph:")
 }
 
 func TestGenerateBaselinePlanHasNoConnectorsSection(t *testing.T) {
@@ -257,12 +269,12 @@ func TestGenerateBaselinePlanHasNoConnectorsSection(t *testing.T) {
 			HTTPEndpoint: "0.0.0.0:4318",
 		},
 		AgentConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"kubeletstats": map[string]any{"collection_interval": "30s"}},
+			Receivers:  map[string]any{"kubelet_stats": map[string]any{"collection_interval": "30s"}},
 			Processors: map[string]any{"batch": map[string]any{}},
 			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
+					"metrics": {Receivers: []string{"kubelet_stats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
 				},
 			},
 		},
@@ -300,12 +312,12 @@ func TestGenerateUsesConfiguredBackendImageOverrides(t *testing.T) {
 			HTTPEndpoint: "0.0.0.0:4318",
 		},
 		AgentConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"kubeletstats": map[string]any{}},
+			Receivers:  map[string]any{"kubelet_stats": map[string]any{}},
 			Processors: map[string]any{"batch": map[string]any{}},
 			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
+					"metrics": {Receivers: []string{"kubelet_stats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
 				},
 			},
 		},
@@ -341,12 +353,12 @@ func TestGenerateUsesConfiguredReleaseMetadataOverrides(t *testing.T) {
 			HTTPEndpoint: "0.0.0.0:4318",
 		},
 		AgentConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"kubeletstats": map[string]any{}},
+			Receivers:  map[string]any{"kubelet_stats": map[string]any{}},
 			Processors: map[string]any{"batch": map[string]any{}},
 			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
+					"metrics": {Receivers: []string{"kubelet_stats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
 				},
 			},
 		},

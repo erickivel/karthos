@@ -16,6 +16,7 @@ const (
 	DefaultBackendHTTPEndpoint = "0.0.0.0:4318"
 	DefaultHealthEndpoint      = "0.0.0.0:13133"
 	DefaultClusterName         = "default-cluster"
+	otlpGRPCExporter           = "otlp_grpc"
 )
 
 type SourcePlanner interface {
@@ -81,14 +82,19 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 
 	enabledSignals := []string{"metric"}
 	agentReceivers := map[string]any{
-		"kubeletstats": map[string]any{
+		"kubelet_stats": map[string]any{
 			"collection_interval":  "30s",
 			"auth_type":            "serviceAccount",
 			"endpoint":             "https://${env:K8S_NODE_NAME}:10250",
 			"insecure_skip_verify": true,
 			"metric_groups":        []string{"node", "pod", "container", "volume"},
+			"collect_all_network_interfaces": map[string]any{
+				"node": true,
+				"pod":  false,
+			},
+			"extra_metadata_labels": []string{"k8s.volume.type"},
 		},
-		"hostmetrics": map[string]any{
+		"host_metrics": map[string]any{
 			"collection_interval": "30s",
 			"root_path":           "/hostfs",
 			"scrapers": map[string]any{
@@ -111,11 +117,8 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		},
 	}
 
-	pipelineReceivers := []string{"kubeletstats", "hostmetrics"}
+	pipelineReceivers := []string{"kubelet_stats", "host_metrics"}
 	var scrapeConfigs []map[string]any
-	if selected.Has(metrics.SourcePrometheusApp) {
-		scrapeConfigs = append(scrapeConfigs, buildPrometheusScrapeConfigs(prometheusTargets(clusterProfile.Sources))...)
-	}
 	if selected.Has(metrics.SourceMeshIstio) {
 		if mesh := meshSource(clusterProfile.Sources); mesh != nil {
 			scrapeConfigs = append(scrapeConfigs, buildIstioScrapeConfig(mesh))
@@ -142,9 +145,6 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			},
 		}
 	}
-	if otlpSignals.metrics {
-		pipelineReceivers = append(pipelineReceivers, "otlp")
-	}
 	if otlpSignals.traces {
 		enabledSignals = append(enabledSignals, "trace")
 	}
@@ -166,7 +166,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 					},
 				},
 			},
-			"k8sattributes": map[string]any{
+			"k8s_attributes": map[string]any{
 				"auth_type":   "serviceAccount",
 				"passthrough": false,
 			},
@@ -174,7 +174,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			"batch":                   map[string]any{},
 		},
 		Exporters: map[string]any{
-			"otlp": map[string]any{
+			otlpGRPCExporter: map[string]any{
 				"endpoint": DefaultGatewayGRPCEndpoint,
 				"tls": map[string]any{
 					"insecure": true,
@@ -186,17 +186,24 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			Pipelines: map[string]PipelineConfig{
 				"metrics": {
 					Receivers:  pipelineReceivers,
-					Processors: []string{"resource", "k8sattributes", oksgSourceTaggerProcessor, "batch"},
-					Exporters:  []string{"otlp"},
+					Processors: []string{"resource", "k8s_attributes", oksgSourceTaggerProcessor, "batch"},
+					Exporters:  []string{otlpGRPCExporter},
 				},
 			},
 		},
 	}
+	if otlpSignals.metrics {
+		agentConfig.Service.Pipelines["metrics/otlp"] = PipelineConfig{
+			Receivers:  []string{"otlp"},
+			Processors: []string{"resource", "k8s_attributes", "batch"},
+			Exporters:  []string{otlpGRPCExporter},
+		}
+	}
 	if otlpSignals.traces {
 		agentConfig.Service.Pipelines["traces"] = PipelineConfig{
 			Receivers:  []string{"otlp"},
-			Processors: []string{"resource", "k8sattributes", "batch"},
-			Exporters:  []string{"otlp"},
+			Processors: []string{"resource", "k8s_attributes", "batch"},
+			Exporters:  []string{otlpGRPCExporter},
 		}
 	}
 
@@ -217,6 +224,12 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			"node_conditions_to_report":   []string{"Ready", "MemoryPressure", "DiskPressure"},
 			"allocatable_types_to_report": []string{"cpu", "memory", "ephemeral-storage", "pods"},
 			"metrics": map[string]any{
+				"k8s.container.storage_limit": map[string]any{
+					"enabled": false,
+				},
+				"k8s.container.storage_request": map[string]any{
+					"enabled": false,
+				},
 				"k8s.node.condition": map[string]any{
 					"enabled": true,
 				},
@@ -226,7 +239,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 				"k8s.container.restarts": map[string]any{
 					"enabled": true,
 				},
-				// Default-disabled in v0.111+; surfaces the integer-encoded
+				// Default-disabled in v0.156; surfaces the integer-encoded
 				// pod failure reason (Evicted, NodeAffinity, etc.) used by
 				// the derived oksg.pod.health.status enum.
 				"k8s.pod.status_reason": map[string]any{
@@ -235,14 +248,22 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 			},
 		},
 	}
-	gatewayMetricsReceivers := []string{"otlp", "k8s_cluster"}
+	gatewayMetricsReceivers := []string{"k8s_cluster"}
+	if selected.Has(metrics.SourcePrometheusApp) {
+		gatewayReceivers["prometheus"] = map[string]any{
+			"config": map[string]any{
+				"scrape_configs": buildPrometheusScrapeConfigs(prometheusTargets(clusterProfile.Sources)),
+			},
+		}
+		gatewayMetricsReceivers = append(gatewayMetricsReceivers, "prometheus")
+	}
 	var gatewayConnectors map[string]any
 	deploySpanmetrics := selected.Has(metrics.SourceTracesSpanmetrics)
 	deployServicegraph := selected.Has(metrics.SourceTracesServicegraph)
 	if deploySpanmetrics || deployServicegraph {
 		gatewayConnectors = map[string]any{}
 		if deploySpanmetrics {
-			gatewayConnectors["spanmetrics"] = map[string]any{
+			gatewayConnectors["span_metrics"] = map[string]any{
 				"histogram": map[string]any{
 					"explicit": map[string]any{
 						"buckets": []string{"100ms", "250ms", "500ms", "1s", "2s", "5s"},
@@ -254,18 +275,19 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 				},
 				"exemplars": map[string]any{"enabled": true},
 			}
-			gatewayMetricsReceivers = append(gatewayMetricsReceivers, "spanmetrics")
+			gatewayMetricsReceivers = append(gatewayMetricsReceivers, "span_metrics")
 		}
 		if deployServicegraph {
-			gatewayConnectors["servicegraph"] = map[string]any{
+			gatewayConnectors["service_graph"] = map[string]any{
+				"metrics_flush_interval":    "15s",
 				"latency_histogram_buckets": []string{"100ms", "250ms", "500ms", "1s", "5s"},
 				"dimensions":                []string{"http.method"},
 				"store": map[string]any{
-					"ttl":       "2s",
+					"ttl":       "30s",
 					"max_items": 1000,
 				},
 			}
-			gatewayMetricsReceivers = append(gatewayMetricsReceivers, "servicegraph")
+			gatewayMetricsReceivers = append(gatewayMetricsReceivers, "service_graph")
 		}
 	}
 
@@ -287,7 +309,7 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 		},
 		Connectors: gatewayConnectors,
 		Exporters: map[string]any{
-			"otlp": map[string]any{
+			otlpGRPCExporter: map[string]any{
 				"endpoint": DefaultBackendGRPCEndpoint,
 				"tls": map[string]any{
 					"insecure": true,
@@ -306,18 +328,27 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 				"metrics": {
 					Receivers:  gatewayMetricsReceivers,
 					Processors: []string{"memory_limiter", oksgSourceTaggerProcessor, "batch"},
-					Exporters:  []string{"otlp"},
+					Exporters:  []string{otlpGRPCExporter},
+				},
+				// All forwarded agent metrics and direct external OTLP metrics enter
+				// through this receiver. Agent-owned datapoints are already stamped at
+				// origin; direct producers remain untagged and are rejected by the
+				// backend instead of being mislabeled by metric name.
+				"metrics/otlp": {
+					Receivers:  []string{"otlp"},
+					Processors: []string{"memory_limiter", "batch"},
+					Exporters:  []string{otlpGRPCExporter},
 				},
 			},
 		},
 	}
 	if otlpSignals.traces {
-		traceExporters := []string{"otlp"}
+		traceExporters := []string{otlpGRPCExporter}
 		if deploySpanmetrics {
-			traceExporters = append(traceExporters, "spanmetrics")
+			traceExporters = append(traceExporters, "span_metrics")
 		}
 		if deployServicegraph {
-			traceExporters = append(traceExporters, "servicegraph")
+			traceExporters = append(traceExporters, "service_graph")
 		}
 		gatewayConfig.Service.Pipelines["traces"] = PipelineConfig{
 			Receivers:  []string{"otlp"},
@@ -368,7 +399,7 @@ func buildPrometheusScrapeConfigs(targets []profile.PrometheusTarget) []map[stri
 	scrapeConfigs := make([]map[string]any, 0, len(targets))
 	for _, target := range targets {
 		scrapeConfigs = append(scrapeConfigs, map[string]any{
-			"job_name":     fmt.Sprintf("%s-%s", target.Namespace, target.ServiceName),
+			"job_name":     fmt.Sprintf("prometheus-app:%s:%s:%d", target.Namespace, target.ServiceName, target.Port),
 			"metrics_path": target.Path,
 			"static_configs": []map[string]any{
 				{
@@ -376,8 +407,10 @@ func buildPrometheusScrapeConfigs(targets []profile.PrometheusTarget) []map[stri
 						fmt.Sprintf("%s.%s.svc.cluster.local:%d", target.ServiceName, target.Namespace, target.Port),
 					},
 					"labels": map[string]string{
-						"service":   target.ServiceName,
-						"namespace": target.Namespace,
+						"service":      target.ServiceName,
+						"namespace":    target.Namespace,
+						"metrics_path": target.Path,
+						"service_port": fmt.Sprintf("%d", target.Port),
 					},
 				},
 			},
@@ -433,7 +466,8 @@ func buildIstioScrapeConfig(mesh *profile.MeshSource) map[string]any {
 	}
 
 	return map[string]any{
-		"job_name": pathlessJobName(mesh.Flavor),
+		"job_name":        pathlessJobName(mesh.Flavor),
+		"scrape_interval": "15s",
 		"kubernetes_sd_configs": []map[string]any{
 			{"role": "pod"},
 		},
@@ -526,43 +560,44 @@ func joinRegex(values []string) string {
 // metric_relabel_configs; the where clauses below skip overwriting that.
 const oksgSourceTaggerProcessor = "transform/oksg-source"
 
-// buildOksgSourceTagger emits OTTL statements that label each metric datapoint
-// with its logical source ID. The patterns are deterministic — each receiver/
-// connector owns a disjoint metric-name namespace — so name-based matching is
-// reliable and cheap. Any new receiver or connector added to the planner must
-// also extend this tagger.
+// buildOksgSourceTagger emits OTTL statements for collector-owned receiver and
+// connector pipelines. Those components own disjoint wire-name namespaces, so
+// name matching is deterministic. External OTLP metrics are isolated in
+// metrics/otlp and never run this processor. Any new collector-owned component
+// added to the planner must extend this tagger.
 func buildOksgSourceTagger() map[string]any {
-	guard := `attributes["oksg_source"] == nil`
+	guard := `datapoint.attributes["oksg_source"] == nil`
 	statements := []string{
-		// kubeletstats receiver. The pod-scope rule lists only the metric
-		// families kubeletstats actually emits (cpu, memory, filesystem,
+		// kubelet_stats receiver. The pod-scope rule lists only the metric
+		// families kubelet_stats actually emits (cpu, memory, filesystem,
 		// network); pod-scope status metrics like k8s.pod.phase /
 		// status_reason originate from k8s_cluster and are tagged kube-cluster
 		// below. Volume metrics live at top-level k8s.volume.* and are
 		// matched by the next clause. Container CPU/memory usage from
-		// kubeletstats arrives on the wire as raw `container.*` (translated
+		// kubelet_stats arrives on the wire as raw `container.*` (translated
 		// to `k8s.container.*` only at the backend dialect step), so
 		// `k8s.container.*` here at the gateway/agent always originates from
 		// the k8s_cluster receiver.
-		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.pod\\.(cpu|memory|filesystem|network)\\.") and ` + guard,
-		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.volume\\.") and ` + guard,
-		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^container\\.") and ` + guard,
-		`set(attributes["oksg_source"], "` + metrics.SourceKubelet + `") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set" or IsMatch(metric.name, "^k8s\\.node\\.(network|filesystem)\\.")) and ` + guard,
-		// hostmetrics receiver
-		`set(attributes["oksg_source"], "` + metrics.SourceHostOS + `") where IsMatch(metric.name, "^system\\.") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.pod\\.(cpu|memory|filesystem|network)\\.") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^k8s\\.volume\\.") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceKubelet + `") where IsMatch(metric.name, "^container\\.") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceKubelet + `") where (metric.name == "k8s.node.cpu.usage" or metric.name == "k8s.node.memory.working_set" or IsMatch(metric.name, "^k8s\\.node\\.(network|filesystem)\\.")) and ` + guard,
+		// host_metrics receiver
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceHostOS + `") where IsMatch(metric.name, "^system\\.") and ` + guard,
 		// k8s_cluster receiver: cluster-level workload + capacity + condition + container/pod spec/status metrics.
 		// The broad ^k8s\.pod\. rule is intentionally last among the pod
 		// matchers — it catches pod.phase / pod.status_reason and any future
 		// pod-scope k8s_cluster signal that the kubelet rules above didn't
 		// claim.
-		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.container\\.") and ` + guard,
-		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.pod\\.") and ` + guard,
-		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.(replicaset|deployment|namespace|daemonset|statefulset|job|cronjob|hpa|resource_quota|replication_controller)\\.") and ` + guard,
-		`set(attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.node\\.(condition|allocatable|cpu\\.capacity|cpu\\.cores|cpu\\.frequency|memory\\.capacity|disk\\.capacity|network\\.bandwidth)") and ` + guard,
-		// spanmetrics connector
-		`set(attributes["oksg_source"], "` + metrics.SourceTracesSpanmetrics + `") where IsMatch(metric.name, "^traces\\.span\\.metrics\\.") and ` + guard,
-		// servicegraph connector
-		`set(attributes["oksg_source"], "` + metrics.SourceTracesServicegraph + `") where IsMatch(metric.name, "^traces\\.service\\.graph\\.") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.container\\.") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.pod\\.") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.(replicaset|deployment|namespace|daemonset|statefulset|job|cronjob|hpa|resource_quota|replication_controller)\\.") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceKubeCluster + `") where IsMatch(metric.name, "^k8s\\.node\\.(condition|allocatable|cpu\\.capacity|cpu\\.cores|cpu\\.frequency|memory\\.capacity|disk\\.capacity|network\\.bandwidth)") and ` + guard,
+		// span_metrics connector
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceTracesSpanmetrics + `") where IsMatch(metric.name, "^traces\\.span\\.metrics\\.") and ` + guard,
+		// service_graph connector
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceTracesServicegraph + `") where IsMatch(metric.name, "^traces_service_graph_") and ` + guard,
+		`set(datapoint.attributes["oksg_source"], "` + metrics.SourceTracesServicegraph + `") where IsMatch(metric.name, "^traces\\.service\\.graph\\.") and ` + guard,
 	}
 	return map[string]any{
 		"metric_statements": []map[string]any{

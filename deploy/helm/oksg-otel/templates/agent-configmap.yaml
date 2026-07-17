@@ -8,5 +8,18 @@ metadata:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
 data:
   config.yaml: |
+{{- if .Values.agent.hostNetwork }}
 {{ .Values.agent.collectorConfig | indent 4 }}
+{{- else }}
+{{- $config := fromYaml .Values.agent.collectorConfig }}
+{{- $receivers := get $config "receivers" }}
+{{- if and $receivers (hasKey $receivers "host_metrics") }}
+{{- $hostMetrics := get $receivers "host_metrics" }}
+{{- $scrapers := get $hostMetrics "scrapers" }}
+{{- if $scrapers }}
+{{- $_ := unset $scrapers "network" }}
+{{- end }}
+{{- end }}
+{{ toYaml $config | indent 4 }}
+{{- end }}
 {{- end }}

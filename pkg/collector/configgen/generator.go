@@ -16,7 +16,7 @@ const (
 	DefaultLogLevel            = "info"
 	DefaultLogFormat           = "json"
 	DefaultCollectorRepository = "otel/opentelemetry-collector-contrib"
-	DefaultCollectorTag        = "0.111.0"
+	DefaultCollectorTag        = "0.156.0"
 	DefaultCollectorPullPolicy = "IfNotPresent"
 	DefaultBackendRepository   = "oksg-backend"
 	DefaultBackendTag          = "latest"
@@ -81,6 +81,7 @@ type ComponentValues struct {
 
 type AgentValues struct {
 	ComponentValues `json:",inline" yaml:",inline"`
+	HostNetwork     bool              `json:"hostNetwork" yaml:"hostNetwork"`
 	Resources       map[string]any    `json:"resources,omitempty" yaml:"resources,omitempty"`
 	Tolerations     []map[string]any  `json:"tolerations,omitempty" yaml:"tolerations,omitempty"`
 	NodeSelector    map[string]string `json:"nodeSelector,omitempty" yaml:"nodeSelector,omitempty"`
@@ -188,15 +189,16 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 			ComponentValues: ComponentValues{
 				Enabled:       true,
 				Logging:       logging,
-				FeatureGates:  []string{"receiver.kubeletstats.enableCPUUsageMetrics"},
+				FeatureGates:  []string{},
 				CollectorYAML: string(agentConfig),
 			},
+			HostNetwork: true,
 		},
 		Gateway: GatewayValues{
 			ComponentValues: ComponentValues{
 				Enabled:       true,
 				Logging:       logging,
-				FeatureGates:  []string{},
+				FeatureGates:  []string{"-connector.spanmetrics.includeCollectorInstanceID"},
 				CollectorYAML: string(gatewayConfig),
 			},
 			Replicas: 1,
