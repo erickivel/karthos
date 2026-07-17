@@ -79,7 +79,7 @@ to. `DefaultLogicalSources()` returns the built-in registry:
 | `host-os` | Host OS metrics | always | none |
 | `kube-cluster` | Kubernetes API | always | `KubeClusterDialect` |
 | `prometheus.app` | Application Prometheus endpoints | profile has prometheus targets | `PrometheusDialect` |
-| `mesh.istio` | Istio service mesh | profile contains an `istio` source with `Mesh != nil` | `IstioDialect` |
+| `mesh.istio` | Istio service mesh | profile contains an `istio` source with Istio mesh metadata and at least one injected namespace | `IstioDialect` |
 | `traces.spanmetrics` | Trace-derived span metrics | profile advertises OTLP traces | `SpanmetricsDialect` |
 | `traces.servicegraph` | Trace-derived service graph | profile advertises OTLP traces | `ServicegraphDialect` |
 
@@ -112,7 +112,23 @@ catalog because that receiver emits logs, not metric samples.
 ResourceQuota catalog entries use the generic `resource` unit because each
 sample's `resource` label controls the physical unit: CPU quota values are
 stored as `millicores`, memory/storage quota values as `bytes`, object quotas
-as `count`, and unknown quota dimensions keep the generic `resource` unit.
+as `count`, and unknown quota dimensions keep the generic `resource` unit. The
+resolved unit is persisted in VictoriaMetrics as the reserved `oksg_unit`
+label, validated and restored on read, and removed from public labels. API
+series group by full label identity and resolved unit so incompatible quota
+resources cannot share one series.
+
+Kubelet network dimensions use the public labels `direction` and
+`network_interface_name`. Volume dimensions use `volume_name`, `volume_type`,
+and optional `persistentvolumeclaim_name`; standard OTLP resource attributes
+and supported legacy datapoint attributes normalize to those names. PVC-backed
+samples attach to PVC entities, while non-PVC volumes remain attached to their
+Pod. All `k8s.volume.*` catalog metrics therefore apply to both PVC and Pod.
+
+The ambiguous `k8s.container.storage.request` and
+`k8s.container.storage.limit` families are intentionally disabled at the
+receiver and absent from the catalog/mappings. Container ephemeral storage and
+`k8s.volume.*` remain the precise public alternatives.
 
 `k8s_cluster` workload/controller metrics must resolve to entities already
 materialized by structural discovery. Discovery emits Deployment, StatefulSet,
@@ -150,7 +166,7 @@ A dialect is a `map[rawName]canonicalName`. The built-in dialects:
 | `KubeletDialect` | `container.cpu.usage` → `k8s.container.cpu.usage`, `container.memory.usage` → `k8s.container.memory.usage` |
 | `KubeClusterDialect` | `k8s.container.cpu_request` → `k8s.container.cpu.request`, `k8s.container.memory_limit` → `k8s.container.memory.limit`, plus the cpu_limit and memory_request equivalents |
 | `SpanmetricsDialect` | `traces.span.metrics.calls` → `rpc.server.request.count`, `traces.span.metrics.duration` → `rpc.server.duration` |
-| `ServicegraphDialect` | `traces.service.graph.request.total` → `servicegraph.request.count`, `traces.service.graph.request.server` → `servicegraph.request.duration`, `traces.service.graph.request_failed_total` → `servicegraph.request.error.count` |
+| `ServicegraphDialect` | `traces_service_graph_request_total` → `servicegraph.request.count`, `traces_service_graph_request_server` → `servicegraph.request.duration`, `traces_service_graph_request_failed_total` → `servicegraph.request.error.count` |
 | `IstioDialect` | `istio_requests_total` → `servicegraph.request.count`, `istio_request_duration_milliseconds` → `servicegraph.request.duration`, plus body size, gRPC message, and TCP connection counters |
 
 `DialectRegistry` chains dialects in the order their owning sources were
@@ -162,10 +178,34 @@ startup: it walks the source registry and collects the non-nil dialects in
 order, so any change to the source list updates the dialect chain
 automatically.
 
-A dialect only renames the metric — it does **not** touch units, datapoint
-attributes, or histogram shape. Unit conversion and label rewriting happen
-in `OTLPNormalizer` (`pkg/backend/ingest/normalizer.go`) after dialect
-translation.
+A core metrics dialect only renames the metric — it does **not** touch units,
+datapoint attributes, entity attachment, or histogram shape. After translation,
+the ingest-local registry in `pkg/backend/ingest/source_dialect.go` selects a
+small source dialect by the registered `oksg_source` or `oksg.source` datapoint
+stamp accepted by the source policy. There is no envelope-source fallback for
+recognized canonical metrics. Each collector-specific implementation owns its bounded
+labels, attachment overrides, directional variants, and conversions in a
+separate `source_dialect_*.go` file. `OTLPNormalizer` retains only generic OTLP
+iteration, assignment enforcement, conversion application, and sample emission.
+
+`HostOSDialect` preserves the dimensions needed to keep host series truthful:
+`cpu`/`state`, `device`/`direction` for disk, `network_interface_name`/`direction`
+for network, filesystem device/mount/type/mode/state, paging device/type/direction/state,
+and connection protocol/state. The old network `device` alias is not published.
+Disk I/O, network I/O, and paging operations are cumulative counters and therefore
+use the shared explicit aggregation modes. Collector v0.156/gopsutil reports paging
+faults and operations in 4 KiB page units for the contract consumed here, so those
+two values are divided by 4096; paging usage is already bytes and is not scaled. A
+collector-tag contract test intentionally fails when `0.156.0` changes until this
+conversion is revalidated.
+
+The Istio dialect treats all six protocol metrics as genuine cumulative sums:
+gRPC request/response messages, TCP opened/closed connections, and TCP sent/received
+bytes. It preserves edge identity, protocol/source dimensions, and base/rate units;
+the dedicated mesh job scrapes every 15 seconds so a one-minute aggregation window
+reliably contains multiple cumulative samples. The cluster accuracy scenario proves
+their raw-to-API behavior with deterministic traffic before audit rows may move from
+`no_data`.
 
 ## 4. Resolver and Arbitration
 
@@ -195,28 +235,77 @@ The output drives two consumers:
 ### 4a. Planner (`pkg/adapters/otel/source_planner.go`)
 
 The planner deploys only receivers/connectors whose source ID appears in
-`SelectedSources`. For example, when Istio is present and wins all
-`servicegraph.*` metrics, the gateway omits the `servicegraph` connector
-entirely. The planner also installs a `transform/oksg-source` processor on
-agent and gateway pipelines that stamps `oksg_source` on every datapoint
-based on its receiver-determined metric-name namespace. Application
+`SelectedSources`. For example, when an active sidecar Istio source is present
+and wins all `servicegraph.*` metrics, the gateway omits the `service_graph`
+connector entirely. The planner installs `transform/oksg-source` only on
+collector-owned receiver/connector pipelines, where it stamps `oksg_source`
+from the receiver-determined wire-name namespace. OTLP metrics use separate
+`metrics/otlp` pipelines without inferred stamping: already-stamped agent
+metrics pass through, while direct external producers must supply a registered
+source or the backend rejects them. Application
 Prometheus and Istio scrape jobs also stamp `oksg_source` at scrape time via
 `relabel_configs`, using the Prometheus-safe `oksg_source` label that the
-backend later normalizes to the `source` attribute.
+backend later normalizes to the `source` attribute. Application Prometheus jobs
+run on the singleton gateway, require an annotation naming a declared Service
+port, use static `<service>.<namespace>.svc.cluster.local:<service-port>` targets, and
+preserve `service`, `namespace`, `metrics_path`, and `service_port`. Kubernetes
+performs Service-to-`targetPort` translation; these jobs make no per-pod
+identity claim. The dedicated Istio job retains pod discovery.
 
-### 4b. Ingester (`pkg/backend/ingest/normalizer.go`)
+### 4b. Ingester (`pkg/backend/ingest`)
 
-`OTLPNormalizer.WithAssignment(assignment)` activates source-mismatch
-filtering. After dialect translation and directional name resolution, the
-normalizer compares each datapoint's `oksg_source` attribute against
-`Assignment[canonical]`. Mismatches are dropped and counted via
-`OTLPNormalizer.DroppedSampleCount()` (an `atomic.Uint64` for safety under
-the OTLP server's concurrent request handling). Untagged samples follow a
-legacy accept path so envelopes from external producers are not silently
-dropped.
+The shared `MetricSourcePolicy` validates every recognized canonical datapoint
+before entity resolution. It requires a registered source stamp and enforces
+the exact assigned winner (or a consistently assigned specialization).
+Missing, unknown, and mismatched datapoints are dropped while valid siblings in
+the acknowledged batch continue. Three atomic reason counters back the total
+and reason-specific accessors. Mesh topology consumes the same pure decision
+without recording it again, preventing invalid edges and double counting.
 
 This is the mechanism that prevents double-counting when the same canonical
 metric has two installed producers.
+
+The normalizer preserves source dimensions through a semantic allowlist rather
+than arbitrary label passthrough. This keeps the canonical store reusable for
+UI, audit, analytics, and future prediction consumers while controlling
+cardinality. Prometheus app HTTP metrics preserve Service identity, namespace,
+configured Service port, metrics path, and HTTP dimensions; static Service-DNS
+scraping intentionally makes no pod or endpoint-target identity claim.
+Spanmetrics preserves method/status/span dimensions; servicegraph
+preserves edge identity, `failed`, `connection_type`, `virtual_node`, generic `http_method`
+when emitted, and distinct `client_http_method` / `server_http_method`
+dimensions. Labels with dotted OTLP names are written with Prometheus-safe API
+keys such as `http_method`, `http_status_code`, `span_name`, and `span_kind`.
+Bounded string, boolean, integer, and floating-point attributes are serialized
+as Prometheus label strings; this is required for numeric HTTP status dimensions.
+
+The generated `service_graph` connector instance uses a 15-second metrics flush ticker and a 30-second edge-pairing TTL. Client
+and server spans are exported by independent application batch processors, so a
+2-second TTL can expire a valid edge before its matching span arrives and
+produce incomplete counts or boundary-node series. In collector v0.156,
+`connection_type` is absent, `messaging_system`, or `database`; virtual-node
+identity is carried separately by the optional `virtual_node=client|server`
+label. See the versioned [servicegraph connector contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
+
+Delta Sum and histogram datapoints are stored as their original incremental
+values with `temporality=delta`; the backend keeps no per-series accumulator.
+Collector v0.156 servicegraph output is cumulative: its request/error metrics
+are monotonic cumulative Sums and its latency metrics are cumulative Histograms.
+The normalizer therefore leaves those series cumulative and does not infer
+temporality from a metric name or from an unspecified/gauge payload. See the
+versioned [servicegraph connector documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
+Query construction is catalog-driven. Cumulative `increase` and `window_rate`
+use reset-aware `increase()` only after a two-sample/history-span maturity gate;
+delta series use `sum_over_time()`. `window_rate` divides exact increase by the
+full normalized window, while cumulative `active_rate` uses `rate()` and delta
+`active_rate` returns no data. Histogram means and error ratios use gated exact
+increases. VictoriaMetrics is deployed
+with `-dedup.minScrapeInterval=1ms`, so exact OTLP retry replays with identical
+labels and timestamps are idempotent at storage. See the
+[VictoriaMetrics deduplication contract](https://docs.victoriametrics.com/victoriametrics/index.html#deduplication).
+Live metric API range queries set `nocache=1`; otherwise an aligned query result
+computed just before a burst can hide newly ingested counter samples until the
+VictoriaMetrics response cache expires.
 
 ### 4c. Query-derived enum metrics
 
@@ -225,7 +314,12 @@ catalog metrics rather than ingested directly. They are listed in
 `catalogSourcelessExceptions` (`pkg/core/metrics/catalog_test.go`) and have an
 empty `Sources` list. Today three such metrics exist:
 
-- `servicegraph.request.error.ratio` — `error.count / request.count`.
+- `servicegraph.request.error.ratio` — grouped windowed `increase(error.count) /
+  increase(request.count)` by entity, source, edge identity, connection type, and
+  client/server HTTP methods. The `failed` dimension is intentionally excluded
+  from grouping so the denominator combines failed and successful requests in
+  the same window. Delta series use `sum_over_time()` instead of `increase()`
+  before division within the same request context.
 - `oksg.container.health.status` — integer-encoded enum derived per container
   from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Public
   values: `1=healthy`, `2=running_not_ready`, `3=restarting`. Priority order
@@ -255,9 +349,19 @@ integers and never strings. The translation to public plain-text labels
 - The graph and status handlers, which call the translator to populate
   `enrichedNode.Status` and bucket `health_summary.pods.*` by string key.
 
-Frontends never see the integer for these metrics. New consumers (UI, exporters,
-dashboards) read the string. The catalog row's `Description` documents both the
-integer encoding (for transparency / debugging) and the string labels.
+Snapshot-wide status and graph enrichment queries do not embed the current entity
+IDs in PromQL. The shared health resolver queries the five-minute window once per
+health branch and intersects samples with current graph IDs in Go, keeping query
+text constant as clusters grow. Single-node lookup retains its exact entity filter.
+Responses expose `complete`, `partial`, or `unavailable` quality metadata; a failed
+branch degrades `/status` but remains an HTTP 200 enrichment result.
+
+`k8s.pod.status_reason` uses the same boundary with `1=evicted`,
+`2=node_affinity`, `3=node_lost`, `4=shutdown`,
+`5=unexpected_admission_error`, and `6=unknown`. Frontends never render the
+integer for these metrics. New consumers (UI, exporters, dashboards) read the
+string. The catalog row's `Description` documents both the integer encoding
+(for transparency / debugging) and the string labels.
 
 **Composition contract.** The `buildPromQL` switch arm
 (`pkg/adapters/storage/victoriametrics/metric_store.go`) is the single source
@@ -277,7 +381,8 @@ catalog. `OTLPSemconvMetrics` maps each canonical metric name to:
 - `Unit` — canonical unit code, used by the API response. For heterogeneous
   families such as ResourceQuota, the catalog/mapping unit is `resource` and
   `OTLPNormalizer` assigns a concrete sample unit from the datapoint labels
-  when possible.
+  when possible. VictoriaMetrics persists that unit separately from public
+  dimensions; the API uses a valid sample unit before the catalog fallback.
 - `Kind` — gauge, sum, or histogram
 
 The normalizer reads this map after dialect translation to apply unit
@@ -297,21 +402,22 @@ This metric is the canonical "request rate between two services or workloads"
 counter. It can be produced by two sources:
 
 - `mesh.istio` (priority 1) — sidecar `istio_requests_total`
-- `traces.servicegraph` (priority 2) — OTel `traces.service.graph.request.total`
+- `traces.servicegraph` (priority 2) — OTel `traces_service_graph_request_total`
 
-Pipeline for an Istio cluster:
+Pipeline for an active sidecar Istio cluster:
 
-1. **Discovery** detects `istio-system`, `istio-sidecar-injector`, and
-   produces an `ObservabilitySource{Type:"istio", Mesh:{...}}`.
+1. **Discovery** detects `istio-system`, `istio-sidecar-injector`, and at
+   least one injected namespace, then produces an
+   `ObservabilitySource{Type:"istio", Mesh:{...}}`. Control-plane-only Istio
+   installs do not activate `mesh.istio`.
 2. **Resolver** sees both `mesh.istio` (`hasIstioMesh` is true) and
    `traces.servicegraph` (`hasTraces` is true). PolicyPriority picks
-   `mesh.istio`. `SelectedSources` = `{kubelet, host-os, kube-cluster,
-   mesh.istio, traces.spanmetrics, traces.servicegraph}` if traces are also
-   on, but `Assignment["servicegraph.request.count"] = "mesh.istio"`.
-3. **Planner** does **not** wire the `servicegraph` connector (because
-   nothing in the assignment routes through it, and the planner consults the
-   full assignment, not just `SelectedSources`, for connector-vs-receiver
-   decisions). It does configure the `mesh-istio` Prometheus scrape job and
+   `mesh.istio`. `SelectedSources` contains only sources that win at least one
+   metric, so `traces.servicegraph` is absent if Istio wins all of its metrics;
+   `Assignment["servicegraph.request.count"] = "mesh.istio"`.
+3. **Planner** does **not** wire the `service_graph` connector because
+   `traces.servicegraph` is absent from `SelectedSources`. It configures the
+   `mesh-istio` Prometheus scrape job and
    the `transform/oksg-source` processor.
 4. **Agent** scrapes `istio-proxy:15020/stats/prometheus`. The relabel rule
    stamps `oksg_source=mesh.istio`. The agent forwards OTLP to the gateway,
@@ -325,14 +431,16 @@ Pipeline for an Istio cluster:
    `topology.Edge{Relation:"calls", Provenance:["mesh.istio"], ...}` with
    protocol, mTLS principal, and response metadata pulled from
    datapoint attributes.
-7. **API** serves the metric as `rate(servicegraph.request.count[1m])` and
+7. **API** serves the metric using its catalog default (`window_rate`, 1 minute)
+   and returns the effective mode/window metadata; callers can explicitly select
+   `latest`, `increase`, or cumulative `active_rate`. It serves
    the edge as part of `/api/v1/graph`.
 
-If the same cluster also runs the `servicegraph` connector, the planner
-would still omit it. If only traces are available (no mesh), the resolver
-falls through to `traces.servicegraph`, the planner enables the connector,
-and the same canonical name is served end-to-end. The UI never sees the
-difference.
+If the same active mesh cluster also runs the `service_graph` connector instance, the
+planner would still omit it. If only traces are available, or Istio is
+installed without injected target namespaces, the resolver falls through to
+`traces.servicegraph`, the planner enables the connector, and the same
+canonical name is served end-to-end. The UI never sees the difference.
 
 ## 7. Adding a New Metric: End-to-End Checklist
 
@@ -381,16 +489,17 @@ If the wire name and the catalog canonical differ:
 
 ### Step 3 — OTTL source tagger: stamp `oksg_source` correctly
 
-`buildOksgSourceTagger` in `pkg/adapters/otel/source_planner.go` runs at
-the agent and gateway **before** the dialect (which lives in the
-backend). So OTTL rules see **wire-format names**, not canonical names.
+`buildOksgSourceTagger` in `pkg/adapters/otel/source_planner.go` runs on
+collector-owned agent and gateway pipelines **before** the dialect (which lives
+in the backend). It never runs on `metrics/otlp`. OTTL rules therefore see
+**wire-format names**, not canonical names.
 Two consequences:
 
 - Rules that match against canonical names that only exist post-dialect
   are dead code. `^k8s\.container\.` at the gateway only matches
   k8s_cluster output (kubeletstats container metrics arrive as raw
   `container.*`, not `k8s.container.*`).
-- The first matching rule wins (`attributes["oksg_source"] == nil`
+- The first matching rule wins (`datapoint.attributes["oksg_source"] == nil`
   guard). Rule ordering matters when prefixes overlap. Place specific
   rules before broad ones.
 
@@ -485,12 +594,10 @@ four points. Bisect with these reads:
    `otelcol_receiver_accepted_metric_points{receiver="..."}`. Zero
    means the receiver isn't producing — go back to Step 1.
 2. **Reaching backend?** Compare with
-   `otelcol_exporter_sent_metric_points{exporter="otlp"}` on the
+   `otelcol_exporter_sent_metric_points{exporter="otlp_grpc"}` on the
    gateway. Equal means everything left.
-3. **Dropped at normalizer?** Backend logs with normal verbosity do
-   not record OTLP-mapping misses. Check
-   `OTLPNormalizer.DroppedSampleCount()` (Prom-self-metric or test
-   instrumentation) for source-mismatch drops.
+3. **Dropped at normalizer?** Public operational diagnostics are deferred.
+   Tests can inspect `DroppedSampleCount()` and the reason-specific accessor.
 4. **Dialect translation hit?** Add a normalizer test that feeds the
    wire name and asserts the canonical output. If it fails, the dialect
    is wrong (or `LogicalSource.Dialect` is still `nil`).
@@ -529,6 +636,9 @@ four points. Bisect with these reads:
 | `pkg/core/metrics/otel_mappings.go` | `OTLPSemconvMetrics`, ingest-side units and kinds |
 | `pkg/core/metrics/unit.go` | Unit constants, conversion factors |
 | `pkg/core/semconv/keys.go` | OTLP attribute key constants |
-| `pkg/backend/ingest/normalizer.go` | `OTLPNormalizer`, `WithAssignment`, source-mismatch drop |
+| `pkg/backend/ingest/normalizer.go` | Generic OTLP iteration, `OTLPNormalizer`, shared source-policy enforcement, conversion application, and raw sample emission |
+| `pkg/backend/ingest/source_policy.go` | Registered provenance, assignment validation, and atomic rejection accounting |
+| `pkg/backend/ingest/source_dialect.go` | Internal source-dialect registry and shared bounded-label/entity helpers |
+| `pkg/backend/ingest/source_dialect_*.go` | Collector-specific normalization for kubelet, host OS, kube cluster, Prometheus app, spanmetrics, servicegraph, and Istio |
 | `pkg/backend/ingest/mesh_metric_topology_builder.go` | Mesh `calls` edges from servicegraph-shaped Istio metrics |
 | `pkg/adapters/otel/source_planner.go` | Receivers/connectors gated on `SelectedSources`, `transform/oksg-source` processor |

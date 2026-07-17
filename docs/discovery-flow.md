@@ -33,12 +33,12 @@ sequenceDiagram
 
     User->>CLI: discovery-job --mode=plan --profile=profile.json
     CLI->>SP: Plan(ctx, ClusterProfile)
-    SP->>SP: Always add agent kubeletstats/hostmetrics and gateway k8scluster
+    SP->>SP: Add agent kubelet_stats/host_metrics and gateway k8s_cluster component IDs
     alt Prometheus targets found
         SP->>SP: Add prometheus receiver and scrape configs
     end
     alt OTLP sources found
-        SP->>SP: Add otlp receiver on agent and spanmetrics/servicegraph connectors on gateway
+        SP->>SP: Add otlp receiver on agent and span_metrics/service_graph connectors on gateway
     end
     SP-->>CLI: Plan
     CLI->>RV: Build(plan)
@@ -90,6 +90,13 @@ Prometheus detection is based on service annotations:
 - `prometheus.io/path`
 - `prometheus.io/port`
 
+`prometheus.io/port` is required and must name a port declared in the Kubernetes
+Service spec. Missing, malformed, or non-Service port annotations are not
+planned. The generated gateway collector scrapes
+`<service>.<namespace>.svc.cluster.local:<port>` once; Kubernetes performs the
+Service-to-`targetPort` translation. The dedicated agent-side Istio job
+continues to discover injected pods directly.
+
 OTLP detection is based on:
 
 - annotation `oksg.io/otlp-traces: "true"` on a service
@@ -101,24 +108,28 @@ Either condition is sufficient for a service to be included as an OTLP source in
 
 The source planner turns the profile into collector intent:
 
-- agent always includes `kubeletstats` (expanded to include volume metrics) and `hostmetrics`
-- gateway always includes `k8scluster` for Kubernetes API-backed workload, controller, HPA, ResourceQuota, pod phase, node condition, and allocatable metrics
-- agent adds `prometheus` only when targets were discovered
+- agent always includes kubeletstats under `kubelet_stats` (expanded to include volume metrics) and hostmetrics under `host_metrics`
+- gateway always includes the `k8s_cluster` component for Kubernetes API-backed workload, controller, HPA, ResourceQuota, pod phase, node condition, and allocatable metrics
+- gateway adds singleton `prometheus` scraping for annotated application Service-DNS targets
+- agent adds `prometheus` only for the dedicated active-Istio pod-discovery job
 - agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
-- gateway enables `spanmetrics` and `servicegraph` connectors when OTLP traces are enabled
-- Istio mesh detection is performed in the Kubernetes discovery adapter, not a detector registry. It checks for `istio-system`, the `istio-sidecar-injector` mutating webhook, and injected namespaces, then emits an `ObservabilitySource` with `Type:"istio"` and `Mesh{Flavor:"istio", Mode:"sidecar", MetricsPort:15020, MetricsPath:"/stats/prometheus"}`.
-- when Istio is present, the source planner adds a dedicated `mesh-istio` Prometheus scrape job for `istio-proxy` containers. This path does not rely on `prometheus.io/scrape` annotations being merged onto application pods.
-- gateway receives OTLP from agents and OTLP-native emitters
+- gateway enables the `span_metrics` and `service_graph` connector component IDs when OTLP traces are enabled
+- Istio mesh detection is performed in the Kubernetes discovery adapter, not a detector registry. It checks for `istio-system`, the `istio-sidecar-injector` mutating webhook, and at least one injected namespace, then emits an `ObservabilitySource` with `Type:"istio"` and `Mesh{Flavor:"istio", Mode:"sidecar", MetricsPort:15020, MetricsPath:"/stats/prometheus"}`. A control-plane-only Istio install is not treated as an active mesh source.
+- when an active Istio mesh source is present, the source planner adds a dedicated `mesh-istio` Prometheus scrape job for `istio-proxy` containers. This path does not rely on `prometheus.io/scrape` annotations being merged onto application pods.
+- gateway receives OTLP from agents and OTLP-native emitters through an
+  untagged `metrics/otlp` pipeline; collector-owned source stamping happens at
+  the originating receiver, while external metric producers must provide their
+  own registered source
 - gateway exports to the backend OTLP ingest service instead of the debug exporter
 - collector telemetry logging is configured for JSON stdout logging with env-controlled level
 - traces are enabled only when OTLP-capable sources advertise trace support
 
-`spanmetrics` and `servicegraph` live on the gateway rather than the per-node agent so the cluster uses one shared connector instance. That prevents the same traffic from being derived once per agent and keeps latency and service-call counts from being double-counted.
+The `span_metrics` and `service_graph` connector instances live on the gateway rather than the per-node agent so the cluster uses one shared connector instance. That prevents the same traffic from being derived once per agent and keeps latency and service-call counts from being double-counted.
 
 Baseline vs enriched plans:
 
-- a **baseline** plan (no Prometheus targets, no OTLP sources) enables `kubeletstats` and `hostmetrics` on the agent plus `k8scluster` on the gateway
-- an **enriched** plan adds `prometheus`, `otlp`, `spanmetrics`, `servicegraph`, and/or the `mesh-istio` scrape job based on what was discovered
+- a **baseline** plan (no Prometheus targets, no OTLP sources) enables `kubelet_stats` and `host_metrics` on the agent plus `k8s_cluster` on the gateway
+- an **enriched** plan adds `prometheus`, `otlp`, `span_metrics`, `service_graph`, and/or the `mesh-istio` scrape job based on what was discovered
 
 Source detection contract: the `Detector` interface in
 `pkg/discovery/detectors` describes a `Name()` plus a `Detect(ctx)

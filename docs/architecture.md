@@ -42,18 +42,20 @@ adapter boundaries (`doc.go` only) for future integrations.
 The source planner emits collector intent that the values builder turns into
 typed Helm values. Receivers and connectors:
 
-- `kubeletstats` (always; pod, container, volume metrics)
-- `hostmetrics` (always; per-node CPU, memory, disk, network, load)
+- kubeletstats as component ID `kubelet_stats` (always; pod, container, volume metrics)
+- hostmetrics as component ID `host_metrics` (always; per-node CPU, memory, disk, network, load, paging, filesystem, and connection data). Agent pods use the host network by default so interface counters describe the node; opting out removes only the network scraper rather than publishing collector-pod traffic as node truth.
 - `k8scluster` (always on the gateway; workload/controller counts, pod phases, node conditions, resource quotas, HPA replica counts)
-- `prometheus` (when discovered targets exist; scrape jobs stamp `oksg_source=prometheus.app`)
+- `prometheus` on the singleton gateway for application Service-DNS targets (scrape jobs stamp `oksg_source=prometheus.app`)
 - `mesh-istio` Prometheus job (when sidecar mode is detected; scrapes `istio-proxy:15020/stats/prometheus`, rewrites Istio labels into servicegraph `client`/`server` edge attributes, stamps `oksg_source=mesh.istio`)
 - `otlp` receivers (when discovery finds workloads with `oksg.io/otlp-traces: "true"` or ports `4317`/`4318`)
-- `spanmetrics` connector (gateway, when traces are present; cluster-wide single instance to avoid double-counting)
-- `servicegraph` connector (gateway, when traces are present; only deployed when no higher-priority source — typically Istio — already produces the edge metric)
+- spanmetrics as component ID `span_metrics` (gateway, when traces are present; cluster-wide single instance to avoid double-counting; v0.156 instance-ID dimension disabled for compatibility)
+- servicegraph as component ID `service_graph` (gateway, when traces are present; only deployed when no higher-priority source — typically Istio — already produces the edge metric)
 
-The agent and gateway pipelines run a `transform/oksg-source` processor that
-stamps `oksg.source` on every datapoint based on its receiver-determined
-metric-name namespace. Together with scrape-time relabel stamps
+Collector-owned agent and gateway pipelines run a `transform/oksg-source`
+processor that stamps the Prometheus-safe `oksg_source` datapoint attribute from
+the receiver-determined metric-name namespace. The backend accepts either
+`oksg_source` or dotted `oksg.source` from producers. External OTLP metrics use isolated `metrics/otlp` pipelines without
+inference and must arrive with a registered source. Together with scrape-time relabel stamps
 (`oksg_source=prometheus.app` / `mesh.istio`) this gives the backend a
 reliable signal for source arbitration.
 
@@ -64,7 +66,8 @@ The backend ingest pipeline:
 | Component | File | Role |
 |-----------|------|------|
 | `OTLPEntityResolver` | `pkg/backend/ingest/entity_resolver.go` | Maps OTLP resource attributes to deterministic `EntityID` (SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label resolve to the PVC entity before the generic fallback. |
-| `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Applies dialect translation, then `OTLPSemconvMetrics` for canonical name + unit + datapoint kind. Resolves directional variants for disk, network, node-condition. Histograms are stored as `_sum`/`_count`. Servicegraph and Istio-mesh datapoints are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` IDs. Mesh metrics also preserve `mesh.*` metadata. With `WithAssignment`, samples whose `oksg.source` mismatches the resolved producer are dropped (counter exposed via `DroppedSampleCount()`). |
+| `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Performs generic OTLP scalar/histogram traversal, canonical mapping, source-assignment enforcement, conversion application, and sample emission. Histograms are stored as `_sum`/`_count`; delta-valued series are preserved raw with `temporality=delta`. |
+| Source dialect registry | `pkg/backend/ingest/source_dialect.go` | Dispatches bounded source-specific behavior to one `source_dialect_*.go` implementation per logical source. Dialects own directional variants, source labels, entity/edge attachment, ResourceQuota units, servicegraph enrichment, and mesh metadata. OTLP temporality handling remains generic and follows the payload contract. |
 | `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | `runs_on` (pod→node), `contains` (namespace→pod, pod→container) plus topology nodes for those entity kinds, all from resource attributes. |
 | `MeshMetricTopologyBuilder` | `pkg/backend/ingest/mesh_metric_topology_builder.go` | `calls` edges with `mesh.istio` provenance from servicegraph-shaped Istio metrics, preserving protocol, mTLS, principal, response-flag, and HTTP/gRPC status labels. Uses datapoint timestamp for `FirstSeen`/`LastSeen`. |
 | `TraceTopologyBuilder` | `pkg/backend/ingest/topology_builder.go` | `calls` edges from OTLP spans where `peer.service` is set; deduplicated within a batch by edge ID. |
@@ -80,12 +83,12 @@ component of every entity ID; default `default`.
 ## Source Arbitration
 
 When more than one available source declares the same canonical metric (e.g.
-`servicegraph.request.count` from both Istio mesh and the OTel `servicegraph`
+`servicegraph.request.count` from both Istio mesh and the OTel `service_graph`
 connector), `metrics.Resolve(catalog, registry, profile)` picks one winner
 per metric using `PolicyPriority` (lowest `Priority` value wins). Output:
 
-- `Assignment` (canonical metric → winning source ID) — drives the
-  normalizer's source-mismatch drop filter via `OTLPNormalizer.WithAssignment`
+- `Assignment` (canonical metric → winning source ID) — seeds the shared
+  source policy used by metric normalization and mesh-edge derivation
 - `SelectedSources` — drives the planner's "deploy this receiver/connector?"
   decision
 

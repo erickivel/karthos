@@ -165,7 +165,7 @@ Notes:
 - use file outputs for `discover` and `plan` when you need clean machine-readable artifacts
 - `plan` now emits Helm values, not raw manifests
 - `deploy` uses Helm, not `kubectl apply`
-- collector runtime flags are driven from Helm values; `agent.featureGates` currently enables `receiver.kubeletstats.enableCPUUsageMetrics` to avoid deprecated kubelet CPU utilization metrics
+- collector runtime flags are driven from Helm values; Collector Contrib is pinned to `0.156.0`, the removed kubelet CPU feature gate is absent, and `gateway.featureGates` disables `connector.spanmetrics.includeCollectorInstanceID` to preserve public spanmetrics identity
 - `--node-ttl` / `OKSG_NODE_TTL` controls topology node aging (default `24h`). Nodes absent from snapshots for longer than this value are hidden from `GetLatest` so deleted entities stop surfacing indefinitely. Set `0` to disable.
 
 ## Helm Ownership
@@ -296,8 +296,8 @@ curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.
 
 Notes:
 
-- `http.server.request.count`, `rpc.server.request.count`, `servicegraph.request.count`, `servicegraph.request.error.count`, gRPC message counts, and TCP connection counts are served as 1-minute rates at query time, even though the stored semconv series are counter-derived.
-- `servicegraph.request.error.ratio` is query-derived from the served request and error rates.
+- Counter presentation is catalog-driven. Rate-presented counters default to `aggregation=window_rate&window=1m`, while callers may explicitly request `latest`, `increase`, `window_rate`, or `active_rate` when that metric declares the mode. Cumulative counters such as container restarts retain their catalog-declared `latest` default.
+- `servicegraph.request.error.ratio` is query-derived from mature, baseline-gated request and error increases over the selected window. It returns no data when a participating branch lacks a trustworthy baseline instead of dividing partial totals.
 - Istio metrics enter through `metrics.IstioDialect`, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
 - The Metrics Explorer entity search and breadcrumb filter are driven by the latest graph snapshot (`useGraphSnapshot`), not the historical `/api/v1/entities` registry. Edge mode lists `calls` edges from the same snapshot.
 
@@ -337,6 +337,13 @@ A skipped envelope (expected for raw host metrics without node context or unsupp
 ```
 
 Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet). `k8s_cluster` workload/controller resources such as deployments, daemonsets, statefulsets, replicasets, jobs, cronjobs, HPAs, ResourceQuotas, and replication controllers are part of the canonical model and should resolve.
+
+The chart's accuracy-first default is `agent.hostNetwork=true`, which renders
+`hostNetwork: true` with `dnsPolicy: ClusterFirstWithHostNet`. This lets the
+hostmetrics network scraper observe node interfaces. Set it to `false` only when
+the security/isolation tradeoff requires it; generated collector configuration
+then omits the network scraper so pod-network traffic is never mislabeled as node
+traffic. CPU, disk, paging, filesystem, and connection scrapers remain enabled.
 
 ## REST API (Layer 6)
 

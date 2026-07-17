@@ -209,10 +209,10 @@ The agent collector is the node-local collection entrypoint.
 
 What it does today:
 
-- always collects infrastructure telemetry with `kubeletstats`
-- adds `prometheus` scraping when discovery found annotated services
+- always collects infrastructure telemetry with the kubeletstats receiver under the `kubelet_stats` component ID
+- adds `prometheus` only for the dedicated Istio pod-discovery scrape job
 - enables `otlp` receivers when discovery found OTLP-capable sources
-- enriches metrics and traces with `k8sattributes`
+- enriches metrics and traces with k8sattributes under the `k8s_attributes` component ID
 - batches data before export
 - exports to the in-cluster gateway over OTLP gRPC
 
@@ -220,7 +220,8 @@ Operational notes:
 
 - the agent is deployed as a DaemonSet
 - startup retries against the gateway are expected if the gateway pod is not ready yet
-- the current chart enables the `receiver.kubeletstats.enableCPUUsageMetrics` feature gate to align with the collector's newer kubelet CPU metric behavior
+- the chart pins Collector Contrib `0.156.0`; the deleted `receiver.kubeletstats.enableCPUUsageMetrics` feature gate is not configured
+- kubelet collection enables every node interface but retains the receiver's default pod-interface collection, and requests `k8s.volume.type` metadata without configuring `k8s_api_config` or adding PV/PVC RBAC
 
 ### 2. Gateway Routing
 
@@ -231,6 +232,7 @@ What it does today:
 - receives OTLP over gRPC and HTTP
 - accepts exports from the agent
 - can also accept OTLP-native application telemetry
+- scrapes annotated application metrics once through static Service-DNS targets
 - collects Kubernetes API-backed metrics with `k8s_cluster`, including workload/controller counts, HPA replicas, ResourceQuota usage, pod phases, node conditions, and node allocatable resources; structural discovery emits matching graph nodes for those controller, HPA, and ResourceQuota entity IDs
 - applies `memory_limiter` and `batch`
 - exports to the backend OTLP gRPC endpoint
@@ -240,6 +242,7 @@ Operational notes:
 
 - the gateway is deployed as a single Deployment replica
 - its job is collection and forwarding only; it does not perform semantic normalization or persistence
+- generated v0.156 component IDs use `k8s_cluster`, `span_metrics`, and `service_graph`; the gateway disables `connector.spanmetrics.includeCollectorInstanceID` so spanmetrics public series identity remains compatible with pre-upgrade data
 
 ### 3. Backend OTLP Ingest
 
@@ -267,24 +270,27 @@ Operational notes:
 
 The backend serves a scalar metrics API, so OTLP metrics are normalized into canonical samples before storage and query:
 
-- Gauge and Sum datapoints are copied as scalar samples, then multiplied by the configured conversion factor.
-- Histogram datapoints are normalized as average values using `sum / count`. Datapoints with `count == 0` are skipped.
-- Servicegraph-derived metrics preserve `edge_client`, `edge_server`, `edge_client_id`, and `edge_server_id` labels so edge queries can join runtime telemetry back onto topology edges.
-- Pod-volume metrics preserve selected topology labels such as `k8s.volume.name`, `k8s.persistentvolumeclaim.name`, `k8s.pod.name`, and `k8s.namespace.name`. When a volume datapoint carries a resolvable PVC identity, the normalizer stores the sample against the PVC entity. Otherwise it remains pod-scoped, and topology cards must not render PVC storage from that sample.
+- Gauge and Sum datapoints are copied as scalar samples, then multiplied by the configured conversion factor. Delta-valued datapoints remain incremental and carry `temporality=delta`; VictoriaMetrics deduplicates exact retry replays, and query construction derives their rates with `sum_over_time()/window_seconds`.
+- Histogram datapoints are stored as raw `_sum` / `_count` samples. Delta histograms keep their incremental sum/count values and the same `temporality=delta` label on both series. Datapoints with `count == 0` are skipped.
+- Application Prometheus HTTP metrics are scraped once by the singleton gateway through static Kubernetes Service DNS targets and attach to the canonical Service entity. Discovery requires `prometheus.io/port` to identify a declared Service port. Samples preserve that port, metrics path, namespace, service, and HTTP labels; Kubernetes performs the Service-port to `targetPort` translation.
+- Servicegraph-derived metrics preserve `edge_client`, `edge_server`, `edge_client_id`, `edge_server_id`, `failed`, valid `connection_type`, separate `virtual_node`, generic method/status when emitted, distinct `client_http_method` / `server_http_method`, and namespace labels so edge queries can join runtime telemetry back onto topology edges without collapsing request contexts.
+- The gateway servicegraph connector flushes metrics every 15 seconds and retains unmatched spans for 30 seconds so independently batched client/server exports can be paired before an edge expires.
+- Kubelet network metrics preserve `direction` and `network_interface_name`, keeping receive/transmit and separate node interfaces as distinct raw series.
+- Pod-volume metrics normalize resource/datapoint attributes to `volume_name`, `volume_type`, and optional `persistentvolumeclaim_name`. When a volume datapoint carries a resolvable PVC identity, the normalizer stores the sample against the PVC entity. Otherwise it remains pod-scoped and stays distinct by volume name/type.
+- ResourceQuota samples carry their resolved unit (`millicores`, `bytes`, `count`, or fallback `resource`) through VictoriaMetrics in the reserved `oksg_unit` label. Reads validate and remove that internal label before the API returns public labels.
+- `k8s.container.storage.request` and `k8s.container.storage.limit` are disabled and not canonical metrics; ephemeral-storage and volume metrics are the supported alternatives.
 
 ### Request, Error, and Duration Semantics
 
 The semconv names stay stable across storage and the API, but the semantics still come from the upstream emitters:
 
-- `traces.span.metrics.calls` translates to `rpc.server.request.count`, then the API serves it as `rate(rpc.server.request.count[1m])`.
-- `traces.service.graph.request.total` translates to `servicegraph.request.count`, then the API serves it as `rate(servicegraph.request.count[1m])`.
-- `traces.service.graph.request_failed_total` translates to `servicegraph.request.error.count`, then the API serves it as `rate(servicegraph.request.error.count[1m])`.
-- `servicegraph.request.error.ratio` is not stored directly; the API derives it at query time as `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`.
+- Counter metrics use the catalog-declared default aggregation. Rate-presented counters default to exact one-minute `window_rate`; cumulative counters such as restarts default to `latest`. Callers can select `latest`, `increase`, `window_rate`, or cumulative `active_rate` with a validated `1m..1h` window.
+- `servicegraph.request.error.ratio` is not stored directly; the API divides baseline-gated error and request increases by entity, source, edge identity, connection type, and client/server HTTP methods. `failed` is excluded from grouping, and incomplete branches yield no data.
 - `http_request_duration_seconds` translates to `http.server.request.duration` and is normalized from seconds to nanoseconds.
 - `traces.span.metrics.duration` translates to `rpc.server.duration` and is normalized from milliseconds to nanoseconds unless the collector configuration is explicitly changed to export seconds.
-- `traces.service.graph.request.server` translates to `servicegraph.request.duration` and is normalized from seconds to nanoseconds.
+- `traces_service_graph_request_server` translates to `servicegraph.request.duration` and is normalized from seconds to nanoseconds.
 
-The fixed query window for request and error rates is currently 1 minute.
+The default counter query window is 1 minute and can be overridden through the API up to 1 hour. Responses report the normalized effective mode and window.
 
 ### 4. Raw Envelope Build
 
@@ -317,7 +323,7 @@ After routing, envelopes are normalized into canonical domain objects.
 Metric path:
 
 - `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label use the PVC identity before the generic resource fallback. Entity resolution errors fail the envelope.
-- `OTLPNormalizer` first translates source dialects into semconv-style metric names, then maps each recognized OTLP metric name to a semconv-native `MetricSample` using the registered `OTLPSemconvMetrics`. Applies unit conversion. Resolves directional names for disk, network, and node condition metrics. ResourceQuota samples preserve the `resource` label and derive concrete sample units from it when possible (`millicores`, `bytes`, or `count`; otherwise `resource`). Servicegraph connector and Istio mesh metrics are enriched with `edge_client`/`edge_server` labels and stable `edge_client_id`/`edge_server_id` labels derived from canonical service entity IDs. Istio request-duration histograms are converted from milliseconds to nanoseconds, histograms are stored as `_sum`/`_count`, and `servicegraph.request.error.ratio` remains query-derived. Unrecognized metric names are silently skipped.
+- `OTLPNormalizer` first uses the core `metrics.DialectRegistry` for raw-name translation and `OTLPSemconvMetrics` for generic kind/unit metadata. It then delegates collector-specific labels, entity attachment, directional variants, and conversions to the internal registry in `source_dialect.go`; each source implementation is isolated in its own `source_dialect_*.go` file. The shared normalizer only traverses scalar/histogram datapoints, enforces source assignment, applies planned conversions, marks delta semantics, and emits raw samples. ResourceQuota samples preserve the `resource` label and derive concrete sample units from it when possible (`millicores`, `bytes`, or `count`; otherwise `resource`). Application Prometheus samples resolve to Service entities from preserved `namespace` / `service` scrape labels. Servicegraph connector and Istio mesh metrics are enriched with stable edge identity and bounded source dimensions. Dotted OTLP labels are normalized to Prometheus-safe names. Pod status-reason integers receive public `value_label` strings at the API boundary, including `6 -> unknown`. Istio request-duration histograms are converted from milliseconds to nanoseconds, histograms are stored as `_sum`/`_count`, and `servicegraph.request.error.ratio` remains query-derived. Unrecognized metric names are silently skipped.
 - `MetricStore` stores the resulting samples in memory or VictoriaMetrics. Supports time-range, entity-filtered, edge-filtered, and catalog-stats queries.
 - `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. `MeshMetricTopologyBuilder` parses servicegraph-shaped mesh metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response metadata. Mesh `calls` edges take `FirstSeen`/`LastSeen` from the metric datapoint timestamp, falling back to the envelope timestamp only when the datapoint has no timestamp.
 - `GraphStore` accumulates edges and nodes across snapshots. Re-observed edges have their `LastSeen` updated; nodes are merged by entity ID.
@@ -329,11 +335,9 @@ Trace path:
 
 ### 7. Source-Mismatch Drop
 
-When a discovery profile is loaded at backend startup, `cmd/backend/main.go` calls `metrics.Resolve(catalog, registry, profile)` to compute the canonical-to-source `Assignment` and passes it to the normalizer via `WithAssignment(...)`.
+At backend startup, `cmd/backend/main.go` resolves the optional profile assignment, constructs one `MetricSourcePolicy`, and shares it with the normalizer and mesh topology builder.
 
-For each incoming datapoint, after dialect translation and directional name resolution, the normalizer compares the sample's `oksg_source` attribute (stamped by the agent/gateway `transform/oksg-source` processor, by application Prometheus scrape relabeling, or by Istio's Prometheus relabel rule) against `Assignment[canonical]`. If the canonical metric has an assigned source and the sample's source disagrees, the sample is dropped and the `dropped` counter — an `atomic.Uint64` to remain safe under the OTLP server's concurrent request handling — is incremented. Samples without an `oksg_source` attribute follow a legacy accept path so envelopes from external producers aren't silently dropped.
-
-The cumulative drop count is exposed via `OTLPNormalizer.DroppedSampleCount()`. See [metrics-pipeline.md](metrics-pipeline.md) for the catalog/registry/resolver contract.
+Before entity resolution, the shared `MetricSourcePolicy` requires every recognized canonical datapoint to carry a registered `oksg.source` or `oksg_source` and enforces its assigned winner. Invalid datapoints are dropped while valid siblings continue in the acknowledged batch. Atomic missing, unknown, and assignment-mismatch counters are exposed internally to tests. Mesh topology uses the same decision without recording a second rejection, so invalid servicegraph datapoints cannot create edges. See [metrics-pipeline.md](metrics-pipeline.md) for the full contract.
 
 ## Runtime View
 
@@ -343,7 +347,9 @@ Workloads / Kubelet
         v
 Agent Collector
   - kubeletstats (pod, container, volume)
-  - hostmetrics (CPU, memory, disk, network, load)
+  - hostmetrics (CPU, memory, disk, network, load, paging, filesystem, connections)
+    - agent host networking defaults on with `ClusterFirstWithHostNet`
+    - opting out removes the network scraper; it does not substitute pod-network counters
   - prometheus (when discovered)
   - otlp (when discovered)
         |

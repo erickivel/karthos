@@ -1,6 +1,49 @@
 # Agent Guide
 
-This repository builds an observability-driven Kubernetes system graph. See [README.md](README.md) for a project summary and [GUIDELINE.md](GUIDELINE.md) for design principles that govern all contributions.
+This repository builds a normalized observability data layer for Kubernetes.
+It ingests OTLP and Kubernetes telemetry, maps heterogeneous signals into
+stable canonical entities, metrics, and relationships, preserves raw
+provenance and source dimensions, controls cardinality, and exposes generic
+APIs for tools built on top of that normalized data.
+
+The graph visualizer is one consumer of this data layer. Future analytics,
+automation, simulation, and prediction systems are also consumers. The long-term
+goal is a live observability knowledge graph that can explain the current
+system and later simulate or predict the performance impact of changes.
+
+See [README.md](README.md) for a project summary and [GUIDELINE.md](GUIDELINE.md) for design principles that govern all contributions.
+
+## Product North Star
+
+Agents working in this repository should optimize for the data foundation, not
+only the current UI screen or the shortest local fix.
+
+- Treat canonical storage and APIs as the platform contract. UI, analytics,
+  automation, and future prediction tools must consume stable interfaces rather
+  than backend internals or source-specific shortcuts.
+- Preserve truth first: keep source provenance, dimensions, labels, timestamps,
+  entity identity, and transformation context before creating summaries.
+- Aggregate intentionally. Node-level, workload-level, or UI-friendly values
+  should be query/API transformations over preserved data, not accidental
+  flattening during ingest or storage.
+- Keep prediction and simulation as future consumers of the canonical
+  graph-and-metrics foundation. Do not mix prediction logic into discovery,
+  collection, normalization, or storage layers prematurely.
+- Prefer generic query capabilities with filters, grouping, aggregation knobs,
+  time ranges, and source selectors so different tools can request the data
+  shape they need without new bespoke endpoints for each screen.
+- Control cardinality deliberately. Preserve stable semantic dimensions needed
+  for correctness, but avoid volatile labels, raw paths, generated IDs, or
+  unbounded attributes unless a storage/query contract explicitly justifies
+  them.
+- Keep source-specific and vendor-specific behavior behind small, explicit
+  interfaces. Prefer lightweight dialects, adapters, and registries whose
+  implementations can be selected or replaced without changing shared domain
+  logic. Each implementation should own its source-specific mapping,
+  dimensions, conversions, defaults, and tests. Do not introduce a dynamic
+  plugin framework unless runtime loading or third-party extensibility is an
+  actual requirement; modular boundaries and interchangeable implementations
+  are the goal.
 
 ## Quick Reference Commands
 
@@ -60,10 +103,10 @@ When upgrading Go (e.g., to fix `govulncheck` findings), update **all** of these
 | `.env.example` | `GO_VERSION` comment |
 | `deploy/images/backend/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
 | `test/e2e/apps/base/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
-| `test/e2e/apps/with-prometheus/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
-| `test/e2e/apps/with-prometheus/gateway-go/go.mod` | `go X.Y.Z` directive |
-| `test/e2e/apps/with-istio/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
-| `test/e2e/apps/with-istio/gateway-go/go.mod` | `go X.Y.Z` directive |
+| `test/e2e/apps/instrumented/gateway-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
+| `test/e2e/apps/instrumented/gateway-go/go.mod` | `go X.Y.Z` directive |
+| `test/e2e/apps/mesh-protocol-go/Dockerfile` | `FROM golang:X.Y.Z-alpine` |
+| `test/e2e/apps/mesh-protocol-go/go.mod` | `go X.Y.Z` directive |
 
 After updating, run `go mod tidy`, reinstall tools (`go install ...`), `asdf reshim golang`, then `task ci` and `task security`.
 
@@ -148,9 +191,55 @@ OTLP signals never re-emit them. So:
 
 ## Telemetry Mapping Rules
 
-- Before adding or remapping any metric, trace-derived metric, or telemetry source, verify the upstream or source-of-truth docs/spec first.
-- Record the signal contract you verified: how the signal is generated, whether it is gauge/sum/histogram and cumulative or delta, its units, and any default rate, flush, or aggregation window semantics.
+- Before integrating or changing any collector, connector, receiver, exporter,
+  telemetry service, metric, or trace-derived metric, read its authoritative
+  upstream documentation and, when semantics depend on implementation details,
+  its source code. Check the documentation for the exact deployed version, not
+  only the latest release, and record any relevant version differences.
+- Record the verified signal contract: how the signal is generated; whether it
+  is a gauge, sum, or histogram; whether sums are monotonic; whether temporality
+  is cumulative or delta; its units and dimensions; and all behaviorally
+  relevant defaults such as collection, scrape, flush, aggregation, expiration,
+  cache, pairing, and TTL windows. Confirm which settings are defaults and which
+  are explicitly generated by OKSG.
+- Treat external documentation review as implementation evidence, not optional
+  background reading. Link the authoritative reference in the relevant product
+  docs or audit notes, and validate the documented behavior against the live
+  generated configuration and emitted telemetry whenever feasible.
 - Only after that verification should you change the semconv metric registry, dialect translations, unit conversions, query-time derivations, storage expectations, or UI assumptions.
 - Do not infer telemetry semantics from a metric name alone. Connectors such as `spanmetrics` and `servicegraph` can emit counters, histograms, and unit defaults that differ from what the semconv name suggests.
+- Isolate collector and service integration behavior in the corresponding
+  dialect or adapter instead of adding source-specific branches to shared
+  normalization, storage, or API code. Shared code should depend on a narrow
+  contract and remain source-agnostic. Register implementations by a stable
+  source ID, keep one focused implementation per source when practical, and
+  test each implementation independently plus through the shared contract.
+- When introducing an integration interface, make the ownership boundary clear:
+  document what the shared layer guarantees, what the source implementation
+  may customize, how it is selected, and what truthful fallback behavior occurs
+  when no implementation is registered. Prefer the smallest interface that
+  supports known sources and keep source-specific configuration out of it.
+- Storage and API contracts must preserve the dimensions required to make a
+  metric truthful. For dimensional telemetry such as CPU state, memory state,
+  disk device/direction, filesystem mount/state, network interface/direction,
+  or resource quota resource labels, do not collapse labels merely because the
+  current UI wants one card value. Build explicit aggregation/query behavior on
+  top of preserved series.
+- When a consumer needs summarized data, prefer generic API/query controls
+  such as `filter`, `group_by`, `aggregate`, `source`, `entity_id`, and time
+  range semantics over UI-specific endpoints or storage-time rollups. If a
+  named view is added for convenience, it should be documented as a derived
+  view over canonical data.
+- When an audit or bug investigation finds a metric that is missing, wrong, or
+  passed through a layer in the wrong shape, document concrete examples from
+  each checked layer: source truth, collector/VM series, stored labels/entity
+  IDs, API response values/units/labels, and frontend rendering. These examples
+  are part of the fix context so later agents can reproduce the failure and
+  decide whether to change collection, normalization, storage, API querying, or
+  presentation.
+- Every metric pipeline change should consider at least three consumers:
+  current frontend surfaces, audit/automation tools, and future feature
+  extraction for prediction or simulation. This does not mean implementing
+  prediction now; it means keeping the canonical data contract reusable.
 - Before adding or modifying any catalog metric, follow the end-to-end checklist in [docs/metrics-pipeline.md § *Adding a New Metric: End-to-End Checklist*](docs/metrics-pipeline.md#7-adding-a-new-metric-end-to-end-checklist). Verify on a live kind cluster — unit tests do not catch receiver-config or OTTL-tag mistakes; metrics can be advertised in the catalog yet silently produce zero datapoints.
 - Status/lifecycle signals stay integer-encoded through the pipeline. `MetricSample.Value` is `float64`; do not introduce string-valued samples for enum metrics like `k8s.pod.phase` or `oksg.{pod,container}.health.status`. Translate integer enums to plain-text strings ONLY at the API boundary — the canonical translator is `pkg/core/metrics/health_status.go`, applied by the metric store (sets `MetricSample.ValueLabel`) and the graph/status handlers (populate `enrichedNode.Status` and `health_summary.pods.*` keys). Frontends never see enum integers; the only consumers of the integer form are storage and PromQL composition.

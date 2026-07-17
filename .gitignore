@@ -34,6 +34,9 @@ deploy/helm/oksg-otel/charts/
 docs/superpowers/
 .superpowers/
 
+# Local audit workspaces
+audits/
+
 # Frontend build artifacts and dependencies (should never exist locally)
 web/node_modules/
 web/dist/
@@ -42,3 +45,7 @@ web/dist/
 .playwright-mcp/
 web/playwright-report/
 web/test-results/
+
+# Python verification artifacts
+__pycache__/
+*.pyc
