@@ -56,3 +56,9 @@ func TestParseConfigParsesNodeTTLAndFlushInterval(t *testing.T) {
 	require.Equal(t, 30*time.Second, cfg.TopologyFlushInterval)
 	require.Equal(t, 250*time.Millisecond, cfg.NodeTTL)
 }
+
+func TestParseConfigParsesPodLifecycleRequired(t *testing.T) {
+	cfg, err := parseConfig([]string{"--pod-lifecycle-required=true"})
+	require.NoError(t, err)
+	require.True(t, cfg.PodLifecycleRequired)
+}

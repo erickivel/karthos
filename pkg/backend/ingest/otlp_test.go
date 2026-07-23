@@ -28,6 +28,7 @@ func TestBuildMetricEnvelopesFromOTLPRequest(t *testing.T) {
 					Attributes: []*commonpb.KeyValue{
 						{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "gateway"}}},
 						{Key: "k8s.namespace.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "oksg-demo"}}},
+						{Key: "k8s.pod.uid", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "pod-uid-a"}}},
 					},
 				},
 				ScopeMetrics: []*metricpb.ScopeMetrics{
@@ -48,6 +49,7 @@ func TestBuildMetricEnvelopesFromOTLPRequest(t *testing.T) {
 	require.Equal(t, "otlp/grpc", envelopes[0].Source)
 	require.Equal(t, "gateway", envelopes[0].Resource["service.name"])
 	require.Equal(t, "oksg-demo", envelopes[0].Resource["k8s.namespace.name"])
+	require.Equal(t, "pod-uid-a", envelopes[0].Resource["k8s.pod.uid"])
 	require.NotEmpty(t, envelopes[0].Payload)
 	require.Equal(t, now, envelopes[0].Timestamp)
 }

@@ -21,6 +21,7 @@ Key coverage areas:
 - backend OTLP envelope conversion and routing
 - OTLP gRPC and HTTP ingest integration
 - `MetricTopologyBuilder`: structural edge and node extraction from resource attributes
+- Pod lifecycle validation: UID/node matching, retirement suppression, watch recovery, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
 - `InMemoryGraphStore`: node accumulation and deduplication across snapshots
 - `/debug/graph` endpoint correctness
@@ -95,6 +96,13 @@ VictoriaMetrics/API assertions. The `e2e:scenario:prometheus` task invokes the
 standalone runner, warms the cumulative servicegraph baseline, sends 30 normal
 and 10 intentional `/error` requests, and verifies the resulting increases,
 window rates, active rates, units, metadata, duration, and error ratio.
+
+It is a deployment-compatibility scenario, not retired-Pod lifecycle proof.
+The retired `runs_on` contract is unit-tested in this repository and is
+accepted end-to-end by the deadline-backed E3 evaluation: capture the exact
+edge and its baseline `last_seen`, delete the Pod, retain raw timestamped
+polls through the real deadline, and require that the edge remains queryable
+without advancing `last_seen` after the backend has observed retirement.
 
 Expected:
 

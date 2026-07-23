@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/erickivel/oksg/pkg/adapters/api"
+	kubernetesadapter "github.com/erickivel/oksg/pkg/adapters/kubernetes"
 	"github.com/erickivel/oksg/pkg/adapters/otlp"
 	"github.com/erickivel/oksg/pkg/adapters/storage"
 	"github.com/erickivel/oksg/pkg/backend/ingest"
@@ -19,6 +20,8 @@ import (
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -55,6 +58,7 @@ type config struct {
 	TopologyFlushInterval time.Duration
 	StatusStaleSeconds    int
 	NodeTTL               time.Duration
+	PodLifecycleRequired  bool
 	// DiscoveryRefreshInterval re-runs structural ingestion from the
 	// discovery profile on a timer. Required because the graph store
 	// applies NodeTTL based on snapshot creation time; without periodic
@@ -150,7 +154,14 @@ func run(ctx context.Context, args []string) error {
 	sourcePolicy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), assignment)
 	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithSourcePolicy(sourcePolicy))
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
+	podLifecycle, err := startPodLifecycle(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
+	if podLifecycle != nil {
+		metricTopoBuilder = ingest.NewMetricTopologyBuilderWithLifecycle(cfg.ClusterName, podLifecycle)
+	}
 	meshMetricTopoBuilder := ingest.NewMeshMetricTopologyBuilder(dialect, cfg.ClusterName, sourcePolicy)
 
 	bufferedTopo := ingest.NewBufferedTopologyIngestor(
@@ -241,6 +252,7 @@ func parseConfig(args []string) (config, error) {
 	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
 	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
 	nodeTTLStr := fs.String("node-ttl", envOrDefault("OKSG_NODE_TTL", defaultNodeTTL.String()), "topology node TTL; nodes absent from snapshots for longer than this age out (0 disables)")
+	podLifecycleRequired := fs.Bool("pod-lifecycle-required", envOrDefault("OKSG_POD_LIFECYCLE_REQUIRED", "false") == "true", "require in-cluster pod lifecycle validation for metric runs_on edges")
 	discoveryRefreshStr := fs.String("discovery-refresh-interval", envOrDefault("OKSG_DISCOVERY_REFRESH_INTERVAL", defaultDiscoveryRefreshInterval.String()), "interval to re-ingest the discovery profile so structural topology nodes (workload/ingress/configmap/secret/pvc) refresh under node-ttl; 0 disables")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
@@ -291,8 +303,40 @@ func parseConfig(args []string) (config, error) {
 		TopologyFlushInterval:    topologyFlushInterval,
 		StatusStaleSeconds:       *statusStaleSeconds,
 		NodeTTL:                  nodeTTL,
+		PodLifecycleRequired:     *podLifecycleRequired,
 		DiscoveryRefreshInterval: discoveryRefresh,
 	}, nil
+}
+
+func startPodLifecycle(ctx context.Context, cfg config, logger *logging.Logger) (ingest.PodLifecycle, error) {
+	if !cfg.PodLifecycleRequired {
+		return nil, nil
+	}
+
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("build in-cluster Kubernetes configuration for required pod lifecycle validation: %w", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create Kubernetes client for required pod lifecycle validation: %w", err)
+	}
+
+	tracker := kubernetesadapter.NewPodLifecycleTracker(client, kubernetesadapter.WithPodLifecycleStateObserver(func(state kubernetesadapter.PodLifecycleState) {
+		fields := []logging.Field{
+			logging.String("reason", state.Reason),
+			logging.Any("active_pod_count", state.ActivePodCount),
+		}
+		if state.Ready {
+			logger.Info("pod lifecycle validation synchronized", fields...)
+			return
+		}
+		logger.Warn("pod lifecycle validation unavailable; runs_on refreshes are fail-closed", fields...)
+	}))
+	if err := tracker.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start required pod lifecycle validation: %w", err)
+	}
+	return tracker, nil
 }
 
 func parseIntOrDefault(s string, def int) int {

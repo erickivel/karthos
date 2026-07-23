@@ -46,6 +46,82 @@ func TestMetricTopologyBuilder_PodRunsOnNode(t *testing.T) {
 	assert.Equal(t, []string{"kubeletstats"}, runsOn.Provenance)
 }
 
+type testPodLifecycle struct {
+	allows bool
+}
+
+func (l testPodLifecycle) AllowsRunsOn(_, _, _, _ string) bool {
+	return l.allows
+}
+
+type togglePodLifecycle struct {
+	allows bool
+}
+
+func (l *togglePodLifecycle) AllowsRunsOn(_, _, _, _ string) bool {
+	return l.allows
+}
+
+func TestMetricTopologyBuilder_RequiresActiveMatchingPodLifecycleForRunsOn(t *testing.T) {
+	env := makeMetricEnvelope("kubeletstats", map[string]string{
+		"k8s.pod.name":       "my-pod",
+		"k8s.pod.uid":        "pod-uid-a",
+		"k8s.namespace.name": "default",
+		"k8s.node.name":      "my-node",
+	})
+
+	active := NewMetricTopologyBuilderWithLifecycle(testCluster, testPodLifecycle{allows: true})
+	activeEdges, err := active.Build(context.Background(), env)
+	require.NoError(t, err)
+	assert.Len(t, activeEdges, 2)
+	assert.Equal(t, topology.RelRunsOn, activeEdges[0].Relation)
+
+	retired := NewMetricTopologyBuilderWithLifecycle(testCluster, testPodLifecycle{allows: false})
+	retiredEdges, err := retired.Build(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, retiredEdges, 1)
+	assert.Equal(t, topology.RelContains, retiredEdges[0].Relation)
+}
+
+func TestBufferedTopologyIngestor_RetiredUIDCannotAdvanceRunsOnLastSeen(t *testing.T) {
+	baseline := time.Date(2026, 7, 20, 12, 9, 11, 0, time.UTC)
+	later := baseline.Add(time.Minute)
+	lifecycle := &togglePodLifecycle{allows: true}
+	builder := NewMetricTopologyBuilderWithLifecycle(testCluster, lifecycle)
+	store := &recordingGraphStore{}
+	buffer := NewBufferedTopologyIngestor(
+		map[schema.SignalType]TopologyBuilder{schema.SignalMetric: builder},
+		store,
+		nil,
+		time.Hour,
+	)
+	defer buffer.Close()
+
+	resource := map[string]string{
+		"k8s.pod.name":       "my-pod",
+		"k8s.pod.uid":        "retired-uid",
+		"k8s.namespace.name": "default",
+		"k8s.node.name":      "my-node",
+	}
+	first, err := schema.NewRawEnvelope("kubeletstats", schema.SignalMetric, resource, []byte(`{}`), baseline)
+	require.NoError(t, err)
+	require.NoError(t, buffer.Ingest(context.Background(), first))
+
+	lifecycle.allows = false
+	stale, err := schema.NewRawEnvelope("kubeletstats", schema.SignalMetric, resource, []byte(`{}`), later)
+	require.NoError(t, err)
+	require.NoError(t, buffer.Ingest(context.Background(), stale))
+	buffer.Flush()
+
+	for _, edge := range store.last().Graph.Edges {
+		if edge.Relation == topology.RelRunsOn {
+			assert.Equal(t, baseline, edge.LastSeen)
+			return
+		}
+	}
+	t.Fatal("expected retained runs_on edge")
+}
+
 func TestMetricTopologyBuilder_NamespaceContainsPod(t *testing.T) {
 	b := NewMetricTopologyBuilder(testCluster)
 	env := makeMetricEnvelope("kubeletstats", map[string]string{

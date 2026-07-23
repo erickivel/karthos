@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
         app.kubernetes.io/component: backend
     spec:
+      serviceAccountName: oksg-backend
       containers:
         - name: oksg-backend
           image: {{ include "oksg-otel.backendImage" . }}
@@ -30,6 +31,7 @@ spec:
             - --status-stale-seconds={{ .Values.backend.statusStaleSeconds | default 300 }}
             - --enabled-signals={{ join "," .Values.enabledSignals }}
             - --cluster-name={{ .Values.global.clusterName }}
+            - --pod-lifecycle-required=true
             {{- if .Values.backend.discoveryProfile.enabled }}
             - --discovery-profile=/etc/oksg/profile.json
             {{- end }}

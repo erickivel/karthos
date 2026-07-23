@@ -20,7 +20,14 @@ import (
 //   - namespace contains pod   (k8s.namespace.name + k8s.pod.name)
 //   - pod contains container   (k8s.pod.name + k8s.namespace.name + k8s.container.name)
 type MetricTopologyBuilder struct {
-	clusterName string
+	clusterName  string
+	podLifecycle PodLifecycle
+}
+
+// PodLifecycle decides whether telemetry may refresh a pod's runs_on edge.
+// Implementations must fail closed while Kubernetes lifecycle state is unknown.
+type PodLifecycle interface {
+	AllowsRunsOn(namespace, podName, podUID, nodeName string) bool
 }
 
 // NewMetricTopologyBuilder creates a MetricTopologyBuilder scoped to the given cluster.
@@ -28,11 +35,18 @@ func NewMetricTopologyBuilder(clusterName string) *MetricTopologyBuilder {
 	return &MetricTopologyBuilder{clusterName: clusterName}
 }
 
+// NewMetricTopologyBuilderWithLifecycle creates a builder that validates
+// runs_on edges against live Kubernetes pod lifecycle state.
+func NewMetricTopologyBuilderWithLifecycle(clusterName string, podLifecycle PodLifecycle) *MetricTopologyBuilder {
+	return &MetricTopologyBuilder{clusterName: clusterName, podLifecycle: podLifecycle}
+}
+
 // Build derives structural topology edges from the envelope's resource attribute map.
 // It satisfies the TopologyBuilder interface.
 func (b *MetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnvelope) ([]topology.Edge, error) {
 	res := envelope.Resource
 	podName := res[semconv.ResourceK8sPodName]
+	podUID := res[semconv.ResourceK8sPodUID]
 	nodeName := res[semconv.ResourceK8sNodeName]
 	namespace := res[semconv.ResourceK8sNamespaceName]
 	containerName := res[semconv.ResourceK8sContainerName]
@@ -45,7 +59,8 @@ func (b *MetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnve
 	var edges []topology.Edge
 
 	// pod runs_on node
-	if podName != "" && namespace != "" && nodeName != "" {
+	if podName != "" && namespace != "" && nodeName != "" &&
+		(b.podLifecycle == nil || b.podLifecycle.AllowsRunsOn(namespace, podName, podUID, nodeName)) {
 		podID := entities.ComputeEntityID(entities.KindPod, b.clusterName, namespace, podName)
 		nodeID := entities.ComputeEntityID(entities.KindNode, b.clusterName, nodeName)
 		e := topology.NewEdge(podID, nodeID, topology.RelRunsOn, t)

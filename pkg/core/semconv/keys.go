@@ -12,6 +12,7 @@ const (
 	ResourceK8sNamespaceName             = "k8s.namespace.name"
 	ResourceK8sNodeName                  = "k8s.node.name"
 	ResourceK8sPodName                   = "k8s.pod.name"
+	ResourceK8sPodUID                    = "k8s.pod.uid"
 	ResourceK8sReplicationControllerName = "k8s.replicationcontroller.name"
 	ResourceK8sReplicaSetName            = "k8s.replicaset.name"
 	ResourceK8sResourceQuotaName         = "k8s.resourcequota.name"

@@ -17,7 +17,7 @@ Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Helm Values -> 
 
 | Path | Role |
 |------|------|
-| `pkg/adapters/kubernetes` | Discovery adapter — Prometheus targets, OTLP-capable workloads, Istio sidecar mesh |
+| `pkg/adapters/kubernetes` | Discovery adapter plus live Pod lifecycle validation — Prometheus targets, OTLP-capable workloads, Istio sidecar mesh, and UID/node List/Watch state |
 | `pkg/adapters/otel` | Source planner; Helm values builder; `transform/oksg-source` processor |
 | `pkg/adapters/otlp` | OTLP gRPC + HTTP ingest server |
 | `pkg/adapters/api` | Versioned REST API server (handlers, response envelope, pagination) |
@@ -68,7 +68,7 @@ The backend ingest pipeline:
 | `OTLPEntityResolver` | `pkg/backend/ingest/entity_resolver.go` | Maps OTLP resource attributes to deterministic `EntityID` (SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label resolve to the PVC entity before the generic fallback. |
 | `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Performs generic OTLP scalar/histogram traversal, canonical mapping, source-assignment enforcement, conversion application, and sample emission. Histograms are stored as `_sum`/`_count`; delta-valued series are preserved raw with `temporality=delta`. |
 | Source dialect registry | `pkg/backend/ingest/source_dialect.go` | Dispatches bounded source-specific behavior to one `source_dialect_*.go` implementation per logical source. Dialects own directional variants, source labels, entity/edge attachment, ResourceQuota units, servicegraph enrichment, and mesh metadata. OTLP temporality handling remains generic and follows the payload contract. |
-| `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | `runs_on` (pod→node), `contains` (namespace→pod, pod→container) plus topology nodes for those entity kinds, all from resource attributes. |
+| `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | `runs_on` (pod→node), `contains` (namespace→pod, pod→container) plus topology nodes for those entity kinds. In Helm deployments, `runs_on` additionally requires a live matching Pod UID and node from Kubernetes lifecycle state. |
 | `MeshMetricTopologyBuilder` | `pkg/backend/ingest/mesh_metric_topology_builder.go` | `calls` edges with `mesh.istio` provenance from servicegraph-shaped Istio metrics, preserving protocol, mTLS, principal, response-flag, and HTTP/gRPC status labels. Uses datapoint timestamp for `FirstSeen`/`LastSeen`. |
 | `TraceTopologyBuilder` | `pkg/backend/ingest/topology_builder.go` | `calls` edges from OTLP spans where `peer.service` is set; deduplicated within a batch by edge ID. |
 | `K8sStructuralTopologyBuilder` | `pkg/backend/ingest/structural_topology_builder.go` | `exposes`, `routes_to`, `uses`, `mounts` from `ClusterProfile` (provenance `k8s-api`, confidence 1.0). |
