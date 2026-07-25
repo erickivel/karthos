@@ -2,6 +2,8 @@ package otel
 
 import (
 	"context"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -200,7 +202,7 @@ func TestPlanIncludesIstioMeshScrapeJobWhenMeshSourceExists(t *testing.T) {
 	require.Contains(t, relabelConfigs, map[string]any{
 		"source_labels": []string{"__meta_kubernetes_pod_node_name"},
 		"action":        "keep",
-		"regex":         "${env:K8S_NODE_NAME}",
+		"regex":         `^\Q${env:K8S_NODE_NAME}\E$`,
 	})
 	require.Contains(t, relabelConfigs, map[string]any{
 		"source_labels": []string{"__meta_kubernetes_namespace"},
@@ -226,6 +228,26 @@ func TestPlanIncludesIstioMeshScrapeJobWhenMeshSourceExists(t *testing.T) {
 		"source_labels": []string{"destination_canonical_service"},
 		"target_label":  "server",
 	})
+}
+
+func TestIstioNodeRelabelMatchesTheAgentNodeExactly(t *testing.T) {
+	config := buildIstioScrapeConfig(&profile.MeshSource{Flavor: "istio"})
+	relabelConfigs := config["relabel_configs"].([]map[string]any)
+
+	var nodeRule map[string]any
+	for _, rule := range relabelConfigs {
+		if sourceLabels, ok := rule["source_labels"].([]string); ok && len(sourceLabels) == 1 && sourceLabels[0] == "__meta_kubernetes_pod_node_name" {
+			nodeRule = rule
+			break
+		}
+	}
+	require.NotNil(t, nodeRule)
+
+	resolved := strings.ReplaceAll(nodeRule["regex"].(string), "${env:K8S_NODE_NAME}", "node-1.example")
+	matcher, err := regexp.Compile(resolved)
+	require.NoError(t, err)
+	require.True(t, matcher.MatchString("node-1.example"))
+	require.False(t, matcher.MatchString("node-1xexample"))
 }
 
 func TestPlanUsesTraceServicegraphForPartialIstioMesh(t *testing.T) {

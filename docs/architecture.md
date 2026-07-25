@@ -46,10 +46,10 @@ typed Helm values. Receivers and connectors:
 - hostmetrics as component ID `host_metrics` (always; per-node CPU, memory, disk, network, load, paging, filesystem, and connection data). Agent pods use the host network by default so interface counters describe the node; opting out removes only the network scraper rather than publishing collector-pod traffic as node truth.
 - `k8scluster` (always on the gateway; workload/controller counts, pod phases, node conditions, resource quotas, HPA replica counts)
 - `prometheus` on the singleton gateway for application Service-DNS targets (scrape jobs stamp `oksg_source=prometheus.app`)
-- `mesh-istio` Prometheus job (when sidecar mode is detected; scrapes `istio-proxy:15020/stats/prometheus`, rewrites Istio labels into servicegraph `client`/`server` edge attributes, stamps `oksg_source=mesh.istio`)
+- `mesh-istio` Prometheus job (only when discovery finds a complete sidecar mesh; each DaemonSet agent scrapes only `istio-proxy:15020/stats/prometheus` Pods on its own node, rewrites Istio labels into servicegraph `client`/`server` edge attributes, and stamps `oksg_source=mesh.istio`)
 - `otlp` receivers (when discovery finds workloads with `oksg.io/otlp-traces: "true"` or ports `4317`/`4318`)
 - spanmetrics as component ID `span_metrics` (gateway, when traces are present; cluster-wide single instance to avoid double-counting; v0.156 instance-ID dimension disabled for compatibility)
-- servicegraph as component ID `service_graph` (gateway, when traces are present; only deployed when no higher-priority source — typically Istio — already produces the edge metric)
+- servicegraph as component ID `service_graph` (gateway, when traces are present and the mesh does not own the POC service-graph coverage; it is the sole selected source for a partial mesh)
 
 Collector-owned agent and gateway pipelines run a `transform/oksg-source`
 processor that stamps the Prometheus-safe `oksg_source` datapoint attribute from
@@ -93,6 +93,15 @@ per metric using `PolicyPriority` (lowest `Priority` value wins). Output:
   decision
 
 Full pipeline in [metrics-pipeline.md](metrics-pipeline.md).
+
+For the POC, discovery classifies an Istio mesh as partial when a non-system
+namespace with a controller-owned workload Pod is not injected. Kubernetes,
+Istio control-plane, and OKSG namespaces are excluded. A complete mesh owns
+the service-graph metrics and enables the node-owned mesh scrape job. A partial
+mesh disables that scrape globally and selects trace-derived servicegraph only
+when traces are available; otherwise it selects no service-graph producer.
+This is global source arbitration, not namespace-scoped coverage or
+boundary-peer routing.
 
 ## Topology Reconstruction
 

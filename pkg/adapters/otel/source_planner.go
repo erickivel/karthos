@@ -453,7 +453,7 @@ func buildIstioScrapeConfig(mesh *profile.MeshSource) map[string]any {
 		{
 			"source_labels": []string{"__meta_kubernetes_pod_node_name"},
 			"action":        "keep",
-			"regex":         "${env:K8S_NODE_NAME}",
+			"regex":         `^\Q${env:K8S_NODE_NAME}\E$`,
 		},
 		{
 			"source_labels": []string{"__address__"},

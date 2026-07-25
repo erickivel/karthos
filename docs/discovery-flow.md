@@ -111,11 +111,14 @@ The source planner turns the profile into collector intent:
 - agent always includes kubeletstats under `kubelet_stats` (expanded to include volume metrics) and hostmetrics under `host_metrics`
 - gateway always includes the `k8s_cluster` component for Kubernetes API-backed workload, controller, HPA, ResourceQuota, pod phase, node condition, and allocatable metrics
 - gateway adds singleton `prometheus` scraping for annotated application Service-DNS targets
-- agent adds `prometheus` only for the dedicated active-Istio pod-discovery job
+- agent adds `prometheus` only for the dedicated complete-Istio pod-discovery
+  job; its exact node-name relabel rule means each DaemonSet agent scrapes only
+  proxies on its own node
 - agent enables OTLP receiver paths when OTLP-capable sources are present in the profile
-- gateway enables the `span_metrics` and `service_graph` connector component IDs when OTLP traces are enabled
-- Istio mesh detection is performed in the Kubernetes discovery adapter, not a detector registry. It checks for `istio-system`, the `istio-sidecar-injector` mutating webhook, and at least one injected namespace, then emits an `ObservabilitySource` with `Type:"istio"` and `Mesh{Flavor:"istio", Mode:"sidecar", MetricsPort:15020, MetricsPath:"/stats/prometheus"}`. A control-plane-only Istio install is not treated as an active mesh source.
-- when an active Istio mesh source is present, the source planner adds a dedicated `mesh-istio` Prometheus scrape job for `istio-proxy` containers. This path does not rely on `prometheus.io/scrape` annotations being merged onto application pods.
+- gateway enables `span_metrics` when OTLP traces are enabled and enables
+  `service_graph` only when trace-derived servicegraph wins source arbitration
+- Istio mesh detection is performed in the Kubernetes discovery adapter, not a detector registry. It checks for `istio-system`, the `istio-sidecar-injector`, and at least one injected namespace, then emits an `ObservabilitySource` with `Type:"istio"` and `Mesh{Flavor:"istio", Mode:"sidecar", MetricsPort:15020, MetricsPath:"/stats/prometheus"}`. A control-plane-only Istio install is not treated as an active mesh source. Discovery marks the mesh partial when a non-system namespace with a controller-owned workload Pod is not injected; `kube-*`, `istio-system`, and `oksg-system` are excluded.
+- a complete mesh wins the POC service-graph metrics and the source planner adds a dedicated node-owned `mesh-istio` Prometheus scrape job for its `istio-proxy` containers. A partial mesh disables the mesh scrape globally; traces select the sole `service_graph` connector when available, otherwise no service-graph source is planned. This does not introduce namespace-scoped or boundary-peer routing.
 - gateway receives OTLP from agents and OTLP-native emitters through an
   untagged `metrics/otlp` pipeline; collector-owned source stamping happens at
   the originating receiver, while external metric producers must provide their
