@@ -16,6 +16,7 @@ import (
 	"github.com/erickivel/oksg/pkg/adapters/storage"
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/backend/persistence"
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
@@ -154,7 +155,7 @@ func run(ctx context.Context, args []string) error {
 	sourcePolicy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), assignment)
 	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithSourcePolicy(sourcePolicy))
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
-	podLifecycle, err := startPodLifecycle(ctx, cfg, logger)
+	podLifecycle, err := startPodLifecycle(ctx, cfg, stores.GraphStore, logger)
 	if err != nil {
 		return err
 	}
@@ -308,7 +309,7 @@ func parseConfig(args []string) (config, error) {
 	}, nil
 }
 
-func startPodLifecycle(ctx context.Context, cfg config, logger *logging.Logger) (ingest.PodLifecycle, error) {
+func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.GraphStore, logger *logging.Logger) (ingest.PodLifecycle, error) {
 	if !cfg.PodLifecycleRequired {
 		return nil, nil
 	}
@@ -321,18 +322,45 @@ func startPodLifecycle(ctx context.Context, cfg config, logger *logging.Logger) 
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes client for required pod lifecycle validation: %w", err)
 	}
+	retirer, ok := graphStore.(persistence.RunsOnRetirer)
+	if !ok {
+		return nil, fmt.Errorf("required pod lifecycle validation needs a graph store that retires runs_on edges")
+	}
 
-	tracker := kubernetesadapter.NewPodLifecycleTracker(client, kubernetesadapter.WithPodLifecycleStateObserver(func(state kubernetesadapter.PodLifecycleState) {
-		fields := []logging.Field{
-			logging.String("reason", state.Reason),
-			logging.Any("active_pod_count", state.ActivePodCount),
-		}
-		if state.Ready {
-			logger.Info("pod lifecycle validation synchronized", fields...)
-			return
-		}
-		logger.Warn("pod lifecycle validation unavailable; runs_on refreshes are fail-closed", fields...)
-	}))
+	tracker := kubernetesadapter.NewPodLifecycleTracker(client,
+		kubernetesadapter.WithPodLifecycleStateObserver(func(state kubernetesadapter.PodLifecycleState) {
+			fields := []logging.Field{
+				logging.String("reason", state.Reason),
+				logging.Any("active_pod_count", state.ActivePodCount),
+			}
+			if state.Ready {
+				logger.Info("pod lifecycle validation synchronized", fields...)
+				return
+			}
+			logger.Warn("pod lifecycle validation unavailable; runs_on refreshes are fail-closed", fields...)
+		}),
+		kubernetesadapter.WithPodRunsOnRetirementObserver(func(retirement kubernetesadapter.PodRunsOnRetirement) {
+			podID := entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, retirement.Namespace, retirement.PodName)
+			nodeID := entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, retirement.NodeName)
+			if err := retirer.RetireRunsOn(context.Background(), podID, nodeID, retirement.RetiredAt); err != nil {
+				logger.Error("retire terminal pod runs_on edge failed",
+					logging.String("namespace", retirement.Namespace),
+					logging.String("pod", retirement.PodName),
+					logging.String("pod_uid", retirement.PodUID),
+					logging.String("node", retirement.NodeName),
+					logging.Error(err),
+				)
+				return
+			}
+			logger.Info("retired terminal pod runs_on edge",
+				logging.String("namespace", retirement.Namespace),
+				logging.String("pod", retirement.PodName),
+				logging.String("pod_uid", retirement.PodUID),
+				logging.String("node", retirement.NodeName),
+				logging.String("retired_at", retirement.RetiredAt.Format(time.RFC3339Nano)),
+			)
+		}),
+	)
 	if err := tracker.Start(ctx); err != nil {
 		return nil, fmt.Errorf("start required pod lifecycle validation: %w", err)
 	}

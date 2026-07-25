@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/query"
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
@@ -40,6 +41,13 @@ type GraphStore interface {
 	PutSnapshot(ctx context.Context, snapshot topology.Snapshot) error
 	GetLatest(ctx context.Context) (*topology.Snapshot, error)
 	QueryEdges(ctx context.Context, q query.EdgeQuery) ([]topology.Edge, error)
+}
+
+// RunsOnRetirer is the narrow lifecycle-to-storage boundary for retiring a
+// terminal Pod assignment without inferring retirement from missing telemetry.
+// Retired edges remain available through QueryEdges as audit history.
+type RunsOnRetirer interface {
+	RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, retiredAt time.Time) error
 }
 
 type MetadataStore interface {

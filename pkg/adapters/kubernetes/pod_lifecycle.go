@@ -12,7 +12,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const podLifecycleRetryDelay = 250 * time.Millisecond
+const (
+	podLifecycleRetryDelay   = 250 * time.Millisecond
+	defaultPodLifecycleGrace = 60 * time.Second
+)
 
 // PodLifecycleState is emitted only when lifecycle validation becomes available
 // or unavailable. It intentionally contains no Pod identity.
@@ -20,6 +23,16 @@ type PodLifecycleState struct {
 	Ready          bool
 	ActivePodCount int
 	Reason         string
+}
+
+// PodRunsOnRetirement identifies the exact Pod UID/node assignment whose
+// runs_on edge has completed its terminal grace period.
+type PodRunsOnRetirement struct {
+	Namespace string
+	PodName   string
+	PodUID    string
+	NodeName  string
+	RetiredAt time.Time
 }
 
 // PodLifecycleOption configures a PodLifecycleTracker.
@@ -32,27 +45,58 @@ func WithPodLifecycleStateObserver(observer func(PodLifecycleState)) PodLifecycl
 	}
 }
 
+// WithPodRunsOnRetirementObserver receives terminal Pod UID/node retirements.
+// The observer is invoked only after the fixed grace period has elapsed.
+func WithPodRunsOnRetirementObserver(observer func(PodRunsOnRetirement)) PodLifecycleOption {
+	return func(t *PodLifecycleTracker) {
+		t.retirementObserver = observer
+	}
+}
+
+// withPodLifecycleGraceDuration overrides the terminal Pod grace period for
+// focused package tests. Deployed backends retain the 60-second default.
+func withPodLifecycleGraceDuration(grace time.Duration) PodLifecycleOption {
+	return func(t *PodLifecycleTracker) {
+		if grace > 0 {
+			t.terminalGrace = grace
+		}
+	}
+}
+
 type activePod struct {
 	uid      string
 	nodeName string
+	terminal bool
+}
+
+type pendingRetirement struct {
+	pod      activePod
+	deadline time.Time
 }
 
 // PodLifecycleTracker keeps the currently active Kubernetes pod UID and node
 // for each namespace/name pair. It is safe for concurrent metric ingestion.
 type PodLifecycleTracker struct {
-	client   kubernetes.Interface
-	observer func(PodLifecycleState)
+	client             kubernetes.Interface
+	observer           func(PodLifecycleState)
+	retirementObserver func(PodRunsOnRetirement)
+	terminalGrace      time.Duration
+	nowFn              func() time.Time
 
-	mu    sync.RWMutex
-	ready bool
-	pods  map[string]activePod
+	mu          sync.RWMutex
+	ready       bool
+	pods        map[string]activePod
+	retirements map[string]pendingRetirement
 }
 
 // NewPodLifecycleTracker creates a tracker that must be started before use.
 func NewPodLifecycleTracker(client kubernetes.Interface, opts ...PodLifecycleOption) *PodLifecycleTracker {
 	t := &PodLifecycleTracker{
-		client: client,
-		pods:   make(map[string]activePod),
+		client:        client,
+		pods:          make(map[string]activePod),
+		retirements:   make(map[string]pendingRetirement),
+		terminalGrace: defaultPodLifecycleGrace,
+		nowFn:         func() time.Time { return time.Now().UTC() },
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -170,14 +214,22 @@ func (t *PodLifecycleTracker) applyPod(pod *corev1.Pod) {
 	key := podLifecycleKey(pod.Namespace, pod.Name)
 	active, ok := activePodFrom(pod)
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if !ok {
 		if current, exists := t.pods[key]; exists && current.uid == string(pod.UID) {
 			delete(t.pods, key)
 		}
+		t.mu.Unlock()
 		return
 	}
+	if current, exists := t.pods[key]; exists && current.uid != active.uid {
+		delete(t.retirements, key)
+	}
 	t.pods[key] = active
+	shouldSchedule := active.terminal
+	t.mu.Unlock()
+	if shouldSchedule {
+		t.scheduleRetirement(key, pod.Namespace, pod.Name, active)
+	}
 }
 
 func (t *PodLifecycleTracker) deletePod(pod *corev1.Pod) {
@@ -199,6 +251,13 @@ func (t *PodLifecycleTracker) setAvailable(pods map[string]activePod, reason str
 	if observer != nil {
 		observer(PodLifecycleState{Ready: true, ActivePodCount: count, Reason: reason})
 	}
+	for key, pod := range pods {
+		if !pod.terminal {
+			continue
+		}
+		namespace, name := splitPodLifecycleKey(key)
+		t.scheduleRetirement(key, namespace, name, pod)
+	}
 }
 
 func (t *PodLifecycleTracker) setUnavailable(reason string) {
@@ -217,11 +276,69 @@ func activePodFrom(pod *corev1.Pod) (activePod, bool) {
 	if pod == nil || pod.UID == "" || pod.Spec.NodeName == "" || pod.DeletionTimestamp != nil {
 		return activePod{}, false
 	}
-	return activePod{uid: string(pod.UID), nodeName: pod.Spec.NodeName}, true
+	return activePod{
+		uid:      string(pod.UID),
+		nodeName: pod.Spec.NodeName,
+		terminal: pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed,
+	}, true
 }
 
 func podLifecycleKey(namespace, name string) string {
 	return namespace + "/" + name
+}
+
+func splitPodLifecycleKey(key string) (string, string) {
+	for i := 0; i < len(key); i++ {
+		if key[i] == '/' {
+			return key[:i], key[i+1:]
+		}
+	}
+	return "", key
+}
+
+func (t *PodLifecycleTracker) scheduleRetirement(key, namespace, name string, pod activePod) {
+	t.mu.Lock()
+	if existing, ok := t.retirements[key]; ok && existing.pod.uid == pod.uid && existing.pod.nodeName == pod.nodeName {
+		t.mu.Unlock()
+		return
+	}
+	deadline := t.nowFn().Add(t.terminalGrace)
+	t.retirements[key] = pendingRetirement{pod: pod, deadline: deadline}
+	grace := t.terminalGrace
+	t.mu.Unlock()
+
+	time.AfterFunc(grace, func() {
+		t.completeRetirement(key, namespace, name, pod, deadline)
+	})
+}
+
+func (t *PodLifecycleTracker) completeRetirement(key, namespace, name string, pod activePod, deadline time.Time) {
+	t.mu.Lock()
+	pending, ok := t.retirements[key]
+	if !ok || pending.pod.uid != pod.uid || pending.pod.nodeName != pod.nodeName || !pending.deadline.Equal(deadline) {
+		t.mu.Unlock()
+		return
+	}
+	delete(t.retirements, key)
+	if current, ok := t.pods[key]; ok {
+		if current.uid != pod.uid || current.nodeName != pod.nodeName {
+			t.mu.Unlock()
+			return
+		}
+		delete(t.pods, key)
+	}
+	observer := t.retirementObserver
+	t.mu.Unlock()
+
+	if observer != nil {
+		observer(PodRunsOnRetirement{
+			Namespace: namespace,
+			PodName:   name,
+			PodUID:    pod.uid,
+			NodeName:  pod.nodeName,
+			RetiredAt: deadline,
+		})
+	}
 }
 
 func waitForRetry(ctx context.Context) bool {

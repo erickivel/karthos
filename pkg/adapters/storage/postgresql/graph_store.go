@@ -13,6 +13,23 @@ import (
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
+const edgeUpsertSQL = `INSERT INTO topology_edges (id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata)
+	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	 ON CONFLICT (id) DO UPDATE SET
+	   last_seen = CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.last_seen ELSE GREATEST(topology_edges.last_seen, EXCLUDED.last_seen) END,
+	   confidence = CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.confidence ELSE EXCLUDED.confidence END,
+	   provenance = CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.provenance ELSE EXCLUDED.provenance END,
+	   metadata = CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.metadata ELSE EXCLUDED.metadata END`
+
+const latestActiveEdgeQuery = `SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
+	 FROM topology_edges
+	 WHERE NOT (metadata ? 'retired_at')`
+
+const retireRunsOnSQL = `UPDATE topology_edges
+	 SET metadata = jsonb_set(metadata, '{retired_at}', to_jsonb($4::text), true)
+	 WHERE id = $1 AND source = $2 AND target = $3 AND relation = 'runs_on'
+	   AND NOT (metadata ? 'retired_at')`
+
 // PostgresGraphStore implements persistence.GraphStore using PostgreSQL.
 type PostgresGraphStore struct {
 	conn    *Conn
@@ -81,14 +98,7 @@ func (s *PostgresGraphStore) PutSnapshot(ctx context.Context, snapshot topology.
 		if err != nil {
 			return fmt.Errorf("pg graph marshal edge metadata: %w", err)
 		}
-		_, err = tx.Exec(ctx,
-			`INSERT INTO topology_edges (id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			 ON CONFLICT (id) DO UPDATE SET
-			   last_seen = GREATEST(topology_edges.last_seen, EXCLUDED.last_seen),
-			   confidence = EXCLUDED.confidence,
-			   provenance = EXCLUDED.provenance,
-			   metadata = EXCLUDED.metadata`,
+		_, err = tx.Exec(ctx, edgeUpsertSQL,
 			e.ID, string(e.Source), string(e.Target), string(e.Relation),
 			e.Confidence, e.Provenance, e.FirstSeen, e.LastSeen, metadataJSON,
 		)
@@ -156,10 +166,7 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 	}
 
 	// Get all accumulated edges.
-	edgeRows, err := s.conn.pool.Query(ctx,
-		`SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
-		 FROM topology_edges`,
-	)
+	edgeRows, err := s.conn.pool.Query(ctx, latestActiveEdgeQuery)
 	if err != nil {
 		return nil, fmt.Errorf("pg graph get edges: %w", err)
 	}
@@ -189,6 +196,20 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 
 	applySnapshotTimestamp(&snap)
 	return &snap, nil
+}
+
+// RetireRunsOn records terminal Pod lifecycle state in edge metadata without
+// changing first_seen or last_seen. QueryEdges keeps the retired audit edge;
+// GetLatest filters it through latestActiveEdgeQuery.
+func (s *PostgresGraphStore) RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, retiredAt time.Time) error {
+	edgeID := topology.ComputeEdgeID(podID, nodeID, topology.RelRunsOn)
+	_, err := s.conn.pool.Exec(ctx, retireRunsOnSQL,
+		edgeID, string(podID), string(nodeID), retiredAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("pg graph retire runs_on edge: %w", err)
+	}
+	return nil
 }
 
 func latestNodeQuery(ttl time.Duration) (string, []any) {

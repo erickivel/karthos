@@ -27,3 +27,10 @@ func TestBuildLatestNodeQueryUsesSubSecondTTLPrecision(t *testing.T) {
 	assert.Contains(t, sql, "WHERE ts.created_at > NOW() - $1::interval")
 	assert.Equal(t, []any{"250ms"}, args)
 }
+
+func TestRetiredRunsOnSQLKeepsAuditEdgeOutOfLatestAndBlocksStaleRefreshes(t *testing.T) {
+	assert.Contains(t, latestActiveEdgeQuery, "WHERE NOT (metadata ? 'retired_at')")
+	assert.Contains(t, edgeUpsertSQL, "CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.last_seen")
+	assert.Contains(t, retireRunsOnSQL, "jsonb_set")
+	assert.Contains(t, retireRunsOnSQL, "relation = 'runs_on'")
+}

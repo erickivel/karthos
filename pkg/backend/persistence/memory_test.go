@@ -249,6 +249,43 @@ func TestGraphStore_EdgeDeduplication(t *testing.T) {
 	assert.Equal(t, t2, snap.Graph.Edges[0].LastSeen)
 }
 
+func TestGraphStore_RetiredRunsOnIsHiddenFromLatestAndImmutable(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "node-a")
+	firstSeen := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	retiredAt := firstSeen.Add(time.Minute)
+	staleAt := retiredAt.Add(time.Minute)
+
+	runsOn := topology.NewEdge(podID, nodeID, topology.RelRunsOn, firstSeen)
+	contains := topology.NewEdge(podID, nodeID, topology.RelContains, firstSeen)
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(runsOn, contains)))
+	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, retiredAt))
+
+	staleRunsOn := topology.NewEdge(podID, nodeID, topology.RelRunsOn, firstSeen)
+	staleRunsOn.LastSeen = staleAt
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(staleRunsOn)))
+
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 1)
+	require.Equal(t, topology.RelContains, latest.Graph.Edges[0].Relation)
+
+	accumulated, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	require.Len(t, accumulated, 2)
+	for _, edge := range accumulated {
+		if edge.Relation != topology.RelRunsOn {
+			continue
+		}
+		require.Equal(t, firstSeen, edge.LastSeen)
+		require.Equal(t, retiredAt.Format(time.RFC3339Nano), edge.Metadata["retired_at"])
+		return
+	}
+	t.Fatal("expected retained audit runs_on edge")
+}
+
 func TestGraphStore_QueryEdgesBySource(t *testing.T) {
 	store := NewInMemoryGraphStore()
 	ctx := context.Background()

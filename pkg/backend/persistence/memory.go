@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/erickivel/oksg/pkg/backend/query"
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/core/topology"
@@ -436,6 +437,9 @@ func (s *InMemoryGraphStore) PutSnapshot(_ context.Context, snapshot topology.Sn
 			s.edges[e.ID] = e
 			continue
 		}
+		if edgeRetired(existing) {
+			continue
+		}
 		if e.LastSeen.After(existing.LastSeen) {
 			existing.LastSeen = e.LastSeen
 			s.edges[e.ID] = existing
@@ -463,6 +467,9 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 
 	edges := make([]topology.Edge, 0, len(s.edges))
 	for _, e := range s.edges {
+		if edgeRetired(e) {
+			continue
+		}
 		edges = append(edges, e)
 	}
 
@@ -484,6 +491,32 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 	result.Graph.Edges = edges
 	result.Graph.Nodes = nodes
 	return &result, nil
+}
+
+// RetireRunsOn records the terminal lifecycle timestamp without changing the
+// edge's observations. Retired runs_on edges are excluded from GetLatest but
+// remain queryable through QueryEdges for audit use.
+func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entities.EntityID, retiredAt time.Time) error {
+	edgeID := topology.ComputeEdgeID(podID, nodeID, topology.RelRunsOn)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	edge, ok := s.edges[edgeID]
+	if !ok || edge.Relation != topology.RelRunsOn || edgeRetired(edge) {
+		return nil
+	}
+	metadata := make(map[string]string, len(edge.Metadata)+1)
+	for key, value := range edge.Metadata {
+		metadata[key] = value
+	}
+	metadata["retired_at"] = retiredAt.UTC().Format(time.RFC3339Nano)
+	edge.Metadata = metadata
+	s.edges[edgeID] = edge
+	return nil
+}
+
+func edgeRetired(edge topology.Edge) bool {
+	return edge.Metadata != nil && edge.Metadata["retired_at"] != ""
 }
 
 // QueryEdges filters edges by Source and/or Target (zero value = no filter).

@@ -647,6 +647,17 @@ four points. Bisect with these reads:
 - Update `docs/runtime-flow.md` if it introduces a new ingest-time
   derivation rule (rate, ratio, histogram unit conversion).
 
+### Pod lifecycle topology boundary
+
+`k8s.pod.phase` is a metric signal; it is not used as a missing-series
+heuristic. The Kubernetes lifecycle adapter observes `Succeeded` and `Failed`
+Pods and, after a fixed 60-second grace, retires only the exact UID/node
+`runs_on` assignment. The graph store records the RFC3339 `retired_at` value in
+edge metadata without changing `first_seen` or final `last_seen`. Latest-graph
+queries exclude that edge; accumulated edge queries retain it for audit. A
+same-name Pod replacement is protected by UID matching, and this POC does not
+offer historical `graph?at=` reconstruction.
+
 ## 8. Adding a New Source
 
 1. Add the source ID constant to `canonical.go`.

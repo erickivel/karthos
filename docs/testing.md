@@ -21,7 +21,7 @@ Key coverage areas:
 - backend OTLP envelope conversion and routing
 - OTLP gRPC and HTTP ingest integration
 - `MetricTopologyBuilder`: structural edge and node extraction from resource attributes
-- Pod lifecycle validation: UID/node matching, retirement suppression, watch recovery, and retained-edge `last_seen` stability
+- Pod lifecycle validation: UID/node matching, `Succeeded`/`Failed` 60-second grace, direct retirement without a later metric, replacement-UID safety, watch recovery, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
 - `InMemoryGraphStore`: node accumulation and deduplication across snapshots
 - `/debug/graph` endpoint correctness
@@ -100,9 +100,11 @@ window rates, active rates, units, metadata, duration, and error ratio.
 It is a deployment-compatibility scenario, not retired-Pod lifecycle proof.
 The retired `runs_on` contract is unit-tested in this repository and is
 accepted end-to-end by the deadline-backed E3 evaluation: capture the exact
-edge and its baseline `last_seen`, delete the Pod, retain raw timestamped
-polls through the real deadline, and require that the edge remains queryable
-without advancing `last_seen` after the backend has observed retirement.
+edge and its baseline `last_seen`, observe its terminal Pod state, retain raw
+timestamped polls through the 60-second deadline, and require that the edge is
+absent from the latest graph while still queryable with `metadata.retired_at`
+and without an advancing `last_seen`. This is not historical graph replay:
+there is no `graph?at=` API in the POC.
 
 Expected:
 
