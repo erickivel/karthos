@@ -83,6 +83,33 @@ func TestMetricTopologyBuilder_RequiresActiveMatchingPodLifecycleForRunsOn(t *te
 	assert.Equal(t, topology.RelContains, retiredEdges[0].Relation)
 }
 
+func TestMetricTopologyBuilderVersionsRunsOnIdentityByPodUID(t *testing.T) {
+	builder := NewMetricTopologyBuilderWithLifecycle(testCluster, testPodLifecycle{allows: true})
+	resource := map[string]string{
+		"k8s.pod.name":       "job-0",
+		"k8s.namespace.name": "default",
+		"k8s.node.name":      "node-a",
+	}
+
+	old := makeMetricEnvelope("kubeletstats", cloneStringMap(resource))
+	old.Resource["k8s.pod.uid"] = "uid-old"
+	new := makeMetricEnvelope("kubeletstats", cloneStringMap(resource))
+	new.Resource["k8s.pod.uid"] = "uid-new"
+
+	oldEdges, err := builder.Build(context.Background(), old)
+	require.NoError(t, err)
+	newEdges, err := builder.Build(context.Background(), new)
+	require.NoError(t, err)
+
+	oldRunsOn := findRunsOnEdge(t, oldEdges)
+	newRunsOn := findRunsOnEdge(t, newEdges)
+	assert.Equal(t, oldRunsOn.Source, newRunsOn.Source)
+	assert.Equal(t, oldRunsOn.Target, newRunsOn.Target)
+	assert.NotEqual(t, oldRunsOn.ID, newRunsOn.ID)
+	assert.Equal(t, "uid-old", oldRunsOn.Metadata["k8s.pod.uid"])
+	assert.Equal(t, "uid-new", newRunsOn.Metadata["k8s.pod.uid"])
+}
+
 func TestBufferedTopologyIngestor_RetiredUIDCannotAdvanceRunsOnLastSeen(t *testing.T) {
 	baseline := time.Date(2026, 7, 20, 12, 9, 11, 0, time.UTC)
 	later := baseline.Add(time.Minute)
@@ -120,6 +147,25 @@ func TestBufferedTopologyIngestor_RetiredUIDCannotAdvanceRunsOnLastSeen(t *testi
 		}
 	}
 	t.Fatal("expected retained runs_on edge")
+}
+
+func findRunsOnEdge(t *testing.T, edges []topology.Edge) topology.Edge {
+	t.Helper()
+	for _, edge := range edges {
+		if edge.Relation == topology.RelRunsOn {
+			return edge
+		}
+	}
+	t.Fatal("expected runs_on edge")
+	return topology.Edge{}
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	clone := make(map[string]string, len(input))
+	for key, value := range input {
+		clone[key] = value
+	}
+	return clone
 }
 
 func TestMetricTopologyBuilder_NamespaceContainsPod(t *testing.T) {

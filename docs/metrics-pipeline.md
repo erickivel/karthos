@@ -652,11 +652,16 @@ four points. Bisect with these reads:
 `k8s.pod.phase` is a metric signal; it is not used as a missing-series
 heuristic. The Kubernetes lifecycle adapter observes `Succeeded` and `Failed`
 Pods and, after a fixed 60-second grace, retires only the exact UID/node
-`runs_on` assignment. The graph store records the RFC3339 `retired_at` value in
-edge metadata without changing `first_seen` or final `last_seen`. Latest-graph
-queries exclude that edge; accumulated edge queries retain it for audit. A
-same-name Pod replacement is protected by UID matching, and this POC does not
-offer historical `graph?at=` reconstruction.
+`runs_on` assignment. Pod and Node endpoints remain name-based, while the
+`runs_on` edge identity includes the Pod UID; a replacement can therefore be
+active while the old assignment remains auditable. The graph store records the
+RFC3339 `retired_at` value in edge metadata without changing `first_seen` or
+final `last_seen`. Latest-graph queries exclude that `runs_on` edge; accumulated
+edge queries retain it for audit. `AllowsRunsOn` denies refresh synchronously at
+the recorded deadline even if the asynchronous persistence callback is delayed.
+The retirement marker applies only to `runs_on`, not to another relation that
+happens to carry a metadata key of the same name. This POC does not offer
+historical `graph?at=` reconstruction.
 
 ## 8. Adding a New Source
 

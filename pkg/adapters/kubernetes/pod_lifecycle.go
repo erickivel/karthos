@@ -128,7 +128,15 @@ func (t *PodLifecycleTracker) AllowsRunsOn(namespace, podName, podUID, nodeName 
 		return false
 	}
 	pod, ok := t.pods[podLifecycleKey(namespace, podName)]
-	return ok && pod.uid == podUID && pod.nodeName == nodeName
+	if !ok || pod.uid != podUID || pod.nodeName != nodeName {
+		return false
+	}
+	if pending, ok := t.retirements[podRetirementKey(namespace, podName, podUID, nodeName)]; ok &&
+		pending.pod.uid == podUID && pending.pod.nodeName == nodeName &&
+		!t.nowFn().Before(pending.deadline) {
+		return false
+	}
+	return true
 }
 
 func (t *PodLifecycleTracker) run(ctx context.Context, watcher watch.Interface) {
@@ -221,9 +229,6 @@ func (t *PodLifecycleTracker) applyPod(pod *corev1.Pod) {
 		t.mu.Unlock()
 		return
 	}
-	if current, exists := t.pods[key]; exists && current.uid != active.uid {
-		delete(t.retirements, key)
-	}
 	t.pods[key] = active
 	shouldSchedule := active.terminal
 	t.mu.Unlock()
@@ -287,6 +292,10 @@ func podLifecycleKey(namespace, name string) string {
 	return namespace + "/" + name
 }
 
+func podRetirementKey(namespace, name, uid, node string) string {
+	return namespace + "/" + name + "/" + uid + "/" + node
+}
+
 func splitPodLifecycleKey(key string) (string, string) {
 	for i := 0; i < len(key); i++ {
 		if key[i] == '/' {
@@ -297,35 +306,34 @@ func splitPodLifecycleKey(key string) (string, string) {
 }
 
 func (t *PodLifecycleTracker) scheduleRetirement(key, namespace, name string, pod activePod) {
+	retirementKey := podRetirementKey(namespace, name, pod.uid, pod.nodeName)
 	t.mu.Lock()
-	if existing, ok := t.retirements[key]; ok && existing.pod.uid == pod.uid && existing.pod.nodeName == pod.nodeName {
+	if _, ok := t.retirements[retirementKey]; ok {
 		t.mu.Unlock()
 		return
 	}
 	deadline := t.nowFn().Add(t.terminalGrace)
-	t.retirements[key] = pendingRetirement{pod: pod, deadline: deadline}
+	t.retirements[retirementKey] = pendingRetirement{pod: pod, deadline: deadline}
 	grace := t.terminalGrace
 	t.mu.Unlock()
 
 	time.AfterFunc(grace, func() {
-		t.completeRetirement(key, namespace, name, pod, deadline)
+		t.completeRetirement(key, retirementKey, namespace, name, pod, deadline)
 	})
 }
 
-func (t *PodLifecycleTracker) completeRetirement(key, namespace, name string, pod activePod, deadline time.Time) {
+func (t *PodLifecycleTracker) completeRetirement(key, retirementKey, namespace, name string, pod activePod, deadline time.Time) {
 	t.mu.Lock()
-	pending, ok := t.retirements[key]
+	pending, ok := t.retirements[retirementKey]
 	if !ok || pending.pod.uid != pod.uid || pending.pod.nodeName != pod.nodeName || !pending.deadline.Equal(deadline) {
 		t.mu.Unlock()
 		return
 	}
-	delete(t.retirements, key)
+	delete(t.retirements, retirementKey)
 	if current, ok := t.pods[key]; ok {
-		if current.uid != pod.uid || current.nodeName != pod.nodeName {
-			t.mu.Unlock()
-			return
+		if current.uid == pod.uid && current.nodeName == pod.nodeName {
+			delete(t.pods, key)
 		}
-		delete(t.pods, key)
 	}
 	observer := t.retirementObserver
 	t.mu.Unlock()

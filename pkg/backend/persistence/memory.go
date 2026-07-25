@@ -496,8 +496,8 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 // RetireRunsOn records the terminal lifecycle timestamp without changing the
 // edge's observations. Retired runs_on edges are excluded from GetLatest but
 // remain queryable through QueryEdges for audit use.
-func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entities.EntityID, retiredAt time.Time) error {
-	edgeID := topology.ComputeEdgeID(podID, nodeID, topology.RelRunsOn)
+func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error {
+	edgeID := topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, podUID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -516,7 +516,7 @@ func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entit
 }
 
 func edgeRetired(edge topology.Edge) bool {
-	return edge.Metadata != nil && edge.Metadata["retired_at"] != ""
+	return edge.Relation == topology.RelRunsOn && edge.Metadata != nil && edge.Metadata["retired_at"] != ""
 }
 
 // QueryEdges filters edges by Source and/or Target (zero value = no filter).

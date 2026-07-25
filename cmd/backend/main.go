@@ -342,7 +342,7 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 		kubernetesadapter.WithPodRunsOnRetirementObserver(func(retirement kubernetesadapter.PodRunsOnRetirement) {
 			podID := entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, retirement.Namespace, retirement.PodName)
 			nodeID := entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, retirement.NodeName)
-			if err := retirer.RetireRunsOn(context.Background(), podID, nodeID, retirement.RetiredAt); err != nil {
+			if err := retirer.RetireRunsOn(context.Background(), podID, nodeID, retirement.PodUID, retirement.RetiredAt); err != nil {
 				logger.Error("retire terminal pod runs_on edge failed",
 					logging.String("namespace", retirement.Namespace),
 					logging.String("pod", retirement.PodName),

@@ -16,14 +16,14 @@ import (
 const edgeUpsertSQL = `INSERT INTO topology_edges (id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata)
 	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	 ON CONFLICT (id) DO UPDATE SET
-	   last_seen = CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.last_seen ELSE GREATEST(topology_edges.last_seen, EXCLUDED.last_seen) END,
-	   confidence = CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.confidence ELSE EXCLUDED.confidence END,
-	   provenance = CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.provenance ELSE EXCLUDED.provenance END,
-	   metadata = CASE WHEN topology_edges.metadata ? 'retired_at' THEN topology_edges.metadata ELSE EXCLUDED.metadata END`
+	   last_seen = CASE WHEN topology_edges.relation = 'runs_on' AND topology_edges.metadata ? 'retired_at' THEN topology_edges.last_seen ELSE GREATEST(topology_edges.last_seen, EXCLUDED.last_seen) END,
+	   confidence = CASE WHEN topology_edges.relation = 'runs_on' AND topology_edges.metadata ? 'retired_at' THEN topology_edges.confidence ELSE EXCLUDED.confidence END,
+	   provenance = CASE WHEN topology_edges.relation = 'runs_on' AND topology_edges.metadata ? 'retired_at' THEN topology_edges.provenance ELSE EXCLUDED.provenance END,
+	   metadata = CASE WHEN topology_edges.relation = 'runs_on' AND topology_edges.metadata ? 'retired_at' THEN topology_edges.metadata ELSE EXCLUDED.metadata END`
 
 const latestActiveEdgeQuery = `SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
 	 FROM topology_edges
-	 WHERE NOT (metadata ? 'retired_at')`
+	 WHERE relation <> 'runs_on' OR NOT (metadata ? 'retired_at')`
 
 const retireRunsOnSQL = `UPDATE topology_edges
 	 SET metadata = jsonb_set(metadata, '{retired_at}', to_jsonb($4::text), true)
@@ -201,8 +201,8 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 // RetireRunsOn records terminal Pod lifecycle state in edge metadata without
 // changing first_seen or last_seen. QueryEdges keeps the retired audit edge;
 // GetLatest filters it through latestActiveEdgeQuery.
-func (s *PostgresGraphStore) RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, retiredAt time.Time) error {
-	edgeID := topology.ComputeEdgeID(podID, nodeID, topology.RelRunsOn)
+func (s *PostgresGraphStore) RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error {
+	edgeID := topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, podUID)
 	_, err := s.conn.pool.Exec(ctx, retireRunsOnSQL,
 		edgeID, string(podID), string(nodeID), retiredAt.UTC().Format(time.RFC3339Nano),
 	)

@@ -258,12 +258,12 @@ func TestGraphStore_RetiredRunsOnIsHiddenFromLatestAndImmutable(t *testing.T) {
 	retiredAt := firstSeen.Add(time.Minute)
 	staleAt := retiredAt.Add(time.Minute)
 
-	runsOn := topology.NewEdge(podID, nodeID, topology.RelRunsOn, firstSeen)
+	runsOn := lifecycleRunsOnEdge(podID, nodeID, "uid-old", firstSeen)
 	contains := topology.NewEdge(podID, nodeID, topology.RelContains, firstSeen)
 	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(runsOn, contains)))
-	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, retiredAt))
+	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, "uid-old", retiredAt))
 
-	staleRunsOn := topology.NewEdge(podID, nodeID, topology.RelRunsOn, firstSeen)
+	staleRunsOn := lifecycleRunsOnEdge(podID, nodeID, "uid-old", firstSeen)
 	staleRunsOn.LastSeen = staleAt
 	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(staleRunsOn)))
 
@@ -284,6 +284,63 @@ func TestGraphStore_RetiredRunsOnIsHiddenFromLatestAndImmutable(t *testing.T) {
 		return
 	}
 	t.Fatal("expected retained audit runs_on edge")
+}
+
+func TestGraphStore_ReplacementUIDBecomesLatestWhileOldAssignmentRemainsAuditHistory(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "node-a")
+	firstSeen := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+
+	old := lifecycleRunsOnEdge(podID, nodeID, "uid-old", firstSeen)
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(old)))
+	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, "uid-old", firstSeen.Add(time.Minute)))
+
+	newAssignment := lifecycleRunsOnEdge(podID, nodeID, "uid-new", firstSeen.Add(2*time.Minute))
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(newAssignment)))
+
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 1)
+	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
+
+	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	require.Len(t, audit, 2)
+	for _, edge := range audit {
+		if edge.ID == old.ID {
+			require.NotEmpty(t, edge.Metadata["retired_at"])
+			return
+		}
+	}
+	t.Fatal("expected retired old runs_on assignment in audit query")
+}
+
+func TestGraphStore_NonRunsOnRetiredAtMetadataRemainsLatestAndRefreshable(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	firstSeen := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	later := firstSeen.Add(time.Minute)
+	edge := topology.NewEdge(svc("api"), svc("db"), topology.RelCalls, firstSeen)
+	edge.Metadata = map[string]string{"retired_at": "application-level-marker"}
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(edge)))
+
+	refresh := edge
+	refresh.LastSeen = later
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(refresh)))
+
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 1)
+	require.Equal(t, later, latest.Graph.Edges[0].LastSeen)
+}
+
+func lifecycleRunsOnEdge(source, target entities.EntityID, podUID string, firstSeen time.Time) topology.Edge {
+	edge := topology.NewEdge(source, target, topology.RelRunsOn, firstSeen)
+	edge.ID = topology.ComputeEdgeIDWithDiscriminator(source, target, topology.RelRunsOn, podUID)
+	edge.Metadata = map[string]string{"k8s.pod.uid": podUID}
+	return edge
 }
 
 func TestGraphStore_QueryEdgesBySource(t *testing.T) {

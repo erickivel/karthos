@@ -83,7 +83,7 @@ func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T
 	}
 }
 
-func TestPodLifecycleTrackerDoesNotRetireReplacementForOldTerminalTimer(t *testing.T) {
+func TestPodLifecycleTrackerRetiresOldUIDWithoutRetiringReplacement(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
 	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
@@ -104,6 +104,11 @@ func TestPodLifecycleTrackerDoesNotRetireReplacementForOldTerminalTimer(t *testi
 	terminal := podForLifecycle("default", "job-0", "uid-old", "node-a")
 	terminal.Status.Phase = corev1.PodSucceeded
 	watcher.Modify(terminal)
+	require.Eventually(t, func() bool {
+		tracker.mu.RLock()
+		defer tracker.mu.RUnlock()
+		return len(tracker.retirements) == 1
+	}, time.Second, 5*time.Millisecond)
 	watcher.Add(podForLifecycle("default", "job-0", "uid-new", "node-a"))
 
 	require.Eventually(t, func() bool {
@@ -111,11 +116,43 @@ func TestPodLifecycleTrackerDoesNotRetireReplacementForOldTerminalTimer(t *testi
 	}, time.Second, 5*time.Millisecond)
 	select {
 	case retirement := <-retirements:
-		t.Fatalf("old terminal timer retired replacement: %#v", retirement)
-	case <-time.After(100 * time.Millisecond):
+		require.Equal(t, "uid-old", retirement.PodUID)
+		require.Equal(t, "node-a", retirement.NodeName)
+	case <-time.After(time.Second):
+		t.Fatal("expected old terminal UID retirement")
 	}
 	require.False(t, tracker.AllowsRunsOn("default", "job-0", "uid-old", "node-a"))
 	require.True(t, tracker.AllowsRunsOn("default", "job-0", "uid-new", "node-a"))
+}
+
+func TestPodLifecycleTrackerDeniesTerminalUIDAfterDeadlineBeforeTimerCallback(t *testing.T) {
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-a", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+
+	baseline := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	var nowNanos atomic.Int64
+	nowNanos.Store(baseline.UnixNano())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client)
+	tracker.nowFn = func() time.Time { return time.Unix(0, nowNanos.Load()).UTC() }
+	require.NoError(t, tracker.Start(ctx))
+
+	terminal := podForLifecycle("default", "job-0", "uid-a", "node-a")
+	terminal.Status.Phase = corev1.PodSucceeded
+	watcher.Modify(terminal)
+	require.Eventually(t, func() bool {
+		tracker.mu.RLock()
+		defer tracker.mu.RUnlock()
+		return len(tracker.retirements) == 1
+	}, time.Second, 5*time.Millisecond)
+	require.True(t, tracker.AllowsRunsOn("default", "job-0", "uid-a", "node-a"))
+
+	nowNanos.Store(baseline.Add(defaultPodLifecycleGrace).UnixNano())
+	require.False(t, tracker.AllowsRunsOn("default", "job-0", "uid-a", "node-a"))
 }
 
 func TestPodLifecycleTrackerFailsClosedUntilWatchRecovers(t *testing.T) {

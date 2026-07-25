@@ -47,7 +47,7 @@ type GraphStore interface {
 // terminal Pod assignment without inferring retirement from missing telemetry.
 // Retired edges remain available through QueryEdges as audit history.
 type RunsOnRetirer interface {
-	RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, retiredAt time.Time) error
+	RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error
 }
 
 type MetadataStore interface {
