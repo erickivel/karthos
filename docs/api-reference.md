@@ -255,14 +255,15 @@ Semconv metric names are the API contract. Canonical counter samples use base
 units (`count`, `bytes`, or `nanoseconds`), while rate units are created only by
 query aggregation. Cumulative samples retain their running base total and delta
 samples retain their reported interval increment. Every catalog counter declares
-its supported/default aggregation and base/rate units. `latest` returns the
-last stored sample for either temporality. `increase` is the query-time
-event/resource change in its base unit; `window_rate` divides that exact change
-by the full window duration; and `active_rate` is available only for cumulative
-series. Cumulative `increase` and `window_rate` emit no sample until at least
-two current-window samples exist and stored history spans the requested window.
-Delta series use `sum_over_time()` for exact increases and return no data for
-`active_rate`.
+its supported/default aggregation and base/rate units. `latest` is the raw-value
+aggregation mode: it returns all matching stored samples over the requested
+time range, with each point retaining its cumulative-total or delta-increment
+temporality. `increase` is the query-time event/resource change in its base
+unit; `window_rate` divides that exact change by the full window duration; and
+`active_rate` is available only for cumulative series. Cumulative `increase`
+and `window_rate` emit no sample until at least two current-window samples exist
+and stored history spans the requested window. Delta series use
+`sum_over_time()` for exact increases and return no data for `active_rate`.
 
 For cardinality control, normalized Prometheus application metrics drop raw
 legacy `path` in favor of bounded route/method/status dimensions, and

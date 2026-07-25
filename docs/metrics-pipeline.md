@@ -321,14 +321,16 @@ are cumulative Histograms. The normalizer therefore preserves the source
 temporality rather than inferring it from a metric name or from an
 unspecified/gauge payload. See the
 versioned [servicegraph connector documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
-Query construction is catalog-driven. `latest` returns the last stored sample
-for either temporality. Cumulative `increase` and `window_rate` use reset-aware
-`increase()` only after a two-sample/history-span maturity gate; delta series
-use `sum_over_time()`. `increase` returns the base unit and `window_rate`
-divides that exact increase by the full normalized window to return the
-catalog-declared rate unit. Cumulative `active_rate` uses `rate()` and delta
-`active_rate` returns no data. Histogram means and error ratios use gated exact
-increases. VictoriaMetrics is deployed
+Query construction is catalog-driven. `latest` selects matching raw samples
+over the requested range without deriving a rate; each point retains its
+cumulative-total or delta-increment temporality. Cumulative `increase` and
+`window_rate` use reset-aware `increase()` only after a
+two-sample/history-span maturity gate; delta series use `sum_over_time()`.
+`increase` returns the base unit and `window_rate` divides that exact increase
+by the full normalized window to return the catalog-declared rate unit.
+Cumulative `active_rate` uses `rate()` and delta `active_rate` returns no data.
+Histogram means and error ratios use gated exact increases. VictoriaMetrics is
+deployed
 with `-dedup.minScrapeInterval=1ms`, so exact OTLP retry replays with identical
 labels and timestamps are idempotent at storage. See the
 [VictoriaMetrics deduplication contract](https://docs.victoriametrics.com/victoriametrics/index.html#deduplication).
