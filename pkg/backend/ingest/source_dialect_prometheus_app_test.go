@@ -65,7 +65,7 @@ func TestOTLPNormalizer_PrometheusAppMetricResolvesServiceAndPreservesBoundedLab
 		"service_port": "8080",
 		"method":       "GET",
 		"path":         "/orders/7c4d9d7e-6dc5-49d4-a660-d8d5b8475b72",
-		"http.route":   "/orders/{order_id}",
+		"http_route":   "/orders/{order_id}",
 		"status":       "500",
 	}, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, true)
 	env := makeEnvelope(t, map[string]string{
@@ -84,14 +84,14 @@ func TestOTLPNormalizer_PrometheusAppMetricResolvesServiceAndPreservesBoundedLab
 	assert.Equal(t, metrics.SourcePrometheusApp, s.Labels["source"])
 	assert.Equal(t, "oksg-demo", s.Labels["namespace"])
 	assert.Equal(t, "gateway-go", s.Labels["service"])
-	assert.Equal(t, "gateway-go-abc123", s.Labels["pod"])
-	assert.Equal(t, "10.42.0.11:8080", s.Labels["instance"])
 	assert.Equal(t, "/metrics", s.Labels["metrics_path"])
 	assert.Equal(t, "8080", s.Labels["service_port"])
 	assert.Equal(t, "GET", s.Labels["method"])
 	assert.Equal(t, "/orders/{order_id}", s.Labels["http_route"])
 	assert.Equal(t, "500", s.Labels["status"])
 	assert.NotContains(t, s.Labels, "path")
+	assert.NotContains(t, s.Labels, "pod")
+	assert.NotContains(t, s.Labels, "instance")
 }
 
 func TestOTLPNormalizer_PrometheusDurationPreservesSameLabelsOnSumAndCount(t *testing.T) {
@@ -115,6 +115,7 @@ func TestOTLPNormalizer_PrometheusDurationPreservesSameLabelsOnSumAndCount(t *te
 		"namespace":    "oksg-demo",
 		"service":      "gateway-go",
 		"pod":          "gateway-go-abc123",
+		"instance":     "10.42.0.11:8080",
 		"metrics_path": "/metrics",
 		"service_port": "8080",
 		"method":       "GET",
@@ -134,10 +135,35 @@ func TestOTLPNormalizer_PrometheusDurationPreservesSameLabelsOnSumAndCount(t *te
 	require.True(t, ok)
 	assert.Equal(t, serviceID, sumSample.EntityID)
 	assert.Equal(t, sumSample.Labels, countSample.Labels)
-	assert.Equal(t, "gateway-go-abc123", sumSample.Labels["pod"])
 	assert.Equal(t, "GET", sumSample.Labels["method"])
 	assert.Equal(t, "/orders/{order_id}", sumSample.Labels["http_route"])
 	assert.NotContains(t, sumSample.Labels, "path")
+	assert.NotContains(t, sumSample.Labels, "pod")
+	assert.NotContains(t, sumSample.Labels, "instance")
 	assert.Equal(t, "/metrics", sumSample.Labels["metrics_path"])
 	assert.Equal(t, "8080", sumSample.Labels["service_port"])
+	assert.Equal(t, metrics.UnitNanoseconds, sumSample.Unit)
+	assert.Equal(t, metrics.UnitCount, countSample.Unit)
+}
+
+func TestOTLPNormalizer_PrometheusAppMetricWithoutRouteStaysServiceLevel(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+	rm := makeSumRMIntWithAttrs("http_requests_total", 7, tsNano, map[string]string{
+		"oksg_source": metrics.SourcePrometheusApp,
+		"namespace":   "oksg-demo",
+		"service":     "gateway-go",
+		"method":      "GET",
+		"path":        "/orders/7c4d9d7e-6dc5-49d4-a660-d8d5b8475b72",
+		"status":      "200",
+	}, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, true)
+
+	samples, err := normalizer.Normalize(context.Background(), makeEnvelope(t, podResource(), rm))
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+
+	assert.Equal(t, "GET", samples[0].Labels["method"])
+	assert.Equal(t, "200", samples[0].Labels["status"])
+	assert.NotContains(t, samples[0].Labels, "path")
+	assert.NotContains(t, samples[0].Labels, "http_route")
 }

@@ -35,13 +35,19 @@ TRACER = trace.get_tracer("service-a-python")
 REQUEST_COUNT = Counter(
     "http_requests_total",
     "Total HTTP requests handled by service-a-python",
-    ["method", "path", "status"],
+    ["method", "http_route", "status"],
 )
 REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds",
     "Request latency for service-a-python",
-    ["method", "path"],
+    ["method", "http_route"],
 )
+
+
+def route_template():
+    if request.url_rule is not None:
+        return request.url_rule.rule
+    return "/{path}"
 
 
 def with_force_error(raw_url):
@@ -57,7 +63,7 @@ def start_request_span():
         return
 
     parent_context = propagate.extract(request.headers)
-    span = TRACER.start_span(f"{request.method} {request.path}", context=parent_context, kind=SpanKind.SERVER)
+    span = TRACER.start_span(f"{request.method} {route_template()}", context=parent_context, kind=SpanKind.SERVER)
     token = otel_context.attach(trace.set_span_in_context(span, parent_context))
     request.environ["otel.span"] = span
     request.environ["otel.token"] = token
@@ -69,14 +75,15 @@ def finish_request_span(response):
     span = request.environ.get("otel.span")
     token = request.environ.get("otel.token")
     started = request.environ.get("otel.start_time")
+    route = route_template()
 
     if started is not None and request.path != "/metrics":
-        REQUEST_LATENCY.labels(request.method, request.path).observe(time.perf_counter() - started)
-        REQUEST_COUNT.labels(request.method, request.path, str(response.status_code)).inc()
+        REQUEST_LATENCY.labels(request.method, route).observe(time.perf_counter() - started)
+        REQUEST_COUNT.labels(request.method, route, str(response.status_code)).inc()
 
     if span is not None:
         span.set_attribute("http.method", request.method)
-        span.set_attribute("http.route", request.path)
+        span.set_attribute("http.route", route)
         span.set_attribute("http.status_code", response.status_code)
         if response.status_code >= 500:
             span.set_status(Status(StatusCode.ERROR, str(response.status_code)))

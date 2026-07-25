@@ -45,6 +45,22 @@ func TestSamplesToPrometheusText(t *testing.T) {
 	assert.Contains(t, got, expectedTsMs)
 }
 
+func TestSamplesToPrometheusText_PersistsHistogramComponentUnits(t *testing.T) {
+	ts := time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)
+	samples := []metrics.MetricSample{
+		{MetricName: "http.server.request.duration_sum", EntityID: "svc1", Value: 1_500_000_000, Timestamp: ts, Unit: metrics.UnitNanoseconds},
+		{MetricName: "http.server.request.duration_count", EntityID: "svc1", Value: 3, Timestamp: ts, Unit: metrics.UnitCount},
+		{MetricName: "servicegraph.request.body.size_sum", EntityID: "edge1", Value: 4096, Timestamp: ts, Unit: metrics.UnitBytes},
+		{MetricName: "servicegraph.request.body.size_count", EntityID: "edge1", Value: 5, Timestamp: ts, Unit: metrics.UnitCount},
+	}
+
+	got := string(samplesToPrometheusText(samples))
+	assert.Contains(t, got, `http_server_request_duration_sum{entity_id="svc1",oksg_unit="nanoseconds"}`)
+	assert.Contains(t, got, `http_server_request_duration_count{entity_id="svc1",oksg_unit="count"}`)
+	assert.Contains(t, got, `servicegraph_request_body_size_sum{entity_id="edge1",oksg_unit="bytes"}`)
+	assert.Contains(t, got, `servicegraph_request_body_size_count{entity_id="edge1",oksg_unit="count"}`)
+}
+
 func TestSamplesToPrometheusText_EscapesLabelValues(t *testing.T) {
 	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	samples := []metrics.MetricSample{

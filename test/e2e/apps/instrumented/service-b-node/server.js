@@ -33,16 +33,27 @@ client.collectDefaultMetrics({ register });
 const requestCounter = new client.Counter({
   name: "http_requests_total",
   help: "Total HTTP requests handled by service-b-node",
-  labelNames: ["method", "path", "status"],
+  labelNames: ["method", "http_route", "status"],
   registers: [register],
 });
 
 const requestDuration = new client.Histogram({
   name: "http_request_duration_seconds",
   help: "Request duration in seconds for service-b-node",
-  labelNames: ["method", "path"],
+  labelNames: ["method", "http_route"],
   registers: [register],
 });
+
+function routeTemplate(path) {
+  switch (path) {
+    case "/compute":
+    case "/health":
+    case "/metrics":
+      return path;
+    default:
+      return "/{path}";
+  }
+}
 
 app.use((req, res, next) => {
   if (req.path === "/metrics") {
@@ -52,21 +63,22 @@ app.use((req, res, next) => {
 
   const parentContext = propagation.extract(context.active(), req.headers);
   const span = tracer.startSpan(
-    `${req.method} ${req.path}`,
+    `${req.method} ${routeTemplate(req.path)}`,
     {
       kind: SpanKind.SERVER,
       attributes: {
         "http.method": req.method,
-        "http.route": req.path,
+        "http.route": routeTemplate(req.path),
       },
     },
     parentContext,
   );
   const spanContext = trace.setSpan(parentContext, span);
-  const end = requestDuration.startTimer({ method: req.method, path: req.path });
+  const route = routeTemplate(req.path);
+  const end = requestDuration.startTimer({ method: req.method, http_route: route });
 
   res.on("finish", () => {
-    requestCounter.inc({ method: req.method, path: req.path, status: String(res.statusCode) });
+    requestCounter.inc({ method: req.method, http_route: route, status: String(res.statusCode) });
     span.setAttribute("http.status_code", res.statusCode);
     if (res.statusCode >= 500) {
       span.setStatus({ code: SpanStatusCode.ERROR, message: String(res.statusCode) });

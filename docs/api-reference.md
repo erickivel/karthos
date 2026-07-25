@@ -256,19 +256,23 @@ units (`count`, `bytes`, or `nanoseconds`), while rate units are created only by
 query aggregation. Cumulative samples retain their running base total and delta
 samples retain their reported interval increment. Every catalog counter declares
 its supported/default aggregation and base/rate units. `latest` is the raw-value
-aggregation mode: it returns all matching stored samples over the requested
-time range, with each point retaining its cumulative-total or delta-increment
-temporality. `increase` is the query-time event/resource change in its base
-unit; `window_rate` divides that exact change by the full window duration; and
-`active_rate` is available only for cumulative series. Cumulative `increase`
-and `window_rate` emit no sample until at least two current-window samples exist
-and stored history spans the requested window. Delta series use
+aggregation mode: it evaluates the raw selector at the API's fixed 15-second
+VictoriaMetrics range-query step, returning those range-evaluation points rather
+than every source sample. Each point retains its cumulative-total or
+delta-increment temporality. `increase` is the query-time event/resource change
+in its base unit; `window_rate` divides that exact change by the full window
+duration; and `active_rate` is available only for cumulative series. Cumulative
+`increase` and `window_rate` emit no sample until at least two current-window
+samples exist and stored history spans the requested window. Delta series use
 `sum_over_time()` for exact increases and return no data for `active_rate`.
 
 For cardinality control, normalized Prometheus application metrics drop raw
-legacy `path` in favor of bounded route/method/status dimensions, and
-spanmetrics drops `span.name` / `span_name` while retaining method, status, and
-span-kind dimensions.
+legacy `path` and volatile target `pod` / `instance` labels. They retain a
+bounded `http_route` only when the application or collector supplied
+`http.route` / `http_route`; the normalizer never derives it from a raw path.
+Without that route, the canonical application metric is service-level
+aggregation rather than per-path data. Spanmetrics drops `span.name` /
+`span_name` while retaining method, status, and span-kind dimensions.
 
 `servicegraph.request.error.ratio` divides baseline-gated error/request increases after grouping by request context and excluding `failed`. It emits no result when any participating error or request branch is immature, preventing partial totals. Histogram means use the same validated window and exact sum/count increases.
 - `oksg.container.health.status` -> integer-encoded enum (1=healthy, 2=running_not_ready, 3=restarting) derived from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Priority order: restarting > not_ready > healthy. Empty result means no recent sample (treat as unknown).

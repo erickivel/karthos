@@ -28,7 +28,7 @@ var (
 			Name: "http_requests_total",
 			Help: "Total HTTP requests handled by gateway-go.",
 		},
-		[]string{"method", "path", "status"},
+		[]string{"method", "http_route", "status"},
 	)
 	requestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -36,7 +36,7 @@ var (
 			Help:    "HTTP request duration in seconds.",
 			Buckets: prometheus.DefBuckets,
 		},
-		[]string{"method", "path"},
+		[]string{"method", "http_route"},
 	)
 )
 
@@ -232,10 +232,12 @@ func tracingMiddleware(next http.Handler) http.Handler {
 		}
 
 		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-		spanCtx, span := tracer.Start(ctx, r.Method+" "+r.URL.Path,
+		route := routeTemplate(r.URL.Path)
+		spanCtx, span := tracer.Start(ctx, r.Method+" "+route,
 			trace.WithSpanKind(trace.SpanKindServer),
 		)
 		defer span.End()
+		span.SetAttributes(attribute.String("http.route", route))
 
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(recorder, r.WithContext(spanCtx))
@@ -258,9 +260,19 @@ func metricsMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(recorder, r)
 
 		status := http.StatusText(recorder.statusCode)
-		requestCounter.WithLabelValues(r.Method, r.URL.Path, status).Inc()
-		requestDuration.WithLabelValues(r.Method, r.URL.Path).Observe(time.Since(start).Seconds())
+		route := routeTemplate(r.URL.Path)
+		requestCounter.WithLabelValues(r.Method, route, status).Inc()
+		requestDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
 	})
+}
+
+func routeTemplate(path string) string {
+	switch path {
+	case "/", "/error", "/health", "/metrics":
+		return path
+	default:
+		return "/{path}"
+	}
 }
 
 type statusRecorder struct {

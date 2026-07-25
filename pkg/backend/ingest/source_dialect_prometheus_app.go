@@ -23,8 +23,6 @@ func applyPrometheusAppDialect(ctx context.Context, resolver EntityResolver, pla
 	preserveLabels(plan.attrs, plan.labels,
 		"namespace",
 		"service",
-		"pod",
-		"instance",
 		"metrics_path",
 		"service_port",
 		"method",

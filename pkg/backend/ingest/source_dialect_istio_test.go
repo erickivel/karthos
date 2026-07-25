@@ -109,4 +109,33 @@ func TestOTLPNormalizer_IstioDurationMillisecondsHistogramEmitsNanosecondSumCoun
 	countSample, ok := findSample(samples, "servicegraph.request.duration_count")
 	require.True(t, ok)
 	assert.InDelta(t, 5.0, countSample.Value, 1e-9)
+	assert.Equal(t, metrics.UnitCount, countSample.Unit)
+}
+
+func TestOTLPNormalizer_IstioRequestBodyHistogramUsesByteSumAndCount(t *testing.T) {
+	normalizer := newNormalizer()
+	tsNano := uint64(time.Now().UnixNano())
+
+	rm := makeHistogramRMWithAttrs("istio_request_bytes", 4096, 5, tsNano, map[string]string{
+		"client":           "gateway-go",
+		"server":           "service-a-python",
+		"client_namespace": "oksg-demo",
+		"server_namespace": "oksg-demo",
+		"oksg.source":      "mesh.istio",
+	})
+	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, samples, 2)
+
+	sumSample, ok := findSample(samples, "servicegraph.request.body.size_sum")
+	require.True(t, ok)
+	assert.InDelta(t, 4096.0, sumSample.Value, 1e-9)
+	assert.Equal(t, metrics.UnitBytes, sumSample.Unit)
+
+	countSample, ok := findSample(samples, "servicegraph.request.body.size_count")
+	require.True(t, ok)
+	assert.InDelta(t, 5.0, countSample.Value, 1e-9)
+	assert.Equal(t, metrics.UnitCount, countSample.Unit)
 }

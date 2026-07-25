@@ -291,7 +291,11 @@ than arbitrary label passthrough. This keeps the canonical store reusable for
 UI, audit, analytics, and future prediction consumers while controlling
 cardinality. Prometheus app HTTP metrics preserve Service identity, namespace,
 configured Service port, metrics path, and bounded HTTP route/method/status
-dimensions, while dropping the raw legacy `path` label. Static Service-DNS
+dimensions, while dropping raw legacy `path` and volatile target `pod` /
+`instance` labels. A route is retained only when the application or collector
+supplies `http.route` / `http_route`; the normalizer never derives one from a
+raw path. Without that bounded route, the canonical application metric remains
+a service-level aggregation rather than per-path data. Static Service-DNS
 scraping intentionally makes no pod or endpoint-target identity claim.
 Spanmetrics preserves method, status, and span-kind dimensions but drops both
 `span.name` and `span_name`; span names commonly embed volatile request paths
@@ -321,10 +325,11 @@ are cumulative Histograms. The normalizer therefore preserves the source
 temporality rather than inferring it from a metric name or from an
 unspecified/gauge payload. See the
 versioned [servicegraph connector documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
-Query construction is catalog-driven. `latest` selects matching raw samples
-over the requested range without deriving a rate; each point retains its
-cumulative-total or delta-increment temporality. Cumulative `increase` and
-`window_rate` use reset-aware `increase()` only after a
+Query construction is catalog-driven. `latest` evaluates the raw selector at
+the API's fixed 15-second VictoriaMetrics range-query step without deriving a
+rate, returning those range-evaluation points rather than every source sample;
+each point retains its cumulative-total or delta-increment temporality.
+Cumulative `increase` and `window_rate` use reset-aware `increase()` only after a
 two-sample/history-span maturity gate; delta series use `sum_over_time()`.
 `increase` returns the base unit and `window_rate` divides that exact increase
 by the full normalized window to return the catalog-declared rate unit.

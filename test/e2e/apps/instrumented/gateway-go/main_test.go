@@ -21,3 +21,18 @@ func TestStatusForResultsReportsGatewayError(t *testing.T) {
 		t.Fatalf("statusForResults() = %d, want 502", got)
 	}
 }
+
+func TestRouteTemplateUsesBoundedKnownRoutes(t *testing.T) {
+	tests := map[string]string{
+		"/":              "/",
+		"/error":         "/error",
+		"/health":        "/health",
+		"/tenant/abc123": "/{path}",
+	}
+
+	for path, want := range tests {
+		if got := routeTemplate(path); got != want {
+			t.Errorf("routeTemplate(%q) = %q, want %q", path, got, want)
+		}
+	}
+}

@@ -136,7 +136,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 							Value:      countValue,
 							Timestamp:  ts,
 							Labels:     cloneLabels(plan.labels),
-							Unit:       plan.unit,
+							Unit:       metrics.UnitCount,
 						},
 					)
 				}
