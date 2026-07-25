@@ -467,6 +467,69 @@ func TestListEdgesPagination(t *testing.T) {
 	require.NotEmpty(t, nextToken)
 }
 
+func TestListEdgesReturnsRetiredUIDVersionedRunsOnAssignmentsForAudit(t *testing.T) {
+	gs := persistence.NewInMemoryGraphStore()
+	now := time.Now().UTC()
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "node-a")
+	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, now)
+	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
+	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old"}
+	newAssignment := topology.NewEdge(podID, nodeID, topology.RelRunsOn, now.Add(time.Minute))
+	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-new")
+	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new"}
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+	require.NoError(t, gs.RetireRunsOn(context.Background(), podID, nodeID, "uid-old", now.Add(30*time.Second)))
+	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
+
+	srv := newTestServer(t, Config{GraphStore: gs})
+	defer srv.cancel()
+	resp := doGet(t, srv, "/api/v1/graph/edges?relation=runs_on")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parsePaginatedData(t, resp)
+	require.EqualValues(t, 2, data["total"])
+	edges := data["edges"].([]any)
+	seen := map[string]map[string]any{}
+	for _, item := range edges {
+		edge := item.(map[string]any)
+		seen[edge["id"].(string)] = edge
+	}
+	require.Contains(t, seen, old.ID)
+	require.Contains(t, seen, newAssignment.ID)
+	require.NotEmpty(t, seen[old.ID]["metadata"].(map[string]any)["retired_at"])
+}
+
+func TestCanonicalizeGraphRecomputesChangedRunsOnEndpointsWithPodUID(t *testing.T) {
+	canonicalService := entities.ComputeEntityID(entities.KindService, "cluster", "default", "api")
+	legacyService := entities.ComputeEntityID(entities.KindService, "cluster", "api")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "node-a")
+	now := time.Now().UTC()
+	old := topology.NewEdge(legacyService, nodeID, topology.RelRunsOn, now)
+	old.ID = topology.ComputeEdgeIDWithDiscriminator(legacyService, nodeID, topology.RelRunsOn, "uid-old")
+	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old", "retired_at": now.Format(time.RFC3339Nano)}
+	newAssignment := topology.NewEdge(legacyService, nodeID, topology.RelRunsOn, now)
+	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(legacyService, nodeID, topology.RelRunsOn, "uid-new")
+	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new"}
+
+	_, edges := canonicalizeGraph([]topology.Node{
+		{ID: canonicalService, Kind: entities.KindService, Labels: map[string]string{"name": "api", "namespace": "default"}},
+		{ID: legacyService, Kind: entities.KindService, Labels: map[string]string{"name": "api"}},
+	}, []topology.Edge{old, newAssignment})
+
+	require.Len(t, edges, 2)
+	seen := map[string]topology.Edge{}
+	for _, edge := range edges {
+		seen[edge.ID] = edge
+	}
+	oldID := topology.ComputeEdgeIDWithDiscriminator(canonicalService, nodeID, topology.RelRunsOn, "uid-old")
+	newID := topology.ComputeEdgeIDWithDiscriminator(canonicalService, nodeID, topology.RelRunsOn, "uid-new")
+	require.Contains(t, seen, oldID)
+	require.Contains(t, seen, newID)
+	require.NotEmpty(t, seen[oldID].Metadata["retired_at"])
+}
+
 func TestGetGraphIncludesStructuralKindsWhenGraphContainsThem(t *testing.T) {
 	gs := persistence.NewInMemoryGraphStore()
 	now := time.Now().UTC()

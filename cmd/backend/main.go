@@ -339,10 +339,10 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 			}
 			logger.Warn("pod lifecycle validation unavailable; runs_on refreshes are fail-closed", fields...)
 		}),
-		kubernetesadapter.WithPodRunsOnRetirementObserver(func(retirement kubernetesadapter.PodRunsOnRetirement) {
+		kubernetesadapter.WithPodRunsOnRetirementObserver(func(retirementCtx context.Context, retirement kubernetesadapter.PodRunsOnRetirement) error {
 			podID := entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, retirement.Namespace, retirement.PodName)
 			nodeID := entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, retirement.NodeName)
-			if err := retirer.RetireRunsOn(context.Background(), podID, nodeID, retirement.PodUID, retirement.RetiredAt); err != nil {
+			if err := retirer.RetireRunsOn(retirementCtx, podID, nodeID, retirement.PodUID, retirement.RetiredAt); err != nil {
 				logger.Error("retire terminal pod runs_on edge failed",
 					logging.String("namespace", retirement.Namespace),
 					logging.String("pod", retirement.PodName),
@@ -350,7 +350,7 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 					logging.String("node", retirement.NodeName),
 					logging.Error(err),
 				)
-				return
+				return err
 			}
 			logger.Info("retired terminal pod runs_on edge",
 				logging.String("namespace", retirement.Namespace),
@@ -359,6 +359,7 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 				logging.String("node", retirement.NodeName),
 				logging.String("retired_at", retirement.RetiredAt.Format(time.RFC3339Nano)),
 			)
+			return nil
 		}),
 	)
 	if err := tracker.Start(ctx); err != nil {

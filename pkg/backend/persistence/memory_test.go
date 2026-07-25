@@ -317,6 +317,28 @@ func TestGraphStore_ReplacementUIDBecomesLatestWhileOldAssignmentRemainsAuditHis
 	t.Fatal("expected retired old runs_on assignment in audit query")
 }
 
+func TestGraphStore_RetirementBeforeFirstSnapshotKeepsLaterBufferedEdgeRetired(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "node-a")
+	retiredAt := time.Date(2026, 7, 25, 12, 1, 0, 0, time.UTC)
+
+	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, "uid-a", retiredAt))
+	buffered := lifecycleRunsOnEdge(podID, nodeID, "uid-a", retiredAt.Add(time.Minute))
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(buffered)))
+
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Empty(t, latest.Graph.Edges)
+
+	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	require.Len(t, audit, 1)
+	require.Equal(t, retiredAt, audit[0].LastSeen)
+	require.Equal(t, retiredAt.Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
+}
+
 func TestGraphStore_NonRunsOnRetiredAtMetadataRemainsLatestAndRefreshable(t *testing.T) {
 	store := NewInMemoryGraphStore()
 	ctx := context.Background()

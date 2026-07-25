@@ -438,6 +438,16 @@ func (s *InMemoryGraphStore) PutSnapshot(_ context.Context, snapshot topology.Sn
 			continue
 		}
 		if edgeRetired(existing) {
+			if e.FirstSeen.Before(existing.FirstSeen) {
+				existing.FirstSeen = e.FirstSeen
+			}
+			if e.LastSeen.Before(existing.LastSeen) {
+				existing.LastSeen = e.LastSeen
+			}
+			existing.Metadata = mergeRetiredEdgeMetadata(existing.Metadata, e.Metadata)
+			existing.Confidence = e.Confidence
+			existing.Provenance = mergeRetiredEdgeProvenance(existing.Provenance, e.Provenance)
+			s.edges[e.ID] = existing
 			continue
 		}
 		if e.LastSeen.After(existing.LastSeen) {
@@ -502,8 +512,16 @@ func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entit
 	defer s.mu.Unlock()
 
 	edge, ok := s.edges[edgeID]
-	if !ok || edge.Relation != topology.RelRunsOn || edgeRetired(edge) {
+	if !ok {
+		edge = topology.NewEdge(podID, nodeID, topology.RelRunsOn, retiredAt)
+		edge.ID = edgeID
+		edge.Metadata = map[string]string{"k8s.pod.uid": podUID}
+	}
+	if edge.Relation != topology.RelRunsOn || edgeRetired(edge) {
 		return nil
+	}
+	if edge.LastSeen.After(retiredAt) {
+		edge.LastSeen = retiredAt
 	}
 	metadata := make(map[string]string, len(edge.Metadata)+1)
 	for key, value := range edge.Metadata {
@@ -517,6 +535,30 @@ func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entit
 
 func edgeRetired(edge topology.Edge) bool {
 	return edge.Relation == topology.RelRunsOn && edge.Metadata != nil && edge.Metadata["retired_at"] != ""
+}
+
+func mergeRetiredEdgeMetadata(existing, incoming map[string]string) map[string]string {
+	merged := make(map[string]string, len(existing)+len(incoming))
+	for key, value := range existing {
+		merged[key] = value
+	}
+	for key, value := range incoming {
+		merged[key] = value
+	}
+	return merged
+}
+
+func mergeRetiredEdgeProvenance(existing, incoming []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(incoming))
+	merged := make([]string, 0, len(existing)+len(incoming))
+	for _, source := range append(existing, incoming...) {
+		if _, ok := seen[source]; ok {
+			continue
+		}
+		seen[source] = struct{}{}
+		merged = append(merged, source)
+	}
+	return merged
 }
 
 // QueryEdges filters edges by Source and/or Target (zero value = no filter).

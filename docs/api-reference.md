@@ -222,7 +222,10 @@ Returns 404 if node not found.
 
 ### GET /api/v1/graph/edges
 
-List topology edges with optional filtering and pagination.
+List accumulated topology edges with optional filtering and pagination. This is
+an audit-capable surface: retired Pod `runs_on` assignments remain listed with
+their UID-versioned edge ID and RFC3339 `metadata.retired_at`, even though they
+are excluded from the latest `/api/v1/graph` snapshot.
 
 | Param | Type | Description |
 |-------|------|-------------|

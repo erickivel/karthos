@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -41,6 +42,95 @@ func TestPodLifecycleTrackerRejectsDeletedUIDAndAcceptsReplacement(t *testing.T)
 	require.False(t, tracker.AllowsRunsOn("default", "api-0", "uid-old", "node-a"))
 }
 
+func TestPodLifecycleTrackerRetiresDeletedActiveUIDImmediately(t *testing.T) {
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+
+	retirements := make(chan PodRunsOnRetirement, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client, WithPodRunsOnRetirementObserver(func(_ context.Context, retirement PodRunsOnRetirement) error {
+		retirements <- retirement
+		return nil
+	}))
+	require.NoError(t, tracker.Start(ctx))
+
+	watcher.Delete(podForLifecycle("default", "api-0", "uid-old", "node-a"))
+	select {
+	case retirement := <-retirements:
+		require.Equal(t, "uid-old", retirement.PodUID)
+	case <-time.After(time.Second):
+		t.Fatal("expected direct deletion retirement")
+	}
+}
+
+func TestPodLifecycleTrackerRetiresReplacedActiveUIDImmediately(t *testing.T) {
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+
+	retirements := make(chan PodRunsOnRetirement, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client, WithPodRunsOnRetirementObserver(func(_ context.Context, retirement PodRunsOnRetirement) error {
+		retirements <- retirement
+		return nil
+	}))
+	require.NoError(t, tracker.Start(ctx))
+
+	watcher.Add(podForLifecycle("default", "api-0", "uid-new", "node-a"))
+	select {
+	case retirement := <-retirements:
+		require.Equal(t, "uid-old", retirement.PodUID)
+	case <-time.After(time.Second):
+		t.Fatal("expected direct replacement retirement")
+	}
+	require.Eventually(t, func() bool {
+		return tracker.AllowsRunsOn("default", "api-0", "uid-new", "node-a")
+	}, time.Second, 5*time.Millisecond)
+}
+
+func TestPodLifecycleTrackerRetriesRetirementObserverWithoutBlockingWatch(t *testing.T) {
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+
+	var attempts atomic.Int32
+	succeeded := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client,
+		withPodRetirementRetry(2, time.Millisecond),
+		WithPodRunsOnRetirementObserver(func(_ context.Context, retirement PodRunsOnRetirement) error {
+			if attempts.Add(1) == 1 {
+				return errors.New("temporary storage failure")
+			}
+			succeeded <- struct{}{}
+			return nil
+		}),
+	)
+	require.NoError(t, tracker.Start(ctx))
+
+	watcher.Delete(podForLifecycle("default", "api-0", "uid-old", "node-a"))
+	watcher.Add(podForLifecycle("default", "api-0", "uid-new", "node-a"))
+	require.Eventually(t, func() bool {
+		return tracker.AllowsRunsOn("default", "api-0", "uid-new", "node-a")
+	}, time.Second, 5*time.Millisecond)
+	select {
+	case <-succeeded:
+		require.EqualValues(t, 2, attempts.Load())
+	case <-time.After(time.Second):
+		t.Fatal("expected retry after transient retirement failure")
+	}
+}
+
 func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T) {
 	for _, phase := range []corev1.PodPhase{corev1.PodSucceeded, corev1.PodFailed} {
 		t.Run(string(phase), func(t *testing.T) {
@@ -55,8 +145,9 @@ func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T
 			defer cancel()
 			tracker := NewPodLifecycleTracker(client,
 				withPodLifecycleGraceDuration(20*time.Millisecond),
-				WithPodRunsOnRetirementObserver(func(retirement PodRunsOnRetirement) {
+				WithPodRunsOnRetirementObserver(func(_ context.Context, retirement PodRunsOnRetirement) error {
 					retirements <- retirement
+					return nil
 				}),
 			)
 			require.NoError(t, tracker.Start(ctx))
@@ -95,8 +186,9 @@ func TestPodLifecycleTrackerRetiresOldUIDWithoutRetiringReplacement(t *testing.T
 	defer cancel()
 	tracker := NewPodLifecycleTracker(client,
 		withPodLifecycleGraceDuration(30*time.Millisecond),
-		WithPodRunsOnRetirementObserver(func(retirement PodRunsOnRetirement) {
+		WithPodRunsOnRetirementObserver(func(_ context.Context, retirement PodRunsOnRetirement) error {
 			retirements <- retirement
+			return nil
 		}),
 	)
 	require.NoError(t, tracker.Start(ctx))

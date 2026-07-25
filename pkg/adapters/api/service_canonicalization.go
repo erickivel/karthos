@@ -78,9 +78,16 @@ func canonicalizeGraph(nodes []topology.Node, edges []topology.Edge) ([]topology
 
 	canonicalEdges := make(map[string]topology.Edge, len(edges))
 	for _, edge := range edges {
+		originalSource, originalTarget := edge.Source, edge.Target
 		edge.Source = canonicalNodeID(edge.Source, aliases)
 		edge.Target = canonicalNodeID(edge.Target, aliases)
-		edge.ID = topology.ComputeEdgeID(edge.Source, edge.Target, edge.Relation)
+		if edge.Source != originalSource || edge.Target != originalTarget {
+			if edge.Relation == topology.RelRunsOn && edge.Metadata != nil && edge.Metadata["k8s.pod.uid"] != "" {
+				edge.ID = topology.ComputeEdgeIDWithDiscriminator(edge.Source, edge.Target, edge.Relation, edge.Metadata["k8s.pod.uid"])
+			} else {
+				edge.ID = topology.ComputeEdgeID(edge.Source, edge.Target, edge.Relation)
+			}
+		}
 
 		existing, ok := canonicalEdges[edge.ID]
 		if !ok || edge.LastSeen.After(existing.LastSeen) {
