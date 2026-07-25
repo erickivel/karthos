@@ -210,7 +210,9 @@ The agent collector is the node-local collection entrypoint.
 What it does today:
 
 - always collects infrastructure telemetry with the kubeletstats receiver under the `kubelet_stats` component ID
-- adds `prometheus` only for the dedicated Istio pod-discovery scrape job
+- adds `prometheus` only for the dedicated Istio pod-discovery scrape job when
+  discovery selects a complete mesh; a relabel keep rule makes each DaemonSet
+  agent scrape only proxies on its own `K8S_NODE_NAME`
 - enables `otlp` receivers when discovery found OTLP-capable sources
 - enriches metrics and traces with k8sattributes under the `k8s_attributes` component ID
 - batches data before export
@@ -219,6 +221,8 @@ What it does today:
 Operational notes:
 
 - the agent is deployed as a DaemonSet
+- source-aware POC deployments use discovery-generated Helm values; direct Helm
+  installation is unsupported because it can bypass the discovered source plan
 - startup retries against the gateway are expected if the gateway pod is not ready yet
 - the chart pins Collector Contrib `0.156.0`; the deleted `receiver.kubeletstats.enableCPUUsageMetrics` feature gate is not configured
 - kubelet collection enables every node interface but retains the receiver's default pod-interface collection, and requests `k8s.volume.type` metadata without configuring `k8s_api_config` or adding PV/PVC RBAC

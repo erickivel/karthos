@@ -198,6 +198,11 @@ func TestPlanIncludesIstioMeshScrapeJobWhenMeshSourceExists(t *testing.T) {
 		"regex":         "istio-proxy",
 	})
 	require.Contains(t, relabelConfigs, map[string]any{
+		"source_labels": []string{"__meta_kubernetes_pod_node_name"},
+		"action":        "keep",
+		"regex":         "${env:K8S_NODE_NAME}",
+	})
+	require.Contains(t, relabelConfigs, map[string]any{
 		"source_labels": []string{"__meta_kubernetes_namespace"},
 		"action":        "keep",
 		"regex":         "oksg-demo",
@@ -221,6 +226,65 @@ func TestPlanIncludesIstioMeshScrapeJobWhenMeshSourceExists(t *testing.T) {
 		"source_labels": []string{"destination_canonical_service"},
 		"target_label":  "server",
 	})
+}
+
+func TestPlanUsesTraceServicegraphForPartialIstioMesh(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Name:    "istio",
+				Type:    "istio",
+				Present: true,
+				Mesh: &profile.MeshSource{
+					Flavor:             "istio",
+					InjectedNamespaces: []string{"oksg-demo"},
+					Partial:            true,
+				},
+			},
+			{
+				Name:    "application-otlp",
+				Type:    "otlp",
+				Present: true,
+				OTLP:    &profile.OTLPSource{TracesEnabled: true},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	require.NotContains(t, plan.AgentConfig.Receivers, "prometheus")
+	require.Contains(t, plan.GatewayConfig.Connectors, "service_graph")
+	require.Contains(t, plan.GatewayConfig.Service.Pipelines["traces"].Exporters, "service_graph")
+	require.Contains(t, plan.GatewayConfig.Service.Pipelines["metrics"].Receivers, "service_graph")
+}
+
+func TestPlanOmitsServicegraphForPartialIstioMeshWithoutTraces(t *testing.T) {
+	planner := NewSourcePlanner("oksg-system")
+
+	plan, err := planner.Plan(context.Background(), &profile.ClusterProfile{
+		ClusterID:   "abc123hash",
+		ClusterName: "kind-test",
+		Sources: []profile.ObservabilitySource{
+			{
+				Name:    "istio",
+				Type:    "istio",
+				Present: true,
+				Mesh: &profile.MeshSource{
+					Flavor:             "istio",
+					InjectedNamespaces: []string{"oksg-demo"},
+					Partial:            true,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	require.NotContains(t, plan.AgentConfig.Receivers, "prometheus")
+	require.NotContains(t, plan.GatewayConfig.Connectors, "service_graph")
+	require.NotContains(t, plan.GatewayConfig.Service.Pipelines["metrics"].Receivers, "service_graph")
 }
 
 func TestPlanFallsBackToClusterIDWhenClusterNameEmpty(t *testing.T) {

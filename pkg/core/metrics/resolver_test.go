@@ -52,6 +52,24 @@ func TestResolveIstioWinsOverTracesServicegraph(t *testing.T) {
 	require.False(t, selected.Has(SourceTracesServicegraph), "traces.servicegraph should not be selected when istio wins all its metrics")
 }
 
+func TestResolveTracesServicegraphWinsWhenIstioMeshIsPartial(t *testing.T) {
+	catalog := []CanonicalMetric{
+		{Name: "servicegraph.request.count", Sources: []SourceRef{
+			{ID: SourceMeshIstio, Priority: 1},
+			{ID: SourceTracesServicegraph, Priority: 2},
+		}},
+	}
+
+	prof := profileWithIstioAndTraces()
+	prof.Sources[0].Mesh.Partial = true
+
+	assignment, selected, err := Resolve(catalog, DefaultLogicalSources(), prof)
+	require.NoError(t, err)
+	require.Equal(t, SourceTracesServicegraph, assignment["servicegraph.request.count"])
+	require.False(t, selected.Has(SourceMeshIstio))
+	require.True(t, selected.Has(SourceTracesServicegraph))
+}
+
 func TestResolveTracesServicegraphWinsWhenIstioAbsent(t *testing.T) {
 	catalog := []CanonicalMetric{
 		{Name: "servicegraph.request.count", Sources: []SourceRef{

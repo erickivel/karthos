@@ -42,6 +42,7 @@ type MeshSource struct {
 	Flavor             string   `json:"flavor"`
 	Mode               string   `json:"mode"`
 	InjectedNamespaces []string `json:"injected_namespaces,omitempty"`
+	Partial            bool     `json:"partial,omitempty"`
 	MetricsPort        int32    `json:"metrics_port,omitempty"`
 	MetricsPath        string   `json:"metrics_path,omitempty"`
 }

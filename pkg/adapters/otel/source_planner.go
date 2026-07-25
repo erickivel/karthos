@@ -451,6 +451,11 @@ func buildIstioScrapeConfig(mesh *profile.MeshSource) map[string]any {
 			"regex":         "istio-proxy",
 		},
 		{
+			"source_labels": []string{"__meta_kubernetes_pod_node_name"},
+			"action":        "keep",
+			"regex":         "${env:K8S_NODE_NAME}",
+		},
+		{
 			"source_labels": []string{"__address__"},
 			"target_label":  "__address__",
 			"regex":         "([^:]+)(?::\\d+)?",

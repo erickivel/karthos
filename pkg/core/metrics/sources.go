@@ -95,7 +95,7 @@ func hasIstioMesh(p *profile.ClusterProfile) bool {
 	}
 	for _, source := range p.Sources {
 		if source.Type == "istio" && source.Present && source.Mesh != nil &&
-			source.Mesh.Flavor == "istio" && len(source.Mesh.InjectedNamespaces) > 0 {
+			source.Mesh.Flavor == "istio" && !source.Mesh.Partial && len(source.Mesh.InjectedNamespaces) > 0 {
 			return true
 		}
 	}

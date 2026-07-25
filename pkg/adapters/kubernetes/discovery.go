@@ -35,6 +35,7 @@ const (
 	istioSidecarWebhook        = "istio-sidecar-injector"
 	istioMetricsPort           = int32(15020)
 	istioMetricsPath           = "/stats/prometheus"
+	oksgSystemNamespace        = "oksg-system"
 )
 
 type HTTPProbe func(ctx context.Context, url string) bool
@@ -276,7 +277,7 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		},
 	}
 	profileResult.Sources = append(profileResult.Sources, otlpSources...)
-	if meshSource, ok := d.istioSource(ctx, namespaces.Items); ok {
+	if meshSource, ok := d.istioSource(ctx, namespaces.Items, pods.Items); ok {
 		profileResult.Sources = append(profileResult.Sources, meshSource)
 	}
 
@@ -312,7 +313,7 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 	return profileResult, nil
 }
 
-func (d *DiscoveryAdapter) istioSource(ctx context.Context, namespaces []corev1.Namespace) (profile.ObservabilitySource, bool) {
+func (d *DiscoveryAdapter) istioSource(ctx context.Context, namespaces []corev1.Namespace, pods []corev1.Pod) (profile.ObservabilitySource, bool) {
 	hasSystemNamespace := false
 	var injected []string
 	for _, namespace := range namespaces {
@@ -347,10 +348,40 @@ func (d *DiscoveryAdapter) istioSource(ctx context.Context, namespaces []corev1.
 			Flavor:             "istio",
 			Mode:               "sidecar",
 			InjectedNamespaces: injected,
+			Partial:            partialIstioMesh(pods, injected),
 			MetricsPort:        istioMetricsPort,
 			MetricsPath:        istioMetricsPath,
 		},
 	}, true
+}
+
+func partialIstioMesh(pods []corev1.Pod, injectedNamespaces []string) bool {
+	injected := make(map[string]struct{}, len(injectedNamespaces))
+	for _, namespace := range injectedNamespaces {
+		injected[namespace] = struct{}{}
+	}
+	for _, pod := range pods {
+		if isTerminatingPod(pod) || isSystemNamespace(pod.Namespace) || !hasControllerOwner(pod) {
+			continue
+		}
+		if _, ok := injected[pod.Namespace]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isSystemNamespace(namespace string) bool {
+	return namespace == istioSystemNamespace || namespace == oksgSystemNamespace || strings.HasPrefix(namespace, "kube-")
+}
+
+func hasControllerOwner(pod corev1.Pod) bool {
+	for _, owner := range pod.OwnerReferences {
+		if owner.Controller != nil && *owner.Controller {
+			return true
+		}
+	}
+	return false
 }
 
 func hasMutatingWebhook(items []admissionv1.MutatingWebhookConfiguration, name string) bool {
@@ -365,7 +396,7 @@ func hasMutatingWebhook(items []admissionv1.MutatingWebhookConfiguration, name s
 func hasIstioSource(sources []profile.ObservabilitySource) bool {
 	for _, source := range sources {
 		if source.Type == "istio" && source.Present && source.Mesh != nil &&
-			source.Mesh.Flavor == "istio" && len(source.Mesh.InjectedNamespaces) > 0 {
+			source.Mesh.Flavor == "istio" && !source.Mesh.Partial && len(source.Mesh.InjectedNamespaces) > 0 {
 			return true
 		}
 	}

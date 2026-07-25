@@ -79,7 +79,7 @@ to. `DefaultLogicalSources()` returns the built-in registry:
 | `host-os` | Host OS metrics | always | none |
 | `kube-cluster` | Kubernetes API | always | `KubeClusterDialect` |
 | `prometheus.app` | Application Prometheus endpoints | profile has prometheus targets | `PrometheusDialect` |
-| `mesh.istio` | Istio service mesh | profile contains an `istio` source with Istio mesh metadata and at least one injected namespace | `IstioDialect` |
+| `mesh.istio` | Istio service mesh | profile contains a complete (not partial) Istio sidecar mesh with at least one injected namespace | `IstioDialect` |
 | `traces.spanmetrics` | Trace-derived span metrics | profile advertises OTLP traces | `SpanmetricsDialect` |
 | `traces.servicegraph` | Trace-derived service graph | profile advertises OTLP traces | `ServicegraphDialect` |
 
@@ -250,7 +250,23 @@ run on the singleton gateway, require an annotation naming a declared Service
 port, use static `<service>.<namespace>.svc.cluster.local:<service-port>` targets, and
 preserve `service`, `namespace`, `metrics_path`, and `service_port`. Kubernetes
 performs Service-to-`targetPort` translation; these jobs make no per-pod
-identity claim. The dedicated Istio job retains pod discovery.
+identity claim. The dedicated Istio job retains pod discovery, but keeps only
+pods whose `__meta_kubernetes_pod_node_name` equals `${env:K8S_NODE_NAME}`;
+each DaemonSet agent therefore owns the proxies on its own node.
+
+**POC service-graph policy.** A complete injected Istio mesh selects only
+`mesh.istio`. A partial mesh is detected when a non-system namespace with a
+controller-owned workload Pod is not injected; Kubernetes, Istio control-plane,
+and OKSG namespaces are excluded from that comparison. Partial meshes globally
+disable `mesh.istio` and its scrape job. When traces are available,
+`traces.servicegraph` is the sole service-graph source; without traces, no
+service-graph source is selected. This deliberately avoids mixed mesh/trace
+coverage in the POC. Namespace-scoped arbitration and boundary peers are not
+implemented.
+
+Source-aware POC deployments must use discovery-generated Helm values. A direct
+Helm install is unsupported for source-aware telemetry correctness because it
+can diverge from the discovery-selected source plan.
 
 ### 4b. Ingester (`pkg/backend/ingest`)
 
@@ -404,7 +420,7 @@ counter. It can be produced by two sources:
 - `mesh.istio` (priority 1) — sidecar `istio_requests_total`
 - `traces.servicegraph` (priority 2) — OTel `traces_service_graph_request_total`
 
-Pipeline for an active sidecar Istio cluster:
+Pipeline for a complete active sidecar Istio mesh:
 
 1. **Discovery** detects `istio-system`, `istio-sidecar-injector`, and at
    least one injected namespace, then produces an
@@ -419,9 +435,10 @@ Pipeline for an active sidecar Istio cluster:
    `traces.servicegraph` is absent from `SelectedSources`. It configures the
    `mesh-istio` Prometheus scrape job and
    the `transform/oksg-source` processor.
-4. **Agent** scrapes `istio-proxy:15020/stats/prometheus`. The relabel rule
-   stamps `oksg_source=mesh.istio`. The agent forwards OTLP to the gateway,
-   the gateway to the backend.
+4. **Agent** scrapes `istio-proxy:15020/stats/prometheus` only when the target
+   Pod is on that agent's `K8S_NODE_NAME`. The relabel rule stamps
+   `oksg_source=mesh.istio`. The agent forwards OTLP to the gateway, the
+   gateway to the backend.
 5. **Backend OTLPNormalizer** runs. The Istio dialect rewrites
    `istio_requests_total` to `servicegraph.request.count`. The assignment
    filter accepts the sample because `oksg_source` matches the assigned
@@ -436,11 +453,12 @@ Pipeline for an active sidecar Istio cluster:
    `latest`, `increase`, or cumulative `active_rate`. It serves
    the edge as part of `/api/v1/graph`.
 
-If the same active mesh cluster also runs the `service_graph` connector instance, the
-planner would still omit it. If only traces are available, or Istio is
-installed without injected target namespaces, the resolver falls through to
-`traces.servicegraph`, the planner enables the connector, and the same
-canonical name is served end-to-end. The UI never sees the difference.
+If the same complete mesh cluster also runs the `service_graph` connector
+instance, the planner still omits it. If only traces are available, Istio has
+no injected workload namespace, or discovery marks the mesh partial, the
+resolver falls through to `traces.servicegraph`; the planner enables the
+connector and does not configure an Istio scrape. The UI never sees two
+sources for the same POC service-graph metric.
 
 ## 7. Adding a New Metric: End-to-End Checklist
 

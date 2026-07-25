@@ -19,6 +19,8 @@ import (
 	"github.com/erickivel/oksg/pkg/core/entities"
 )
 
+func boolPtr(value bool) *bool { return &value }
+
 func TestDiscoverDetectsIstioMeshSource(t *testing.T) {
 	client := fake.NewClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
@@ -44,7 +46,35 @@ func TestDiscoverDetectsIstioMeshSource(t *testing.T) {
 	require.Equal(t, int32(15020), mesh.Mesh.MetricsPort)
 	require.Equal(t, "/stats/prometheus", mesh.Mesh.MetricsPath)
 	require.Equal(t, []string{"oksg-demo"}, mesh.Mesh.InjectedNamespaces)
+	require.False(t, mesh.Mesh.Partial)
 	require.Contains(t, profile.RecommendedReceivers, "prometheus")
+}
+
+func TestDiscoverMarksIstioMeshPartialWhenAWorkloadPodIsNotInjected(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   "mesh-workload",
+			Labels: map[string]string{"istio-injection": "enabled"},
+		}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "plain-workload"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "mesh-api", Namespace: "mesh-workload", OwnerReferences: []metav1.OwnerReference{{Controller: boolPtr(true)}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "plain-api", Namespace: "plain-workload", OwnerReferences: []metav1.OwnerReference{{Controller: boolPtr(true)}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "system-agent", Namespace: "kube-system", OwnerReferences: []metav1.OwnerReference{{Controller: boolPtr(true)}}}},
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "istio-sidecar-injector"}},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	require.True(t, profile.Sources[1].Mesh.Partial)
+	require.NotContains(t, profile.RecommendedReceivers, "prometheus")
+	for _, path := range profile.CollectionPaths {
+		require.NotEqual(t, "prometheus/mesh-istio", path.ReceiverType)
+	}
 }
 
 func TestDiscoverIgnoresIstioControlPlaneWithoutInjectedNamespaces(t *testing.T) {
