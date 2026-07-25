@@ -223,6 +223,9 @@ Operational notes:
 - the agent is deployed as a DaemonSet
 - source-aware POC deployments use discovery-generated Helm values; direct Helm
   installation is unsupported because it can bypass the discovered source plan
+- generated values are point-in-time: rerun discovery, plan generation, and
+  deployment whenever observed workload mesh membership changes; this POC has
+  no automatic reconciliation
 - startup retries against the gateway are expected if the gateway pod is not ready yet
 - the chart pins Collector Contrib `0.156.0`; the deleted `receiver.kubeletstats.enableCPUUsageMetrics` feature gate is not configured
 - kubelet collection enables every node interface but retains the receiver's default pod-interface collection, and requests `k8s.volume.type` metadata without configuring `k8s_api_config` or adding PV/PVC RBAC

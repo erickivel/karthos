@@ -23,19 +23,21 @@ import (
 )
 
 const (
-	discoveryAdapterName       = "k8s-discovery-adapter"
-	prometheusAnnotationScrape = "prometheus.io/scrape"
-	prometheusAnnotationPath   = "prometheus.io/path"
-	prometheusAnnotationPort   = "prometheus.io/port"
-	defaultPrometheusPath      = "/metrics"
-	otlpAnnotationTraces       = "oksg.io/otlp-traces"
-	otlpGRPCPort               = int32(4317)
-	otlpHTTPPort               = int32(4318)
-	istioSystemNamespace       = "istio-system"
-	istioSidecarWebhook        = "istio-sidecar-injector"
-	istioMetricsPort           = int32(15020)
-	istioMetricsPath           = "/stats/prometheus"
-	oksgSystemNamespace        = "oksg-system"
+	discoveryAdapterName         = "k8s-discovery-adapter"
+	prometheusAnnotationScrape   = "prometheus.io/scrape"
+	prometheusAnnotationPath     = "prometheus.io/path"
+	prometheusAnnotationPort     = "prometheus.io/port"
+	defaultPrometheusPath        = "/metrics"
+	otlpAnnotationTraces         = "oksg.io/otlp-traces"
+	otlpGRPCPort                 = int32(4317)
+	otlpHTTPPort                 = int32(4318)
+	istioSystemNamespace         = "istio-system"
+	istioSidecarWebhook          = "istio-sidecar-injector"
+	istioMetricsPort             = int32(15020)
+	istioMetricsPath             = "/stats/prometheus"
+	oksgSystemNamespace          = "oksg-system"
+	istioProxyContainer          = "istio-proxy"
+	istioSidecarInjectAnnotation = "sidecar.istio.io/inject"
 )
 
 type HTTPProbe func(ctx context.Context, url string) bool
@@ -364,7 +366,20 @@ func partialIstioMesh(pods []corev1.Pod, injectedNamespaces []string) bool {
 		if isTerminatingPod(pod) || isSystemNamespace(pod.Namespace) || !hasControllerOwner(pod) {
 			continue
 		}
-		if _, ok := injected[pod.Namespace]; !ok {
+		if _, ok := injected[pod.Namespace]; !ok || istioInjectionDisabled(pod) || !hasIstioProxy(pod) {
+			return true
+		}
+	}
+	return false
+}
+
+func istioInjectionDisabled(pod corev1.Pod) bool {
+	return strings.EqualFold(strings.TrimSpace(pod.Annotations[istioSidecarInjectAnnotation]), "false")
+}
+
+func hasIstioProxy(pod corev1.Pod) bool {
+	for _, container := range pod.Spec.Containers {
+		if container.Name == istioProxyContainer {
 			return true
 		}
 	}

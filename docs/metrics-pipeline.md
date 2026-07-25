@@ -255,10 +255,12 @@ pods whose `__meta_kubernetes_pod_node_name` equals `${env:K8S_NODE_NAME}`;
 each DaemonSet agent therefore owns the proxies on its own node.
 
 **POC service-graph policy.** A complete injected Istio mesh selects only
-`mesh.istio`. A partial mesh is detected when a non-system namespace with a
-controller-owned workload Pod is not injected; Kubernetes, Istio control-plane,
-and OKSG namespaces are excluded from that comparison. Partial meshes globally
-disable `mesh.istio` and its scrape job. When traces are available,
+`mesh.istio`. A partial mesh is detected when a non-system controller-owned
+workload Pod is outside an injected namespace, explicitly sets
+`sidecar.istio.io/inject: "false"`, or has no `istio-proxy` container.
+Kubernetes, Istio control-plane, and OKSG namespaces are excluded from that
+comparison. Partial meshes globally disable `mesh.istio` and its scrape job.
+When traces are available,
 `traces.servicegraph` is the sole service-graph source; without traces, no
 service-graph source is selected. This deliberately avoids mixed mesh/trace
 coverage in the POC. Namespace-scoped arbitration and boundary peers are not
@@ -266,7 +268,10 @@ implemented.
 
 Source-aware POC deployments must use discovery-generated Helm values. A direct
 Helm install is unsupported for source-aware telemetry correctness because it
-can diverge from the discovery-selected source plan.
+can diverge from the discovery-selected source plan. Generated values are a
+point-in-time plan: rerun discovery, plan generation, and deployment whenever
+observed workload mesh membership changes. Automatic reconciliation is not part
+of this POC.
 
 ### 4b. Ingester (`pkg/backend/ingest`)
 

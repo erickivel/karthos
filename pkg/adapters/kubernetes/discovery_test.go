@@ -77,6 +77,61 @@ func TestDiscoverMarksIstioMeshPartialWhenAWorkloadPodIsNotInjected(t *testing.T
 	}
 }
 
+func TestDiscoverMarksIstioMeshPartialWhenAnInjectedNamespacePodOptsOut(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   "oksg-demo",
+			Labels: map[string]string{"istio-injection": "enabled"},
+		}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "opted-out-api",
+				Namespace:       "oksg-demo",
+				Annotations:     map[string]string{"sidecar.istio.io/inject": "false"},
+				OwnerReferences: []metav1.OwnerReference{{Controller: boolPtr(true)}},
+			},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api"}, {Name: "istio-proxy"}}},
+		},
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "istio-sidecar-injector"}},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	require.True(t, profile.Sources[1].Mesh.Partial)
+	require.NotContains(t, profile.RecommendedReceivers, "prometheus")
+}
+
+func TestDiscoverMarksIstioMeshPartialWhenAnInjectedNamespacePodHasNoProxy(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   "oksg-demo",
+			Labels: map[string]string{"istio-injection": "enabled"},
+		}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "missing-proxy-api",
+				Namespace:       "oksg-demo",
+				OwnerReferences: []metav1.OwnerReference{{Controller: boolPtr(true)}},
+			},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api"}}},
+		},
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "istio-sidecar-injector"}},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	require.True(t, profile.Sources[1].Mesh.Partial)
+	require.NotContains(t, profile.RecommendedReceivers, "prometheus")
+}
+
 func TestDiscoverIgnoresIstioControlPlaneWithoutInjectedNamespaces(t *testing.T) {
 	client := fake.NewClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
