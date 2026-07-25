@@ -123,7 +123,7 @@ func TestOTLPNormalizer_RawKubeletPodNetworkIO(t *testing.T) {
 
 	assert.Equal(t, "k8s.pod.network.io", samples[0].MetricName)
 	assert.InDelta(t, 1500.0, samples[0].Value, 1e-9)
-	assert.Equal(t, metrics.UnitBytesPerSecond, samples[0].Unit)
+	assert.Equal(t, metrics.UnitBytes, samples[0].Unit)
 	assert.Equal(t, "receive", samples[0].Labels["direction"])
 	assert.Equal(t, "eth0", samples[0].Labels["network_interface_name"])
 }

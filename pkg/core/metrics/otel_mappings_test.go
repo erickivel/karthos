@@ -21,7 +21,7 @@ func TestOTLPSemconvMetricsSpanAndServicegraphTargets(t *testing.T) {
 
 	servicegraphCount, ok := OTLPSemconvMetrics["servicegraph.request.count"]
 	require.True(t, ok, "expected servicegraph.request.count to be present")
-	require.Equal(t, UnitPerSecond, servicegraphCount.Unit)
+	require.Equal(t, UnitCount, servicegraphCount.Unit)
 	require.Equal(t, MetricKindCounter, servicegraphCount.Kind)
 	require.Equal(t, 1.0, servicegraphCount.ConversionFactor)
 
@@ -32,7 +32,7 @@ func TestOTLPSemconvMetricsSpanAndServicegraphTargets(t *testing.T) {
 
 	tcpConnections, ok := OTLPSemconvMetrics["servicegraph.tcp.connection.open.count"]
 	require.True(t, ok, "expected servicegraph.tcp.connection.open.count to be present")
-	require.Equal(t, UnitPerSecond, tcpConnections.Unit)
+	require.Equal(t, UnitCount, tcpConnections.Unit)
 	require.Equal(t, MetricKindCounter, tcpConnections.Kind)
 }
 
@@ -81,6 +81,38 @@ func TestOTLPSemconvMetricsHostByteAndPagingSumsAreCounters(t *testing.T) {
 		mapping, ok := OTLPSemconvMetrics[metricName]
 		require.True(t, ok, "expected %s to be present", metricName)
 		require.Equal(t, MetricKindCounter, mapping.Kind, "%s must preserve its cumulative monotonic sum contract", metricName)
+	}
+}
+
+func TestOTLPSemconvMetricCountersStoreOnlyBaseUnits(t *testing.T) {
+	for metricName, mapping := range OTLPSemconvMetrics {
+		if mapping.Kind != MetricKindCounter {
+			continue
+		}
+
+		require.Containsf(t, []Unit{UnitCount, UnitBytes, UnitNanoseconds}, mapping.Unit,
+			"%s must store the raw cumulative counter in a base unit", metricName)
+	}
+}
+
+func TestCatalogCounterRatesAreDerivedFromStoredBaseUnits(t *testing.T) {
+	catalog := CatalogByName()
+	for metricName, mapping := range OTLPSemconvMetrics {
+		if mapping.Kind != MetricKindCounter {
+			continue
+		}
+
+		metric, ok := catalog[metricName]
+		if !ok {
+			continue
+		}
+		require.NotNilf(t, metric.Aggregation, "%s must declare query-time aggregation", metricName)
+		require.Equalf(t, mapping.Unit, metric.Aggregation.BaseUnit,
+			"%s storage unit must equal the catalog base unit", metricName)
+		if metric.Aggregation.Default == AggregationWindowRate {
+			require.NotEqualf(t, mapping.Unit, metric.Aggregation.RateUnit,
+				"%s rate unit must be query-derived rather than stored", metricName)
+		}
 	}
 }
 

@@ -467,7 +467,7 @@ func TestOTLPNormalizer_IstioRequestsUseServicegraphEdgeLabelsAndMeshMetadata(t 
 
 	s := samples[0]
 	assert.Equal(t, "servicegraph.request.count", s.MetricName)
-	assert.Equal(t, metrics.UnitPerSecond, s.Unit)
+	assert.Equal(t, metrics.UnitCount, s.Unit)
 	assert.Equal(t, "mesh.istio", s.Labels["source"])
 	assert.Equal(t, "gateway-go", s.Labels["edge_client"])
 	assert.Equal(t, "service-a-python", s.Labels["edge_server"])

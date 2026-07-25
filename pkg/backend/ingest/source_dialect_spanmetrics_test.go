@@ -102,13 +102,14 @@ func TestOTLPNormalizer_SpanMetricsDurationHistogramEmitsSumCountPair(t *testing
 	assert.InDelta(t, 3.0, countSample.Value, 1e-9)
 }
 
-func TestOTLPNormalizer_SpanMetricsPreservesDimensions(t *testing.T) {
+func TestOTLPNormalizer_SpanMetricsPreservesBoundedDimensions(t *testing.T) {
 	normalizer := newNormalizer()
 	tsNano := uint64(time.Now().UnixNano())
 	rm := makeSumRMIntWithAttrs("traces.span.metrics.calls", 5, tsNano, map[string]string{
 		"oksg_source": metrics.SourceTracesSpanmetrics,
 		"http.method": "POST",
-		"span.name":   "POST /checkout",
+		"span.name":   "POST /orders/7c4d9d7e-6dc5-49d4-a660-d8d5b8475b72",
+		"span_name":   "POST /orders/7c4d9d7e-6dc5-49d4-a660-d8d5b8475b72",
 		"span.kind":   "server",
 		"status.code": "ERROR",
 	}, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, true)
@@ -120,10 +121,12 @@ func TestOTLPNormalizer_SpanMetricsPreservesDimensions(t *testing.T) {
 	require.Len(t, samples, 1)
 
 	assert.Equal(t, "POST", samples[0].Labels["http_method"])
+	assert.Equal(t, metrics.UnitCount, samples[0].Unit)
 	assert.Equal(t, "500", samples[0].Labels["http_status_code"])
-	assert.Equal(t, "POST /checkout", samples[0].Labels["span_name"])
 	assert.Equal(t, "server", samples[0].Labels["span_kind"])
 	assert.Equal(t, "ERROR", samples[0].Labels["status_code"])
+	assert.NotContains(t, samples[0].Labels, "span_name")
+	assert.NotContains(t, samples[0].Labels, "span.name")
 }
 
 func TestOTLPNormalizer_DeltaSumsRemainRawBySeries(t *testing.T) {

@@ -290,15 +290,18 @@ The normalizer preserves source dimensions through a semantic allowlist rather
 than arbitrary label passthrough. This keeps the canonical store reusable for
 UI, audit, analytics, and future prediction consumers while controlling
 cardinality. Prometheus app HTTP metrics preserve Service identity, namespace,
-configured Service port, metrics path, and HTTP dimensions; static Service-DNS
+configured Service port, metrics path, and bounded HTTP route/method/status
+dimensions, while dropping the raw legacy `path` label. Static Service-DNS
 scraping intentionally makes no pod or endpoint-target identity claim.
-Spanmetrics preserves method/status/span dimensions; servicegraph
-preserves edge identity, `failed`, `connection_type`, `virtual_node`, generic `http_method`
-when emitted, and distinct `client_http_method` / `server_http_method`
-dimensions. Labels with dotted OTLP names are written with Prometheus-safe API
-keys such as `http_method`, `http_status_code`, `span_name`, and `span_kind`.
-Bounded string, boolean, integer, and floating-point attributes are serialized
-as Prometheus label strings; this is required for numeric HTTP status dimensions.
+Spanmetrics preserves method, status, and span-kind dimensions but drops both
+`span.name` and `span_name`; span names commonly embed volatile request paths
+or identifiers. Servicegraph preserves edge identity, `failed`,
+`connection_type`, `virtual_node`, generic `http_method` when emitted, and
+distinct `client_http_method` / `server_http_method` dimensions. Labels with
+dotted OTLP names are written with Prometheus-safe API keys such as
+`http_method`, `http_status_code`, and `span_kind`. Bounded string, boolean,
+integer, and floating-point attributes are serialized as Prometheus label
+strings; this is required for numeric HTTP status dimensions.
 
 The generated `service_graph` connector instance uses a 15-second metrics flush ticker and a 30-second edge-pairing TTL. Client
 and server spans are exported by independent application batch processors, so a
@@ -308,19 +311,22 @@ produce incomplete counts or boundary-node series. In collector v0.156,
 identity is carried separately by the optional `virtual_node=client|server`
 label. See the versioned [servicegraph connector contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
 
-Delta Sum and histogram datapoints are stored as their original incremental
-values with `temporality=delta`; the backend keeps no per-series accumulator.
-Collector v0.156 servicegraph output is cumulative: its request/error metrics
-are monotonic cumulative Sums and its latency metrics are cumulative Histograms.
+Counter samples are stored as their raw cumulative values in a physical base
+unit (`count`, `bytes`, or `nanoseconds`), never as an implied rate. Delta Sum
+and histogram datapoints are stored as their original incremental values with
+`temporality=delta`; the backend keeps no per-series accumulator. Collector
+v0.156 servicegraph output is cumulative: its request/error metrics are
+monotonic cumulative Sums and its latency metrics are cumulative Histograms.
 The normalizer therefore leaves those series cumulative and does not infer
 temporality from a metric name or from an unspecified/gauge payload. See the
 versioned [servicegraph connector documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
 Query construction is catalog-driven. Cumulative `increase` and `window_rate`
 use reset-aware `increase()` only after a two-sample/history-span maturity gate;
-delta series use `sum_over_time()`. `window_rate` divides exact increase by the
-full normalized window, while cumulative `active_rate` uses `rate()` and delta
-`active_rate` returns no data. Histogram means and error ratios use gated exact
-increases. VictoriaMetrics is deployed
+delta series use `sum_over_time()`. `increase` returns the base unit and
+`window_rate` divides that exact increase by the full normalized window to
+return the catalog-declared rate unit. Cumulative `active_rate` uses `rate()`
+and delta `active_rate` returns no data. Histogram means and error ratios use
+gated exact increases. VictoriaMetrics is deployed
 with `-dedup.minScrapeInterval=1ms`, so exact OTLP retry replays with identical
 labels and timestamps are idempotent at storage. See the
 [VictoriaMetrics deduplication contract](https://docs.victoriametrics.com/victoriametrics/index.html#deduplication).

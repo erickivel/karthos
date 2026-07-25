@@ -28,7 +28,6 @@ func applyPrometheusAppDialect(ctx context.Context, resolver EntityResolver, pla
 		"metrics_path",
 		"service_port",
 		"method",
-		"path",
 		"status",
 		"http_method",
 		"http.route:http_route",

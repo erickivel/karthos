@@ -53,8 +53,6 @@ func preserveTraceLabels(attrs []*commonpb.KeyValue, labels map[string]string) {
 		"http.status_code:http_status_code",
 		"status_code",
 		"status.code:status_code",
-		"span.name:span_name",
-		"span_name",
 		"span.kind:span_kind",
 		"span_kind",
 	)

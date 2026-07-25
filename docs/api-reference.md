@@ -251,7 +251,21 @@ Response:
 
 Query metric samples with a mode-aware unit. Sorted by timestamp descending.
 
-Semconv metric names are the API contract. Every catalog counter declares its supported/default aggregation and base/rate units. `window_rate` is the exact reset-aware window increase divided by the full window duration; `active_rate` is the observed cumulative-counter slope; `increase` is the event/resource change; and `latest` is the stored cumulative value. Cumulative `increase` and `window_rate` emit no sample until at least two current-window samples exist and stored history spans the requested window. Delta series use `sum_over_time()` for exact increases and return no data for `active_rate`.
+Semconv metric names are the API contract. Canonical counter samples are stored
+as cumulative base values (`count`, `bytes`, or `nanoseconds`); rate units are
+created only by query aggregation. Every catalog counter declares its
+supported/default aggregation and base/rate units. `window_rate` is the exact
+reset-aware window increase divided by the full window duration; `active_rate`
+is the observed cumulative-counter slope; `increase` is the event/resource
+change in its base unit; and `latest` is the stored cumulative value. Cumulative
+`increase` and `window_rate` emit no sample until at least two current-window
+samples exist and stored history spans the requested window. Delta series use
+`sum_over_time()` for exact increases and return no data for `active_rate`.
+
+For cardinality control, normalized Prometheus application metrics drop raw
+legacy `path` in favor of bounded route/method/status dimensions, and
+spanmetrics drops `span.name` / `span_name` while retaining method, status, and
+span-kind dimensions.
 
 `servicegraph.request.error.ratio` divides baseline-gated error/request increases after grouping by request context and excluding `failed`. It emits no result when any participating error or request branch is immature, preventing partial totals. Histogram means use the same validated window and exact sum/count increases.
 - `oksg.container.health.status` -> integer-encoded enum (1=healthy, 2=running_not_ready, 3=restarting) derived from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Priority order: restarting > not_ready > healthy. Empty result means no recent sample (treat as unknown).

@@ -20,12 +20,12 @@ func TestOTLPNormalizer_IstioProtocolCountersPreserveCumulativeSums(t *testing.T
 		canonical string
 		unit      metrics.Unit
 	}{
-		{raw: "istio_request_messages_total", canonical: "servicegraph.grpc.request.message.count", unit: metrics.UnitPerSecond},
-		{raw: "istio_response_messages_total", canonical: "servicegraph.grpc.response.message.count", unit: metrics.UnitPerSecond},
-		{raw: "istio_tcp_connections_opened_total", canonical: "servicegraph.tcp.connection.open.count", unit: metrics.UnitPerSecond},
-		{raw: "istio_tcp_connections_closed_total", canonical: "servicegraph.tcp.connection.close.count", unit: metrics.UnitPerSecond},
-		{raw: "istio_tcp_sent_bytes_total", canonical: "servicegraph.tcp.bytes.sent", unit: metrics.UnitBytesPerSecond},
-		{raw: "istio_tcp_received_bytes_total", canonical: "servicegraph.tcp.bytes.received", unit: metrics.UnitBytesPerSecond},
+		{raw: "istio_request_messages_total", canonical: "servicegraph.grpc.request.message.count", unit: metrics.UnitCount},
+		{raw: "istio_response_messages_total", canonical: "servicegraph.grpc.response.message.count", unit: metrics.UnitCount},
+		{raw: "istio_tcp_connections_opened_total", canonical: "servicegraph.tcp.connection.open.count", unit: metrics.UnitCount},
+		{raw: "istio_tcp_connections_closed_total", canonical: "servicegraph.tcp.connection.close.count", unit: metrics.UnitCount},
+		{raw: "istio_tcp_sent_bytes_total", canonical: "servicegraph.tcp.bytes.sent", unit: metrics.UnitBytes},
+		{raw: "istio_tcp_received_bytes_total", canonical: "servicegraph.tcp.bytes.received", unit: metrics.UnitBytes},
 	}
 
 	for _, tt := range tests {

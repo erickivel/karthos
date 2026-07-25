@@ -38,7 +38,7 @@ func TestOTLPNormalizer_PrometheusDurationHistogramEmitsSumCountPair(t *testing.
 	assert.InDelta(t, 3.0, countSample.Value, 1e-9)
 }
 
-func TestOTLPNormalizer_PrometheusAppMetricResolvesServiceAndPreservesLabels(t *testing.T) {
+func TestOTLPNormalizer_PrometheusAppMetricResolvesServiceAndPreservesBoundedLabels(t *testing.T) {
 	registry := persistence.NewInMemoryEntityRegistry()
 	serviceID := entities.ComputeEntityID(entities.KindService, testCluster, "oksg-demo", "gateway-go")
 	require.NoError(t, registry.UpsertEntity(context.Background(), persistence.StoredEntity{
@@ -64,7 +64,8 @@ func TestOTLPNormalizer_PrometheusAppMetricResolvesServiceAndPreservesLabels(t *
 		"metrics_path": "/metrics",
 		"service_port": "8080",
 		"method":       "GET",
-		"path":         "/error",
+		"path":         "/orders/7c4d9d7e-6dc5-49d4-a660-d8d5b8475b72",
+		"http.route":   "/orders/{order_id}",
 		"status":       "500",
 	}, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, true)
 	env := makeEnvelope(t, map[string]string{
@@ -78,6 +79,7 @@ func TestOTLPNormalizer_PrometheusAppMetricResolvesServiceAndPreservesLabels(t *
 
 	s := samples[0]
 	assert.Equal(t, "http.server.request.count", s.MetricName)
+	assert.Equal(t, metrics.UnitCount, s.Unit)
 	assert.Equal(t, serviceID, s.EntityID)
 	assert.Equal(t, metrics.SourcePrometheusApp, s.Labels["source"])
 	assert.Equal(t, "oksg-demo", s.Labels["namespace"])
@@ -87,8 +89,9 @@ func TestOTLPNormalizer_PrometheusAppMetricResolvesServiceAndPreservesLabels(t *
 	assert.Equal(t, "/metrics", s.Labels["metrics_path"])
 	assert.Equal(t, "8080", s.Labels["service_port"])
 	assert.Equal(t, "GET", s.Labels["method"])
-	assert.Equal(t, "/error", s.Labels["path"])
+	assert.Equal(t, "/orders/{order_id}", s.Labels["http_route"])
 	assert.Equal(t, "500", s.Labels["status"])
+	assert.NotContains(t, s.Labels, "path")
 }
 
 func TestOTLPNormalizer_PrometheusDurationPreservesSameLabelsOnSumAndCount(t *testing.T) {
@@ -115,7 +118,8 @@ func TestOTLPNormalizer_PrometheusDurationPreservesSameLabelsOnSumAndCount(t *te
 		"metrics_path": "/metrics",
 		"service_port": "8080",
 		"method":       "GET",
-		"path":         "/",
+		"path":         "/orders/7c4d9d7e-6dc5-49d4-a660-d8d5b8475b72",
+		"http.route":   "/orders/{order_id}",
 	}
 	rm := makeHistogramRMWithAttrs("http_request_duration_seconds", 1.5, 3, tsNano, attrs)
 	env := makeEnvelope(t, map[string]string{"k8s.node.name": "worker-1"}, rm)
@@ -132,7 +136,8 @@ func TestOTLPNormalizer_PrometheusDurationPreservesSameLabelsOnSumAndCount(t *te
 	assert.Equal(t, sumSample.Labels, countSample.Labels)
 	assert.Equal(t, "gateway-go-abc123", sumSample.Labels["pod"])
 	assert.Equal(t, "GET", sumSample.Labels["method"])
-	assert.Equal(t, "/", sumSample.Labels["path"])
+	assert.Equal(t, "/orders/{order_id}", sumSample.Labels["http_route"])
+	assert.NotContains(t, sumSample.Labels, "path")
 	assert.Equal(t, "/metrics", sumSample.Labels["metrics_path"])
 	assert.Equal(t, "8080", sumSample.Labels["service_port"])
 }
