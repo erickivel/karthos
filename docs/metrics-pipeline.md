@@ -659,6 +659,12 @@ RFC3339 `retired_at` value in edge metadata without changing `first_seen` or
 final `last_seen`. Latest-graph queries exclude that `runs_on` edge; accumulated
 edge queries retain it for audit. `AllowsRunsOn` denies refresh synchronously at
 the recorded deadline even if the asynchronous persistence callback is delayed.
+At backend startup, persisted active UID-versioned assignments are reconciled
+against the first authoritative Pod List/Watch state before metric refreshes
+are accepted, retiring any old UID that is absent from that state. A terminal
+UID keeps its full grace period even if it is deleted or replaced before the
+deadline; non-terminal deletions and replacements retire immediately. Retirement
+persistence retries until backend shutdown with a bounded per-attempt backoff.
 The retirement marker applies only to `runs_on`, not to another relation that
 happens to carry a metadata key of the same name. This POC does not offer
 historical `graph?at=` reconstruction.

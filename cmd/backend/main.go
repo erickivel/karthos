@@ -326,6 +326,10 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 	if !ok {
 		return nil, fmt.Errorf("required pod lifecycle validation needs a graph store that retires runs_on edges")
 	}
+	reconciler, ok := graphStore.(persistence.RunsOnReconciler)
+	if !ok {
+		return nil, fmt.Errorf("required pod lifecycle validation needs a graph store that reconciles runs_on edges")
+	}
 
 	tracker := kubernetesadapter.NewPodLifecycleTracker(client,
 		kubernetesadapter.WithPodLifecycleStateObserver(func(state kubernetesadapter.PodLifecycleState) {
@@ -338,6 +342,20 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 				return
 			}
 			logger.Warn("pod lifecycle validation unavailable; runs_on refreshes are fail-closed", fields...)
+		}),
+		kubernetesadapter.WithPodRunsOnReconciliationObserver(func(reconciliationCtx context.Context, observed []kubernetesadapter.PodRunsOnAssignment) error {
+			active := make([]persistence.RunsOnAssignment, 0, len(observed))
+			for _, assignment := range observed {
+				active = append(active, persistence.RunsOnAssignment{
+					PodID:  entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, assignment.Namespace, assignment.PodName),
+					NodeID: entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, assignment.NodeName),
+					PodUID: assignment.PodUID,
+				})
+			}
+			if err := reconciler.ReconcileRunsOn(reconciliationCtx, active, time.Now().UTC()); err != nil {
+				return fmt.Errorf("reconcile persisted runs_on assignments: %w", err)
+			}
+			return nil
 		}),
 		kubernetesadapter.WithPodRunsOnRetirementObserver(func(retirementCtx context.Context, retirement kubernetesadapter.PodRunsOnRetirement) error {
 			podID := entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, retirement.Namespace, retirement.PodName)

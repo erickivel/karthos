@@ -50,6 +50,19 @@ type RunsOnRetirer interface {
 	RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error
 }
 
+// RunsOnAssignment is the observed identity of an active Pod-to-Node assignment.
+type RunsOnAssignment struct {
+	PodID  entities.EntityID
+	NodeID entities.EntityID
+	PodUID string
+}
+
+// RunsOnReconciler retires persisted active runs_on assignments that no longer
+// match the initial authoritative Kubernetes List/Watch state.
+type RunsOnReconciler interface {
+	ReconcileRunsOn(ctx context.Context, active []RunsOnAssignment, retiredAt time.Time) error
+}
+
 type MetadataStore interface {
 	PutDiscovery(ctx context.Context, snapshot profile.ClusterProfile) error
 	GetDiscovery(ctx context.Context) (*profile.ClusterProfile, error)

@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	podLifecycleRetryDelay    = 250 * time.Millisecond
-	defaultPodLifecycleGrace  = 60 * time.Second
-	defaultRetirementAttempts = 3
-	defaultRetirementBackoff  = 100 * time.Millisecond
+	podLifecycleRetryDelay   = 250 * time.Millisecond
+	defaultPodLifecycleGrace = 60 * time.Second
+	defaultRetirementBackoff = 100 * time.Millisecond
 )
 
 // PodLifecycleState is emitted only when lifecycle validation becomes available
@@ -37,6 +36,14 @@ type PodRunsOnRetirement struct {
 	RetiredAt time.Time
 }
 
+// PodRunsOnAssignment identifies an observed active Pod-to-Node assignment.
+type PodRunsOnAssignment struct {
+	Namespace string
+	PodName   string
+	PodUID    string
+	NodeName  string
+}
+
 // PodLifecycleOption configures a PodLifecycleTracker.
 type PodLifecycleOption func(*PodLifecycleTracker)
 
@@ -55,6 +62,14 @@ func WithPodRunsOnRetirementObserver(observer func(context.Context, PodRunsOnRet
 	}
 }
 
+// WithPodRunsOnReconciliationObserver receives the authoritative initial
+// Pod List/Watch assignments before the tracker begins accepting refreshes.
+func WithPodRunsOnReconciliationObserver(observer func(context.Context, []PodRunsOnAssignment) error) PodLifecycleOption {
+	return func(t *PodLifecycleTracker) {
+		t.reconciliationObserver = observer
+	}
+}
+
 // withPodLifecycleGraceDuration overrides the terminal Pod grace period for
 // focused package tests. Deployed backends retain the 60-second default.
 func withPodLifecycleGraceDuration(grace time.Duration) PodLifecycleOption {
@@ -65,11 +80,8 @@ func withPodLifecycleGraceDuration(grace time.Duration) PodLifecycleOption {
 	}
 }
 
-func withPodRetirementRetry(attempts int, backoff time.Duration) PodLifecycleOption {
+func withPodRetirementRetry(backoff time.Duration) PodLifecycleOption {
 	return func(t *PodLifecycleTracker) {
-		if attempts > 0 {
-			t.retirementAttempts = attempts
-		}
 		if backoff > 0 {
 			t.retirementBackoff = backoff
 		}
@@ -90,13 +102,13 @@ type pendingRetirement struct {
 // PodLifecycleTracker keeps the currently active Kubernetes pod UID and node
 // for each namespace/name pair. It is safe for concurrent metric ingestion.
 type PodLifecycleTracker struct {
-	client             kubernetes.Interface
-	observer           func(PodLifecycleState)
-	retirementObserver func(context.Context, PodRunsOnRetirement) error
-	terminalGrace      time.Duration
-	retirementAttempts int
-	retirementBackoff  time.Duration
-	nowFn              func() time.Time
+	client                 kubernetes.Interface
+	observer               func(PodLifecycleState)
+	retirementObserver     func(context.Context, PodRunsOnRetirement) error
+	reconciliationObserver func(context.Context, []PodRunsOnAssignment) error
+	terminalGrace          time.Duration
+	retirementBackoff      time.Duration
+	nowFn                  func() time.Time
 
 	mu          sync.RWMutex
 	ready       bool
@@ -108,13 +120,12 @@ type PodLifecycleTracker struct {
 // NewPodLifecycleTracker creates a tracker that must be started before use.
 func NewPodLifecycleTracker(client kubernetes.Interface, opts ...PodLifecycleOption) *PodLifecycleTracker {
 	t := &PodLifecycleTracker{
-		client:             client,
-		pods:               make(map[string]activePod),
-		retirements:        make(map[string]pendingRetirement),
-		terminalGrace:      defaultPodLifecycleGrace,
-		retirementAttempts: defaultRetirementAttempts,
-		retirementBackoff:  defaultRetirementBackoff,
-		nowFn:              func() time.Time { return time.Now().UTC() },
+		client:            client,
+		pods:              make(map[string]activePod),
+		retirements:       make(map[string]pendingRetirement),
+		terminalGrace:     defaultPodLifecycleGrace,
+		retirementBackoff: defaultRetirementBackoff,
+		nowFn:             func() time.Time { return time.Now().UTC() },
 	}
 	for _, opt := range opts {
 		opt(t)
@@ -132,6 +143,10 @@ func (t *PodLifecycleTracker) Start(ctx context.Context) error {
 	t.mu.Lock()
 	t.ctx = ctx
 	t.mu.Unlock()
+	if err := t.reconcileInitial(ctx, pods); err != nil {
+		watcher.Stop()
+		return err
+	}
 	t.setAvailable(pods, "initial_sync")
 	go t.run(ctx, watcher)
 	return nil
@@ -148,16 +163,12 @@ func (t *PodLifecycleTracker) AllowsRunsOn(namespace, podName, podUID, nodeName 
 	if !t.ready {
 		return false
 	}
-	pod, ok := t.pods[podLifecycleKey(namespace, podName)]
-	if !ok || pod.uid != podUID || pod.nodeName != nodeName {
-		return false
-	}
 	if pending, ok := t.retirements[podRetirementKey(namespace, podName, podUID, nodeName)]; ok &&
-		pending.pod.uid == podUID && pending.pod.nodeName == nodeName &&
-		!t.nowFn().Before(pending.deadline) {
-		return false
+		pending.pod.uid == podUID && pending.pod.nodeName == nodeName {
+		return t.nowFn().Before(pending.deadline)
 	}
-	return true
+	pod, ok := t.pods[podLifecycleKey(namespace, podName)]
+	return ok && pod.uid == podUID && pod.nodeName == nodeName
 }
 
 func (t *PodLifecycleTracker) run(ctx context.Context, watcher watch.Interface) {
@@ -247,7 +258,9 @@ func (t *PodLifecycleTracker) applyPod(pod *corev1.Pod) {
 	if !ok {
 		if current, exists := t.pods[key]; exists && current.uid == string(pod.UID) {
 			delete(t.pods, key)
-			retirement = t.retireNowLocked(pod.Namespace, pod.Name, current)
+			if !t.hasTerminalGraceLocked(pod.Namespace, pod.Name, current) {
+				retirement = t.retireNowLocked(pod.Namespace, pod.Name, current)
+			}
 		}
 		t.mu.Unlock()
 		if retirement != nil {
@@ -256,7 +269,9 @@ func (t *PodLifecycleTracker) applyPod(pod *corev1.Pod) {
 		return
 	}
 	if current, exists := t.pods[key]; exists && (current.uid != active.uid || current.nodeName != active.nodeName) {
-		retirement = t.retireNowLocked(pod.Namespace, pod.Name, current)
+		if !t.hasTerminalGraceLocked(pod.Namespace, pod.Name, current) {
+			retirement = t.retireNowLocked(pod.Namespace, pod.Name, current)
+		}
 	}
 	t.pods[key] = active
 	shouldSchedule := active.terminal
@@ -275,7 +290,9 @@ func (t *PodLifecycleTracker) deletePod(pod *corev1.Pod) {
 	var retirement *PodRunsOnRetirement
 	if current, ok := t.pods[key]; ok && current.uid == string(pod.UID) {
 		delete(t.pods, key)
-		retirement = t.retireNowLocked(pod.Namespace, pod.Name, current)
+		if !t.hasTerminalGraceLocked(pod.Namespace, pod.Name, current) {
+			retirement = t.retireNowLocked(pod.Namespace, pod.Name, current)
+		}
 	}
 	t.mu.Unlock()
 	if retirement != nil {
@@ -289,7 +306,7 @@ func (t *PodLifecycleTracker) setAvailable(pods map[string]activePod, reason str
 	for key, current := range t.pods {
 		namespace, name := splitPodLifecycleKey(key)
 		next, ok := pods[key]
-		if !ok || next.uid != current.uid || next.nodeName != current.nodeName {
+		if (!ok || next.uid != current.uid || next.nodeName != current.nodeName) && !t.hasTerminalGraceLocked(namespace, name, current) {
 			if retirement := t.retireNowLocked(namespace, name, current); retirement != nil {
 				retirements = append(retirements, *retirement)
 			}
@@ -407,11 +424,30 @@ func (t *PodLifecycleTracker) retireNowLocked(namespace, name string, pod active
 	return &retirement
 }
 
+func (t *PodLifecycleTracker) hasTerminalGraceLocked(namespace, name string, pod activePod) bool {
+	_, ok := t.retirements[podRetirementKey(namespace, name, pod.uid, pod.nodeName)]
+	return ok
+}
+
+func (t *PodLifecycleTracker) reconcileInitial(ctx context.Context, pods map[string]activePod) error {
+	t.mu.RLock()
+	observer := t.reconciliationObserver
+	t.mu.RUnlock()
+	if observer == nil {
+		return nil
+	}
+	assignments := make([]PodRunsOnAssignment, 0, len(pods))
+	for key, pod := range pods {
+		namespace, name := splitPodLifecycleKey(key)
+		assignments = append(assignments, PodRunsOnAssignment{Namespace: namespace, PodName: name, PodUID: pod.uid, NodeName: pod.nodeName})
+	}
+	return observer(ctx, assignments)
+}
+
 func (t *PodLifecycleTracker) emitRetirement(retirement PodRunsOnRetirement) {
 	t.mu.RLock()
 	observer := t.retirementObserver
 	ctx := t.ctx
-	attempts := t.retirementAttempts
 	backoff := t.retirementBackoff
 	t.mu.RUnlock()
 	if observer == nil {
@@ -421,17 +457,14 @@ func (t *PodLifecycleTracker) emitRetirement(retirement PodRunsOnRetirement) {
 		ctx = context.Background()
 	}
 	go func() {
-		for attempt := 0; attempt < attempts; attempt++ {
+		for {
 			if ctx.Err() != nil {
 				return
 			}
 			if err := observer(ctx, retirement); err == nil {
 				return
 			}
-			if attempt == attempts-1 {
-				return
-			}
-			timer := time.NewTimer(backoff << attempt)
+			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
 				timer.Stop()

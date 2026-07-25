@@ -8,6 +8,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/erickivel/oksg/pkg/backend/persistence"
+	"github.com/erickivel/oksg/pkg/backend/query"
+	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/oksg/pkg/core/topology"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -67,6 +72,51 @@ func TestPodLifecycleTrackerRetiresDeletedActiveUIDImmediately(t *testing.T) {
 	}
 }
 
+func TestPodLifecycleTrackerKeepsTerminalGraceWhenDeletedBeforeDeadline(t *testing.T) {
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-terminal", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+
+	retirements := make(chan PodRunsOnRetirement, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client,
+		withPodLifecycleGraceDuration(50*time.Millisecond),
+		WithPodRunsOnRetirementObserver(func(_ context.Context, retirement PodRunsOnRetirement) error {
+			retirements <- retirement
+			return nil
+		}),
+	)
+	require.NoError(t, tracker.Start(ctx))
+
+	terminal := podForLifecycle("default", "job-0", "uid-terminal", "node-a")
+	terminal.Status.Phase = corev1.PodSucceeded
+	watcher.Modify(terminal)
+	require.Eventually(t, func() bool {
+		tracker.mu.RLock()
+		defer tracker.mu.RUnlock()
+		return len(tracker.retirements) == 1
+	}, time.Second, 5*time.Millisecond)
+	watcher.Delete(terminal)
+
+	require.Eventually(t, func() bool {
+		return tracker.AllowsRunsOn("default", "job-0", "uid-terminal", "node-a")
+	}, time.Second, 5*time.Millisecond)
+	select {
+	case retirement := <-retirements:
+		t.Fatalf("terminal Pod retired before its grace deadline: %#v", retirement)
+	case <-time.After(20 * time.Millisecond):
+	}
+	select {
+	case retirement := <-retirements:
+		require.Equal(t, "uid-terminal", retirement.PodUID)
+	case <-time.After(time.Second):
+		t.Fatal("expected terminal Pod retirement at grace deadline")
+	}
+}
+
 func TestPodLifecycleTrackerRetiresReplacedActiveUIDImmediately(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
@@ -107,7 +157,7 @@ func TestPodLifecycleTrackerRetriesRetirementObserverWithoutBlockingWatch(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	tracker := NewPodLifecycleTracker(client,
-		withPodRetirementRetry(2, time.Millisecond),
+		withPodRetirementRetry(time.Millisecond),
 		WithPodRunsOnRetirementObserver(func(_ context.Context, retirement PodRunsOnRetirement) error {
 			if attempts.Add(1) == 1 {
 				return errors.New("temporary storage failure")
@@ -129,6 +179,76 @@ func TestPodLifecycleTrackerRetriesRetirementObserverWithoutBlockingWatch(t *tes
 	case <-time.After(time.Second):
 		t.Fatal("expected retry after transient retirement failure")
 	}
+}
+
+func TestPodLifecycleTrackerRetriesRetirementObserverPastThreeFailures(t *testing.T) {
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+
+	var attempts atomic.Int32
+	succeeded := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client,
+		withPodRetirementRetry(time.Millisecond),
+		WithPodRunsOnRetirementObserver(func(_ context.Context, retirement PodRunsOnRetirement) error {
+			if attempts.Add(1) <= 3 {
+				return errors.New("temporary storage failure")
+			}
+			succeeded <- struct{}{}
+			return nil
+		}),
+	)
+	require.NoError(t, tracker.Start(ctx))
+	watcher.Delete(podForLifecycle("default", "api-0", "uid-old", "node-a"))
+
+	select {
+	case <-succeeded:
+		require.EqualValues(t, 4, attempts.Load())
+	case <-time.After(time.Second):
+		t.Fatal("expected retirement retry beyond three failures")
+	}
+}
+
+func TestPodLifecycleTrackerInitialReconciliationRetiresPreseededReplacement(t *testing.T) {
+	store := persistence.NewInMemoryGraphStore()
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "node-a")
+	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
+	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
+	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old"}
+	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-new", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client, WithPodRunsOnReconciliationObserver(func(ctx context.Context, observed []PodRunsOnAssignment) error {
+		assignments := make([]persistence.RunsOnAssignment, 0, len(observed))
+		for _, assignment := range observed {
+			assignments = append(assignments, persistence.RunsOnAssignment{
+				PodID:  entities.ComputeEntityID(entities.KindPod, "cluster", assignment.Namespace, assignment.PodName),
+				NodeID: entities.ComputeEntityID(entities.KindNode, "cluster", assignment.NodeName),
+				PodUID: assignment.PodUID,
+			})
+		}
+		return store.ReconcileRunsOn(ctx, assignments, time.Now().UTC())
+	}))
+	require.NoError(t, tracker.Start(ctx))
+
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Empty(t, latest.Graph.Edges)
+	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	require.Len(t, audit, 1)
+	require.NotEmpty(t, audit[0].Metadata["retired_at"])
 }
 
 func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T) {

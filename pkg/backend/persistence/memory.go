@@ -507,9 +507,40 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 // edge's observations. Retired runs_on edges are excluded from GetLatest but
 // remain queryable through QueryEdges for audit use.
 func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error {
-	edgeID := topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, podUID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.retireRunsOnLocked(podID, nodeID, podUID, retiredAt)
+	return nil
+}
+
+// ReconcileRunsOn retires persisted active assignments absent from the
+// authoritative Pod List/Watch state observed at backend startup.
+func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, active []RunsOnAssignment, retiredAt time.Time) error {
+	activeIDs := make(map[string]struct{}, len(active))
+	for _, assignment := range active {
+		activeIDs[topology.ComputeEdgeIDWithDiscriminator(assignment.PodID, assignment.NodeID, topology.RelRunsOn, assignment.PodUID)] = struct{}{}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, edge := range s.edges {
+		if edge.Relation != topology.RelRunsOn || edgeRetired(edge) {
+			continue
+		}
+		podUID := edge.Metadata["k8s.pod.uid"]
+		if podUID == "" {
+			continue
+		}
+		if _, ok := activeIDs[edge.ID]; ok {
+			continue
+		}
+		s.retireRunsOnLocked(edge.Source, edge.Target, podUID, retiredAt)
+	}
+	return nil
+}
+
+func (s *InMemoryGraphStore) retireRunsOnLocked(podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) {
+	edgeID := topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, podUID)
 
 	edge, ok := s.edges[edgeID]
 	if !ok {
@@ -518,7 +549,7 @@ func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entit
 		edge.Metadata = map[string]string{"k8s.pod.uid": podUID}
 	}
 	if edge.Relation != topology.RelRunsOn || edgeRetired(edge) {
-		return nil
+		return
 	}
 	if edge.LastSeen.After(retiredAt) {
 		edge.LastSeen = retiredAt
@@ -530,7 +561,6 @@ func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entit
 	metadata["retired_at"] = retiredAt.UTC().Format(time.RFC3339Nano)
 	edge.Metadata = metadata
 	s.edges[edgeID] = edge
-	return nil
 }
 
 func edgeRetired(edge topology.Edge) bool {

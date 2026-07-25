@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/topology"
@@ -211,6 +212,56 @@ func (s *PostgresGraphStore) RetireRunsOn(ctx context.Context, podID, nodeID ent
 	)
 	if err != nil {
 		return fmt.Errorf("pg graph retire runs_on edge: %w", err)
+	}
+	return nil
+}
+
+// ReconcileRunsOn retires persisted active UID-versioned assignments that are
+// absent from the authoritative initial Kubernetes Pod List/Watch state.
+func (s *PostgresGraphStore) ReconcileRunsOn(ctx context.Context, active []persistence.RunsOnAssignment, retiredAt time.Time) error {
+	activeIDs := make(map[string]struct{}, len(active))
+	for _, assignment := range active {
+		activeIDs[topology.ComputeEdgeIDWithDiscriminator(assignment.PodID, assignment.NodeID, topology.RelRunsOn, assignment.PodUID)] = struct{}{}
+	}
+
+	rows, err := s.conn.pool.Query(ctx, `SELECT id, source, target, metadata FROM topology_edges WHERE relation = 'runs_on' AND NOT (metadata ? 'retired_at')`)
+	if err != nil {
+		return fmt.Errorf("pg graph list active runs_on assignments: %w", err)
+	}
+	type staleAssignment struct {
+		podID  entities.EntityID
+		nodeID entities.EntityID
+		podUID string
+	}
+	stale := make([]staleAssignment, 0)
+	for rows.Next() {
+		var id, source, target string
+		var metadataJSON []byte
+		if err := rows.Scan(&id, &source, &target, &metadataJSON); err != nil {
+			return fmt.Errorf("pg graph scan active runs_on assignment: %w", err)
+		}
+		if _, ok := activeIDs[id]; ok {
+			continue
+		}
+		var metadata map[string]string
+		if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+			return fmt.Errorf("pg graph unmarshal active runs_on metadata: %w", err)
+		}
+		podUID := metadata["k8s.pod.uid"]
+		if podUID == "" {
+			continue
+		}
+		stale = append(stale, staleAssignment{podID: entities.EntityID(source), nodeID: entities.EntityID(target), podUID: podUID})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("pg graph active runs_on iteration: %w", err)
+	}
+	rows.Close()
+	for _, assignment := range stale {
+		if err := s.RetireRunsOn(ctx, assignment.podID, assignment.nodeID, assignment.podUID, retiredAt); err != nil {
+			return err
+		}
 	}
 	return nil
 }
