@@ -251,16 +251,18 @@ Response:
 
 Query metric samples with a mode-aware unit. Sorted by timestamp descending.
 
-Semconv metric names are the API contract. Canonical counter samples are stored
-as cumulative base values (`count`, `bytes`, or `nanoseconds`); rate units are
-created only by query aggregation. Every catalog counter declares its
-supported/default aggregation and base/rate units. `window_rate` is the exact
-reset-aware window increase divided by the full window duration; `active_rate`
-is the observed cumulative-counter slope; `increase` is the event/resource
-change in its base unit; and `latest` is the stored cumulative value. Cumulative
-`increase` and `window_rate` emit no sample until at least two current-window
-samples exist and stored history spans the requested window. Delta series use
-`sum_over_time()` for exact increases and return no data for `active_rate`.
+Semconv metric names are the API contract. Canonical counter samples use base
+units (`count`, `bytes`, or `nanoseconds`), while rate units are created only by
+query aggregation. Cumulative samples retain their running base total and delta
+samples retain their reported interval increment. Every catalog counter declares
+its supported/default aggregation and base/rate units. `latest` returns the
+last stored sample for either temporality. `increase` is the query-time
+event/resource change in its base unit; `window_rate` divides that exact change
+by the full window duration; and `active_rate` is available only for cumulative
+series. Cumulative `increase` and `window_rate` emit no sample until at least
+two current-window samples exist and stored history spans the requested window.
+Delta series use `sum_over_time()` for exact increases and return no data for
+`active_rate`.
 
 For cardinality control, normalized Prometheus application metrics drop raw
 legacy `path` in favor of bounded route/method/status dimensions, and
@@ -289,7 +291,7 @@ The integer→label mapping for any enum metric is documented in the catalog row
 | `next_token` | string | Pagination cursor |
 
 ```bash
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=5" | jq .data.samples[:3]
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=window_rate&window=1m&page_size=5" | jq .data.samples[:3]
 ```
 
 Response:
