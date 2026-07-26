@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -437,11 +438,14 @@ func (s *InMemoryGraphStore) PutSnapshot(_ context.Context, snapshot topology.Sn
 			s.edges[e.ID] = e
 			continue
 		}
-		if edgeRetired(existing) {
+		if edgeRetired(existing) || edgeTerminalDeadline(existing) != nil {
 			if e.FirstSeen.Before(existing.FirstSeen) {
 				existing.FirstSeen = e.FirstSeen
 			}
-			if e.LastSeen.Before(existing.LastSeen) {
+			if !edgeRetired(existing) && e.LastSeen.After(existing.LastSeen) {
+				existing.LastSeen = e.LastSeen
+			}
+			if edgeRetired(existing) && e.LastSeen.Before(existing.LastSeen) {
 				existing.LastSeen = e.LastSeen
 			}
 			existing.Metadata = mergeRetiredEdgeMetadata(existing.Metadata, e.Metadata)
@@ -477,7 +481,7 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 
 	edges := make([]topology.Edge, 0, len(s.edges))
 	for _, e := range s.edges {
-		if edgeRetired(e) {
+		if edgeRetired(e) || edgeTerminalDeadlineExpired(e, s.nowFn()) {
 			continue
 		}
 		edges = append(edges, e)
@@ -515,7 +519,35 @@ func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entit
 
 // ReconcileRunsOn retires persisted active assignments absent from the
 // authoritative Pod List/Watch state observed at backend startup.
-func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, active []RunsOnAssignment, retiredAt time.Time) error {
+func (s *InMemoryGraphStore) MarkRunsOnTerminal(_ context.Context, grace RunsOnTerminalGrace) error {
+	if grace.ClusterName == "" || grace.PodUID == "" || grace.Deadline.IsZero() {
+		return fmt.Errorf("terminal runs_on grace requires cluster, pod UID, and deadline")
+	}
+	edgeID := topology.ComputeEdgeIDWithDiscriminator(grace.PodID, grace.NodeID, topology.RelRunsOn, grace.PodUID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	edge, ok := s.edges[edgeID]
+	if !ok {
+		edge = topology.NewEdge(grace.PodID, grace.NodeID, topology.RelRunsOn, grace.ObservedAt)
+		edge.ID = edgeID
+	}
+	metadata := mergeRetiredEdgeMetadata(edge.Metadata, map[string]string{
+		"k8s.cluster.name":   grace.ClusterName,
+		"k8s.namespace.name": grace.Namespace,
+		"k8s.pod.name":       grace.PodName,
+		"k8s.pod.uid":        grace.PodUID,
+		"k8s.node.name":      grace.NodeName,
+		"terminal_deadline":  grace.Deadline.UTC().Format(time.RFC3339Nano),
+	})
+	if existing := edgeTerminalDeadline(edge); existing != nil && existing.Before(grace.Deadline) {
+		metadata["terminal_deadline"] = existing.UTC().Format(time.RFC3339Nano)
+	}
+	edge.Metadata = metadata
+	s.edges[edgeID] = edge
+	return nil
+}
+
+func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, clusterName string, active []RunsOnAssignment, retiredAt time.Time) ([]RunsOnTerminalGrace, error) {
 	activeIDs := make(map[string]struct{}, len(active))
 	for _, assignment := range active {
 		activeIDs[topology.ComputeEdgeIDWithDiscriminator(assignment.PodID, assignment.NodeID, topology.RelRunsOn, assignment.PodUID)] = struct{}{}
@@ -523,8 +555,12 @@ func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, active []RunsOnA
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	pending := make([]RunsOnTerminalGrace, 0)
 	for _, edge := range s.edges {
 		if edge.Relation != topology.RelRunsOn || edgeRetired(edge) {
+			continue
+		}
+		if edge.Metadata["k8s.cluster.name"] != clusterName {
 			continue
 		}
 		podUID := edge.Metadata["k8s.pod.uid"]
@@ -534,9 +570,26 @@ func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, active []RunsOnA
 		if _, ok := activeIDs[edge.ID]; ok {
 			continue
 		}
+		if deadline := edgeTerminalDeadline(edge); deadline != nil {
+			if deadline.After(retiredAt) {
+				pending = append(pending, RunsOnTerminalGrace{
+					ClusterName: clusterName,
+					Namespace:   edge.Metadata["k8s.namespace.name"],
+					PodName:     edge.Metadata["k8s.pod.name"],
+					PodUID:      podUID,
+					NodeName:    edge.Metadata["k8s.node.name"],
+					PodID:       edge.Source,
+					NodeID:      edge.Target,
+					Deadline:    *deadline,
+				})
+				continue
+			}
+			s.retireRunsOnLocked(edge.Source, edge.Target, podUID, *deadline)
+			continue
+		}
 		s.retireRunsOnLocked(edge.Source, edge.Target, podUID, retiredAt)
 	}
-	return nil
+	return pending, nil
 }
 
 func (s *InMemoryGraphStore) retireRunsOnLocked(podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) {
@@ -565,6 +618,22 @@ func (s *InMemoryGraphStore) retireRunsOnLocked(podID, nodeID entities.EntityID,
 
 func edgeRetired(edge topology.Edge) bool {
 	return edge.Relation == topology.RelRunsOn && edge.Metadata != nil && edge.Metadata["retired_at"] != ""
+}
+
+func edgeTerminalDeadline(edge topology.Edge) *time.Time {
+	if edge.Relation != topology.RelRunsOn || edge.Metadata == nil || edge.Metadata["terminal_deadline"] == "" {
+		return nil
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, edge.Metadata["terminal_deadline"])
+	if err != nil {
+		return nil
+	}
+	return &deadline
+}
+
+func edgeTerminalDeadlineExpired(edge topology.Edge, now time.Time) bool {
+	deadline := edgeTerminalDeadline(edge)
+	return deadline != nil && !deadline.After(now)
 }
 
 func mergeRetiredEdgeMetadata(existing, incoming map[string]string) map[string]string {

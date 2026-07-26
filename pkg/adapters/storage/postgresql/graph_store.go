@@ -21,11 +21,14 @@ const edgeUpsertSQL = `INSERT INTO topology_edges (id, source, target, relation,
 	   last_seen = CASE WHEN topology_edges.relation = 'runs_on' AND topology_edges.metadata ? 'retired_at' THEN LEAST(topology_edges.last_seen, EXCLUDED.last_seen) ELSE GREATEST(topology_edges.last_seen, EXCLUDED.last_seen) END,
 	   confidence = EXCLUDED.confidence,
 	   provenance = EXCLUDED.provenance,
-	   metadata = CASE WHEN topology_edges.relation = 'runs_on' AND topology_edges.metadata ? 'retired_at' THEN topology_edges.metadata || EXCLUDED.metadata ELSE EXCLUDED.metadata END`
+	   metadata = CASE WHEN topology_edges.relation = 'runs_on' AND (topology_edges.metadata ? 'retired_at' OR topology_edges.metadata ? 'terminal_deadline') THEN topology_edges.metadata || EXCLUDED.metadata ELSE EXCLUDED.metadata END`
 
 const latestActiveEdgeQuery = `SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
 	 FROM topology_edges
-	 WHERE relation <> 'runs_on' OR NOT (metadata ? 'retired_at')`
+	 WHERE relation <> 'runs_on' OR (
+	   NOT (metadata ? 'retired_at') AND
+	   (NOT (metadata ? 'terminal_deadline') OR (metadata->>'terminal_deadline')::timestamptz > NOW())
+	 )`
 
 const retireRunsOnSQL = `INSERT INTO topology_edges (id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata)
 	 VALUES ($1, $2, $3, 'runs_on', 1.0, '{}', $4, $4, jsonb_build_object('retired_at', $5::text, 'k8s.pod.uid', $6::text))
@@ -33,6 +36,20 @@ const retireRunsOnSQL = `INSERT INTO topology_edges (id, source, target, relatio
 	   last_seen = LEAST(topology_edges.last_seen, EXCLUDED.last_seen),
 	   metadata = jsonb_set(topology_edges.metadata, '{retired_at}', to_jsonb($5::text), true)
 	 WHERE topology_edges.relation = 'runs_on' AND NOT (topology_edges.metadata ? 'retired_at')`
+
+const markRunsOnTerminalSQL = `INSERT INTO topology_edges (id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata)
+	 VALUES ($1, $2, $3, 'runs_on', 1.0, '{}', $4, $4, $5)
+	 ON CONFLICT (id) DO UPDATE SET
+	   first_seen = LEAST(topology_edges.first_seen, EXCLUDED.first_seen),
+	   last_seen = GREATEST(topology_edges.last_seen, EXCLUDED.last_seen),
+	   metadata = topology_edges.metadata || EXCLUDED.metadata
+	 WHERE topology_edges.relation = 'runs_on' AND NOT (topology_edges.metadata ? 'retired_at')`
+
+const reconcileActiveRunsOnSQL = `SELECT id, source, target, metadata
+	 FROM topology_edges
+	 WHERE relation = 'runs_on'
+	   AND NOT (metadata ? 'retired_at')
+	   AND metadata->>'k8s.cluster.name' = $1`
 
 // PostgresGraphStore implements persistence.GraphStore using PostgreSQL.
 type PostgresGraphStore struct {
@@ -216,54 +233,106 @@ func (s *PostgresGraphStore) RetireRunsOn(ctx context.Context, podID, nodeID ent
 	return nil
 }
 
+// MarkRunsOnTerminal durably records the grace deadline for a terminal Pod UID
+// so a restarted backend can keep the assignment active until that deadline.
+func (s *PostgresGraphStore) MarkRunsOnTerminal(ctx context.Context, grace persistence.RunsOnTerminalGrace) error {
+	if grace.ClusterName == "" || grace.PodUID == "" || grace.Deadline.IsZero() {
+		return fmt.Errorf("terminal runs_on grace requires cluster, pod UID, and deadline")
+	}
+	edgeID := topology.ComputeEdgeIDWithDiscriminator(grace.PodID, grace.NodeID, topology.RelRunsOn, grace.PodUID)
+	metadata, err := json.Marshal(map[string]string{
+		"k8s.cluster.name":   grace.ClusterName,
+		"k8s.namespace.name": grace.Namespace,
+		"k8s.pod.name":       grace.PodName,
+		"k8s.pod.uid":        grace.PodUID,
+		"k8s.node.name":      grace.NodeName,
+		"terminal_deadline":  grace.Deadline.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal terminal runs_on metadata: %w", err)
+	}
+	_, err = s.conn.pool.Exec(ctx, markRunsOnTerminalSQL, edgeID, string(grace.PodID), string(grace.NodeID), grace.ObservedAt, metadata)
+	if err != nil {
+		return fmt.Errorf("pg graph mark terminal runs_on edge: %w", err)
+	}
+	return nil
+}
+
 // ReconcileRunsOn retires persisted active UID-versioned assignments that are
 // absent from the authoritative initial Kubernetes Pod List/Watch state.
-func (s *PostgresGraphStore) ReconcileRunsOn(ctx context.Context, active []persistence.RunsOnAssignment, retiredAt time.Time) error {
+func (s *PostgresGraphStore) ReconcileRunsOn(ctx context.Context, clusterName string, active []persistence.RunsOnAssignment, retiredAt time.Time) ([]persistence.RunsOnTerminalGrace, error) {
 	activeIDs := make(map[string]struct{}, len(active))
 	for _, assignment := range active {
 		activeIDs[topology.ComputeEdgeIDWithDiscriminator(assignment.PodID, assignment.NodeID, topology.RelRunsOn, assignment.PodUID)] = struct{}{}
 	}
 
-	rows, err := s.conn.pool.Query(ctx, `SELECT id, source, target, metadata FROM topology_edges WHERE relation = 'runs_on' AND NOT (metadata ? 'retired_at')`)
+	rows, err := s.conn.pool.Query(ctx, reconcileActiveRunsOnSQL, clusterName)
 	if err != nil {
-		return fmt.Errorf("pg graph list active runs_on assignments: %w", err)
+		return nil, fmt.Errorf("pg graph list active runs_on assignments: %w", err)
 	}
 	type staleAssignment struct {
-		podID  entities.EntityID
-		nodeID entities.EntityID
-		podUID string
+		podID     entities.EntityID
+		nodeID    entities.EntityID
+		podUID    string
+		retiredAt time.Time
 	}
 	stale := make([]staleAssignment, 0)
+	pending := make([]persistence.RunsOnTerminalGrace, 0)
 	for rows.Next() {
 		var id, source, target string
 		var metadataJSON []byte
 		if err := rows.Scan(&id, &source, &target, &metadataJSON); err != nil {
-			return fmt.Errorf("pg graph scan active runs_on assignment: %w", err)
+			return nil, fmt.Errorf("pg graph scan active runs_on assignment: %w", err)
 		}
 		if _, ok := activeIDs[id]; ok {
 			continue
 		}
 		var metadata map[string]string
 		if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
-			return fmt.Errorf("pg graph unmarshal active runs_on metadata: %w", err)
+			return nil, fmt.Errorf("pg graph unmarshal active runs_on metadata: %w", err)
 		}
 		podUID := metadata["k8s.pod.uid"]
 		if podUID == "" {
+			continue
+		}
+		if deadlineText := metadata["terminal_deadline"]; deadlineText != "" {
+			deadline, err := time.Parse(time.RFC3339Nano, deadlineText)
+			if err != nil {
+				return nil, fmt.Errorf("parse terminal runs_on deadline: %w", err)
+			}
+			if deadline.After(retiredAt) {
+				pending = append(pending, persistence.RunsOnTerminalGrace{
+					ClusterName: clusterName,
+					Namespace:   metadata["k8s.namespace.name"],
+					PodName:     metadata["k8s.pod.name"],
+					PodUID:      podUID,
+					NodeName:    metadata["k8s.node.name"],
+					PodID:       entities.EntityID(source),
+					NodeID:      entities.EntityID(target),
+					Deadline:    deadline,
+				})
+				continue
+			}
+			stale = append(stale, staleAssignment{podID: entities.EntityID(source), nodeID: entities.EntityID(target), podUID: podUID, retiredAt: deadline})
 			continue
 		}
 		stale = append(stale, staleAssignment{podID: entities.EntityID(source), nodeID: entities.EntityID(target), podUID: podUID})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("pg graph active runs_on iteration: %w", err)
+		return nil, fmt.Errorf("pg graph active runs_on iteration: %w", err)
 	}
 	rows.Close()
 	for _, assignment := range stale {
-		if err := s.RetireRunsOn(ctx, assignment.podID, assignment.nodeID, assignment.podUID, retiredAt); err != nil {
-			return err
+		at := retiredAt
+		if !assignment.retiredAt.IsZero() {
+			at = assignment.retiredAt
+		}
+		if err := s.RetireRunsOn(ctx, assignment.podID, assignment.nodeID, assignment.podUID, at); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return pending, nil
 }
 
 func latestNodeQuery(ttl time.Duration) (string, []any) {

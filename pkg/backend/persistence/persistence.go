@@ -57,10 +57,32 @@ type RunsOnAssignment struct {
 	PodUID string
 }
 
+// RunsOnTerminalGrace is a persisted terminal-Pod grace window. The Kubernetes
+// identity fields allow a restarted lifecycle tracker to re-arm retirement at
+// the original deadline without inferring the old assignment from telemetry.
+type RunsOnTerminalGrace struct {
+	ClusterName string
+	Namespace   string
+	PodName     string
+	PodUID      string
+	NodeName    string
+	PodID       entities.EntityID
+	NodeID      entities.EntityID
+	ObservedAt  time.Time
+	Deadline    time.Time
+}
+
+// RunsOnTerminalMarker durably records a terminal Pod's grace deadline before
+// retirement. The marker keeps the assignment latest-active until Deadline.
+type RunsOnTerminalMarker interface {
+	MarkRunsOnTerminal(ctx context.Context, grace RunsOnTerminalGrace) error
+}
+
 // RunsOnReconciler retires persisted active runs_on assignments that no longer
-// match the initial authoritative Kubernetes List/Watch state.
+// match the initial authoritative Kubernetes List/Watch state for one cluster.
+// Unexpired terminal grace windows are returned so the tracker can re-arm them.
 type RunsOnReconciler interface {
-	ReconcileRunsOn(ctx context.Context, active []RunsOnAssignment, retiredAt time.Time) error
+	ReconcileRunsOn(ctx context.Context, clusterName string, active []RunsOnAssignment, retiredAt time.Time) ([]RunsOnTerminalGrace, error)
 }
 
 type MetadataStore interface {

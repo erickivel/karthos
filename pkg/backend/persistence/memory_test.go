@@ -339,6 +339,85 @@ func TestGraphStore_RetirementBeforeFirstSnapshotKeepsLaterBufferedEdgeRetired(t
 	require.Equal(t, retiredAt.Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
 }
 
+func TestGraphStore_TerminalGraceSurvivesReconciliationUntilItsDeadline(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	observedAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	deadline := observedAt.Add(time.Minute)
+	current := observedAt.Add(30 * time.Second)
+	store.nowFn = func() time.Time { return current }
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster-a", "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster-a", "node-a")
+	edge := lifecycleRunsOnEdge(podID, nodeID, "uid-terminal", observedAt)
+	edge.Metadata["k8s.cluster.name"] = "cluster-a"
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(edge)))
+	require.NoError(t, store.MarkRunsOnTerminal(ctx, RunsOnTerminalGrace{
+		ClusterName: "cluster-a",
+		Namespace:   "default",
+		PodName:     "job-0",
+		PodUID:      "uid-terminal",
+		NodeName:    "node-a",
+		PodID:       podID,
+		NodeID:      nodeID,
+		ObservedAt:  observedAt,
+		Deadline:    deadline,
+	}))
+
+	// A replacement/deletion means the old UID is absent from the restarted
+	// tracker, but it remains latest-active throughout its persisted grace.
+	pending, err := store.ReconcileRunsOn(ctx, "cluster-a", nil, current)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Equal(t, deadline, pending[0].Deadline)
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 1)
+
+	current = deadline
+	pending, err = store.ReconcileRunsOn(ctx, "cluster-a", nil, current)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+	latest, err = store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Empty(t, latest.Graph.Edges)
+	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	require.Len(t, audit, 1)
+	require.Equal(t, deadline.Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
+}
+
+func TestGraphStore_ReconcileRunsOnDoesNotCrossClusterBoundary(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	retiredAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+
+	clusterA := lifecycleRunsOnEdge(
+		entities.ComputeEntityID(entities.KindPod, "cluster-a", "default", "api"),
+		entities.ComputeEntityID(entities.KindNode, "cluster-a", "node-a"),
+		"uid-a", retiredAt,
+	)
+	clusterA.Metadata["k8s.cluster.name"] = "cluster-a"
+	clusterB := lifecycleRunsOnEdge(
+		entities.ComputeEntityID(entities.KindPod, "cluster-b", "default", "api"),
+		entities.ComputeEntityID(entities.KindNode, "cluster-b", "node-b"),
+		"uid-b", retiredAt,
+	)
+	clusterB.Metadata["k8s.cluster.name"] = "cluster-b"
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(clusterA, clusterB)))
+
+	_, err := store.ReconcileRunsOn(ctx, "cluster-a", nil, retiredAt.Add(time.Minute))
+	require.NoError(t, err)
+
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 1)
+	require.Equal(t, clusterB.ID, latest.Graph.Edges[0].ID)
+	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: clusterA.Source})
+	require.NoError(t, err)
+	require.Len(t, audit, 1)
+	require.NotEmpty(t, audit[0].Metadata["retired_at"])
+}
+
 func TestGraphStore_NonRunsOnRetiredAtMetadataRemainsLatestAndRefreshable(t *testing.T) {
 	store := NewInMemoryGraphStore()
 	ctx := context.Background()

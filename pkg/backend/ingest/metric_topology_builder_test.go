@@ -106,6 +106,8 @@ func TestMetricTopologyBuilderVersionsRunsOnIdentityByPodUID(t *testing.T) {
 	assert.Equal(t, oldRunsOn.Source, newRunsOn.Source)
 	assert.Equal(t, oldRunsOn.Target, newRunsOn.Target)
 	assert.NotEqual(t, oldRunsOn.ID, newRunsOn.ID)
+	assert.Equal(t, testCluster, oldRunsOn.Metadata["k8s.cluster.name"])
+	assert.Equal(t, testCluster, newRunsOn.Metadata["k8s.cluster.name"])
 	assert.Equal(t, "uid-old", oldRunsOn.Metadata["k8s.pod.uid"])
 	assert.Equal(t, "uid-new", newRunsOn.Metadata["k8s.pod.uid"])
 }

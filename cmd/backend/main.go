@@ -330,6 +330,10 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 	if !ok {
 		return nil, fmt.Errorf("required pod lifecycle validation needs a graph store that reconciles runs_on edges")
 	}
+	terminalMarker, ok := graphStore.(persistence.RunsOnTerminalMarker)
+	if !ok {
+		return nil, fmt.Errorf("required pod lifecycle validation needs a graph store that records terminal runs_on deadlines")
+	}
 
 	tracker := kubernetesadapter.NewPodLifecycleTracker(client,
 		kubernetesadapter.WithPodLifecycleStateObserver(func(state kubernetesadapter.PodLifecycleState) {
@@ -343,7 +347,20 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 			}
 			logger.Warn("pod lifecycle validation unavailable; runs_on refreshes are fail-closed", fields...)
 		}),
-		kubernetesadapter.WithPodRunsOnReconciliationObserver(func(reconciliationCtx context.Context, observed []kubernetesadapter.PodRunsOnAssignment) error {
+		kubernetesadapter.WithPodRunsOnTerminalObserver(func(terminalCtx context.Context, grace kubernetesadapter.PodRunsOnTerminalGrace) error {
+			return terminalMarker.MarkRunsOnTerminal(terminalCtx, persistence.RunsOnTerminalGrace{
+				ClusterName: cfg.ClusterName,
+				Namespace:   grace.Namespace,
+				PodName:     grace.PodName,
+				PodUID:      grace.PodUID,
+				NodeName:    grace.NodeName,
+				PodID:       entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, grace.Namespace, grace.PodName),
+				NodeID:      entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, grace.NodeName),
+				ObservedAt:  grace.ObservedAt,
+				Deadline:    grace.Deadline,
+			})
+		}),
+		kubernetesadapter.WithPodRunsOnReconciliationObserver(func(reconciliationCtx context.Context, observed []kubernetesadapter.PodRunsOnAssignment) ([]kubernetesadapter.PodRunsOnTerminalGrace, error) {
 			active := make([]persistence.RunsOnAssignment, 0, len(observed))
 			for _, assignment := range observed {
 				active = append(active, persistence.RunsOnAssignment{
@@ -352,10 +369,22 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 					PodUID: assignment.PodUID,
 				})
 			}
-			if err := reconciler.ReconcileRunsOn(reconciliationCtx, active, time.Now().UTC()); err != nil {
-				return fmt.Errorf("reconcile persisted runs_on assignments: %w", err)
+			persisted, err := reconciler.ReconcileRunsOn(reconciliationCtx, cfg.ClusterName, active, time.Now().UTC())
+			if err != nil {
+				return nil, fmt.Errorf("reconcile persisted runs_on assignments: %w", err)
 			}
-			return nil
+			grace := make([]kubernetesadapter.PodRunsOnTerminalGrace, 0, len(persisted))
+			for _, item := range persisted {
+				grace = append(grace, kubernetesadapter.PodRunsOnTerminalGrace{
+					Namespace:  item.Namespace,
+					PodName:    item.PodName,
+					PodUID:     item.PodUID,
+					NodeName:   item.NodeName,
+					ObservedAt: item.ObservedAt,
+					Deadline:   item.Deadline,
+				})
+			}
+			return grace, nil
 		}),
 		kubernetesadapter.WithPodRunsOnRetirementObserver(func(retirementCtx context.Context, retirement kubernetesadapter.PodRunsOnRetirement) error {
 			podID := entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, retirement.Namespace, retirement.PodName)

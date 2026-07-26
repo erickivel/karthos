@@ -219,7 +219,7 @@ func TestPodLifecycleTrackerInitialReconciliationRetiresPreseededReplacement(t *
 	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "node-a")
 	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
 	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
-	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old"}
+	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old", "k8s.cluster.name": "cluster"}
 	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
 
 	watcher := watch.NewRaceFreeFake()
@@ -229,7 +229,7 @@ func TestPodLifecycleTrackerInitialReconciliationRetiresPreseededReplacement(t *
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tracker := NewPodLifecycleTracker(client, WithPodRunsOnReconciliationObserver(func(ctx context.Context, observed []PodRunsOnAssignment) error {
+	tracker := NewPodLifecycleTracker(client, WithPodRunsOnReconciliationObserver(func(ctx context.Context, observed []PodRunsOnAssignment) ([]PodRunsOnTerminalGrace, error) {
 		assignments := make([]persistence.RunsOnAssignment, 0, len(observed))
 		for _, assignment := range observed {
 			assignments = append(assignments, persistence.RunsOnAssignment{
@@ -238,7 +238,8 @@ func TestPodLifecycleTrackerInitialReconciliationRetiresPreseededReplacement(t *
 				PodUID: assignment.PodUID,
 			})
 		}
-		return store.ReconcileRunsOn(ctx, assignments, time.Now().UTC())
+		_, err := store.ReconcileRunsOn(ctx, "cluster", assignments, time.Now().UTC())
+		return nil, err
 	}))
 	require.NoError(t, tracker.Start(ctx))
 
@@ -249,6 +250,105 @@ func TestPodLifecycleTrackerInitialReconciliationRetiresPreseededReplacement(t *
 	require.NoError(t, err)
 	require.Len(t, audit, 1)
 	require.NotEmpty(t, audit[0].Metadata["retired_at"])
+}
+
+func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *testing.T) {
+	const cluster = "cluster"
+	store := persistence.NewInMemoryGraphStore()
+	podID := entities.ComputeEntityID(entities.KindPod, cluster, "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, cluster, "node-a")
+	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
+	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
+	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old", "k8s.cluster.name": cluster}
+	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+
+	firstWatcher := watch.NewRaceFreeFake()
+	firstClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
+	firstClient.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, firstWatcher, nil
+	})
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	first := NewPodLifecycleTracker(firstClient,
+		withPodLifecycleGraceDuration(150*time.Millisecond),
+		WithPodRunsOnTerminalObserver(func(ctx context.Context, grace PodRunsOnTerminalGrace) error {
+			return store.MarkRunsOnTerminal(ctx, persistence.RunsOnTerminalGrace{
+				ClusterName: cluster,
+				Namespace:   grace.Namespace,
+				PodName:     grace.PodName,
+				PodUID:      grace.PodUID,
+				NodeName:    grace.NodeName,
+				PodID:       podID,
+				NodeID:      nodeID,
+				ObservedAt:  grace.ObservedAt,
+				Deadline:    grace.Deadline,
+			})
+		}),
+		WithPodRunsOnRetirementObserver(func(ctx context.Context, retirement PodRunsOnRetirement) error {
+			return store.RetireRunsOn(ctx, podID, nodeID, retirement.PodUID, retirement.RetiredAt)
+		}),
+	)
+	require.NoError(t, first.Start(firstCtx))
+	terminal := podForLifecycle("default", "job-0", "uid-old", "node-a")
+	terminal.Status.Phase = corev1.PodSucceeded
+	firstWatcher.Modify(terminal)
+	firstWatcher.Delete(terminal)
+	require.Eventually(t, func() bool {
+		edges, err := store.QueryEdges(context.Background(), query.EdgeQuery{Source: podID})
+		return err == nil && len(edges) == 1 && edges[0].Metadata["terminal_deadline"] != ""
+	}, time.Second, 5*time.Millisecond)
+	cancelFirst()
+
+	newAssignment := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
+	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-new")
+	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new", "k8s.cluster.name": cluster}
+	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
+
+	secondWatcher := watch.NewRaceFreeFake()
+	secondClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-new", "node-a"))
+	secondClient.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, secondWatcher, nil
+	})
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	second := NewPodLifecycleTracker(secondClient,
+		WithPodRunsOnReconciliationObserver(func(ctx context.Context, observed []PodRunsOnAssignment) ([]PodRunsOnTerminalGrace, error) {
+			active := make([]persistence.RunsOnAssignment, 0, len(observed))
+			for _, assignment := range observed {
+				active = append(active, persistence.RunsOnAssignment{PodID: podID, NodeID: nodeID, PodUID: assignment.PodUID})
+			}
+			persisted, err := store.ReconcileRunsOn(ctx, cluster, active, time.Now().UTC())
+			grace := make([]PodRunsOnTerminalGrace, 0, len(persisted))
+			for _, item := range persisted {
+				grace = append(grace, PodRunsOnTerminalGrace{Namespace: item.Namespace, PodName: item.PodName, PodUID: item.PodUID, NodeName: item.NodeName, ObservedAt: item.ObservedAt, Deadline: item.Deadline})
+			}
+			return grace, err
+		}),
+		WithPodRunsOnRetirementObserver(func(ctx context.Context, retirement PodRunsOnRetirement) error {
+			return store.RetireRunsOn(ctx, podID, nodeID, retirement.PodUID, retirement.RetiredAt)
+		}),
+	)
+	require.NoError(t, second.Start(secondCtx))
+	require.True(t, second.AllowsRunsOn("default", "job-0", "uid-old", "node-a"))
+
+	latest, err := store.GetLatest(secondCtx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 2, "old terminal UID remains active during its persisted grace")
+	require.Eventually(t, func() bool {
+		edges, err := store.QueryEdges(context.Background(), query.EdgeQuery{Source: podID})
+		if err != nil || len(edges) != 2 {
+			return false
+		}
+		for _, edge := range edges {
+			if edge.ID == old.ID {
+				return edge.Metadata["retired_at"] != ""
+			}
+		}
+		return false
+	}, time.Second, 5*time.Millisecond)
+	latest, err = store.GetLatest(secondCtx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 1)
+	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
 }
 
 func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T) {

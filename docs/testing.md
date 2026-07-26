@@ -21,7 +21,7 @@ Key coverage areas:
 - backend OTLP envelope conversion and routing
 - OTLP gRPC and HTTP ingest integration
 - `MetricTopologyBuilder`: structural edge and node extraction from resource attributes
-- Pod lifecycle validation: UID/node matching, startup reconciliation of persisted UID-versioned `runs_on` assignments, durable retirement before a topology-buffer flush, `Succeeded`/`Failed` 60-second grace retained across deletion/replacement, synchronous deadline denial, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
+- Pod lifecycle validation: UID/node matching, cluster-scoped startup reconciliation of persisted UID-versioned `runs_on` assignments, durable `terminal_deadline` persistence and restart re-arming across deletion/replacement, deadline exclusion from latest reads with `retired_at` audit history, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
 - `InMemoryGraphStore`: node accumulation and deduplication across snapshots
 - `/debug/graph` endpoint correctness

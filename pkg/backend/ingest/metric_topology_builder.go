@@ -66,7 +66,10 @@ func (b *MetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnve
 		e := topology.NewEdge(podID, nodeID, topology.RelRunsOn, t)
 		if podUID != "" {
 			e.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, podUID)
-			e.Metadata = map[string]string{"k8s.pod.uid": podUID}
+			e.Metadata = map[string]string{
+				"k8s.cluster.name": b.clusterName,
+				"k8s.pod.uid":      podUID,
+			}
 		}
 		e.Provenance = []string{envelope.Source}
 		edges = append(edges, e)

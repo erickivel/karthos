@@ -665,6 +665,13 @@ are accepted, retiring any old UID that is absent from that state. A terminal
 UID keeps its full grace period even if it is deleted or replaced before the
 deadline; non-terminal deletions and replacements retire immediately. Retirement
 persistence retries until backend shutdown with a bounded per-attempt backoff.
+Terminal observation stores `terminal_deadline` with the cluster and Pod
+identity, so a restart preserves the grace even when the old Pod no longer
+appears in the List/Watch result; reconciliation returns that pending deadline
+to the tracker to re-arm it. Reconciliation is restricted to matching
+`k8s.cluster.name`; unscoped legacy edges are skipped rather than risking a
+cross-cluster retirement. At the deadline, latest-graph reads exclude the edge
+and the subsequent retirement marker provides the audit timestamp.
 The retirement marker applies only to `runs_on`, not to another relation that
 happens to carry a metadata key of the same name. This POC does not offer
 historical `graph?at=` reconstruction.
