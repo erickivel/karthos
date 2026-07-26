@@ -38,6 +38,7 @@ func TestRetiredRunsOnSQLKeepsAuditEdgeOutOfLatestAndBlocksStaleRefreshes(t *tes
 	assert.Contains(t, retireRunsOnSQL, "INSERT INTO topology_edges")
 	assert.Contains(t, edgeUpsertSQL, "LEAST(topology_edges.last_seen, EXCLUDED.last_seen)")
 	assert.Contains(t, retireRunsOnSQL, "'k8s.pod.uid'")
-	assert.Contains(t, markRunsOnTerminalSQL, "metadata = topology_edges.metadata || EXCLUDED.metadata")
+	assert.Contains(t, markRunsOnTerminalSQL, "topology_edges.metadata ? 'terminal_deadline'")
+	assert.Contains(t, markRunsOnTerminalSQL, "EXCLUDED.metadata - 'terminal_deadline'")
 	assert.Contains(t, reconcileActiveRunsOnSQL, "metadata->>'k8s.cluster.name' = $1")
 }

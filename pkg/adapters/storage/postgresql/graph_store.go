@@ -42,7 +42,11 @@ const markRunsOnTerminalSQL = `INSERT INTO topology_edges (id, source, target, r
 	 ON CONFLICT (id) DO UPDATE SET
 	   first_seen = LEAST(topology_edges.first_seen, EXCLUDED.first_seen),
 	   last_seen = GREATEST(topology_edges.last_seen, EXCLUDED.last_seen),
-	   metadata = topology_edges.metadata || EXCLUDED.metadata
+	   metadata = CASE
+	     WHEN topology_edges.metadata ? 'terminal_deadline'
+	       THEN topology_edges.metadata || (EXCLUDED.metadata - 'terminal_deadline')
+	     ELSE topology_edges.metadata || EXCLUDED.metadata
+	   END
 	 WHERE topology_edges.relation = 'runs_on' AND NOT (topology_edges.metadata ? 'retired_at')`
 
 const reconcileActiveRunsOnSQL = `SELECT id, source, target, metadata
@@ -284,9 +288,6 @@ func (s *PostgresGraphStore) ReconcileRunsOn(ctx context.Context, clusterName st
 		if err := rows.Scan(&id, &source, &target, &metadataJSON); err != nil {
 			return nil, fmt.Errorf("pg graph scan active runs_on assignment: %w", err)
 		}
-		if _, ok := activeIDs[id]; ok {
-			continue
-		}
 		var metadata map[string]string
 		if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
 			return nil, fmt.Errorf("pg graph unmarshal active runs_on metadata: %w", err)
@@ -314,6 +315,9 @@ func (s *PostgresGraphStore) ReconcileRunsOn(ctx context.Context, clusterName st
 				continue
 			}
 			stale = append(stale, staleAssignment{podID: entities.EntityID(source), nodeID: entities.EntityID(target), podUID: podUID, retiredAt: deadline})
+			continue
+		}
+		if _, ok := activeIDs[id]; ok {
 			continue
 		}
 		stale = append(stale, staleAssignment{podID: entities.EntityID(source), nodeID: entities.EntityID(target), podUID: podUID})

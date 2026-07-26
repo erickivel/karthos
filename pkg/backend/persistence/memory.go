@@ -531,6 +531,9 @@ func (s *InMemoryGraphStore) MarkRunsOnTerminal(_ context.Context, grace RunsOnT
 		edge = topology.NewEdge(grace.PodID, grace.NodeID, topology.RelRunsOn, grace.ObservedAt)
 		edge.ID = edgeID
 	}
+	if edgeRetired(edge) {
+		return nil
+	}
 	metadata := mergeRetiredEdgeMetadata(edge.Metadata, map[string]string{
 		"k8s.cluster.name":   grace.ClusterName,
 		"k8s.namespace.name": grace.Namespace,
@@ -567,9 +570,6 @@ func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, clusterName stri
 		if podUID == "" {
 			continue
 		}
-		if _, ok := activeIDs[edge.ID]; ok {
-			continue
-		}
 		if deadline := edgeTerminalDeadline(edge); deadline != nil {
 			if deadline.After(retiredAt) {
 				pending = append(pending, RunsOnTerminalGrace{
@@ -585,6 +585,9 @@ func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, clusterName stri
 				continue
 			}
 			s.retireRunsOnLocked(edge.Source, edge.Target, podUID, *deadline)
+			continue
+		}
+		if _, ok := activeIDs[edge.ID]; ok {
 			continue
 		}
 		s.retireRunsOnLocked(edge.Source, edge.Target, podUID, retiredAt)

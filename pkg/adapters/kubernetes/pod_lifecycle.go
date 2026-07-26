@@ -74,8 +74,8 @@ func WithPodRunsOnRetirementObserver(observer func(context.Context, PodRunsOnRet
 	}
 }
 
-// WithPodRunsOnTerminalObserver persists a terminal Pod's grace deadline.
-// Persistence is retried off the watch path until the backend context ends.
+// WithPodRunsOnTerminalObserver persists a terminal Pod's grace deadline. The
+// first write is synchronous; only a failed first write is retried off-watch.
 func WithPodRunsOnTerminalObserver(observer func(context.Context, PodRunsOnTerminalGrace) error) PodLifecycleOption {
 	return func(t *PodLifecycleTracker) {
 		t.terminalObserver = observer
@@ -131,11 +131,12 @@ type PodLifecycleTracker struct {
 	retirementBackoff      time.Duration
 	nowFn                  func() time.Time
 
-	mu          sync.RWMutex
-	ready       bool
-	ctx         context.Context
-	pods        map[string]activePod
-	retirements map[string]pendingRetirement
+	mu              sync.RWMutex
+	ready           bool
+	ctx             context.Context
+	pods            map[string]activePod
+	retirements     map[string]pendingRetirement
+	terminalPending map[string]struct{}
 }
 
 // NewPodLifecycleTracker creates a tracker that must be started before use.
@@ -144,6 +145,7 @@ func NewPodLifecycleTracker(client kubernetes.Interface, opts ...PodLifecycleOpt
 		client:            client,
 		pods:              make(map[string]activePod),
 		retirements:       make(map[string]pendingRetirement),
+		terminalPending:   make(map[string]struct{}),
 		terminalGrace:     defaultPodLifecycleGrace,
 		retirementBackoff: defaultRetirementBackoff,
 		nowFn:             func() time.Time { return time.Now().UTC() },
@@ -169,10 +171,10 @@ func (t *PodLifecycleTracker) Start(ctx context.Context) error {
 		watcher.Stop()
 		return err
 	}
-	t.setAvailable(pods, "initial_sync")
 	for _, grace := range persistedGrace {
 		t.restoreRetirement(grace)
 	}
+	t.setAvailable(pods, "initial_sync")
 	go t.run(ctx, watcher)
 	return nil
 }
@@ -188,7 +190,11 @@ func (t *PodLifecycleTracker) AllowsRunsOn(namespace, podName, podUID, nodeName 
 	if !t.ready {
 		return false
 	}
-	if pending, ok := t.retirements[podRetirementKey(namespace, podName, podUID, nodeName)]; ok &&
+	retirementKey := podRetirementKey(namespace, podName, podUID, nodeName)
+	if _, blocked := t.terminalPending[retirementKey]; blocked {
+		return false
+	}
+	if pending, ok := t.retirements[retirementKey]; ok &&
 		pending.pod.uid == podUID && pending.pod.nodeName == nodeName {
 		return t.nowFn().Before(pending.deadline)
 	}
@@ -280,6 +286,8 @@ func (t *PodLifecycleTracker) applyPod(pod *corev1.Pod) {
 	active, ok := activePodFrom(pod)
 	t.mu.Lock()
 	var retirement *PodRunsOnRetirement
+	var terminalGrace PodRunsOnTerminalGrace
+	shouldSchedule := false
 	if !ok {
 		if current, exists := t.pods[key]; exists && current.uid == string(pod.UID) {
 			delete(t.pods, key)
@@ -298,14 +306,17 @@ func (t *PodLifecycleTracker) applyPod(pod *corev1.Pod) {
 			retirement = t.retireNowLocked(pod.Namespace, pod.Name, current)
 		}
 	}
+	if active.terminal {
+		terminalGrace = t.newTerminalGrace(pod.Namespace, pod.Name, active)
+		shouldSchedule = t.beginTerminalGraceLocked(terminalGrace)
+	}
 	t.pods[key] = active
-	shouldSchedule := active.terminal
 	t.mu.Unlock()
 	if retirement != nil {
 		t.emitRetirement(*retirement)
 	}
 	if shouldSchedule {
-		t.scheduleRetirement(key, pod.Namespace, pod.Name, active)
+		t.persistAndArmTerminalGrace(key, terminalGrace)
 	}
 }
 
@@ -338,15 +349,9 @@ func (t *PodLifecycleTracker) setAvailable(pods map[string]activePod, reason str
 		}
 	}
 	t.pods = pods
-	t.ready = true
-	observer := t.observer
-	count := len(t.pods)
 	t.mu.Unlock()
 	for _, retirement := range retirements {
 		t.emitRetirement(retirement)
-	}
-	if observer != nil {
-		observer(PodLifecycleState{Ready: true, ActivePodCount: count, Reason: reason})
 	}
 	for key, pod := range pods {
 		if !pod.terminal {
@@ -354,6 +359,14 @@ func (t *PodLifecycleTracker) setAvailable(pods map[string]activePod, reason str
 		}
 		namespace, name := splitPodLifecycleKey(key)
 		t.scheduleRetirement(key, namespace, name, pod)
+	}
+	t.mu.Lock()
+	t.ready = true
+	observer := t.observer
+	count := len(t.pods)
+	t.mu.Unlock()
+	if observer != nil {
+		observer(PodLifecycleState{Ready: true, ActivePodCount: count, Reason: reason})
 	}
 }
 
@@ -398,42 +411,83 @@ func splitPodLifecycleKey(key string) (string, string) {
 }
 
 func (t *PodLifecycleTracker) scheduleRetirement(key, namespace, name string, pod activePod) {
+	grace := t.newTerminalGrace(namespace, name, pod)
+	if !t.beginTerminalGrace(grace) {
+		return
+	}
+	t.persistAndArmTerminalGrace(key, grace)
+}
+
+func (t *PodLifecycleTracker) newTerminalGrace(namespace, name string, pod activePod) PodRunsOnTerminalGrace {
 	observedAt := t.nowFn()
-	t.scheduleRetirementAt(key, PodRunsOnTerminalGrace{
+	return PodRunsOnTerminalGrace{
 		Namespace:  namespace,
 		PodName:    name,
 		PodUID:     pod.uid,
 		NodeName:   pod.nodeName,
 		ObservedAt: observedAt,
 		Deadline:   observedAt.Add(t.terminalGrace),
-	}, true)
+	}
+}
+
+func (t *PodLifecycleTracker) persistAndArmTerminalGrace(key string, grace PodRunsOnTerminalGrace) {
+	if !t.persistTerminalGrace(grace) {
+		t.retryTerminalGrace(grace)
+		return
+	}
+	t.armPendingTerminalGrace(key, grace, time.Until(grace.Deadline))
 }
 
 func (t *PodLifecycleTracker) restoreRetirement(grace PodRunsOnTerminalGrace) {
 	if grace.Namespace == "" || grace.PodName == "" || grace.PodUID == "" || grace.NodeName == "" || grace.Deadline.IsZero() {
 		return
 	}
-	t.scheduleRetirementAt(podLifecycleKey(grace.Namespace, grace.PodName), grace, false)
+	t.armRestoredRetirement(podLifecycleKey(grace.Namespace, grace.PodName), grace, time.Until(grace.Deadline))
 }
 
-func (t *PodLifecycleTracker) scheduleRetirementAt(key string, grace PodRunsOnTerminalGrace, persist bool) {
+func (t *PodLifecycleTracker) beginTerminalGrace(grace PodRunsOnTerminalGrace) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.beginTerminalGraceLocked(grace)
+}
+
+func (t *PodLifecycleTracker) beginTerminalGraceLocked(grace PodRunsOnTerminalGrace) bool {
+	retirementKey := podRetirementKey(grace.Namespace, grace.PodName, grace.PodUID, grace.NodeName)
+	if _, armed := t.retirements[retirementKey]; armed {
+		return false
+	}
+	if _, pending := t.terminalPending[retirementKey]; pending {
+		return false
+	}
+	t.terminalPending[retirementKey] = struct{}{}
+	return true
+}
+
+func (t *PodLifecycleTracker) armPendingTerminalGrace(key string, grace PodRunsOnTerminalGrace, delay time.Duration) {
+	t.armRetirement(key, grace, delay, true)
+}
+
+func (t *PodLifecycleTracker) armRestoredRetirement(key string, grace PodRunsOnTerminalGrace, delay time.Duration) {
+	t.armRetirement(key, grace, delay, false)
+}
+
+func (t *PodLifecycleTracker) armRetirement(key string, grace PodRunsOnTerminalGrace, delay time.Duration, requirePending bool) {
 	pod := activePod{uid: grace.PodUID, nodeName: grace.NodeName, terminal: true}
 	retirementKey := podRetirementKey(grace.Namespace, grace.PodName, pod.uid, pod.nodeName)
 	t.mu.Lock()
+	if requirePending {
+		if _, pending := t.terminalPending[retirementKey]; !pending {
+			t.mu.Unlock()
+			return
+		}
+	}
 	if _, ok := t.retirements[retirementKey]; ok {
 		t.mu.Unlock()
 		return
 	}
+	delete(t.terminalPending, retirementKey)
 	t.retirements[retirementKey] = pendingRetirement{pod: pod, deadline: grace.Deadline}
 	t.mu.Unlock()
-	if persist {
-		t.emitTerminalGrace(grace)
-	}
-
-	delay := time.Until(grace.Deadline)
-	if persist {
-		delay = grace.Deadline.Sub(grace.ObservedAt)
-	}
 	if delay < 0 {
 		delay = 0
 	}
@@ -466,7 +520,9 @@ func (t *PodLifecycleTracker) completeRetirement(key, retirementKey, namespace, 
 }
 
 func (t *PodLifecycleTracker) retireNowLocked(namespace, name string, pod activePod) *PodRunsOnRetirement {
-	delete(t.retirements, podRetirementKey(namespace, name, pod.uid, pod.nodeName))
+	retirementKey := podRetirementKey(namespace, name, pod.uid, pod.nodeName)
+	delete(t.retirements, retirementKey)
+	delete(t.terminalPending, retirementKey)
 	retirement := PodRunsOnRetirement{
 		Namespace: namespace,
 		PodName:   name,
@@ -497,7 +553,21 @@ func (t *PodLifecycleTracker) reconcileInitial(ctx context.Context, pods map[str
 	return observer(ctx, assignments)
 }
 
-func (t *PodLifecycleTracker) emitTerminalGrace(grace PodRunsOnTerminalGrace) {
+func (t *PodLifecycleTracker) persistTerminalGrace(grace PodRunsOnTerminalGrace) bool {
+	t.mu.RLock()
+	observer := t.terminalObserver
+	ctx := t.ctx
+	t.mu.RUnlock()
+	if observer == nil {
+		return true
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return observer(ctx, grace) == nil
+}
+
+func (t *PodLifecycleTracker) retryTerminalGrace(grace PodRunsOnTerminalGrace) {
 	t.mu.RLock()
 	observer := t.terminalObserver
 	ctx := t.ctx
@@ -515,6 +585,7 @@ func (t *PodLifecycleTracker) emitTerminalGrace(grace PodRunsOnTerminalGrace) {
 				return
 			}
 			if err := observer(ctx, grace); err == nil {
+				t.armPendingTerminalGrace(podLifecycleKey(grace.Namespace, grace.PodName), grace, time.Until(grace.Deadline))
 				return
 			}
 			timer := time.NewTimer(backoff)

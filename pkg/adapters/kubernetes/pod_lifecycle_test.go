@@ -351,6 +351,134 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
 }
 
+func TestPodLifecycleTrackerDeniesTerminalRefreshUntilDeadlineMarkerPersists(t *testing.T) {
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-terminal", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+	markerStarted := make(chan struct{})
+	allowMarker := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client, WithPodRunsOnTerminalObserver(func(_ context.Context, _ PodRunsOnTerminalGrace) error {
+		close(markerStarted)
+		<-allowMarker
+		return nil
+	}))
+	require.NoError(t, tracker.Start(ctx))
+
+	terminal := podForLifecycle("default", "job-0", "uid-terminal", "node-a")
+	terminal.Status.Phase = corev1.PodSucceeded
+	watcher.Modify(terminal)
+	select {
+	case <-markerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("expected synchronous terminal deadline persistence")
+	}
+	require.False(t, tracker.AllowsRunsOn("default", "job-0", "uid-terminal", "node-a"))
+	close(allowMarker)
+	require.Eventually(t, func() bool {
+		return tracker.AllowsRunsOn("default", "job-0", "uid-terminal", "node-a")
+	}, time.Second, 5*time.Millisecond)
+}
+
+func TestPodLifecycleTrackerFailsClosedAndRetriesTerminalMarkerWithOriginalDeadline(t *testing.T) {
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-terminal", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+	var attempts atomic.Int32
+	deadlines := make(chan time.Time, 2)
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client,
+		withPodLifecycleGraceDuration(200*time.Millisecond),
+		withPodRetirementRetry(time.Millisecond),
+		WithPodRunsOnTerminalObserver(func(_ context.Context, grace PodRunsOnTerminalGrace) error {
+			deadlines <- grace.Deadline
+			if attempts.Add(1) == 1 {
+				return errors.New("initial marker write failed")
+			}
+			close(retryStarted)
+			<-allowRetry
+			return nil
+		}),
+	)
+	require.NoError(t, tracker.Start(ctx))
+
+	terminal := podForLifecycle("default", "job-0", "uid-terminal", "node-a")
+	terminal.Status.Phase = corev1.PodSucceeded
+	watcher.Modify(terminal)
+	select {
+	case <-retryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("expected asynchronous terminal marker retry")
+	}
+	require.False(t, tracker.AllowsRunsOn("default", "job-0", "uid-terminal", "node-a"))
+	firstDeadline := <-deadlines
+	secondDeadline := <-deadlines
+	require.Equal(t, firstDeadline, secondDeadline)
+	close(allowRetry)
+	require.Eventually(t, func() bool {
+		return tracker.AllowsRunsOn("default", "job-0", "uid-terminal", "node-a")
+	}, time.Second, 5*time.Millisecond)
+}
+
+func TestPodLifecycleTrackerRestoresPersistedDeadlineForTerminalUIDStillListed(t *testing.T) {
+	const cluster = "cluster"
+	store := persistence.NewInMemoryGraphStore()
+	podID := entities.ComputeEntityID(entities.KindPod, cluster, "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, cluster, "node-a")
+	observedAt := time.Now().UTC()
+	deadline := observedAt.Add(200 * time.Millisecond)
+	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, observedAt)
+	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-terminal")
+	old.Metadata = map[string]string{"k8s.pod.uid": "uid-terminal", "k8s.cluster.name": cluster}
+	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+	require.NoError(t, store.MarkRunsOnTerminal(context.Background(), persistence.RunsOnTerminalGrace{
+		ClusterName: cluster, Namespace: "default", PodName: "job-0", PodUID: "uid-terminal", NodeName: "node-a",
+		PodID: podID, NodeID: nodeID, ObservedAt: observedAt, Deadline: deadline,
+	}))
+
+	watcher := watch.NewRaceFreeFake()
+	terminal := podForLifecycle("default", "job-0", "uid-terminal", "node-a")
+	terminal.Status.Phase = corev1.PodSucceeded
+	client := fake.NewClientset(terminal)
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+	var markerWrites atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tracker := NewPodLifecycleTracker(client,
+		WithPodRunsOnTerminalObserver(func(_ context.Context, _ PodRunsOnTerminalGrace) error {
+			markerWrites.Add(1)
+			return nil
+		}),
+		WithPodRunsOnReconciliationObserver(func(ctx context.Context, observed []PodRunsOnAssignment) ([]PodRunsOnTerminalGrace, error) {
+			active := []persistence.RunsOnAssignment{{PodID: podID, NodeID: nodeID, PodUID: observed[0].PodUID}}
+			persisted, err := store.ReconcileRunsOn(ctx, cluster, active, time.Now().UTC())
+			grace := make([]PodRunsOnTerminalGrace, 0, len(persisted))
+			for _, item := range persisted {
+				grace = append(grace, PodRunsOnTerminalGrace{Namespace: item.Namespace, PodName: item.PodName, PodUID: item.PodUID, NodeName: item.NodeName, ObservedAt: item.ObservedAt, Deadline: item.Deadline})
+			}
+			return grace, err
+		}),
+	)
+	require.NoError(t, tracker.Start(ctx))
+	require.True(t, tracker.AllowsRunsOn("default", "job-0", "uid-terminal", "node-a"))
+	require.Never(t, func() bool {
+		return markerWrites.Load() != 0
+	}, 30*time.Millisecond, 5*time.Millisecond, "restart must not reset an existing terminal deadline")
+	edges, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	require.Equal(t, deadline.Format(time.RFC3339Nano), edges[0].Metadata["terminal_deadline"])
+}
+
 func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T) {
 	for _, phase := range []corev1.PodPhase{corev1.PodSucceeded, corev1.PodFailed} {
 		t.Run(string(phase), func(t *testing.T) {
@@ -444,7 +572,7 @@ func TestPodLifecycleTrackerDeniesTerminalUIDAfterDeadlineBeforeTimerCallback(t 
 		return true, watcher, nil
 	})
 
-	baseline := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	baseline := time.Now().UTC()
 	var nowNanos atomic.Int64
 	nowNanos.Store(baseline.UnixNano())
 	ctx, cancel := context.WithCancel(context.Background())
