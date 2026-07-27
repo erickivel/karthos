@@ -46,6 +46,7 @@ tasks:
   test:fixtures:
     desc: Run repository-owned nested fixture test suites
     cmds:
+      - bash test/e2e/apps/deploy_test.sh
       - go -C test/e2e/apps/instrumented/gateway-go test ./...
       - go -C test/e2e/apps/mesh-protocol-go test ./...
       - bash test/e2e/scripts/traffic_schedule_test.sh

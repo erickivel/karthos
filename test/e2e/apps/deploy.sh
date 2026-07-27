@@ -55,6 +55,14 @@ build_and_load "${REGISTRY_HOST}/oksg-frontend:${IMAGE_TAG}" "${REPO_ROOT}/web"
 
 RENDERED_APPS="${RENDERED_DIR}/apps.yaml"
 kubectl kustomize "${VARIANT_DIR}" >"${RENDERED_APPS}"
+REGISTRY_HOST_PATTERN="${REGISTRY_HOST//./\\.}"
+sed -i.bak \
+  -e "s|${REGISTRY_HOST_PATTERN}/gateway-go:latest|${REGISTRY_HOST}/gateway-go:${IMAGE_TAG}|g" \
+  -e "s|${REGISTRY_HOST_PATTERN}/service-a-python:latest|${REGISTRY_HOST}/service-a-python:${IMAGE_TAG}|g" \
+  -e "s|${REGISTRY_HOST_PATTERN}/service-b-node:latest|${REGISTRY_HOST}/service-b-node:${IMAGE_TAG}|g" \
+  -e "s|${REGISTRY_HOST_PATTERN}/mesh-protocol-go:latest|${REGISTRY_HOST}/mesh-protocol-go:${IMAGE_TAG}|g" \
+  "${RENDERED_APPS}"
+rm -f "${RENDERED_APPS}.bak"
 
 if [[ "${CLUSTER_ENGINE}" == "k3s" ]]; then
   REMOTE_NODE_NAME="${K3S_NODE_NAME:-$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')}"
