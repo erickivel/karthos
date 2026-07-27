@@ -23,6 +23,23 @@ export DEPLOY_TEST_REGISTRY="${REGISTRY_HOST}"
 cat >"${TMPDIR_TEST}/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${DEPLOY_TEST_REMOTE:-0}" == "1" ]]; then
+  echo "remote docker $*" >>"${DEPLOY_TEST_LOG}"
+  case "$1" in
+    load)
+      [[ "$(cat)" == "image-stream" ]] || exit 1
+      printf 'Loaded image\n'
+      ;;
+    push)
+      [[ "${2:-}" == "${DEPLOY_TEST_REGISTRY}"/*:run-tag ]] || exit 1
+      printf 'digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc size: 1\n'
+      ;;
+    *)
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
 echo "docker $*" >>"${DEPLOY_TEST_LOG}"
 if [[ "${1:-}" == "save" ]]; then
   printf 'image-stream\n'
@@ -33,21 +50,21 @@ cat >"${TMPDIR_TEST}/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "ssh $*" >>"${DEPLOY_TEST_LOG}"
-if [[ "$*" == *"docker load"* ]]; then
-  IFS= read -r image
-  [[ "${image}" == localhost:5001/*:run-tag ]] || exit 1
-  [[ "$(cat)" == "image-stream" ]] || exit 1
-  [[ "$*" == *'docker push "$image"'* ]] || exit 1
-  if [[ "$*" == *"docker load >&2"* ]]; then
-    printf 'Loaded image: localhost:5001/deploy-test\n' >&2
-  else
-    printf 'Loaded image: localhost:5001/deploy-test\n'
-  fi
-  printf 'sha256:deploy-test\n'
-else
-  cat >/dev/null
-  printf 'Docker-Content-Digest: sha256:deploy-test\r\n'
-fi
+remote_command=""
+for argument in "$@"; do
+  remote_command="${argument}"
+done
+[[ "${remote_command}" == "bash -c "* ]] || exit 1
+[[ "${remote_command}" == *"set -euo pipefail"* ]] || exit 1
+DEPLOY_TEST_REMOTE=1 bash -c "${remote_command}"
+EOF
+
+cat >"${TMPDIR_TEST}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "curl $*" >>"${DEPLOY_TEST_LOG}"
+[[ "${DEPLOY_TEST_REMOTE:-0}" == "1" ]] || exit 1
+printf 'Docker-Content-Digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\r\n'
 EOF
 
 cat >"${TMPDIR_TEST}/kubectl" <<'EOF'
@@ -86,7 +103,7 @@ YAML
     ;;
 esac
 EOF
-chmod +x "${TMPDIR_TEST}/docker" "${TMPDIR_TEST}/ssh" "${TMPDIR_TEST}/kubectl"
+chmod +x "${TMPDIR_TEST}/docker" "${TMPDIR_TEST}/ssh" "${TMPDIR_TEST}/curl" "${TMPDIR_TEST}/kubectl"
 
 export PATH="${TMPDIR_TEST}:${PATH}"
 export DEPLOY_TEST_LOG="${TMPDIR_TEST}/calls.log"
@@ -100,6 +117,7 @@ for image in gateway-go service-a-python service-b-node mesh-protocol-go; do
     echo "stale ${image}:latest image found in applied manifest" >&2
     exit 1
   fi
+  grep -Fqx "remote docker push ${DEPLOY_TEST_REGISTRY}/${image}:run-tag" "${DEPLOY_TEST_LOG}"
 done
 grep -Fqx '        - image: registry.k8s.io/pause:3.10' "${DEPLOY_TEST_APPLY_MANIFEST}"
 

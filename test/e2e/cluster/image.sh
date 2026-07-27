@@ -58,8 +58,8 @@ docker load >&2
 push_output="$(docker push "$image" 2>&1)"
 printf "%s\\n" "$push_output" >&2
 pushed_digest="$(printf "%s\\n" "$push_output" | sed -n "s/.*[Dd]igest: \\(sha256:[[:xdigit:]]*\\).*/\\1/p" | tail -n 1)"
-if [[ -z "$pushed_digest" ]]; then
-  echo "image transport: remote docker push did not print a manifest digest" >&2
+if [[ ! "$pushed_digest" =~ ^sha256:[[:xdigit:]]{64}$ ]]; then
+  echo "image transport: invalid remote push digest: ${pushed_digest:-missing}" >&2
   exit 1
 fi
 printf "%s\\n" "$pushed_digest"
@@ -70,16 +70,25 @@ set -euo pipefail
 IFS= read -r repository
 IFS= read -r tag
 IFS= read -r registry_port
-case "$repository" in ''|*[!A-Za-z0-9._/-]*) echo "image transport: invalid remote repository" >&2; exit 1 ;; esac
-case "$tag" in ''|*[!A-Za-z0-9._-]*) echo "image transport: invalid remote tag" >&2; exit 1 ;; esac
-case "$registry_port" in ''|*[!0-9]*) echo "image transport: invalid remote registry port" >&2; exit 1 ;; esac
+if [[ -z "$repository" || "$repository" == *[!A-Za-z0-9._/-]* ]]; then
+  echo "image transport: invalid remote repository" >&2
+  exit 1
+fi
+if [[ -z "$tag" || "$tag" == *[!A-Za-z0-9._-]* ]]; then
+  echo "image transport: invalid remote tag" >&2
+  exit 1
+fi
+if [[ -z "$registry_port" || "$registry_port" == *[!0-9]* ]]; then
+  echo "image transport: invalid remote registry port" >&2
+  exit 1
+fi
 curl -fsSI \
   -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
   "http://127.0.0.1:${registry_port}/v2/${repository}/manifests/${tag}"
 '"'"'' | awk 'tolower($1) == "docker-content-digest:" { gsub("\\r", "", $2); print $2; exit }')"
 
-  if [[ -z "${manifest_digest}" ]]; then
-    echo "image transport: remote registry did not return Docker-Content-Digest for ${image}" >&2
+  if [[ ! "${manifest_digest}" =~ ^sha256:[[:xdigit:]]{64}$ ]]; then
+    echo "image transport: invalid remote registry manifest digest: ${manifest_digest:-missing} for ${image}" >&2
     return 1
   fi
   if [[ "${pushed_digest}" != "${manifest_digest}" ]]; then
