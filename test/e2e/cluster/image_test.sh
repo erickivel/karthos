@@ -40,8 +40,12 @@ set -euo pipefail
 echo "ssh $*" >>"${IMAGE_TEST_LOG}"
 
 if [[ "$*" == *"docker load"* ]]; then
+  [[ "$*" != *" -- localhost:5001/"* ]] || exit 45
+  IFS= read -r image
   payload="$(cat)"
+  [[ "${image}" == "localhost:5001/demo:demo-tag" ]] || exit 46
   [[ "${payload}" == "image-stream" ]] || exit 47
+  [[ "$*" == *'docker push "$image"'* ]] || exit 48
   if [[ "$*" == *"docker load >&2"* ]]; then
     printf 'Loaded image: localhost:5001/demo:demo-tag\n' >&2
   else
@@ -51,11 +55,18 @@ if [[ "$*" == *"docker load"* ]]; then
     load_fail) exit 43 ;;
     push_fail) exit 44 ;;
   esac
+  echo "remote docker push ${image}" >>"${IMAGE_TEST_LOG}"
   printf '%s\n' "${IMAGE_TEST_PUSH_DIGEST}"
   exit 0
 fi
 
-cat >/dev/null
+[[ "$*" != *" -- demo demo-tag 5001"* ]] || exit 52
+IFS= read -r repository
+IFS= read -r tag
+IFS= read -r registry_port
+[[ "${repository}" == "demo" ]] || exit 49
+[[ "${tag}" == "demo-tag" ]] || exit 50
+[[ "${registry_port}" == "5001" ]] || exit 51
 if [[ -n "${IMAGE_TEST_HEADER_DIGEST:-}" ]]; then
   printf 'Docker-Content-Digest: %s\r\n' "${IMAGE_TEST_HEADER_DIGEST}"
 fi
@@ -126,6 +137,7 @@ export IMAGE_TEST_MODE=success
 run_image
 grep -q '^docker save localhost:5001/demo:demo-tag$' "${IMAGE_TEST_LOG}"
 grep -q '^ssh ' "${IMAGE_TEST_LOG}"
+grep -q '^remote docker push localhost:5001/demo:demo-tag$' "${IMAGE_TEST_LOG}"
 ! grep -q '^docker push ' "${IMAGE_TEST_LOG}"
 
 export IMAGE_TEST_HEADER_DIGEST="sha256:other-manifest"

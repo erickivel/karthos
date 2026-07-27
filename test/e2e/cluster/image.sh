@@ -19,12 +19,18 @@ split_image_reference() {
   local image="$1"
   local repository_and_tag
 
+  case "${image}" in
+    *[!A-Za-z0-9._:/-]*|*//*|*::*)
+      echo "image transport: unsafe image reference: ${image}" >&2
+      return 1
+      ;;
+  esac
   registry="${image%%/*}"
   repository_and_tag="${image#*/}"
   repository="${repository_and_tag%:*}"
   tag="${repository_and_tag##*:}"
 
-  if [[ "${registry}" == "${image}" || "${repository}" == "${repository_and_tag}" ]]; then
+  if [[ "${registry}" != localhost:* || "${registry#localhost:}" == *[!0-9]* || -z "${registry#localhost:}" || -z "${repository}" || "${repository}" == "${repository_and_tag}" || -z "${tag}" ]]; then
     echo "image transport: expected registry/repository:tag, got ${image}" >&2
     return 1
   fi
@@ -38,9 +44,16 @@ push_k3s_image() {
   : "${K3S_REGISTRY_PORT:=5001}"
   split_image_reference "${image}"
 
-  pushed_digest="$(docker save "${image}" | ssh -o BatchMode=yes "${K3S_SSH_HOST}" bash -c '
+  pushed_digest="$({ printf '%s\n' "${image}"; docker save "${image}"; } | ssh -o BatchMode=yes "${K3S_SSH_HOST}" 'bash -c '"'"'
 set -euo pipefail
-image="$1"
+IFS= read -r image
+case "$image" in
+  localhost:[0-9]*/*:*) ;;
+  *) echo "image transport: invalid remote image reference" >&2; exit 1 ;;
+esac
+case "$image" in
+  *[!A-Za-z0-9._:/-]*|*//*|*::*) echo "image transport: unsafe remote image reference" >&2; exit 1 ;;
+esac
 docker load >&2
 push_output="$(docker push "$image" 2>&1)"
 printf "%s\\n" "$push_output" >&2
@@ -50,17 +63,20 @@ if [[ -z "$pushed_digest" ]]; then
   exit 1
 fi
 printf "%s\\n" "$pushed_digest"
-' -- "${image}")"
+'"'"'')"
 
-  manifest_digest="$(ssh -o BatchMode=yes "${K3S_SSH_HOST}" bash -c '
+  manifest_digest="$(printf '%s\n%s\n%s\n' "${repository}" "${tag}" "${K3S_REGISTRY_PORT}" | ssh -o BatchMode=yes "${K3S_SSH_HOST}" 'bash -c '"'"'
 set -euo pipefail
-repository="$1"
-tag="$2"
-registry_port="$3"
+IFS= read -r repository
+IFS= read -r tag
+IFS= read -r registry_port
+case "$repository" in ''|*[!A-Za-z0-9._/-]*) echo "image transport: invalid remote repository" >&2; exit 1 ;; esac
+case "$tag" in ''|*[!A-Za-z0-9._-]*) echo "image transport: invalid remote tag" >&2; exit 1 ;; esac
+case "$registry_port" in ''|*[!0-9]*) echo "image transport: invalid remote registry port" >&2; exit 1 ;; esac
 curl -fsSI \
   -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
   "http://127.0.0.1:${registry_port}/v2/${repository}/manifests/${tag}"
-' -- "${repository}" "${tag}" "${K3S_REGISTRY_PORT}" | awk 'tolower($1) == "docker-content-digest:" { gsub("\\r", "", $2); print $2; exit }')"
+'"'"'' | awk 'tolower($1) == "docker-content-digest:" { gsub("\\r", "", $2); print $2; exit }')"
 
   if [[ -z "${manifest_digest}" ]]; then
     echo "image transport: remote registry did not return Docker-Content-Digest for ${image}" >&2

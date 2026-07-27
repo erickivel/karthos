@@ -34,7 +34,10 @@ cat >"${TMPDIR_TEST}/ssh" <<'EOF'
 set -euo pipefail
 echo "ssh $*" >>"${DEPLOY_TEST_LOG}"
 if [[ "$*" == *"docker load"* ]]; then
+  IFS= read -r image
+  [[ "${image}" == localhost:5001/*:run-tag ]] || exit 1
   [[ "$(cat)" == "image-stream" ]] || exit 1
+  [[ "$*" == *'docker push "$image"'* ]] || exit 1
   if [[ "$*" == *"docker load >&2"* ]]; then
     printf 'Loaded image: localhost:5001/deploy-test\n' >&2
   else
