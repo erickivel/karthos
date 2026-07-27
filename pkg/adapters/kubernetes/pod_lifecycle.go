@@ -37,8 +37,8 @@ type PodRunsOnRetirement struct {
 }
 
 // PodRunsOnTerminalGrace identifies the exact terminal UID/node assignment and
-// its fixed retirement deadline. It is persisted so a restart can re-arm the
-// deadline even if Kubernetes has already deleted or replaced the Pod.
+// its fixed retirement deadline. Only Confirmed grace is re-armed after a
+// restart; an unconfirmed retry marker is reconciled as failure-path state.
 type PodRunsOnTerminalGrace struct {
 	Namespace  string
 	PodName    string

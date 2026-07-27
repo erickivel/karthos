@@ -58,8 +58,9 @@ type RunsOnAssignment struct {
 }
 
 // RunsOnTerminalGrace is a persisted terminal-Pod grace window. The Kubernetes
-// identity fields allow a restarted lifecycle tracker to re-arm retirement at
-// the original deadline without inferring the old assignment from telemetry.
+// identity fields let a restarted lifecycle tracker re-arm the original
+// deadline only when Confirmed is true; unconfirmed retry markers are
+// reconciled as failure-path state.
 type RunsOnTerminalGrace struct {
 	ClusterName string
 	Namespace   string
