@@ -78,7 +78,10 @@ bash "${REPO_ROOT}/test/e2e/apps/deploy.sh" with-istio
 
 for image in gateway-go service-a-python service-b-node mesh-protocol-go; do
   grep -Fqx "        - image: ${DEPLOY_TEST_REGISTRY}/${image}:run-tag" "${DEPLOY_TEST_APPLY_MANIFEST}"
-  ! grep -Fq "${DEPLOY_TEST_REGISTRY}/${image}:latest" "${DEPLOY_TEST_APPLY_MANIFEST}"
+  if grep -Fq "${DEPLOY_TEST_REGISTRY}/${image}:latest" "${DEPLOY_TEST_APPLY_MANIFEST}"; then
+    echo "stale ${image}:latest image found in applied manifest" >&2
+    exit 1
+  fi
 done
 grep -Fqx '        - image: registry.k8s.io/pause:3.10' "${DEPLOY_TEST_APPLY_MANIFEST}"
 

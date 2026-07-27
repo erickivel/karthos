@@ -34,7 +34,15 @@ print("✓ Generated collector values include Istio scrape wiring")
 PY
 
 kubectl delete job mesh-protocol-client -n oksg-demo --ignore-not-found
-kubectl apply -f test/e2e/apps/with-istio/mesh-protocol-client-job.yaml
+RENDERED_PROTOCOL_CLIENT_JOB="$(mktemp -t oksg-mesh-protocol-client.XXXXXX)"
+REGISTRY_HOST_PATTERN="${REGISTRY_HOST//./\\.}"
+sed "s|${REGISTRY_HOST_PATTERN}/mesh-protocol-go:latest|${REGISTRY_HOST}/mesh-protocol-go:${IMAGE_TAG}|g" \
+  test/e2e/apps/with-istio/mesh-protocol-client-job.yaml >"${RENDERED_PROTOCOL_CLIENT_JOB}"
+if ! kubectl apply -f "${RENDERED_PROTOCOL_CLIENT_JOB}"; then
+  rm -f "${RENDERED_PROTOCOL_CLIENT_JOB}"
+  exit 1
+fi
+rm -f "${RENDERED_PROTOCOL_CLIENT_JOB}"
 
 echo "Waiting for deterministic protocol warm-up..."
 warmup_ready=false
