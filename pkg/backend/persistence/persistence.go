@@ -72,10 +72,19 @@ type RunsOnTerminalGrace struct {
 	Deadline    time.Time
 }
 
+// RunsOnTerminalState is the durable state after a terminal marker attempt.
+// Retired is terminal: marker retries must not recreate a pending assignment.
+type RunsOnTerminalState uint8
+
+const (
+	RunsOnTerminalPending RunsOnTerminalState = iota
+	RunsOnTerminalRetired
+)
+
 // RunsOnTerminalMarker durably records a terminal Pod's grace deadline before
 // retirement. The marker keeps the assignment latest-active until Deadline.
 type RunsOnTerminalMarker interface {
-	MarkRunsOnTerminal(ctx context.Context, grace RunsOnTerminalGrace) error
+	MarkRunsOnTerminal(ctx context.Context, grace RunsOnTerminalGrace) (RunsOnTerminalState, error)
 }
 
 // RunsOnReconciler retires persisted active runs_on assignments that no longer

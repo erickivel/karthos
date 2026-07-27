@@ -347,8 +347,8 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 			}
 			logger.Warn("pod lifecycle validation unavailable; runs_on refreshes are fail-closed", fields...)
 		}),
-		kubernetesadapter.WithPodRunsOnTerminalObserver(func(terminalCtx context.Context, grace kubernetesadapter.PodRunsOnTerminalGrace) error {
-			return terminalMarker.MarkRunsOnTerminal(terminalCtx, persistence.RunsOnTerminalGrace{
+		kubernetesadapter.WithPodRunsOnTerminalObserver(func(terminalCtx context.Context, grace kubernetesadapter.PodRunsOnTerminalGrace) (kubernetesadapter.PodRunsOnTerminalState, error) {
+			state, err := terminalMarker.MarkRunsOnTerminal(terminalCtx, persistence.RunsOnTerminalGrace{
 				ClusterName: cfg.ClusterName,
 				Namespace:   grace.Namespace,
 				PodName:     grace.PodName,
@@ -359,6 +359,10 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 				ObservedAt:  grace.ObservedAt,
 				Deadline:    grace.Deadline,
 			})
+			if state == persistence.RunsOnTerminalRetired {
+				return kubernetesadapter.PodRunsOnTerminalRetired, err
+			}
+			return kubernetesadapter.PodRunsOnTerminalPending, err
 		}),
 		kubernetesadapter.WithPodRunsOnReconciliationObserver(func(reconciliationCtx context.Context, observed []kubernetesadapter.PodRunsOnAssignment) ([]kubernetesadapter.PodRunsOnTerminalGrace, error) {
 			active := make([]persistence.RunsOnAssignment, 0, len(observed))

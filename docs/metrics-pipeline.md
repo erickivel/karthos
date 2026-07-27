@@ -676,6 +676,9 @@ the tracker and never resets it. Reconciliation is restricted to matching
 `k8s.cluster.name`; unscoped legacy edges are skipped rather than risking a
 cross-cluster retirement. At the deadline, latest-graph reads exclude the edge
 and the subsequent retirement marker provides the audit timestamp.
+Storage enforces the one-way UID assignment transition from active to pending
+terminal to retired. A delayed terminal-marker retry receives the retired state
+after a deletion/replacement has won and must not recreate pending grace.
 The retirement marker applies only to `runs_on`, not to another relation that
 happens to carry a metadata key of the same name. This POC does not offer
 historical `graph?at=` reconstruction.

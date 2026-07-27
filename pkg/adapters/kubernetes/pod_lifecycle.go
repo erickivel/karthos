@@ -48,6 +48,15 @@ type PodRunsOnTerminalGrace struct {
 	Deadline   time.Time
 }
 
+// PodRunsOnTerminalState reports whether storage accepted a pending terminal
+// deadline or rejected it because the UID has already retired.
+type PodRunsOnTerminalState uint8
+
+const (
+	PodRunsOnTerminalPending PodRunsOnTerminalState = iota
+	PodRunsOnTerminalRetired
+)
+
 // PodRunsOnAssignment identifies an observed active Pod-to-Node assignment.
 type PodRunsOnAssignment struct {
 	Namespace string
@@ -76,7 +85,7 @@ func WithPodRunsOnRetirementObserver(observer func(context.Context, PodRunsOnRet
 
 // WithPodRunsOnTerminalObserver persists a terminal Pod's grace deadline. The
 // first write is synchronous; only a failed first write is retried off-watch.
-func WithPodRunsOnTerminalObserver(observer func(context.Context, PodRunsOnTerminalGrace) error) PodLifecycleOption {
+func WithPodRunsOnTerminalObserver(observer func(context.Context, PodRunsOnTerminalGrace) (PodRunsOnTerminalState, error)) PodLifecycleOption {
 	return func(t *PodLifecycleTracker) {
 		t.terminalObserver = observer
 	}
@@ -124,7 +133,7 @@ type pendingRetirement struct {
 type PodLifecycleTracker struct {
 	client                 kubernetes.Interface
 	observer               func(PodLifecycleState)
-	terminalObserver       func(context.Context, PodRunsOnTerminalGrace) error
+	terminalObserver       func(context.Context, PodRunsOnTerminalGrace) (PodRunsOnTerminalState, error)
 	retirementObserver     func(context.Context, PodRunsOnRetirement) error
 	reconciliationObserver func(context.Context, []PodRunsOnAssignment) ([]PodRunsOnTerminalGrace, error)
 	terminalGrace          time.Duration
@@ -431,8 +440,13 @@ func (t *PodLifecycleTracker) newTerminalGrace(namespace, name string, pod activ
 }
 
 func (t *PodLifecycleTracker) persistAndArmTerminalGrace(key string, grace PodRunsOnTerminalGrace) {
-	if !t.persistTerminalGrace(grace) {
+	state, err := t.persistTerminalGrace(grace)
+	if err != nil {
 		t.retryTerminalGrace(grace)
+		return
+	}
+	if state == PodRunsOnTerminalRetired {
+		t.clearTerminalPending(grace)
 		return
 	}
 	t.armPendingTerminalGrace(key, grace, time.Until(grace.Deadline))
@@ -553,18 +567,24 @@ func (t *PodLifecycleTracker) reconcileInitial(ctx context.Context, pods map[str
 	return observer(ctx, assignments)
 }
 
-func (t *PodLifecycleTracker) persistTerminalGrace(grace PodRunsOnTerminalGrace) bool {
+func (t *PodLifecycleTracker) persistTerminalGrace(grace PodRunsOnTerminalGrace) (PodRunsOnTerminalState, error) {
 	t.mu.RLock()
 	observer := t.terminalObserver
 	ctx := t.ctx
 	t.mu.RUnlock()
 	if observer == nil {
-		return true
+		return PodRunsOnTerminalPending, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return observer(ctx, grace) == nil
+	return observer(ctx, grace)
+}
+
+func (t *PodLifecycleTracker) clearTerminalPending(grace PodRunsOnTerminalGrace) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.terminalPending, podRetirementKey(grace.Namespace, grace.PodName, grace.PodUID, grace.NodeName))
 }
 
 func (t *PodLifecycleTracker) retryTerminalGrace(grace PodRunsOnTerminalGrace) {
@@ -584,7 +604,11 @@ func (t *PodLifecycleTracker) retryTerminalGrace(grace PodRunsOnTerminalGrace) {
 			if ctx.Err() != nil {
 				return
 			}
-			if err := observer(ctx, grace); err == nil {
+			if state, err := observer(ctx, grace); err == nil {
+				if state == PodRunsOnTerminalRetired {
+					t.clearTerminalPending(grace)
+					return
+				}
 				t.armPendingTerminalGrace(podLifecycleKey(grace.Namespace, grace.PodName), grace, time.Until(grace.Deadline))
 				return
 			}

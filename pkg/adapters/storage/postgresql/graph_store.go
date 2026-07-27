@@ -239,9 +239,9 @@ func (s *PostgresGraphStore) RetireRunsOn(ctx context.Context, podID, nodeID ent
 
 // MarkRunsOnTerminal durably records the grace deadline for a terminal Pod UID
 // so a restarted backend can keep the assignment active until that deadline.
-func (s *PostgresGraphStore) MarkRunsOnTerminal(ctx context.Context, grace persistence.RunsOnTerminalGrace) error {
+func (s *PostgresGraphStore) MarkRunsOnTerminal(ctx context.Context, grace persistence.RunsOnTerminalGrace) (persistence.RunsOnTerminalState, error) {
 	if grace.ClusterName == "" || grace.PodUID == "" || grace.Deadline.IsZero() {
-		return fmt.Errorf("terminal runs_on grace requires cluster, pod UID, and deadline")
+		return persistence.RunsOnTerminalPending, fmt.Errorf("terminal runs_on grace requires cluster, pod UID, and deadline")
 	}
 	edgeID := topology.ComputeEdgeIDWithDiscriminator(grace.PodID, grace.NodeID, topology.RelRunsOn, grace.PodUID)
 	metadata, err := json.Marshal(map[string]string{
@@ -253,13 +253,16 @@ func (s *PostgresGraphStore) MarkRunsOnTerminal(ctx context.Context, grace persi
 		"terminal_deadline":  grace.Deadline.UTC().Format(time.RFC3339Nano),
 	})
 	if err != nil {
-		return fmt.Errorf("marshal terminal runs_on metadata: %w", err)
+		return persistence.RunsOnTerminalPending, fmt.Errorf("marshal terminal runs_on metadata: %w", err)
 	}
-	_, err = s.conn.pool.Exec(ctx, markRunsOnTerminalSQL, edgeID, string(grace.PodID), string(grace.NodeID), grace.ObservedAt, metadata)
+	tag, err := s.conn.pool.Exec(ctx, markRunsOnTerminalSQL, edgeID, string(grace.PodID), string(grace.NodeID), grace.ObservedAt, metadata)
 	if err != nil {
-		return fmt.Errorf("pg graph mark terminal runs_on edge: %w", err)
+		return persistence.RunsOnTerminalPending, fmt.Errorf("pg graph mark terminal runs_on edge: %w", err)
 	}
-	return nil
+	if tag.RowsAffected() == 0 {
+		return persistence.RunsOnTerminalRetired, nil
+	}
+	return persistence.RunsOnTerminalPending, nil
 }
 
 // ReconcileRunsOn retires persisted active UID-versioned assignments that are

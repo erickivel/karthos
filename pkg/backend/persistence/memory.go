@@ -519,9 +519,9 @@ func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entit
 
 // ReconcileRunsOn retires persisted active assignments absent from the
 // authoritative Pod List/Watch state observed at backend startup.
-func (s *InMemoryGraphStore) MarkRunsOnTerminal(_ context.Context, grace RunsOnTerminalGrace) error {
+func (s *InMemoryGraphStore) MarkRunsOnTerminal(_ context.Context, grace RunsOnTerminalGrace) (RunsOnTerminalState, error) {
 	if grace.ClusterName == "" || grace.PodUID == "" || grace.Deadline.IsZero() {
-		return fmt.Errorf("terminal runs_on grace requires cluster, pod UID, and deadline")
+		return RunsOnTerminalPending, fmt.Errorf("terminal runs_on grace requires cluster, pod UID, and deadline")
 	}
 	edgeID := topology.ComputeEdgeIDWithDiscriminator(grace.PodID, grace.NodeID, topology.RelRunsOn, grace.PodUID)
 	s.mu.Lock()
@@ -532,7 +532,7 @@ func (s *InMemoryGraphStore) MarkRunsOnTerminal(_ context.Context, grace RunsOnT
 		edge.ID = edgeID
 	}
 	if edgeRetired(edge) {
-		return nil
+		return RunsOnTerminalRetired, nil
 	}
 	metadata := mergeRetiredEdgeMetadata(edge.Metadata, map[string]string{
 		"k8s.cluster.name":   grace.ClusterName,
@@ -547,7 +547,7 @@ func (s *InMemoryGraphStore) MarkRunsOnTerminal(_ context.Context, grace RunsOnT
 	}
 	edge.Metadata = metadata
 	s.edges[edgeID] = edge
-	return nil
+	return RunsOnTerminalPending, nil
 }
 
 func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, clusterName string, active []RunsOnAssignment, retiredAt time.Time) ([]RunsOnTerminalGrace, error) {

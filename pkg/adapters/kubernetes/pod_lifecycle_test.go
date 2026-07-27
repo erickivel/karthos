@@ -270,8 +270,8 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	first := NewPodLifecycleTracker(firstClient,
 		withPodLifecycleGraceDuration(150*time.Millisecond),
-		WithPodRunsOnTerminalObserver(func(ctx context.Context, grace PodRunsOnTerminalGrace) error {
-			return store.MarkRunsOnTerminal(ctx, persistence.RunsOnTerminalGrace{
+		WithPodRunsOnTerminalObserver(func(ctx context.Context, grace PodRunsOnTerminalGrace) (PodRunsOnTerminalState, error) {
+			state, err := store.MarkRunsOnTerminal(ctx, persistence.RunsOnTerminalGrace{
 				ClusterName: cluster,
 				Namespace:   grace.Namespace,
 				PodName:     grace.PodName,
@@ -282,6 +282,7 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 				ObservedAt:  grace.ObservedAt,
 				Deadline:    grace.Deadline,
 			})
+			return PodRunsOnTerminalState(state), err
 		}),
 		WithPodRunsOnRetirementObserver(func(ctx context.Context, retirement PodRunsOnRetirement) error {
 			return store.RetireRunsOn(ctx, podID, nodeID, retirement.PodUID, retirement.RetiredAt)
@@ -361,10 +362,10 @@ func TestPodLifecycleTrackerDeniesTerminalRefreshUntilDeadlineMarkerPersists(t *
 	allowMarker := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tracker := NewPodLifecycleTracker(client, WithPodRunsOnTerminalObserver(func(_ context.Context, _ PodRunsOnTerminalGrace) error {
+	tracker := NewPodLifecycleTracker(client, WithPodRunsOnTerminalObserver(func(_ context.Context, _ PodRunsOnTerminalGrace) (PodRunsOnTerminalState, error) {
 		close(markerStarted)
 		<-allowMarker
-		return nil
+		return PodRunsOnTerminalPending, nil
 	}))
 	require.NoError(t, tracker.Start(ctx))
 
@@ -398,14 +399,14 @@ func TestPodLifecycleTrackerFailsClosedAndRetriesTerminalMarkerWithOriginalDeadl
 	tracker := NewPodLifecycleTracker(client,
 		withPodLifecycleGraceDuration(200*time.Millisecond),
 		withPodRetirementRetry(time.Millisecond),
-		WithPodRunsOnTerminalObserver(func(_ context.Context, grace PodRunsOnTerminalGrace) error {
+		WithPodRunsOnTerminalObserver(func(_ context.Context, grace PodRunsOnTerminalGrace) (PodRunsOnTerminalState, error) {
 			deadlines <- grace.Deadline
 			if attempts.Add(1) == 1 {
-				return errors.New("initial marker write failed")
+				return PodRunsOnTerminalPending, errors.New("initial marker write failed")
 			}
 			close(retryStarted)
 			<-allowRetry
-			return nil
+			return PodRunsOnTerminalPending, nil
 		}),
 	)
 	require.NoError(t, tracker.Start(ctx))
@@ -439,10 +440,11 @@ func TestPodLifecycleTrackerRestoresPersistedDeadlineForTerminalUIDStillListed(t
 	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-terminal")
 	old.Metadata = map[string]string{"k8s.pod.uid": "uid-terminal", "k8s.cluster.name": cluster}
 	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
-	require.NoError(t, store.MarkRunsOnTerminal(context.Background(), persistence.RunsOnTerminalGrace{
+	_, err := store.MarkRunsOnTerminal(context.Background(), persistence.RunsOnTerminalGrace{
 		ClusterName: cluster, Namespace: "default", PodName: "job-0", PodUID: "uid-terminal", NodeName: "node-a",
 		PodID: podID, NodeID: nodeID, ObservedAt: observedAt, Deadline: deadline,
-	}))
+	})
+	require.NoError(t, err)
 
 	watcher := watch.NewRaceFreeFake()
 	terminal := podForLifecycle("default", "job-0", "uid-terminal", "node-a")
@@ -455,9 +457,9 @@ func TestPodLifecycleTrackerRestoresPersistedDeadlineForTerminalUIDStillListed(t
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	tracker := NewPodLifecycleTracker(client,
-		WithPodRunsOnTerminalObserver(func(_ context.Context, _ PodRunsOnTerminalGrace) error {
+		WithPodRunsOnTerminalObserver(func(_ context.Context, _ PodRunsOnTerminalGrace) (PodRunsOnTerminalState, error) {
 			markerWrites.Add(1)
-			return nil
+			return PodRunsOnTerminalPending, nil
 		}),
 		WithPodRunsOnReconciliationObserver(func(ctx context.Context, observed []PodRunsOnAssignment) ([]PodRunsOnTerminalGrace, error) {
 			active := []persistence.RunsOnAssignment{{PodID: podID, NodeID: nodeID, PodUID: observed[0].PodUID}}
@@ -477,6 +479,110 @@ func TestPodLifecycleTrackerRestoresPersistedDeadlineForTerminalUIDStillListed(t
 	edges, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
 	require.NoError(t, err)
 	require.Equal(t, deadline.Format(time.RFC3339Nano), edges[0].Metadata["terminal_deadline"])
+}
+
+func TestPodLifecycleTrackerRetirementWinsWhenDelayedMarkerRetriesAcrossRestart(t *testing.T) {
+	const cluster = "cluster"
+	store := persistence.NewInMemoryGraphStore()
+	podID := entities.ComputeEntityID(entities.KindPod, cluster, "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, cluster, "node-a")
+	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
+	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
+	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old", "k8s.cluster.name": cluster}
+	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+
+	watcher := watch.NewRaceFreeFake()
+	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
+	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, watcher, nil
+	})
+	var markerAttempts atomic.Int32
+	retryStarted := make(chan struct{})
+	allowRetry := make(chan struct{})
+	retiredDurably := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	tracker := NewPodLifecycleTracker(client,
+		withPodLifecycleGraceDuration(time.Second),
+		withPodRetirementRetry(time.Millisecond),
+		WithPodRunsOnTerminalObserver(func(ctx context.Context, grace PodRunsOnTerminalGrace) (PodRunsOnTerminalState, error) {
+			if markerAttempts.Add(1) == 1 {
+				return PodRunsOnTerminalPending, errors.New("initial marker write failed")
+			}
+			close(retryStarted)
+			<-allowRetry
+			state, err := store.MarkRunsOnTerminal(ctx, persistence.RunsOnTerminalGrace{
+				ClusterName: cluster, Namespace: grace.Namespace, PodName: grace.PodName, PodUID: grace.PodUID, NodeName: grace.NodeName,
+				PodID: podID, NodeID: nodeID, ObservedAt: grace.ObservedAt, Deadline: grace.Deadline,
+			})
+			return PodRunsOnTerminalState(state), err
+		}),
+		WithPodRunsOnRetirementObserver(func(retirementCtx context.Context, retirement PodRunsOnRetirement) error {
+			if err := store.RetireRunsOn(retirementCtx, podID, nodeID, retirement.PodUID, retirement.RetiredAt); err != nil {
+				return err
+			}
+			close(retiredDurably)
+			<-retirementCtx.Done() // simulate crash before callback completion
+			return retirementCtx.Err()
+		}),
+	)
+	require.NoError(t, tracker.Start(ctx))
+	terminal := podForLifecycle("default", "job-0", "uid-old", "node-a")
+	terminal.Status.Phase = corev1.PodSucceeded
+	watcher.Modify(terminal)
+	select {
+	case <-retryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("expected delayed terminal marker retry")
+	}
+	watcher.Delete(terminal)
+	select {
+	case <-retiredDurably:
+	case <-time.After(time.Second):
+		t.Fatal("expected atomic direct retirement before simulated crash")
+	}
+
+	newAssignment := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
+	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-new")
+	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new", "k8s.cluster.name": cluster}
+	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
+	watcher.Add(podForLifecycle("default", "job-0", "uid-new", "node-a"))
+	close(allowRetry)
+	require.Eventually(t, func() bool {
+		return markerAttempts.Load() == 2 && !tracker.AllowsRunsOn("default", "job-0", "uid-old", "node-a")
+	}, time.Second, 5*time.Millisecond)
+	cancel() // crash before the retirement callback returns
+
+	restartWatcher := watch.NewRaceFreeFake()
+	restartClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-new", "node-a"))
+	restartClient.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+		return true, restartWatcher, nil
+	})
+	restartCtx, cancelRestart := context.WithCancel(context.Background())
+	defer cancelRestart()
+	restarted := NewPodLifecycleTracker(restartClient, WithPodRunsOnReconciliationObserver(func(ctx context.Context, observed []PodRunsOnAssignment) ([]PodRunsOnTerminalGrace, error) {
+		active := []persistence.RunsOnAssignment{{PodID: podID, NodeID: nodeID, PodUID: observed[0].PodUID}}
+		persisted, err := store.ReconcileRunsOn(ctx, cluster, active, time.Now().UTC())
+		grace := make([]PodRunsOnTerminalGrace, 0, len(persisted))
+		for _, item := range persisted {
+			grace = append(grace, PodRunsOnTerminalGrace{Namespace: item.Namespace, PodName: item.PodName, PodUID: item.PodUID, NodeName: item.NodeName, Deadline: item.Deadline})
+		}
+		return grace, err
+	}))
+	require.NoError(t, restarted.Start(restartCtx))
+	latest, err := store.GetLatest(restartCtx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 1)
+	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
+	audit, err := store.QueryEdges(restartCtx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	require.Len(t, audit, 2)
+	for _, edge := range audit {
+		if edge.ID == old.ID {
+			require.NotEmpty(t, edge.Metadata["retired_at"])
+			return
+		}
+	}
+	t.Fatal("expected old UID retirement audit edge")
 }
 
 func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T) {

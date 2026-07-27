@@ -351,7 +351,7 @@ func TestGraphStore_TerminalGraceSurvivesReconciliationUntilItsDeadline(t *testi
 	edge := lifecycleRunsOnEdge(podID, nodeID, "uid-terminal", observedAt)
 	edge.Metadata["k8s.cluster.name"] = "cluster-a"
 	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(edge)))
-	require.NoError(t, store.MarkRunsOnTerminal(ctx, RunsOnTerminalGrace{
+	_, err := store.MarkRunsOnTerminal(ctx, RunsOnTerminalGrace{
 		ClusterName: "cluster-a",
 		Namespace:   "default",
 		PodName:     "job-0",
@@ -361,7 +361,8 @@ func TestGraphStore_TerminalGraceSurvivesReconciliationUntilItsDeadline(t *testi
 		NodeID:      nodeID,
 		ObservedAt:  observedAt,
 		Deadline:    deadline,
-	}))
+	})
+	require.NoError(t, err)
 
 	// A replacement/deletion means the old UID is absent from the restarted
 	// tracker, but it remains latest-active throughout its persisted grace.
@@ -384,6 +385,32 @@ func TestGraphStore_TerminalGraceSurvivesReconciliationUntilItsDeadline(t *testi
 	require.NoError(t, err)
 	require.Len(t, audit, 1)
 	require.Equal(t, deadline.Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
+}
+
+func TestGraphStore_RetirementWinsOverDelayedTerminalMarker(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	observedAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster-a", "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster-a", "node-a")
+	edge := lifecycleRunsOnEdge(podID, nodeID, "uid-old", observedAt)
+	edge.Metadata["k8s.cluster.name"] = "cluster-a"
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(edge)))
+	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, "uid-old", observedAt.Add(time.Second)))
+
+	state, err := store.MarkRunsOnTerminal(ctx, RunsOnTerminalGrace{
+		ClusterName: "cluster-a", Namespace: "default", PodName: "job-0", PodUID: "uid-old", NodeName: "node-a",
+		PodID: podID, NodeID: nodeID, ObservedAt: observedAt, Deadline: observedAt.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Equal(t, RunsOnTerminalRetired, state)
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Empty(t, latest.Graph.Edges)
+	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	require.Equal(t, observedAt.Add(time.Second).Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
+	require.Empty(t, audit[0].Metadata["terminal_deadline"])
 }
 
 func TestGraphStore_ReconcileRunsOnDoesNotCrossClusterBoundary(t *testing.T) {
