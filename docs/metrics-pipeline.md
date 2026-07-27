@@ -662,17 +662,21 @@ the recorded deadline even if the asynchronous persistence callback is delayed.
 At backend startup, persisted active UID-versioned assignments are reconciled
 against the first authoritative Pod List/Watch state before metric refreshes
 are accepted, retiring any old UID that is absent from that state. A terminal
-UID keeps its full grace period even if it is deleted or replaced before the
-deadline; non-terminal deletions and replacements retire immediately. Retirement
+UID with a confirmed initial marker keeps its full grace period even if it is
+deleted or replaced before the deadline; non-terminal deletions and
+replacements retire immediately. Retirement
 persistence retries until backend shutdown with a bounded per-attempt backoff.
 Terminal observation synchronously stores one immutable `terminal_deadline`
 with the cluster and Pod identity before allowing grace-period refreshes. If
 that initial write fails, the terminal UID is fail-closed immediately; its
 structural refreshes may be lost while the original deadline is retried
-asynchronously without being extended. A restart preserves the grace even when
-the old Pod no longer appears in the List/Watch result, or when that same
-terminal UID is still listed: reconciliation returns the existing deadline to
-the tracker and never resets it. Reconciliation is restricted to matching
+asynchronously without being extended. A retry-only marker is explicitly
+unconfirmed: if its UID is absent or replaced at restart, reconciliation
+retires it immediately rather than preserve grace for a stale assignment. A
+restart preserves grace for a confirmed initial marker even when the old Pod no
+longer appears in the List/Watch result, or when that same terminal UID is
+still listed: reconciliation returns the existing deadline to the tracker and
+never resets it. Reconciliation is restricted to matching
 `k8s.cluster.name`; unscoped legacy edges are skipped rather than risking a
 cross-cluster retirement. At the deadline, latest-graph reads exclude the edge
 and the subsequent retirement marker provides the audit timestamp.

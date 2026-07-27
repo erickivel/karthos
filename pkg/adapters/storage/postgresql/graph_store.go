@@ -244,14 +244,18 @@ func (s *PostgresGraphStore) MarkRunsOnTerminal(ctx context.Context, grace persi
 		return persistence.RunsOnTerminalPending, fmt.Errorf("terminal runs_on grace requires cluster, pod UID, and deadline")
 	}
 	edgeID := topology.ComputeEdgeIDWithDiscriminator(grace.PodID, grace.NodeID, topology.RelRunsOn, grace.PodUID)
-	metadata, err := json.Marshal(map[string]string{
+	markerMetadata := map[string]string{
 		"k8s.cluster.name":   grace.ClusterName,
 		"k8s.namespace.name": grace.Namespace,
 		"k8s.pod.name":       grace.PodName,
 		"k8s.pod.uid":        grace.PodUID,
 		"k8s.node.name":      grace.NodeName,
 		"terminal_deadline":  grace.Deadline.UTC().Format(time.RFC3339Nano),
-	})
+	}
+	if grace.Confirmed {
+		markerMetadata["terminal_grace_confirmed"] = "true"
+	}
+	metadata, err := json.Marshal(markerMetadata)
 	if err != nil {
 		return persistence.RunsOnTerminalPending, fmt.Errorf("marshal terminal runs_on metadata: %w", err)
 	}
@@ -304,6 +308,13 @@ func (s *PostgresGraphStore) ReconcileRunsOn(ctx context.Context, clusterName st
 			if err != nil {
 				return nil, fmt.Errorf("parse terminal runs_on deadline: %w", err)
 			}
+			confirmed := metadata["terminal_grace_confirmed"] == "true"
+			if !confirmed {
+				if _, active := activeIDs[id]; !active {
+					stale = append(stale, staleAssignment{podID: entities.EntityID(source), nodeID: entities.EntityID(target), podUID: podUID})
+					continue
+				}
+			}
 			if deadline.After(retiredAt) {
 				pending = append(pending, persistence.RunsOnTerminalGrace{
 					ClusterName: clusterName,
@@ -314,6 +325,7 @@ func (s *PostgresGraphStore) ReconcileRunsOn(ctx context.Context, clusterName st
 					PodID:       entities.EntityID(source),
 					NodeID:      entities.EntityID(target),
 					Deadline:    deadline,
+					Confirmed:   confirmed,
 				})
 				continue
 			}

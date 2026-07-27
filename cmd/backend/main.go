@@ -358,6 +358,7 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 				NodeID:      entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, grace.NodeName),
 				ObservedAt:  grace.ObservedAt,
 				Deadline:    grace.Deadline,
+				Confirmed:   grace.Confirmed,
 			})
 			if state == persistence.RunsOnTerminalRetired {
 				return kubernetesadapter.PodRunsOnTerminalRetired, err
@@ -386,6 +387,7 @@ func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.G
 					NodeName:   item.NodeName,
 					ObservedAt: item.ObservedAt,
 					Deadline:   item.Deadline,
+					Confirmed:  item.Confirmed,
 				})
 			}
 			return grace, nil

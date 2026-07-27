@@ -534,14 +534,18 @@ func (s *InMemoryGraphStore) MarkRunsOnTerminal(_ context.Context, grace RunsOnT
 	if edgeRetired(edge) {
 		return RunsOnTerminalRetired, nil
 	}
-	metadata := mergeRetiredEdgeMetadata(edge.Metadata, map[string]string{
+	markerMetadata := map[string]string{
 		"k8s.cluster.name":   grace.ClusterName,
 		"k8s.namespace.name": grace.Namespace,
 		"k8s.pod.name":       grace.PodName,
 		"k8s.pod.uid":        grace.PodUID,
 		"k8s.node.name":      grace.NodeName,
 		"terminal_deadline":  grace.Deadline.UTC().Format(time.RFC3339Nano),
-	})
+	}
+	if grace.Confirmed {
+		markerMetadata["terminal_grace_confirmed"] = "true"
+	}
+	metadata := mergeRetiredEdgeMetadata(edge.Metadata, markerMetadata)
 	if existing := edgeTerminalDeadline(edge); existing != nil && existing.Before(grace.Deadline) {
 		metadata["terminal_deadline"] = existing.UTC().Format(time.RFC3339Nano)
 	}
@@ -571,6 +575,12 @@ func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, clusterName stri
 			continue
 		}
 		if deadline := edgeTerminalDeadline(edge); deadline != nil {
+			if edge.Metadata["terminal_grace_confirmed"] != "true" {
+				if _, active := activeIDs[edge.ID]; !active {
+					s.retireRunsOnLocked(edge.Source, edge.Target, podUID, retiredAt)
+					continue
+				}
+			}
 			if deadline.After(retiredAt) {
 				pending = append(pending, RunsOnTerminalGrace{
 					ClusterName: clusterName,
@@ -581,6 +591,7 @@ func (s *InMemoryGraphStore) ReconcileRunsOn(_ context.Context, clusterName stri
 					PodID:       edge.Source,
 					NodeID:      edge.Target,
 					Deadline:    *deadline,
+					Confirmed:   edge.Metadata["terminal_grace_confirmed"] == "true",
 				})
 				continue
 			}

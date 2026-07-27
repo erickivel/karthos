@@ -361,6 +361,7 @@ func TestGraphStore_TerminalGraceSurvivesReconciliationUntilItsDeadline(t *testi
 		NodeID:      nodeID,
 		ObservedAt:  observedAt,
 		Deadline:    deadline,
+		Confirmed:   true,
 	})
 	require.NoError(t, err)
 
@@ -411,6 +412,41 @@ func TestGraphStore_RetirementWinsOverDelayedTerminalMarker(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, observedAt.Add(time.Second).Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
 	require.Empty(t, audit[0].Metadata["terminal_deadline"])
+}
+
+func TestGraphStore_ReconcileUnconfirmedTerminalMarkerWithReplacementRetiresImmediately(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	podID := entities.ComputeEntityID(entities.KindPod, "cluster-a", "default", "job-0")
+	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster-a", "node-a")
+	old := lifecycleRunsOnEdge(podID, nodeID, "uid-old", now)
+	old.Metadata["k8s.cluster.name"] = "cluster-a"
+	newAssignment := lifecycleRunsOnEdge(podID, nodeID, "uid-new", now.Add(time.Second))
+	newAssignment.Metadata["k8s.cluster.name"] = "cluster-a"
+	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(old, newAssignment)))
+	_, err := store.MarkRunsOnTerminal(ctx, RunsOnTerminalGrace{
+		ClusterName: "cluster-a", Namespace: "default", PodName: "job-0", PodUID: "uid-old", NodeName: "node-a",
+		PodID: podID, NodeID: nodeID, ObservedAt: now, Deadline: now.Add(time.Minute), Confirmed: false,
+	})
+	require.NoError(t, err)
+
+	pending, err := store.ReconcileRunsOn(ctx, "cluster-a", []RunsOnAssignment{{PodID: podID, NodeID: nodeID, PodUID: "uid-new"}}, now.Add(2*time.Second))
+	require.NoError(t, err)
+	require.Empty(t, pending)
+	latest, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, latest.Graph.Edges, 1)
+	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
+	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
+	require.NoError(t, err)
+	for _, edge := range audit {
+		if edge.ID == old.ID {
+			require.NotEmpty(t, edge.Metadata["retired_at"])
+			return
+		}
+	}
+	t.Fatal("expected unconfirmed old UID retirement")
 }
 
 func TestGraphStore_ReconcileRunsOnDoesNotCrossClusterBoundary(t *testing.T) {

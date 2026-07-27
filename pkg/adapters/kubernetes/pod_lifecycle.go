@@ -46,6 +46,7 @@ type PodRunsOnTerminalGrace struct {
 	NodeName   string
 	ObservedAt time.Time
 	Deadline   time.Time
+	Confirmed  bool
 }
 
 // PodRunsOnTerminalState reports whether storage accepted a pending terminal
@@ -436,6 +437,7 @@ func (t *PodLifecycleTracker) newTerminalGrace(namespace, name string, pod activ
 		NodeName:   pod.nodeName,
 		ObservedAt: observedAt,
 		Deadline:   observedAt.Add(t.terminalGrace),
+		Confirmed:  true,
 	}
 }
 
@@ -599,17 +601,23 @@ func (t *PodLifecycleTracker) retryTerminalGrace(grace PodRunsOnTerminalGrace) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// A retry proves only that a marker was eventually written; it cannot prove
+	// the initial synchronous write completed before the terminal transition.
+	// Persist it as unconfirmed so restart reconciliation can fail closed when
+	// this UID is no longer in the authoritative Pod List/Watch state.
+	retryGrace := grace
+	retryGrace.Confirmed = false
 	go func() {
 		for {
 			if ctx.Err() != nil {
 				return
 			}
-			if state, err := observer(ctx, grace); err == nil {
+			if state, err := observer(ctx, retryGrace); err == nil {
 				if state == PodRunsOnTerminalRetired {
-					t.clearTerminalPending(grace)
+					t.clearTerminalPending(retryGrace)
 					return
 				}
-				t.armPendingTerminalGrace(podLifecycleKey(grace.Namespace, grace.PodName), grace, time.Until(grace.Deadline))
+				t.armPendingTerminalGrace(podLifecycleKey(retryGrace.Namespace, retryGrace.PodName), retryGrace, time.Until(retryGrace.Deadline))
 				return
 			}
 			timer := time.NewTimer(backoff)

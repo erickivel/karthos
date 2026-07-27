@@ -70,6 +70,7 @@ type RunsOnTerminalGrace struct {
 	NodeID      entities.EntityID
 	ObservedAt  time.Time
 	Deadline    time.Time
+	Confirmed   bool
 }
 
 // RunsOnTerminalState is the durable state after a terminal marker attempt.
