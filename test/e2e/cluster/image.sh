@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
-# Per-cell image transport.
-#
-# Today this is a thin wrapper around `docker push` for both supported
-# cells — the only `case` arm is `push_or_load`, which always pushes:
-#   - kind+local: docker push -> local "registry:2" container that kind's
-#     containerd mirrors at localhost:5001.
-#   - k3s+ssh:   docker push -> SSH tunnel -> remote "registry:2" container.
-#     k3s containerd mirrors localhost:5001 -> http://127.0.0.1:5001 via
-#     /etc/rancher/k3s/registries.yaml.
-#
-# The wrapper exists so deploy.sh never needs to know which transport a
-# cell uses; a future kind variant can swap in `kind load docker-image`
-# here (paired with flipping pullPolicy=Always) without touching deploy.sh.
+# Per-cell image transport. Deploys keep the same registry-qualified image tag
+# in every cell while each engine owns the path that makes that tag available.
 
 set -euo pipefail
 
@@ -26,55 +15,79 @@ EOF
   exit 2
 }
 
-tag_is_resolvable() {
-  local registry="$1"
-  local repository="$2"
-  local tag="$3"
-
-  curl -fsSI \
-    -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-    "http://${registry}/v2/${repository}/manifests/${tag}" >/dev/null
-}
-
-ensure_remote_tag() {
+split_image_reference() {
   local image="$1"
-  local registry repository_and_tag repository tag digest_ref digest manifest
+  local repository_and_tag
 
   registry="${image%%/*}"
   repository_and_tag="${image#*/}"
   repository="${repository_and_tag%:*}"
   tag="${repository_and_tag##*:}"
 
-  if tag_is_resolvable "$registry" "$repository" "$tag"; then
-    return 0
-  fi
-
-  digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image")"
-  digest="${digest_ref##*@}"
-  if [[ -z "$digest" || "$digest" == "$digest_ref" ]]; then
-    echo "image transport: pushed $image but could not determine its manifest digest" >&2
+  if [[ "${registry}" == "${image}" || "${repository}" == "${repository_and_tag}" ]]; then
+    echo "image transport: expected registry/repository:tag, got ${image}" >&2
     return 1
   fi
+}
 
-  manifest="$(mktemp -t oksg-registry-manifest.XXXXXX)"
-  trap 'rm -f "$manifest"' RETURN
-  curl -fsS \
-    -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-    "http://${registry}/v2/${repository}/manifests/${digest}" \
-    -o "$manifest"
-  curl -fsS -X PUT \
-    -H 'Content-Type: application/vnd.docker.distribution.manifest.v2+json' \
-    --data-binary "@$manifest" \
-    "http://${registry}/v2/${repository}/manifests/${tag}" >/dev/null
-  tag_is_resolvable "$registry" "$repository" "$tag"
+push_k3s_image() {
+  local image="$1"
+  local pushed_digest manifest_digest
+
+  : "${K3S_SSH_HOST:?K3S_SSH_HOST required for CLUSTER_ENGINE=k3s}"
+  : "${K3S_REGISTRY_PORT:=5001}"
+  split_image_reference "${image}"
+
+  pushed_digest="$(docker save "${image}" | ssh -o BatchMode=yes "${K3S_SSH_HOST}" bash -c '
+set -euo pipefail
+image="$1"
+docker load >&2
+push_output="$(docker push "$image" 2>&1)"
+printf "%s\\n" "$push_output" >&2
+pushed_digest="$(printf "%s\\n" "$push_output" | sed -n "s/.*[Dd]igest: \\(sha256:[[:xdigit:]]*\\).*/\\1/p" | tail -n 1)"
+if [[ -z "$pushed_digest" ]]; then
+  echo "image transport: remote docker push did not print a manifest digest" >&2
+  exit 1
+fi
+printf "%s\\n" "$pushed_digest"
+' -- "${image}")"
+
+  manifest_digest="$(ssh -o BatchMode=yes "${K3S_SSH_HOST}" bash -c '
+set -euo pipefail
+repository="$1"
+tag="$2"
+registry_port="$3"
+curl -fsSI \
+  -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+  "http://127.0.0.1:${registry_port}/v2/${repository}/manifests/${tag}"
+' -- "${repository}" "${tag}" "${K3S_REGISTRY_PORT}" | awk 'tolower($1) == "docker-content-digest:" { gsub("\\r", "", $2); print $2; exit }')"
+
+  if [[ -z "${manifest_digest}" ]]; then
+    echo "image transport: remote registry did not return Docker-Content-Digest for ${image}" >&2
+    return 1
+  fi
+  if [[ "${pushed_digest}" != "${manifest_digest}" ]]; then
+    echo "image transport: remote push digest ${pushed_digest} does not match registry manifest digest ${manifest_digest} for ${image}" >&2
+    return 1
+  fi
 }
 
 case "${1:-}" in
   push_or_load)
     shift
     [ $# -eq 1 ] || usage
-    docker push "$1"
-    ensure_remote_tag "$1"
+    case "${CLUSTER_ENGINE}" in
+      kind)
+        docker push "$1"
+        ;;
+      k3s)
+        push_k3s_image "$1"
+        ;;
+      *)
+        echo "unsupported CLUSTER_ENGINE: ${CLUSTER_ENGINE}" >&2
+        exit 1
+        ;;
+    esac
     ;;
   *)
     usage

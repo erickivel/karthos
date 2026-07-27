@@ -2,8 +2,9 @@
 # Foreground SSH tunnel that makes localhost:${K3S_REGISTRY_PORT} on the dev
 # machine forward to localhost:${K3S_REGISTRY_PORT} on the k3s server.
 #
-# This is what makes `docker push localhost:5001/...` reach the registry
-# container on the remote host. Ctrl-C to stop. Keep it in its own pane.
+# E2E image deploys stream images to the remote Docker daemon directly, so this
+# tunnel is optional and only useful for inspecting the remote registry locally.
+# Ctrl-C to stop. Keep it in its own pane when using it.
 
 set -euo pipefail
 

@@ -19,12 +19,13 @@ For day-to-day use, three things are worth remembering:
 1. **One variable switches everything.** `CLUSTER_PROFILE` in `.env` picks
    the engine, registry path, kubeconfig, and (when remote) the SSH host.
    No other file or task needs editing to flip cells.
-2. **Image tags never change between cells.** `docker push localhost:5001/…`
-   works locally for kind and remotely for k3s+ssh — the SSH tunnel and the
-   k3s `registries.yaml` mirror make `localhost:5001` resolve to the same
-   logical place on both ends. Remote profiles may set `IMAGE_PLATFORM`
-   (for example `linux/amd64`) when the server CPU architecture differs from
-   the local Docker daemon.
+2. **Image tags never change between cells.** kind pushes to its local
+   registry. For k3s+ssh, the harness streams the locally built image over
+   SSH, loads and pushes it from the server, then verifies the server
+   registry manifest digest before deployment. The SSH tunnel is optional
+   for manual registry inspection, not required to deploy images. Remote
+   profiles may set `IMAGE_PLATFORM` (for example `linux/amd64`) when the
+   server CPU architecture differs from the local Docker daemon.
 3. **The frontend dev loop is identical** for both cells. `task web:dev`
    talks to the backend through `kubectl port-forward`, which proxies via
    the Kubernetes API server. The API server's location (laptop vs remote)
@@ -146,29 +147,29 @@ task web:dev
 
 ## Cell: `k3s` + `ssh` (remote — single-node)
 
-The trick: the image tag stays `localhost:5001/...` on both ends. An SSH
-`-L` tunnel on the laptop and `registries.yaml` on the server make
-`localhost:5001` resolve to the same registry container that lives on the
-server.
+The image tag stays `localhost:5001/...` on both ends, but image transport is
+executed from the server side. The harness streams `docker save` over SSH to
+`docker load`, runs `docker push` on the server, and compares that push digest
+with the manifest digest served from the server loopback registry. k3s then
+pulls through its `registries.yaml` mirror.
 
 ```
 ╭───────────── your laptop ─────────────╮          ╭────────────── remote server ─────────────╮
 │                                       │          │                                          │
-│  docker push localhost:5001/foo       │          │   ┌──────────────────────────┐           │
-│           │                           │          │   │ registry:2 container     │           │
-│           ▼                           │          │   │ 127.0.0.1:5001 → :5000   │◄──┐       │
-│  ┌────────────────────────┐           │          │   │ "oksg-registry"          │   │       │
-│  │ ssh -L 5001:           │           │          │   └──────────────────────────┘   │       │
-│  │   localhost:5001       │═══tunnel═══════════════►                                │       │
-│  │   <K3S_SSH_HOST>       │           │ tcp:5001 │           ▲                      │       │
-│  └────────────────────────┘           │          │           │ image pulls          │       │
-│  ▲                                    │          │           │                      │       │
-│  │ task test:cluster:tunnel           │          │   ┌───────┴──────────────────────┴───┐   │
-│  │ (foreground; keep open in pane 2)  │          │   │ k3s server (containerd)          │   │
-│  │                                    │          │   │   registries.yaml mirrors        │   │
-│  │  kubectl (via                      │          │   │   localhost:5001 → 127.0.0.1:5001│   │
-│  │   ~/.kube/configs/                 │          │   │                                  │   │
-│  │   remote-k3s.yaml)                 │          │   │   serves API on :6443            │   │
+│  docker save localhost:5001/foo       │          │   docker load → docker push          │   │
+│           │                           │          │           │                          │   │
+│           └──── SSH stdin stream ─────────────────►           ▼                          │   │
+│                                       │          │   ┌──────────────────────────┐           │
+│  optional ssh -L (inspection only)   │          │   │ registry:2 container     │◄──┐       │
+│                                       │          │   │ 127.0.0.1:5001 → :5000   │   │       │
+│  kubectl (via                         │          │   │ "oksg-registry"          │   │       │
+│  ~/.kube/configs/                     │          │   └──────────────────────────┘   │       │
+│  remote-k3s.yaml)                     │          │           ▲ image pulls             │       │
+│                                       │          │   ┌───────┴──────────────────────┴───┐   │
+│                                       │          │   │ k3s server (containerd)          │   │
+│                                       │          │   │   registries.yaml mirrors        │   │
+│                                       │          │   │   localhost:5001 → 127.0.0.1:5001│   │
+│                                       │          │   │   serves API on :6443            │   │
 │  └────────────────────────────────────┼──tcp:6443┼──►│                                  │   │
 │                                       │   (direct,│   └──────────────────────────────────┘   │
 │  kubeconfig embeds                    │   not via │                                          │
@@ -177,22 +178,24 @@ server.
 ╰───────────────────────────────────────╯          ╰──────────────────────────────────────────╯
 ```
 
-Two data paths from the laptop to the server, each doing one thing:
+The required image and API paths, plus the optional inspection path:
 
 | Path                                         | Purpose                                  |
 |----------------------------------------------|------------------------------------------|
-| `ssh -L 5001:localhost:5001`                 | `docker push` images so k3s can pull them|
+| `docker save \| ssh <host> docker load`       | Streams the local image to the server without an archive |
+| Server-side `docker push localhost:5001/...` | Publishes to the registry k3s can pull from and yields the digest to verify |
 | Direct TCP to `K3S_SERVER_IP:6443`           | `kubectl` / `helm` against the API server|
+| Optional `ssh -L 5001:localhost:5001`        | Lets a developer inspect the remote registry from the laptop |
 
 ### Responsibilities (k3s+ssh)
 
 | Component                   | Where it runs       | Responsibility                                |
 |-----------------------------|---------------------|-----------------------------------------------|
-| Docker daemon (build)       | Laptop              | Builds images locally                         |
-| SSH tunnel `-L 5001:…`      | Laptop (foreground) | Pipes `docker push localhost:5001` to server  |
+| Docker daemon (build)       | Laptop              | Builds images locally and streams `docker save` over SSH |
+| SSH tunnel `-L 5001:…`      | Laptop (optional)   | Exposes the remote registry locally for inspection |
 | kubectl / helm              | Laptop              | Talks directly to k3s API on `K3S_SERVER_IP:6443`|
 | Vite dev server             | Laptop (Docker)     | Frontend HMR; `/api` → port-forward → API server |
-| Docker daemon (runtime)     | Server              | Runs the in-cluster registry container        |
+| Docker daemon (runtime)     | Server              | Loads streamed images, pushes them, and runs the in-cluster registry container |
 | `registry:2` ("oksg-registry") | Server (Docker)  | Holds the OKSG/demo images                    |
 | k3s (single-node)           | Server              | Hosts the workloads under test                |
 | backend, otel, demo apps    | Server (k3s)        | The system under test                         |
@@ -272,15 +275,16 @@ exists on the laptop and an idempotent registry runs on the server.
 
 ### Daily flow (after setup)
 
-Two panes — the tunnel must stay open while you work.
+The normal deploy flow needs no registry tunnel. Open one only when you want
+to inspect the remote registry from the laptop.
 
 ```
-       pane 1 (work)                              pane 2 (must stay open)
-       ─────────────                              ──────────────────────
+       pane 1 (work)                              optional pane 2
+       ─────────────                              ───────────────
 
  VARIANT=base task test:e2e:deploy                task test:cluster:tunnel
-       │ docker build → docker push localhost:5001/…    │ ssh -N -L 5001:…
-       │                                                │ (foreground)
+       │ docker build → docker save → SSH load/push     │ ssh -N -L 5001:…
+       │                                                │ (registry inspection only)
        │ kubectl apply                                  │
        │                                                │
  task test:e2e:apply-otel                              │
@@ -295,12 +299,9 @@ Two panes — the tunnel must stay open while you work.
 Or, copy-pasteable:
 
 ```bash
-# Pane 2 (must stay open while you work — Ctrl-C to stop):
-task test:cluster:tunnel
-
-# Pane 1, one-off after every setup:
+# One-off after every setup:
 task test:e2e:setup           # ensures registry, registries.yaml, kubeconfig
-task test:cluster:doctor      # confirms SSH, k3s, registry, tunnel, kubectl, TLS SAN
+task test:cluster:doctor      # confirms SSH, k3s, server registry, kubectl, TLS SAN
 
 # Pane 1, normal work:
 VARIANT=base task test:e2e:deploy
@@ -308,15 +309,19 @@ task test:e2e:apply-otel
 task test:e2e:verify
 kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
 task web:dev                  # frontend hits the remote cluster
+
+# Optional: expose the remote registry locally for manual inspection.
+task test:cluster:tunnel
 ```
 
 ### How it works (in words)
 
-- Image tags stay `localhost:5001/oksg-*`. On the dev machine that name is
-  forwarded through the SSH tunnel to a `registry:2` container on the
-  server. Inside the cluster, k3s containerd mirrors `localhost:5001` to
-  `http://127.0.0.1:5001` via `/etc/rancher/k3s/registries.yaml`, which
-  resolves to the same container.
+- Image tags stay `localhost:5001/oksg-*`. For k3s, `image.sh` streams each
+  local image to the remote Docker daemon, pushes it from that daemon, and
+  verifies the pushed digest against the remote registry's
+  `Docker-Content-Digest` response. No laptop registry tunnel is involved.
+  Inside the cluster, k3s containerd mirrors `localhost:5001` to the server
+  loopback registry via `/etc/rancher/k3s/registries.yaml`.
 - The exported kubeconfig embeds `https://${K3S_SERVER_IP}:${K3S_API_PORT}`
   as the server URL, so `kubectl` reaches the API server directly (no
   tunnel needed for the API).
@@ -344,8 +349,8 @@ Common failures and what `doctor` says:
 - `k3s service not active` — `ssh <host> sudo systemctl status k3s`.
 - `registries.yaml missing` — re-run `task test:e2e:setup`.
 - `oksg-registry container not running` — re-run `task test:e2e:setup`.
-- `localhost:5001 not reachable from this host` — start the tunnel
-  (`task test:cluster:tunnel`) in another pane.
+- `remote registry not reachable from the k3s server` — re-run
+  `task test:e2e:setup`; a laptop tunnel does not repair this condition.
 - `kubectl unreachable` — usually a TLS SAN mismatch. The doctor prints
   the exact `--tls-san=...` remediation to apply on the server.
 

@@ -114,7 +114,7 @@ k3s+ssh cell ready.
 
 Next steps:
   export KUBECONFIG=${KUBECONFIG}
-  task test:cluster:tunnel    # in a separate pane; keeps localhost:${K3S_REGISTRY_PORT} live
   task test:cluster:doctor    # validate the cell
+  # Optional: task test:cluster:tunnel  # inspect the remote registry from the laptop
 
 EOF

@@ -15,6 +15,10 @@ vars:
     sh: . test/e2e/cluster/profile.sh && echo "$IMAGE_PLATFORM"
   KUBECONFIG:
     sh: . test/e2e/cluster/profile.sh && echo "$KUBECONFIG"
+  K3S_SSH_HOST:
+    sh: . test/e2e/cluster/profile.sh && echo "${K3S_SSH_HOST:-}"
+  K3S_REGISTRY_PORT:
+    sh: . test/e2e/cluster/profile.sh && echo "${K3S_REGISTRY_PORT:-5001}"
   KIND_CLUSTER_NAME:
     sh: . test/e2e/cluster/profile.sh && echo "${KIND_CLUSTER_NAME:-oksg-test}"
   KIND_REGISTRY_NAME:
@@ -186,8 +190,8 @@ tasks:
               echo "kubectl cannot reach the cluster (KUBECONFIG={{.KUBECONFIG}}). Run 'task test:e2e:setup' and 'task test:cluster:doctor'."
               exit 1
             fi
-            if ! curl -fsS --max-time 5 "http://{{.REGISTRY_HOST}}/v2/" >/dev/null 2>&1; then
-              echo "registry not reachable at {{.REGISTRY_HOST}}. Start the tunnel: 'task test:cluster:tunnel'."
+            if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "{{.K3S_SSH_HOST}}" curl -fsS --max-time 5 http://127.0.0.1:{{.K3S_REGISTRY_PORT}}/v2/ >/dev/null 2>&1; then
+              echo "remote registry is not reachable from the k3s server at 127.0.0.1:{{.K3S_REGISTRY_PORT}}. Run 'task test:e2e:setup' and 'task test:cluster:doctor'."
               exit 1
             fi
             ;;
@@ -381,7 +385,7 @@ tasks:
         echo "KUBECONFIG={{.KUBECONFIG}}"
 
   cluster:tunnel:
-    desc: Open the SSH registry tunnel for k3s+ssh profiles (foreground; Ctrl-C to stop)
+    desc: Open an optional SSH registry-inspection tunnel for k3s+ssh profiles (foreground; Ctrl-C to stop)
     cmds:
       - |
         case "{{.CLUSTER_ENGINE}}" in

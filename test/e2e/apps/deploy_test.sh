@@ -24,12 +24,27 @@ cat >"${TMPDIR_TEST}/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "docker $*" >>"${DEPLOY_TEST_LOG}"
+if [[ "${1:-}" == "save" ]]; then
+  printf 'image-stream\n'
+fi
 EOF
 
-cat >"${TMPDIR_TEST}/curl" <<'EOF'
+cat >"${TMPDIR_TEST}/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-echo "curl $*" >>"${DEPLOY_TEST_LOG}"
+echo "ssh $*" >>"${DEPLOY_TEST_LOG}"
+if [[ "$*" == *"docker load"* ]]; then
+  [[ "$(cat)" == "image-stream" ]] || exit 1
+  if [[ "$*" == *"docker load >&2"* ]]; then
+    printf 'Loaded image: localhost:5001/deploy-test\n' >&2
+  else
+    printf 'Loaded image: localhost:5001/deploy-test\n'
+  fi
+  printf 'sha256:deploy-test\n'
+else
+  cat >/dev/null
+  printf 'Docker-Content-Digest: sha256:deploy-test\r\n'
+fi
 EOF
 
 cat >"${TMPDIR_TEST}/kubectl" <<'EOF'
@@ -68,7 +83,7 @@ YAML
     ;;
 esac
 EOF
-chmod +x "${TMPDIR_TEST}/docker" "${TMPDIR_TEST}/curl" "${TMPDIR_TEST}/kubectl"
+chmod +x "${TMPDIR_TEST}/docker" "${TMPDIR_TEST}/ssh" "${TMPDIR_TEST}/kubectl"
 
 export PATH="${TMPDIR_TEST}:${PATH}"
 export DEPLOY_TEST_LOG="${TMPDIR_TEST}/calls.log"
