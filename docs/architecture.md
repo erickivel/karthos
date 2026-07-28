@@ -94,15 +94,18 @@ per metric using `PolicyPriority` (lowest `Priority` value wins). Output:
 
 Full pipeline in [metrics-pipeline.md](metrics-pipeline.md).
 
-For the POC, discovery classifies an Istio mesh as partial when a non-system
-controller-owned workload Pod is outside an injected namespace, explicitly
-disables injection, or has no `istio-proxy` container. Kubernetes, Istio
-control-plane, and OKSG namespaces are excluded. A complete mesh owns the
-service-graph metrics and enables the node-owned mesh scrape job. A partial
-mesh disables that scrape globally and selects trace-derived servicegraph only
-when traces are available; otherwise it selects no service-graph producer.
-This is global source arbitration, not namespace-scoped coverage or
-boundary-peer routing.
+For the POC, a workload Pod has a supported Istio proxy when `istio-proxy` is
+either a classic regular container or a Kubernetes native sidecar init
+container with `restartPolicy: Always`. Discovery classifies the mesh as
+partial when a non-system controller-owned workload Pod is outside an injected
+namespace, explicitly disables injection, or lacks one of those supported proxy
+layouts. Kubernetes, Istio control-plane, and OKSG namespaces are excluded.
+Ambient mode remains unsupported because it has no per-Pod proxy scrape
+contract. A complete mesh owns the service-graph metrics and enables the
+node-owned mesh scrape job. A partial mesh disables that scrape globally and
+selects trace-derived servicegraph only when traces are available; otherwise it
+selects no service-graph producer. This is global source arbitration, not
+namespace-scoped coverage or boundary-peer routing.
 
 ## Topology Reconstruction
 

@@ -50,6 +50,103 @@ func TestDiscoverDetectsIstioMeshSource(t *testing.T) {
 	require.Contains(t, profile.RecommendedReceivers, "prometheus")
 }
 
+func TestDiscoverAcceptsIstioNativeSidecar(t *testing.T) {
+	restartPolicy := corev1.ContainerRestartPolicyAlways
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   "oksg-demo",
+			Labels: map[string]string{"istio-injection": "enabled"},
+		}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "native-sidecar-api",
+				Namespace:       "oksg-demo",
+				OwnerReferences: []metav1.OwnerReference{{Controller: boolPtr(true)}},
+			},
+			Spec: corev1.PodSpec{
+				Containers:     []corev1.Container{{Name: "api"}},
+				InitContainers: []corev1.Container{{Name: "istio-proxy", RestartPolicy: &restartPolicy}},
+			},
+		},
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "istio-sidecar-injector"}},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	require.False(t, profile.Sources[1].Mesh.Partial)
+	require.Contains(t, profile.RecommendedReceivers, "prometheus")
+	for _, path := range profile.CollectionPaths {
+		if path.ReceiverType == "prometheus/mesh-istio" {
+			return
+		}
+	}
+	t.Fatal("expected mesh-istio collection path")
+}
+
+func TestDiscoverMarksIstioMeshPartialForOrdinaryInitContainerNamedProxy(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   "oksg-demo",
+			Labels: map[string]string{"istio-injection": "enabled"},
+		}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "ordinary-init-proxy-api",
+				Namespace:       "oksg-demo",
+				OwnerReferences: []metav1.OwnerReference{{Controller: boolPtr(true)}},
+			},
+			Spec: corev1.PodSpec{
+				Containers:     []corev1.Container{{Name: "api"}},
+				InitContainers: []corev1.Container{{Name: "istio-proxy"}},
+			},
+		},
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "istio-sidecar-injector"}},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	require.True(t, profile.Sources[1].Mesh.Partial)
+	require.NotContains(t, profile.RecommendedReceivers, "prometheus")
+	for _, path := range profile.CollectionPaths {
+		require.NotEqual(t, "prometheus/mesh-istio", path.ReceiverType)
+	}
+}
+
+func TestDiscoverAcceptsIstioClassicSidecar(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   "oksg-demo",
+			Labels: map[string]string{"istio-injection": "enabled"},
+		}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "classic-sidecar-api",
+				Namespace:       "oksg-demo",
+				OwnerReferences: []metav1.OwnerReference{{Controller: boolPtr(true)}},
+			},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api"}, {Name: "istio-proxy"}}},
+		},
+		&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "istio-sidecar-injector"}},
+	)
+
+	adapter := NewDiscoveryAdapter(client, "kind-test", nil)
+	profile, err := adapter.Discover(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, profile.Sources, 2)
+	require.False(t, profile.Sources[1].Mesh.Partial)
+	require.Contains(t, profile.RecommendedReceivers, "prometheus")
+}
+
 func TestDiscoverMarksIstioMeshPartialWhenAWorkloadPodIsNotInjected(t *testing.T) {
 	client := fake.NewClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "istio-system"}},

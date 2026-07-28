@@ -134,7 +134,8 @@ Expected:
 
 - the task installs a minimal Istio control plane if needed, deploys the `with-istio` fixture, generates normal plus intentional error gateway traffic, and applies the OKSG collector plan
 - `oksg-demo` has sidecar injection enabled, while the sparse orphan pod explicitly disables injection
-- discovery emits an `istio` source with `mesh.flavor=istio`, `mesh.mode=sidecar`, and `/stats/prometheus` on port `15020`
+- discovery emits an `istio` source with `mesh.flavor=istio`, `mesh.mode=sidecar`, `mesh.partial=false`, and `/stats/prometheus` on port `15020`; complete sidecar meshes may use either a classic regular `istio-proxy` container or a Kubernetes native `initContainer` with `restartPolicy: Always`
+- ambient mode remains unsupported because it has no per-Pod proxy scrape contract
 - generated Helm values include a dedicated 15-second `mesh-istio` Prometheus scrape job that selects `istio-proxy` containers and stamps Prometheus-safe `oksg_source=mesh.istio`; the cadence keeps multiple cumulative samples inside the default one-minute aggregation window
 - generated Helm values place discovered application Prometheus Service-DNS jobs on the singleton gateway and stamp them with `oksg_source=prometheus.app`; agent Prometheus remains reserved for Istio pod discovery
 - application Prometheus annotations are not required for mesh metrics

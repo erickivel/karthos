@@ -255,11 +255,15 @@ pods whose `__meta_kubernetes_pod_node_name` equals `${env:K8S_NODE_NAME}`;
 each DaemonSet agent therefore owns the proxies on its own node.
 
 **POC service-graph policy.** A complete injected Istio mesh selects only
-`mesh.istio`. A partial mesh is detected when a non-system controller-owned
-workload Pod is outside an injected namespace, explicitly sets
-`sidecar.istio.io/inject: "false"`, or has no `istio-proxy` container.
-Kubernetes, Istio control-plane, and OKSG namespaces are excluded from that
-comparison. Partial meshes globally disable `mesh.istio` and its scrape job.
+`mesh.istio`. A workload Pod has a supported proxy when `istio-proxy` is either
+a classic regular container or a Kubernetes native sidecar init container with
+`restartPolicy: Always`. A partial mesh is detected when a non-system
+controller-owned workload Pod is outside an injected namespace, explicitly sets
+`sidecar.istio.io/inject: "false"`, or lacks one of those supported proxy
+layouts. Kubernetes, Istio control-plane, and OKSG namespaces are excluded from
+that comparison. Ambient mode remains unsupported because it has no per-Pod
+proxy scrape contract. Partial meshes globally disable `mesh.istio` and its
+scrape job.
 When traces are available,
 `traces.servicegraph` is the sole service-graph source; without traces, no
 service-graph source is selected. This deliberately avoids mixed mesh/trace

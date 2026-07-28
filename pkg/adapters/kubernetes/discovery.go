@@ -383,6 +383,13 @@ func hasIstioProxy(pod corev1.Pod) bool {
 			return true
 		}
 	}
+	for _, container := range pod.Spec.InitContainers {
+		if container.Name == istioProxyContainer &&
+			container.RestartPolicy != nil &&
+			*container.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			return true
+		}
+	}
 	return false
 }
 
