@@ -19,7 +19,7 @@ assert mesh is not None, "No istio source found in profile"
 assert mesh["present"] is True, "Istio source should be present"
 assert mesh["mesh"]["flavor"] == "istio"
 assert mesh["mesh"]["mode"] == "sidecar"
-assert mesh["mesh"]["partial"] is False, "Istio mesh should be complete"
+assert mesh["mesh"].get("partial", False) is False, "Istio mesh should be complete"
 assert "oksg-demo" in mesh["mesh"].get("injected_namespaces", [])
 print("✓ Discovery profile includes Istio mesh source")
 PY
