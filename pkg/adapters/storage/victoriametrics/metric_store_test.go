@@ -296,6 +296,7 @@ func TestBuildPromQLWindowMeanRequiresPositiveCountIncrease(t *testing.T) {
 
 	assert.Contains(t, got, "http_server_request_duration_sum")
 	assert.Contains(t, got, "http_server_request_duration_count")
+	assert.Contains(t, got, "ignoring(oksg_unit)")
 	assert.Contains(t, got, "> 0")
 	assert.NotContains(t, got, "clamp_min")
 }

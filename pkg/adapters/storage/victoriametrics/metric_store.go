@@ -398,7 +398,7 @@ func buildPromQL(q query.MetricQuery) string {
 	if metrics.IsWindowedMeanMetric(q.MetricName) {
 		sumIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_sum"))
 		countIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_count"))
-		return fmt.Sprintf("%s / (%s > 0)", sumIncrease, countIncrease)
+		return fmt.Sprintf("%s / ignoring(%s) (%s > 0)", sumIncrease, storedUnitLabel, countIncrease)
 	}
 
 	selector := metricSelector(q)
