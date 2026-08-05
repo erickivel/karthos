@@ -77,7 +77,7 @@ expected_edges = {
 
 def query(metric):
     selectors = " or ".join(
-        f'{metric}{{source="traces.servicegraph",temporality!="delta",oksg_unit="per_second",edge_client="{client}",edge_server="{server}"}}'
+        f'{metric}{{source="traces.servicegraph",temporality!="delta",oksg_unit="count",edge_client="{client}",edge_server="{server}"}}'
         for client, server in sorted(expected_edges)
     )
     promql = (
@@ -204,7 +204,7 @@ def edge_values(result):
 
 def exact_edge_query(metric):
     selectors = " or ".join(
-        f'{metric}{{source="traces.servicegraph",temporality!="delta",oksg_unit="per_second",edge_client="{client}",edge_server="{server}"}}'
+        f'{metric}{{source="traces.servicegraph",temporality!="delta",oksg_unit="count",edge_client="{client}",edge_server="{server}"}}'
         for client, server in sorted(expected_edges)
     )
     return f"sum by (edge_client,edge_server) ({selectors})"
