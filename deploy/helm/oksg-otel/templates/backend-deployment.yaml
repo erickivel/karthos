@@ -32,8 +32,9 @@ spec:
             - --enabled-signals={{ join "," .Values.enabledSignals }}
             - --cluster-name={{ .Values.global.clusterName }}
             - --pod-lifecycle-required=true
-            {{- if .Values.backend.discoveryProfile.enabled }}
-            - --discovery-profile=/etc/oksg/profile.json
+            {{- if .Values.backend.sourceContract.enabled }}
+            - --capability-profile=/etc/oksg/capability-profile.json
+            - --source-plan=/etc/oksg/source-plan.json
             {{- end }}
           env:
             - name: OKSG_LOG_LEVEL
@@ -78,18 +79,18 @@ spec:
               port: health
             initialDelaySeconds: 15
             periodSeconds: 20
-          {{- if .Values.backend.discoveryProfile.enabled }}
+          {{- if .Values.backend.sourceContract.enabled }}
           volumeMounts:
-            - name: discovery-profile
+            - name: source-contract
               mountPath: /etc/oksg
               readOnly: true
           {{- end }}
           resources:
 {{ toYaml .Values.backend.resources | indent 12 }}
-      {{- if .Values.backend.discoveryProfile.enabled }}
+      {{- if .Values.backend.sourceContract.enabled }}
       volumes:
-        - name: discovery-profile
+        - name: source-contract
           configMap:
-            name: {{ .Values.backend.discoveryProfile.configMapName }}
+            name: {{ .Values.backend.sourceContract.configMapName }}
       {{- end }}
 {{- end }}

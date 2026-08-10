@@ -62,7 +62,6 @@ tasks:
     cmds:
       - mkdir -p bin
       - go build -o ./bin/backend ./cmd/backend
-      - go build -o ./bin/controller ./cmd/controller
       - go build -o ./bin/discovery-job ./cmd/discovery-job
 
   build:check:
@@ -70,7 +69,6 @@ tasks:
     cmds:
       - mkdir -p bin
       - go build -o ./bin/backend ./cmd/backend
-      - go build -o ./bin/controller ./cmd/controller
       - go build -o ./bin/discovery-job ./cmd/discovery-job
 
   tidy:
@@ -104,4 +102,4 @@ tasks:
     desc: Remove generated artifacts and any binaries accidentally built in repo root
     cmds:
       - rm -rf bin coverage.out schemas
-      - rm -f discovery-job backend controller
+      - rm -f discovery-job backend

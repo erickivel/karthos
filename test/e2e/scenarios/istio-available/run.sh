@@ -14,14 +14,14 @@ import json
 from pathlib import Path
 
 profile = json.loads(Path("bin/e2e/profile.json").read_text())
-mesh = next((s for s in profile["sources"] if s["type"] == "istio"), None)
-assert mesh is not None, "No istio source found in profile"
-assert mesh["present"] is True, "Istio source should be present"
-assert mesh["mesh"]["flavor"] == "istio"
-assert mesh["mesh"]["mode"] == "sidecar"
-assert mesh["mesh"].get("partial", False) is False, "Istio mesh should be complete"
-assert "oksg-demo" in mesh["mesh"].get("injected_namespaces", [])
-print("✓ Discovery profile includes Istio mesh source")
+mesh = next((c for c in profile["capabilities"] if c["source_id"] == "mesh.istio"), None)
+assert mesh is not None, "No istio capability found in profile"
+assert mesh["status"] == "available", "Istio capability should be available"
+evidence = mesh["evidence"]["mesh"]
+assert evidence["flavor"] == "istio"
+assert evidence["mode"] == "sidecar"
+assert "oksg-demo" in evidence.get("injected_namespaces", [])
+print("✓ Capability profile includes Istio mesh")
 PY
 
 python3 - <<'PY'

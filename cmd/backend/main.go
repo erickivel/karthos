@@ -12,6 +12,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/adapters/api"
 	kubernetesadapter "github.com/erickivel/oksg/pkg/adapters/kubernetes"
+	oteladapter "github.com/erickivel/oksg/pkg/adapters/otel"
 	"github.com/erickivel/oksg/pkg/adapters/otlp"
 	"github.com/erickivel/oksg/pkg/adapters/storage"
 	"github.com/erickivel/oksg/pkg/backend/ingest"
@@ -21,6 +22,8 @@ import (
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/oksg/pkg/sources/structure"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -35,12 +38,10 @@ const (
 	defaultTopologyFlushInterval   = 60 * time.Second
 	defaultStatusStaleSeconds      = 300
 	defaultNodeTTL                 = 24 * time.Hour
-	// defaultDiscoveryRefreshInterval re-runs structural ingestion from the
-	// discovery profile on a timer so workload/ingress/configmap/secret/pvc
-	// nodes keep producing fresh snapshots and survive `nodeTTL` aging in the
-	// graph store. MUST stay strictly less than defaultNodeTTL — otherwise
-	// structural nodes age out between refreshes and disappear from the API.
-	defaultDiscoveryRefreshInterval = 10 * time.Minute
+	// defaultStructureRefreshInterval refreshes the live Kubernetes API
+	// topology. It must remain strictly below node TTL so structural-only
+	// entities (workloads, ingress, configmaps, secrets, PVCs) never age out.
+	defaultStructureRefreshInterval = 10 * time.Minute
 )
 
 type config struct {
@@ -51,7 +52,8 @@ type config struct {
 	LogLevel              string
 	EnabledSignals        []string
 	ClusterName           string
-	DiscoveryProfile      string
+	CapabilityProfile     string
+	SourcePlan            string
 	StorageBackend        string
 	PostgresDSN           string
 	VMURL                 string
@@ -60,13 +62,9 @@ type config struct {
 	StatusStaleSeconds    int
 	NodeTTL               time.Duration
 	PodLifecycleRequired  bool
-	// DiscoveryRefreshInterval re-runs structural ingestion from the
-	// discovery profile on a timer. Required because the graph store
-	// applies NodeTTL based on snapshot creation time; without periodic
-	// re-ingest, workload/ingress/configmap/secret/pvc nodes (which only
-	// the structural pipeline produces) age out and the API stops
-	// returning them. 0 disables the refresh — only do that for tests.
-	DiscoveryRefreshInterval time.Duration
+	// StructureRefreshInterval directly refreshes live Kubernetes structure.
+	// It must stay positive and, when node TTL is enabled, strictly less than it.
+	StructureRefreshInterval time.Duration
 }
 
 func main() {
@@ -113,49 +111,34 @@ func run(ctx context.Context, args []string) error {
 		logging.String("backend", cfg.StorageBackend),
 	)
 
+	capabilityProfile, sourcePlan, err := loadSourceContract(cfg)
+	if err != nil {
+		return err
+	}
+	if err := stores.MetadataStore.PutDiscovery(ctx, *capabilityProfile); err != nil {
+		return fmt.Errorf("persist capability profile: %w", err)
+	}
+
+	client, err := newInClusterClient()
+	if err != nil {
+		return err
+	}
+	structural := structure.New(client, cfg.ClusterName, stores.GraphStore, stores.EntityRegistry)
+	if err := structural.Refresh(ctx); err != nil {
+		return fmt.Errorf("refresh initial Kubernetes structure: %w", err)
+	}
+	go runStructureRefreshLoop(ctx, cfg.StructureRefreshInterval, structural, logger)
+
 	resolver := ingest.NewOTLPEntityResolverWithRegistry(cfg.ClusterName, stores.EntityRegistry)
-	dialect := metrics.NewDialectRegistryFromSources(metrics.DefaultLogicalSources())
+	modules := sources.DefaultRegistry()
+	dialect := metrics.NewSourceDialectRegistry(modules.Dialects())
+	assignment := sourcePlan.MetricAssignments
+	logger.Info("mounted source plan loaded", logging.Any("metric_count", len(assignment)))
 
-	var loadedProfile *profile.ClusterProfile
-	if cfg.DiscoveryProfile != "" {
-		prof, err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger)
-		if err != nil {
-			return err
-		}
-		loadedProfile = prof
-
-		// Re-ingest the discovery profile periodically so structural nodes
-		// (workload/ingress/configmap/secret/pvc) get fresh snapshots and
-		// don't age out under NodeTTL. See `defaultDiscoveryRefreshInterval`
-		// for the rationale; without this, the structural snapshot is pushed
-		// once at startup and disappears after NodeTTL.
-		if cfg.DiscoveryRefreshInterval > 0 {
-			if cfg.NodeTTL > 0 && cfg.DiscoveryRefreshInterval >= cfg.NodeTTL {
-				logger.Warn("discovery refresh interval is not strictly less than node TTL; structural nodes will age out between refreshes",
-					logging.String("discovery_refresh_interval", cfg.DiscoveryRefreshInterval.String()),
-					logging.String("node_ttl", cfg.NodeTTL.String()),
-				)
-			}
-			go runDiscoveryRefreshLoop(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger)
-		}
-	}
-
-	var assignment metrics.Assignment
-	if loadedProfile != nil {
-		var err error
-		assignment, _, err = metrics.Resolve(metrics.DefaultCatalog(), metrics.DefaultLogicalSources(), loadedProfile)
-		if err != nil {
-			return fmt.Errorf("resolve metric source assignment: %w", err)
-		}
-		logger.Info("metric source assignment loaded",
-			logging.Any("metric_count", len(assignment)),
-		)
-	}
-
-	sourcePolicy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), assignment)
+	sourcePolicy := ingest.NewMetricSourcePolicy(modules.MetricIDs(), assignment)
 	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithSourcePolicy(sourcePolicy))
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
-	podLifecycle, err := startPodLifecycle(ctx, cfg, stores.GraphStore, logger)
+	podLifecycle, err := startPodLifecycle(ctx, cfg, stores.GraphStore, logger, client)
 	if err != nil {
 		return err
 	}
@@ -206,8 +189,6 @@ func run(ctx context.Context, args []string) error {
 		HTTPListenAddress:   cfg.HTTPListenAddress,
 		HealthListenAddress: cfg.HealthListenAddress,
 		EnabledSignals:      cfg.EnabledSignals,
-		MetricStore:         stores.MetricStore,
-		GraphStore:          stores.GraphStore,
 	}, ingest.NewEnvelopeBuilder(contextNow), router, logger)
 	if err != nil {
 		return err
@@ -245,7 +226,8 @@ func parseConfig(args []string) (config, error) {
 	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultBackendLogLevel), "structured log level")
 	enabledSignals := fs.String("enabled-signals", envOrDefault("OKSG_BACKEND_ENABLED_SIGNALS", "metric,trace"), "comma-separated enabled signals")
 	clusterName := fs.String("cluster-name", envOrDefault("OKSG_CLUSTER_NAME", "default"), "cluster name for entity resolution")
-	discoveryProfile := fs.String("discovery-profile", envOrDefault("OKSG_DISCOVERY_PROFILE", ""), "path to ClusterProfile JSON for structural topology")
+	capabilityProfile := fs.String("capability-profile", envOrDefault("OKSG_CAPABILITY_PROFILE", ""), "path to mounted capability profile JSON")
+	sourcePlan := fs.String("source-plan", envOrDefault("OKSG_SOURCE_PLAN", ""), "path to mounted resolved source plan JSON")
 	storageBackend := fs.String("storage-backend", envOrDefault("OKSG_STORAGE_BACKEND", defaultStorageBackend), "storage backend: memory or external")
 	postgresDSN := fs.String("postgres-dsn", envOrDefault("OKSG_POSTGRES_DSN", ""), "PostgreSQL connection string")
 	vmURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
@@ -254,7 +236,7 @@ func parseConfig(args []string) (config, error) {
 	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
 	nodeTTLStr := fs.String("node-ttl", envOrDefault("OKSG_NODE_TTL", defaultNodeTTL.String()), "topology node TTL; nodes absent from snapshots for longer than this age out (0 disables)")
 	podLifecycleRequired := fs.Bool("pod-lifecycle-required", envOrDefault("OKSG_POD_LIFECYCLE_REQUIRED", "false") == "true", "require in-cluster pod lifecycle validation for metric runs_on edges")
-	discoveryRefreshStr := fs.String("discovery-refresh-interval", envOrDefault("OKSG_DISCOVERY_REFRESH_INTERVAL", defaultDiscoveryRefreshInterval.String()), "interval to re-ingest the discovery profile so structural topology nodes (workload/ingress/configmap/secret/pvc) refresh under node-ttl; 0 disables")
+	structureRefreshStr := fs.String("structure-refresh-interval", envOrDefault("OKSG_STRUCTURE_REFRESH_INTERVAL", defaultStructureRefreshInterval.String()), "interval to refresh live Kubernetes structural topology; must be positive and strictly less than node TTL")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -280,12 +262,12 @@ func parseConfig(args []string) (config, error) {
 		nodeTTL = 0
 	}
 
-	discoveryRefresh, err := time.ParseDuration(*discoveryRefreshStr)
+	structureRefresh, err := time.ParseDuration(*structureRefreshStr)
 	if err != nil {
-		return config{}, fmt.Errorf("parse discovery refresh interval: %w", err)
+		return config{}, fmt.Errorf("parse structure refresh interval: %w", err)
 	}
-	if discoveryRefresh < 0 {
-		discoveryRefresh = 0
+	if err := validateStructureRefreshInterval(structureRefresh, nodeTTL); err != nil {
+		return config{}, err
 	}
 
 	return config{
@@ -296,7 +278,8 @@ func parseConfig(args []string) (config, error) {
 		LogLevel:                 *logLevel,
 		EnabledSignals:           signals,
 		ClusterName:              *clusterName,
-		DiscoveryProfile:         *discoveryProfile,
+		CapabilityProfile:        *capabilityProfile,
+		SourcePlan:               *sourcePlan,
 		StorageBackend:           *storageBackend,
 		PostgresDSN:              *postgresDSN,
 		VMURL:                    *vmURL,
@@ -305,22 +288,39 @@ func parseConfig(args []string) (config, error) {
 		StatusStaleSeconds:       *statusStaleSeconds,
 		NodeTTL:                  nodeTTL,
 		PodLifecycleRequired:     *podLifecycleRequired,
-		DiscoveryRefreshInterval: discoveryRefresh,
+		StructureRefreshInterval: structureRefresh,
 	}, nil
 }
 
-func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.GraphStore, logger *logging.Logger) (ingest.PodLifecycle, error) {
+func validateStructureRefreshInterval(interval, nodeTTL time.Duration) error {
+	if interval <= 0 {
+		return fmt.Errorf("structure refresh interval must be greater than zero")
+	}
+	if nodeTTL > 0 && interval >= nodeTTL {
+		return fmt.Errorf("structure refresh interval must be strictly less than node TTL")
+	}
+	return nil
+}
+
+func newInClusterClient() (kubernetes.Interface, error) {
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("build in-cluster Kubernetes configuration for structural refresh: %w", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create Kubernetes client for structural refresh: %w", err)
+	}
+	return client, nil
+}
+
+func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.GraphStore, logger *logging.Logger, client kubernetes.Interface) (ingest.PodLifecycle, error) {
 	if !cfg.PodLifecycleRequired {
 		return nil, nil
 	}
 
-	kubeConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("build in-cluster Kubernetes configuration for required pod lifecycle validation: %w", err)
-	}
-	client, err := kubernetes.NewForConfig(kubeConfig)
-	if err != nil {
-		return nil, fmt.Errorf("create Kubernetes client for required pod lifecycle validation: %w", err)
+	if client == nil {
+		return nil, fmt.Errorf("required pod lifecycle validation needs an in-cluster Kubernetes client")
 	}
 	retirer, ok := graphStore.(persistence.RunsOnRetirer)
 	if !ok {
@@ -466,69 +466,75 @@ func contextNow() time.Time {
 	return time.Now().UTC()
 }
 
-// runDiscoveryRefreshLoop re-runs structural ingestion on the configured
-// interval. Required because the graph store applies NodeTTL based on snapshot
-// creation time — without periodic re-ingest, workload/ingress/configmap/
-// secret/pvc nodes (only produced by the structural pipeline) age out and the
-// API stops returning them. Errors are logged and the loop continues; a
-// transient discovery-profile read failure shouldn't take the backend down.
-func runDiscoveryRefreshLoop(
-	ctx context.Context,
-	cfg config,
-	graphStore persistence.GraphStore,
-	metadataStore persistence.MetadataStore,
-	entityRegistry persistence.EntityRegistry,
-	logger *logging.Logger,
-) {
-	ticker := time.NewTicker(cfg.DiscoveryRefreshInterval)
+type structuralRefresher interface {
+	Refresh(context.Context) error
+}
+
+func runStructureRefreshLoop(ctx context.Context, interval time.Duration, refresher structuralRefresher, logger *logging.Logger) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	logger.Info("discovery refresh loop started",
-		logging.String("interval", cfg.DiscoveryRefreshInterval.String()),
-		logging.String("profile_path", cfg.DiscoveryProfile),
-	)
+	logger.Info("Kubernetes structure refresh loop started", logging.String("interval", interval.String()))
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("discovery refresh loop stopping")
+			logger.Info("Kubernetes structure refresh loop stopping")
 			return
 		case <-ticker.C:
-			if _, err := ingestDiscoveryProfile(ctx, cfg, graphStore, metadataStore, entityRegistry, logger); err != nil {
-				logger.Warn("discovery refresh ingest failed", logging.Error(err))
+			if err := refresher.Refresh(ctx); err != nil {
+				logger.Warn("Kubernetes structure refresh failed", logging.Error(err))
 			}
 		}
 	}
 }
 
-func ingestDiscoveryProfile(
-	ctx context.Context,
-	cfg config,
-	graphStore persistence.GraphStore,
-	metadataStore persistence.MetadataStore,
-	entityRegistry persistence.EntityRegistry,
-	logger *logging.Logger,
-) (*profile.ClusterProfile, error) {
-	data, err := os.ReadFile(cfg.DiscoveryProfile)
+func loadSourceContract(cfg config) (*profile.ClusterProfile, oteladapter.ResolvedSourcePlan, error) {
+	if cfg.CapabilityProfile == "" {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("capability profile path is required")
+	}
+	if cfg.SourcePlan == "" {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan path is required")
+	}
+	profileData, err := os.ReadFile(cfg.CapabilityProfile)
 	if err != nil {
-		return nil, fmt.Errorf("read discovery profile: %w", err)
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("read capability profile: %w", err)
 	}
-	var prof profile.ClusterProfile
-	if err := json.Unmarshal(data, &prof); err != nil {
-		return nil, fmt.Errorf("unmarshal discovery profile: %w", err)
+	var capabilityProfile profile.ClusterProfile
+	if err := json.Unmarshal(profileData, &capabilityProfile); err != nil {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("decode capability profile: %w", err)
 	}
-
-	if err := metadataStore.PutDiscovery(ctx, prof); err != nil {
-		return nil, fmt.Errorf("persist discovery profile: %w", err)
+	planData, err := os.ReadFile(cfg.SourcePlan)
+	if err != nil {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("read source plan: %w", err)
 	}
-
-	builder := ingest.NewK8sStructuralTopologyBuilder(cfg.ClusterName)
-	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore, entityRegistry, logger)
-	if err := ingestor.IngestProfile(ctx, &prof); err != nil {
-		return nil, fmt.Errorf("ingest structural topology: %w", err)
+	var sourcePlan oteladapter.ResolvedSourcePlan
+	if err := json.Unmarshal(planData, &sourcePlan); err != nil {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("decode source plan: %w", err)
 	}
-
-	logger.Info("structural topology ingested from discovery profile",
-		logging.String("profile_path", cfg.DiscoveryProfile),
-		logging.String("cluster_name", prof.ClusterName),
-	)
-	return &prof, nil
+	fingerprint, err := capabilityProfile.Fingerprint()
+	if err != nil {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("fingerprint capability profile: %w", err)
+	}
+	if sourcePlan.ProfileFingerprint == "" || sourcePlan.ProfileFingerprint != fingerprint {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan profile fingerprint does not match mounted capability profile")
+	}
+	known := make(map[string]struct{}, len(sources.DefaultRegistry().MetricIDs()))
+	for _, sourceID := range sources.DefaultRegistry().MetricIDs() {
+		known[sourceID] = struct{}{}
+	}
+	selected := make(map[string]struct{}, len(sourcePlan.SelectedSources))
+	for _, sourceID := range sourcePlan.SelectedSources {
+		if _, ok := known[sourceID]; !ok {
+			return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan selects unknown source %q", sourceID)
+		}
+		selected[sourceID] = struct{}{}
+	}
+	for metricName, sourceID := range sourcePlan.MetricAssignments {
+		if _, ok := known[sourceID]; !ok {
+			return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan assigns metric %q to unknown source %q", metricName, sourceID)
+		}
+		if _, ok := selected[sourceID]; !ok {
+			return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan assigns metric %q to unselected source %q", metricName, sourceID)
+		}
+	}
+	return &capabilityProfile, sourcePlan, nil
 }

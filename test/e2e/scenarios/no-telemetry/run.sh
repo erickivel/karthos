@@ -11,9 +11,7 @@ from pathlib import Path
 profile = json.loads(Path("bin/e2e/profile.json").read_text())
 expected = json.loads(Path("test/e2e/scenarios/no-telemetry/expected-profile.json").read_text())
 
-assert profile["recommended_receivers"] == expected["recommended_receivers"]
-source = profile["sources"][0]
-assert source["type"] == expected["source_expectations"]["type"]
-assert source["present"] is expected["source_expectations"]["present"]
-assert source.get("prometheus_targets", []) == []
+capability = next(c for c in profile["capabilities"] if c["source_id"] == expected["source_id"])
+assert capability["status"] == expected["status"]
+assert capability.get("evidence", {}).get("prometheus_targets", []) == []
 PY

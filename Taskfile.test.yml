@@ -110,12 +110,16 @@ tasks:
     deps: [e2e:ensure-build]
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}}"
+      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --capability-profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}}"
 
-  e2e:apply-profile:
-    desc: Create or update a ConfigMap from the discovery profile for backend structural topology
+  e2e:apply-source-contract:
+    desc: Create or update the capability profile and resolved source-plan ConfigMap for backend validation
     cmds:
-      - kubectl create configmap oksg-discovery-profile --from-file=profile.json={{.PROFILE_PATH}} -n {{.KIND_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+      - >-
+        kubectl create configmap oksg-source-contract
+        --from-file=capability-profile.json={{.PROFILE_PATH}}
+        --from-file=source-plan.json={{.VALUES_PATH}}.source-plan.json
+        -n {{.KIND_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
 
   e2e:apply-otel:
     desc: Install or upgrade the OTel Helm release with generated values and external storage
@@ -156,7 +160,7 @@ tasks:
     desc: Remove deployed OTel Helm release
     cmds:
       - helm uninstall {{.HELM_RELEASE_NAME}} --namespace {{.KIND_NAMESPACE}} || true
-      - kubectl delete configmap oksg-discovery-profile -n {{.KIND_NAMESPACE}} --ignore-not-found
+      - kubectl delete configmap oksg-source-contract -n {{.KIND_NAMESPACE}} --ignore-not-found
 
   e2e:reset-apps:
     desc: Remove deployed demo fixtures across all e2e app namespaces
@@ -210,11 +214,11 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
-      - task: e2e:apply-profile
+      - task: e2e:apply-source-contract
       - task: e2e:verify
 
   e2e:scenario:prometheus:
-    desc: Run Prometheus discovery scenario with gateway traffic (full pipeline including spanmetrics/servicegraph)
+    desc: Run Prometheus discovery scenario with gateway traffic (full pipeline including servicegraph)
     cmds:
       - ./test/e2e/scenarios/prometheus-available/run.sh
 
@@ -227,7 +231,7 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
-      - task: e2e:apply-profile
+      - task: e2e:apply-source-contract
       - task: e2e:verify
       - task: e2e:traffic
         vars:
@@ -248,30 +252,19 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
-      - task: e2e:apply-profile
+      - task: e2e:apply-source-contract
       - task: e2e:verify
 
-  e2e:debug:metrics:
-    desc: Dump all metric samples from the backend /debug/metrics endpoint (port-forwards health port, curls, then cleans up)
+  e2e:scenario:detector-failure:
+    desc: Verify discovery fails closed and never writes a profile after a detector failure
+    deps: [e2e:ensure-build]
     cmds:
-      - |
-        lsof -ti :{{.BACKEND_HEALTH_PORT}} | xargs kill 2>/dev/null || true
-        kubectl port-forward -n {{.KIND_NAMESPACE}} deployment/oksg-backend {{.BACKEND_HEALTH_PORT}}:{{.BACKEND_HEALTH_PORT}} &
-        PF_PID=$!
-        sleep 2
-        curl -sf http://localhost:{{.BACKEND_HEALTH_PORT}}/debug/metrics
-        kill $PF_PID 2>/dev/null || true
+      - ./test/e2e/scenarios/detector-failure/run.sh
 
-  e2e:debug:graph:
-    desc: Dump the current topology graph snapshot from the backend /debug/graph endpoint
+  e2e:scenario:source-contract-rejection:
+    desc: Verify backend rejects a mismatched source plan and restores the valid contract
     cmds:
-      - |
-        lsof -ti :{{.BACKEND_HEALTH_PORT}} | xargs kill 2>/dev/null || true
-        kubectl port-forward -n {{.KIND_NAMESPACE}} deployment/oksg-backend {{.BACKEND_HEALTH_PORT}}:{{.BACKEND_HEALTH_PORT}} &
-        PF_PID=$!
-        sleep 2
-        curl -sf http://localhost:{{.BACKEND_HEALTH_PORT}}/debug/graph
-        kill $PF_PID 2>/dev/null || true
+      - ./test/e2e/scenarios/source-contract-rejection/run.sh
 
   e2e:debug:api:
     desc: Query the backend REST API status endpoint via a dedicated local port-forward
@@ -341,7 +334,7 @@ tasks:
             done
           fi
         fi
-        echo "Done. Run 'task test:e2e:debug:metrics' or 'task test:e2e:debug:graph' to inspect results."
+        echo "Done. Run 'task test:e2e:debug:api' to inspect backend status and query /api/v1/graph or /api/v1/metrics for data."
         kill $PF_PID 2>/dev/null || true
 
   e2e:traffic:watch:

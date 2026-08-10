@@ -16,31 +16,25 @@ from pathlib import Path
 profile = json.loads(Path("bin/e2e/profile.json").read_text())
 expected = json.loads(Path("test/e2e/scenarios/prometheus-available/expected-profile.json").read_text())
 
-assert profile["recommended_receivers"] == expected["recommended_receivers"], \
-    f"recommended_receivers mismatch: {profile['recommended_receivers']} != {expected['recommended_receivers']}"
+prom_source = next((c for c in profile["capabilities"] if c["source_id"] == expected["source_id"]), None)
+assert prom_source is not None, "No prometheus capability found in profile"
+assert prom_source["status"] == expected["status"]
+assert len(prom_source.get("evidence", {}).get("prometheus_targets", [])) >= 1, "Expected at least one prometheus target"
 
-prom_source = next((s for s in profile["sources"] if s["type"] == "prometheus"), None)
-assert prom_source is not None, "No prometheus source found in profile"
-assert prom_source["present"] is expected["source_expectations"]["present"]
-assert len(prom_source["prometheus_targets"]) >= 1, "Expected at least one prometheus target"
-
-print("✓ Discovery profile valid")
+print("✓ Capability profile valid")
 PY
 
-# Verify the generated collector values wire up the v0.156 compatibility-first
-# service graph and span metrics connector instances.
+# Verify the generated collector values wire up the selected servicegraph connector.
 python3 - <<'PY'
 from pathlib import Path
 
 values = Path("bin/e2e/otel-values.yaml").read_text()
 assert "service_graph:" in values, "generated Helm values should include the service_graph connector"
-assert "span_metrics:" in values, "generated Helm values should include the span_metrics connector"
-assert "otlp_grpc:" in values, "generated Helm values should use the non-deprecated OTLP gRPC exporter ID"
+assert "otlp_grpc:" in values, "generated Helm values should use the OTLP gRPC exporter ID"
 assert 'set(datapoint.attributes["oksg_source"]' in values, "source tagging must use explicit datapoint context"
 assert 'set(attributes["oksg_source"]' not in values, "ambiguous OTTL attribute paths must not be generated"
 assert "metrics_flush_interval: 15s" in values, "servicegraph should flush on the configured 15s ticker"
-assert "-connector.spanmetrics.includeCollectorInstanceID" in values, "spanmetrics instance identity must remain disabled"
-print("✓ Generated collector values include compatibility-first service_graph/span_metrics wiring")
+print("✓ Generated collector values include service_graph wiring")
 PY
 
 # Create every success/error branch, then let the cumulative series span the
@@ -122,15 +116,13 @@ PY
 # Generate one bounded traffic window so every rate and ratio has a known truth set.
 task test:e2e:traffic TRAFFIC_REQUESTS=30 TRAFFIC_ERROR_REQUESTS=10 TRAFFIC_INTERVAL=0.5 TRAFFIC_INTERLEAVE_ERRORS=true
 
-# Inspect the graph. External metric storage intentionally leaves the legacy
-# /debug/metrics in-memory endpoint empty; the VM and public API checks below
-# are the metric ingestion assertions for this scenario.
+# Inspect the graph through the public API.
 python3 - <<'PY'
 import json
 import urllib.request
 
-graph_resp = urllib.request.urlopen("http://localhost:13133/debug/graph")
-graph = json.loads(graph_resp.read())
+graph_resp = urllib.request.urlopen("http://localhost:18081/api/v1/graph")
+graph = json.loads(graph_resp.read())["data"]
 edges = graph.get("graph", {}).get("edges", [])
 nodes = graph.get("graph", {}).get("nodes", [])
 assert nodes and edges, f"expected non-empty graph snapshot, got {len(nodes)} nodes and {len(edges)} edges"
@@ -176,7 +168,7 @@ for relation in sorted({edge.get("relation") for edge in edges} - {"calls"}):
 PY
 
 # Validate raw delta totals in VictoriaMetrics, then verify the public API's
-# temporality-aware rates, duration means, and error ratios.
+# temporality-aware rates and duration means.
 python3 - <<'PY'
 import json
 import math
@@ -321,14 +313,6 @@ active_rates = latest_aggregate_by_edge(api_samples("servicegraph.request.count"
 assert set(active_rates) == expected_edges, f"active rate missing cumulative servicegraph edges: {active_rates}"
 assert all(math.isfinite(value) and value > 0 for value in active_rates.values())
 print("✓ API exact increases, default/explicit window rates, active rates, metadata, and units are correct")
-
-ratios = latest_by_edge(api_samples("servicegraph.request.error.ratio"))
-assert set(ratios) == expected_edges, f"error ratio missing internal edges: {ratios.keys()}"
-for edge, sample in ratios.items():
-    value = float(sample["value"])
-    assert math.isfinite(value), f"error ratio {edge} is not finite: {value}"
-    assert abs(value - 0.25) <= 0.02, f"error ratio {edge}: {value} != 0.25 ± 0.02"
-print("✓ servicegraph.request.error.ratio matches controlled traffic on all internal edges")
 
 durations = latest_by_edge(api_samples("servicegraph.request.duration"))
 assert set(durations) == expected_edges, f"duration missing internal edges: {durations.keys()}"

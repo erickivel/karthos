@@ -79,7 +79,7 @@ if grep -Fq "${ISTIO_RUN_TEST_REGISTRY}/mesh-protocol-go:latest" "${ISTIO_RUN_TE
   exit 1
 fi
 
-grep -Fq 'mesh["mesh"].get("partial", False) is False' \
+grep -Fq 'mesh["status"] == "available"' \
   "${REPO_ROOT}/test/e2e/scenarios/istio-available/run.sh"
 
 echo "Istio protocol Job uses built fixture image tag: PASS"

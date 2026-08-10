@@ -1,9 +1,4 @@
 {
-  "recommended_receivers": [
-    "kubeletstats"
-  ],
-  "source_expectations": {
-    "type": "prometheus",
-    "present": false
-  }
+  "source_id": "prometheus.app",
+  "status": "unavailable"
 }
