@@ -36,12 +36,8 @@ func TestGaugesAndEnumsDoNotDeclareAggregation(t *testing.T) {
 
 func TestWindowDerivedMetricsDeclareAggregationInCatalog(t *testing.T) {
 	want := map[string]AggregationMode{
-		"http.server.request.duration":     AggregationWindowMean,
-		"rpc.server.duration":              AggregationWindowMean,
-		"servicegraph.request.duration":    AggregationWindowMean,
-		"servicegraph.request.body.size":   AggregationWindowMean,
-		"servicegraph.response.body.size":  AggregationWindowMean,
-		"servicegraph.request.error.ratio": AggregationWindowRatio,
+		"http.server.request.duration":  AggregationWindowMean,
+		"servicegraph.request.duration": AggregationWindowMean,
 	}
 
 	for _, metric := range defaultCatalog {
@@ -89,9 +85,9 @@ func TestCounterAggregationDefaultsAndUnits(t *testing.T) {
 	require.Equal(t, UnitCount, restarts.BaseUnit)
 	require.Equal(t, UnitPerSecond, restarts.RateUnit)
 
-	cpuTime := catalog["system.cpu.time"].Aggregation
-	require.Equal(t, UnitNanoseconds, cpuTime.BaseUnit)
-	require.Equal(t, UnitNanosecondsPerSecond, cpuTime.RateUnit)
+	diskOperations := catalog["system.disk.operations"].Aggregation
+	require.Equal(t, UnitCount, diskOperations.BaseUnit)
+	require.Equal(t, UnitPerSecond, diskOperations.RateUnit)
 }
 
 func TestHostCounterAggregationDefaultsAndUnits(t *testing.T) {
@@ -111,12 +107,6 @@ func TestHostCounterAggregationDefaultsAndUnits(t *testing.T) {
 		require.Equal(t, UnitBytesPerSecond, spec.RateUnit, name)
 	}
 
-	paging := catalog["system.paging.operations"].Aggregation
-	require.NotNil(t, paging)
-	require.Equal(t, AggregationWindowRate, paging.Default)
-	require.Equal(t, time.Minute, paging.DefaultWindow)
-	require.Equal(t, UnitCount, paging.BaseUnit)
-	require.Equal(t, UnitPerSecond, paging.RateUnit)
 }
 
 func TestResolveAggregationValidatesModeAndWindow(t *testing.T) {
@@ -171,11 +161,4 @@ func TestResolveAggregationAllowsWindowOnlyForDerivedMetrics(t *testing.T) {
 	require.Equal(t, 90*time.Second, mean.Window)
 	require.Equal(t, UnitNanoseconds, mean.Unit)
 
-	ratio, err := ResolveAggregation(catalog["servicegraph.request.error.ratio"], "", "")
-	require.NoError(t, err)
-	require.Equal(t, AggregationWindowRatio, ratio.Mode)
-	require.Equal(t, time.Minute, ratio.Window)
-
-	_, err = ResolveAggregation(catalog["servicegraph.request.error.ratio"], "increase", "1m")
-	require.ErrorContains(t, err, "aggregation is not supported")
 }

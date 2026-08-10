@@ -101,17 +101,17 @@ type ServiceValues struct {
 }
 
 type BackendValues struct {
-	Enabled          bool                   `json:"enabled" yaml:"enabled"`
-	GRPCEndpoint     string                 `json:"grpcEndpoint,omitempty" yaml:"grpcEndpoint,omitempty"`
-	HTTPEndpoint     string                 `json:"httpEndpoint,omitempty" yaml:"httpEndpoint,omitempty"`
-	Image            ImageValues            `json:"image" yaml:"image"`
-	Service          BackendService         `json:"service" yaml:"service"`
-	RuntimeEnv       map[string]string      `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
-	DiscoveryProfile DiscoveryProfileValues `json:"discoveryProfile,omitempty" yaml:"discoveryProfile,omitempty"`
-	Resources        map[string]any         `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Enabled        bool                 `json:"enabled" yaml:"enabled"`
+	GRPCEndpoint   string               `json:"grpcEndpoint,omitempty" yaml:"grpcEndpoint,omitempty"`
+	HTTPEndpoint   string               `json:"httpEndpoint,omitempty" yaml:"httpEndpoint,omitempty"`
+	Image          ImageValues          `json:"image" yaml:"image"`
+	Service        BackendService       `json:"service" yaml:"service"`
+	RuntimeEnv     map[string]string    `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
+	SourceContract SourceContractValues `json:"sourceContract,omitempty" yaml:"sourceContract,omitempty"`
+	Resources      map[string]any       `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
 
-type DiscoveryProfileValues struct {
+type SourceContractValues struct {
 	Enabled       bool   `json:"enabled" yaml:"enabled"`
 	ConfigMapName string `json:"configMapName,omitempty" yaml:"configMapName,omitempty"`
 }
@@ -198,7 +198,7 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 			ComponentValues: ComponentValues{
 				Enabled:       true,
 				Logging:       logging,
-				FeatureGates:  []string{"-connector.spanmetrics.includeCollectorInstanceID"},
+				FeatureGates:  []string{},
 				CollectorYAML: string(gatewayConfig),
 			},
 			Replicas: 1,
@@ -218,9 +218,9 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 				HTTPPort:   endpointPort(plan.Backend.HTTPEndpoint, 4318),
 				HealthPort: DefaultBackendHealthPort,
 			},
-			DiscoveryProfile: DiscoveryProfileValues{
+			SourceContract: SourceContractValues{
 				Enabled:       true,
-				ConfigMapName: "oksg-discovery-profile",
+				ConfigMapName: "oksg-source-contract",
 			},
 		},
 		Secrets: SecretsValues{},

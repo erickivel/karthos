@@ -12,28 +12,13 @@ func TestOTLPSemconvMetricsUsesSemconvKeys(t *testing.T) {
 	require.Equal(t, OTLPMetricMapping{ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge}, mapping)
 }
 
-func TestOTLPSemconvMetricsSpanAndServicegraphTargets(t *testing.T) {
-	spanDuration, ok := OTLPSemconvMetrics["rpc.server.duration"]
-	require.True(t, ok, "expected rpc.server.duration to be present")
-	require.Equal(t, UnitNanoseconds, spanDuration.Unit)
-	require.Equal(t, MetricKindHistogram, spanDuration.Kind)
-	require.Equal(t, 1e6, spanDuration.ConversionFactor)
-
+func TestOTLPSemconvMetricsServicegraphTargets(t *testing.T) {
 	servicegraphCount, ok := OTLPSemconvMetrics["servicegraph.request.count"]
 	require.True(t, ok, "expected servicegraph.request.count to be present")
 	require.Equal(t, UnitCount, servicegraphCount.Unit)
 	require.Equal(t, MetricKindCounter, servicegraphCount.Kind)
 	require.Equal(t, 1.0, servicegraphCount.ConversionFactor)
 
-	requestBytes, ok := OTLPSemconvMetrics["servicegraph.request.body.size"]
-	require.True(t, ok, "expected servicegraph.request.body.size to be present")
-	require.Equal(t, UnitBytes, requestBytes.Unit)
-	require.Equal(t, MetricKindHistogram, requestBytes.Kind)
-
-	tcpConnections, ok := OTLPSemconvMetrics["servicegraph.tcp.connection.open.count"]
-	require.True(t, ok, "expected servicegraph.tcp.connection.open.count to be present")
-	require.Equal(t, UnitCount, tcpConnections.Unit)
-	require.Equal(t, MetricKindCounter, tcpConnections.Kind)
 }
 
 func TestOTLPSemconvMetricsStoresConditionVariantsAsSemconvStyleNames(t *testing.T) {
@@ -49,34 +34,20 @@ func TestOTLPSemconvMetricsStoresConditionVariantsAsSemconvStyleNames(t *testing
 	}
 }
 
-func TestOTLPSemconvMetricsResourceQuotaUsesResourceUnit(t *testing.T) {
-	for _, metricName := range []string{
-		"k8s.resource_quota.hard_limit",
-		"k8s.resource_quota.used",
-	} {
-		mapping, ok := OTLPSemconvMetrics[metricName]
-		require.True(t, ok, "expected %s to be present", metricName)
-		require.Equal(t, UnitResource, mapping.Unit)
-		require.Equal(t, MetricKindGauge, mapping.Kind)
-	}
-}
-
-func TestOTLPSemconvMetricsRemovesGenericContainerStorage(t *testing.T) {
+func TestOTLPSemconvMetricsRemovesDeferredFamilies(t *testing.T) {
 	require.NotContains(t, OTLPSemconvMetrics, "k8s.container.storage.request")
 	require.NotContains(t, OTLPSemconvMetrics, "k8s.container.storage.limit")
-	require.Contains(t, OTLPSemconvMetrics, "k8s.container.ephemeral_storage.request")
-	require.Contains(t, OTLPSemconvMetrics, "k8s.container.ephemeral_storage.limit")
+	require.NotContains(t, OTLPSemconvMetrics, "k8s.container.ephemeral_storage.request")
+	require.NotContains(t, OTLPSemconvMetrics, "rpc.server.duration")
+	require.NotContains(t, OTLPSemconvMetrics, "servicegraph.request.body.size")
 }
 
 func TestOTLPSemconvMetricsHostByteAndPagingSumsAreCounters(t *testing.T) {
 	for _, metricName := range []string{
-		"system.disk.io",
 		"system.disk.io.read",
 		"system.disk.io.write",
-		"system.network.io",
 		"system.network.io.receive",
 		"system.network.io.transmit",
-		"system.paging.operations",
 	} {
 		mapping, ok := OTLPSemconvMetrics[metricName]
 		require.True(t, ok, "expected %s to be present", metricName)

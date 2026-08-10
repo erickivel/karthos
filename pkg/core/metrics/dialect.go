@@ -17,24 +17,46 @@ func DialectFromMap(m map[string]string) Dialect {
 
 type DialectRegistry struct {
 	dialects []Dialect
+	bySource map[string]Dialect
 }
 
 func NewDialectRegistry(dialects ...Dialect) *DialectRegistry {
 	return &DialectRegistry{dialects: dialects}
 }
 
-// NewDialectRegistryFromSources collects the non-nil Dialects of the given
-// logical sources into a single DialectRegistry, preserving order. This is the
-// preferred constructor at startup so the dialect set stays in lockstep with
-// the source registry.
-func NewDialectRegistryFromSources(sources []LogicalSource) *DialectRegistry {
-	out := &DialectRegistry{}
-	for _, source := range sources {
-		if source.Dialect != nil {
-			out.dialects = append(out.dialects, source.Dialect)
+// NewSourceDialectRegistry binds each compiled source ID to its source-owned
+// wire-name dialect. Callers obtain these pairs from pkg/sources; metrics does
+// not own a parallel source registry.
+func NewSourceDialectRegistry(sourceDialects map[string]Dialect) *DialectRegistry {
+	out := &DialectRegistry{bySource: make(map[string]Dialect, len(sourceDialects))}
+	for sourceID, dialect := range sourceDialects {
+		if dialect == nil {
+			continue
 		}
+		out.dialects = append(out.dialects, dialect)
+		out.bySource[sourceID] = dialect
 	}
 	return out
+}
+
+// TranslateForSource translates with one explicitly stamped source. The
+// source-built registry never performs ordered dialect matching, preventing a
+// raw metric from being claimed by an unrelated module.
+func (r *DialectRegistry) TranslateForSource(sourceID, metricName string) string {
+	if r == nil {
+		return metricName
+	}
+	if r.bySource != nil {
+		dialect := r.bySource[sourceID]
+		if dialect == nil {
+			return metricName
+		}
+		if translated, ok := dialect.Translate(metricName); ok {
+			return translated
+		}
+		return metricName
+	}
+	return r.Translate(metricName)
 }
 
 func (r *DialectRegistry) Translate(metricName string) string {
@@ -57,11 +79,8 @@ var PrometheusDialect = DialectMap{
 }
 
 var KubeletDialect = DialectMap{
-	"container.cpu.usage":            "k8s.container.cpu.usage",
-	"container.memory.usage":         "k8s.container.memory.usage",
-	"container.filesystem.usage":     "k8s.container.filesystem.usage",
-	"container.filesystem.capacity":  "k8s.container.filesystem.capacity",
-	"container.filesystem.available": "k8s.container.filesystem.available",
+	"container.cpu.usage":    "k8s.container.cpu.usage",
+	"container.memory.usage": "k8s.container.memory.usage",
 }
 
 // KubeClusterDialect translates k8s_cluster receiver wire names (with underscore
@@ -69,17 +88,10 @@ var KubeletDialect = DialectMap{
 // Container ready/restarts already use single-segment names that match the
 // catalog directly and need no translation.
 var KubeClusterDialect = DialectMap{
-	"k8s.container.cpu_request":              "k8s.container.cpu.request",
-	"k8s.container.cpu_limit":                "k8s.container.cpu.limit",
-	"k8s.container.memory_request":           "k8s.container.memory.request",
-	"k8s.container.memory_limit":             "k8s.container.memory.limit",
-	"k8s.container.ephemeralstorage_request": "k8s.container.ephemeral_storage.request",
-	"k8s.container.ephemeralstorage_limit":   "k8s.container.ephemeral_storage.limit",
-}
-
-var SpanmetricsDialect = DialectMap{
-	"traces.span.metrics.calls":    "rpc.server.request.count",
-	"traces.span.metrics.duration": "rpc.server.duration",
+	"k8s.container.cpu_request":    "k8s.container.cpu.request",
+	"k8s.container.cpu_limit":      "k8s.container.cpu.limit",
+	"k8s.container.memory_request": "k8s.container.memory.request",
+	"k8s.container.memory_limit":   "k8s.container.memory.limit",
 }
 
 var ServicegraphDialect = DialectMap{
@@ -94,12 +106,4 @@ var ServicegraphDialect = DialectMap{
 var IstioDialect = DialectMap{
 	"istio_requests_total":                "servicegraph.request.count",
 	"istio_request_duration_milliseconds": "servicegraph.request.duration",
-	"istio_request_bytes":                 "servicegraph.request.body.size",
-	"istio_response_bytes":                "servicegraph.response.body.size",
-	"istio_request_messages_total":        "servicegraph.grpc.request.message.count",
-	"istio_response_messages_total":       "servicegraph.grpc.response.message.count",
-	"istio_tcp_connections_opened_total":  "servicegraph.tcp.connection.open.count",
-	"istio_tcp_connections_closed_total":  "servicegraph.tcp.connection.close.count",
-	"istio_tcp_sent_bytes_total":          "servicegraph.tcp.bytes.sent",
-	"istio_tcp_received_bytes_total":      "servicegraph.tcp.bytes.received",
 }

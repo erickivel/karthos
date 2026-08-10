@@ -79,14 +79,12 @@ func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 	require.Contains(t, string(values), "releaseName: oksg-otel")
 	require.Contains(t, string(values), "backend:")
 	require.Contains(t, string(values), "grpcEndpoint: oksg-backend:4317")
-	require.Contains(t, string(values), "featureGates:")
 	require.NotContains(t, string(values), "enableCPUUsageMetrics")
-	require.Contains(t, string(values), "-connector.spanmetrics.includeCollectorInstanceID")
 	require.Contains(t, string(values), "enabledSignals:")
 	require.Contains(t, string(values), "- trace")
 }
 
-func TestBuildUsesV0156CompatibilityFeatureGates(t *testing.T) {
+func TestBuildUsesV0156FeatureGates(t *testing.T) {
 	renderer := NewGenerator()
 	values, err := renderer.Build(otel.Plan{})
 	require.NoError(t, err)
@@ -94,7 +92,14 @@ func TestBuildUsesV0156CompatibilityFeatureGates(t *testing.T) {
 	require.Equal(t, "0.156.0", values.Global.Image.Tag)
 	require.True(t, values.Agent.HostNetwork)
 	require.Empty(t, values.Agent.FeatureGates)
-	require.Equal(t, []string{"-connector.spanmetrics.includeCollectorInstanceID"}, values.Gateway.FeatureGates)
+	require.Empty(t, values.Gateway.FeatureGates)
+}
+
+func TestBuildMountsTheSourceContractInsteadOfADiscoveryProfile(t *testing.T) {
+	values, err := NewGenerator().Build(otel.Plan{})
+	require.NoError(t, err)
+	require.True(t, values.Backend.SourceContract.Enabled)
+	require.Equal(t, "oksg-source-contract", values.Backend.SourceContract.ConfigMapName)
 }
 
 func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
@@ -194,7 +199,7 @@ func TestGenerateIncludesK8sclusterInGatewayConfig(t *testing.T) {
 	require.Contains(t, string(values), "node_conditions_to_report:")
 }
 
-func TestGenerateIncludesConnectorsWhenPresent(t *testing.T) {
+func TestGenerateIncludesServicegraphConnectorWhenPresent(t *testing.T) {
 	renderer := NewGenerator()
 
 	values, err := renderer.Generate(otel.Plan{
@@ -213,11 +218,6 @@ func TestGenerateIncludesConnectorsWhenPresent(t *testing.T) {
 			},
 			Processors: map[string]any{"batch": map[string]any{}},
 			Connectors: map[string]any{
-				"span_metrics": map[string]any{
-					"histogram": map[string]any{
-						"explicit": map[string]any{"buckets": []string{"100ms", "250ms", "500ms"}},
-					},
-				},
 				"service_graph": map[string]any{
 					"latency_histogram_buckets": []string{"100ms", "500ms", "1s"},
 				},
@@ -226,14 +226,14 @@ func TestGenerateIncludesConnectorsWhenPresent(t *testing.T) {
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {
-						Receivers:  []string{"kubelet_stats", "span_metrics", "service_graph"},
+						Receivers:  []string{"kubelet_stats", "service_graph"},
 						Processors: []string{"batch"},
 						Exporters:  []string{"otlp"},
 					},
 					"traces": {
 						Receivers:  []string{"otlp"},
 						Processors: []string{"batch"},
-						Exporters:  []string{"otlp", "span_metrics", "service_graph"},
+						Exporters:  []string{"otlp", "service_graph"},
 					},
 				},
 			},
@@ -252,7 +252,7 @@ func TestGenerateIncludesConnectorsWhenPresent(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Contains(t, string(values), "connectors:")
-	require.Contains(t, string(values), "span_metrics:")
+	require.NotContains(t, string(values), "span_metrics:")
 	require.Contains(t, string(values), "service_graph:")
 }
 

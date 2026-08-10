@@ -34,16 +34,6 @@ type deployerInterface interface {
 	Template(ctx context.Context, values []byte, options deployer.Options) error
 }
 
-type deployFunc func(ctx context.Context, values []byte, options deployer.Options) error
-
-func (f deployFunc) Apply(ctx context.Context, values []byte, options deployer.Options) error {
-	return f(ctx, values, options)
-}
-
-func (f deployFunc) Template(_ context.Context, _ []byte, _ deployer.Options) error {
-	return fmt.Errorf("template not implemented")
-}
-
 type dependencies struct {
 	discover  func(context.Context) (*profile.ClusterProfile, error)
 	planner   planner
@@ -67,9 +57,10 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	mode := fs.String("mode", "discover", "mode to run: discover, plan, deploy")
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig")
 	clusterName := fs.String("cluster-name", defaultClusterName, "name of the cluster being discovered")
-	profilePath := fs.String("profile", "", "path to discovery profile JSON")
+	profilePath := fs.String("capability-profile", "", "path to capability profile JSON")
 	outputPath := fs.String("output", "", "output file path")
 	valuesOutputPath := fs.String("values-output", "", "output file path for generated Helm values")
+	resolvedPlanOutputPath := fs.String("resolved-plan-output", "", "output path for resolved source plan JSON (defaults beside --values-output)")
 	renderedOutputPath := fs.String("rendered-output", "", "directory for helm template output")
 	namespace := fs.String("namespace", otel.DefaultNamespace, "namespace for generated collector resources")
 	helmNamespace := fs.String("helm-namespace", "", "namespace for Helm release resources (defaults to --namespace)")
@@ -100,6 +91,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	}
 
 	valuesPath := coalesce(*valuesOutputPath, *outputPath)
+	resolvedPlanPath := coalesce(*resolvedPlanOutputPath, defaultResolvedPlanPath(valuesPath))
 	deployOptions := deployer.Options{
 		ReleaseName:  *releaseName,
 		ChartPath:    *chartPath,
@@ -174,6 +166,11 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			logger.Error("write helm values failed", logging.Error(err))
 			return err
 		}
+		if resolvedPlanPath != "" {
+			if err := writeJSON(resolvedPlanPath, plan.SourcePlan); err != nil {
+				return fmt.Errorf("write resolved source plan: %w", err)
+			}
+		}
 		if *renderedOutputPath != "" {
 			if deps.deployer == nil {
 				deps.deployer = deployer.New(nil)
@@ -218,6 +215,11 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			if err := writeOutput(valuesPath, values); err != nil {
 				logger.Error("write helm values failed", logging.Error(err))
 				return err
+			}
+		}
+		if resolvedPlanPath != "" {
+			if err := writeJSON(resolvedPlanPath, plan.SourcePlan); err != nil {
+				return fmt.Errorf("write resolved source plan: %w", err)
 			}
 		}
 		logger.Info("deploying helm release",
@@ -302,7 +304,7 @@ func readProfile(path string) (*profile.ClusterProfile, error) {
 		return nil, fmt.Errorf("profile path is required")
 	}
 
-	data, err := os.ReadFile(filepath.Clean(path)) //#nosec G304 -- path comes from trusted CLI flag --profile
+	data, err := os.ReadFile(filepath.Clean(path)) //#nosec G304 -- path comes from trusted CLI flag --capability-profile
 	if err != nil {
 		return nil, fmt.Errorf("read profile: %w", err)
 	}
@@ -338,6 +340,13 @@ func coalesce(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func defaultResolvedPlanPath(valuesPath string) string {
+	if valuesPath == "" {
+		return ""
+	}
+	return valuesPath + ".source-plan.json"
 }
 
 func envOrDefault(key, fallback string) string {

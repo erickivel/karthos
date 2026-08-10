@@ -10,131 +10,55 @@ import (
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
 	"github.com/erickivel/oksg/pkg/collector/configgen"
-	"github.com/erickivel/oksg/pkg/collector/deployer"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
-func TestRunPlanWritesRenderedCollectorManifests(t *testing.T) {
+func TestRunPlanWritesResolvedSourcePlanBesideValues(t *testing.T) {
 	tempDir := t.TempDir()
 	profilePath := filepath.Join(tempDir, "profile.json")
-	outputPath := filepath.Join(tempDir, "otel-values.yaml")
-
-	err := os.WriteFile(profilePath, []byte(`{
-  "sources": [{
-    "name": "application-prometheus",
-    "type": "prometheus",
-    "present": true,
-    "prometheus_targets": [{
-      "service_name": "gateway-go",
-      "namespace": "oksg-demo",
-      "port": 8080,
-      "path": "/metrics",
-      "reachable": true
-    }]
-  }]
-}`), 0o644)
-	require.NoError(t, err)
-
-	err = run(context.Background(), []string{
-		"--mode=plan",
-		"--profile=" + profilePath,
-		"--output=" + outputPath,
-	}, dependencies{
-		planner:   otel.NewSourcePlanner("oksg-system"),
-		generator: defaultGenerator(configgen.GeneratorOptions{}),
-	})
-	require.NoError(t, err)
-
-	output, err := os.ReadFile(outputPath)
-	require.NoError(t, err)
-	require.Contains(t, string(output), "collectorConfig")
-	require.Contains(t, string(output), "prometheus:")
-}
-
-func TestRunDeployUsesGeneratedManifests(t *testing.T) {
-	tempDir := t.TempDir()
-	profilePath := filepath.Join(tempDir, "profile.json")
-
-	err := os.WriteFile(profilePath, []byte(`{
-  "sources": [{
-    "name": "application-prometheus",
-    "type": "prometheus",
-    "present": false
-  }]
-}`), 0o644)
-	require.NoError(t, err)
-
-	var applied string
-	var appliedOptions deployer.Options
-	err = run(context.Background(), []string{
-		"--mode=deploy",
-		"--profile=" + profilePath,
-	}, dependencies{
-		planner:   otel.NewSourcePlanner("oksg-system"),
-		generator: defaultGenerator(configgen.GeneratorOptions{}),
-		deployer: deployFunc(func(_ context.Context, values []byte, options deployer.Options) error {
-			applied = string(values)
-			appliedOptions = options
-			return nil
-		}),
-	})
-	require.NoError(t, err)
-	require.Contains(t, applied, "collectorConfig")
-	require.Equal(t, "oksg-system", appliedOptions.Namespace)
-	require.NotContains(t, applied, "prometheus:")
-}
-
-func TestRunDeployUsesHelmNamespaceForBothPlannerAndDeployer(t *testing.T) {
-	tempDir := t.TempDir()
-	profilePath := filepath.Join(tempDir, "profile.json")
-
-	err := os.WriteFile(profilePath, []byte(`{
-  "sources": [{
-    "name": "application-prometheus",
-    "type": "prometheus",
-    "present": false
-  }]
-}`), 0o644)
-	require.NoError(t, err)
-
-	var applied string
-	var appliedOptions deployer.Options
-	err = run(context.Background(), []string{
-		"--mode=deploy",
-		"--profile=" + profilePath,
-		"--namespace=default-ns",
-		"--helm-namespace=override-ns",
-	}, dependencies{
-		generator: defaultGenerator(configgen.GeneratorOptions{}),
-		deployer: deployFunc(func(_ context.Context, values []byte, options deployer.Options) error {
-			applied = string(values)
-			appliedOptions = options
-			return nil
-		}),
-	})
-	require.NoError(t, err)
-	require.Equal(t, "override-ns", appliedOptions.Namespace)
-	require.Contains(t, applied, "namespace: override-ns")
-	require.NotContains(t, applied, "namespace: default-ns")
-}
-
-func TestRunDiscoverWritesProfile(t *testing.T) {
-	tempDir := t.TempDir()
-	outputPath := filepath.Join(tempDir, "profile.json")
+	valuesPath := filepath.Join(tempDir, "otel-values.yaml")
+	require.NoError(t, os.WriteFile(profilePath, []byte(capabilityProfileJSON), 0o644))
 
 	err := run(context.Background(), []string{
-		"--mode=discover",
-		"--output=" + outputPath,
-	}, dependencies{
+		"--mode=plan",
+		"--capability-profile=" + profilePath,
+		"--values-output=" + valuesPath,
+	}, dependencies{planner: otel.NewSourcePlanner("oksg-system"), generator: defaultGenerator(configgen.GeneratorOptions{})})
+	require.NoError(t, err)
+
+	values, err := os.ReadFile(valuesPath)
+	require.NoError(t, err)
+	require.Contains(t, string(values), "collectorConfig")
+	resolved, err := os.ReadFile(valuesPath + ".source-plan.json")
+	require.NoError(t, err)
+	require.Contains(t, string(resolved), "profile_fingerprint")
+	require.Contains(t, string(resolved), "metric_assignments")
+}
+
+func TestRunDiscoverWritesCapabilityProfile(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "profile.json")
+	err := run(context.Background(), []string{"--mode=discover", "--output=" + outputPath}, dependencies{
 		discover: func(context.Context) (*profile.ClusterProfile, error) {
-			return &profile.ClusterProfile{
-				RecommendedReceivers: []string{"kubeletstats"},
-			}, nil
+			return &profile.ClusterProfile{Capabilities: []profile.SourceCapability{{
+				SourceID: "kubelet", Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable,
+			}}}, nil
 		},
 	})
 	require.NoError(t, err)
-
-	output, err := os.ReadFile(outputPath)
+	payload, err := os.ReadFile(outputPath)
 	require.NoError(t, err)
-	require.Contains(t, string(output), "recommended_receivers")
+	require.Contains(t, string(payload), "capabilities")
 }
+
+const capabilityProfileJSON = `{
+  "cluster_name": "kind-test",
+  "capabilities": [
+    {"source_id":"kubernetes.structure","kind":"direct","status":"available","signals":["structure"]},
+    {"source_id":"kubelet","kind":"direct","status":"available","signals":["metric"]},
+    {"source_id":"host-os","kind":"direct","status":"available","signals":["metric"]},
+    {"source_id":"kube-cluster","kind":"direct","status":"available","signals":["metric"]},
+    {"source_id":"prometheus.app","kind":"direct","status":"available","signals":["metric"],"evidence":{"prometheus_targets":[{"service_name":"gateway","namespace":"demo","port":8080,"path":"/metrics"}]}},
+    {"source_id":"mesh.istio","kind":"direct","status":"unavailable"},
+    {"source_id":"traces.servicegraph","kind":"derived","status":"unavailable"}
+  ]
+}`

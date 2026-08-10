@@ -43,13 +43,15 @@ type SourceRef struct {
 // and which dialect to apply), and the planner (which tags wire output with the
 // matching oksg.source attribute).
 const (
-	SourceKubelet            = "kubelet"
-	SourceHostOS             = "host-os"
-	SourceKubeCluster        = "kube-cluster"
-	SourcePrometheusApp      = "prometheus.app"
-	SourceMeshIstio          = "mesh.istio"
-	SourceTracesSpanmetrics  = "traces.spanmetrics"
-	SourceTracesServicegraph = "traces.servicegraph"
+	// SourceKubernetesStructure identifies the non-metric Kubernetes API module.
+	// It is included in capability snapshots but never in metric arbitration.
+	SourceKubernetesStructure = "kubernetes.structure"
+	SourceKubelet             = "kubelet"
+	SourceHostOS              = "host-os"
+	SourceKubeCluster         = "kube-cluster"
+	SourcePrometheusApp       = "prometheus.app"
+	SourceMeshIstio           = "mesh.istio"
+	SourceTracesServicegraph  = "traces.servicegraph"
 )
 
 // SelectionPolicy decides how Sources is consumed when more than one source is

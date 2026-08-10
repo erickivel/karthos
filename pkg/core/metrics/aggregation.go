@@ -15,8 +15,7 @@ const (
 	AggregationIncrease   AggregationMode = "increase"
 	// Internal modes describe window-only derived metrics. They are emitted in
 	// effective query metadata but cannot be selected via aggregation=.
-	AggregationWindowMean  AggregationMode = "window_mean"
-	AggregationWindowRatio AggregationMode = "window_ratio"
+	AggregationWindowMean AggregationMode = "window_mean"
 
 	MinAggregationWindow     = time.Minute
 	MaxAggregationWindow     = time.Hour
@@ -105,7 +104,7 @@ func ResolveAggregation(metric CanonicalMetric, modeParam, windowParam string) (
 		return ResolvedAggregation{Mode: AggregationLatest, Unit: metric.Unit}, nil
 	}
 
-	if metric.Aggregation.Default == AggregationWindowMean || metric.Aggregation.Default == AggregationWindowRatio {
+	if metric.Aggregation.Default == AggregationWindowMean {
 		if modeParam != "" {
 			return ResolvedAggregation{}, fmt.Errorf("aggregation is not supported for metric %q", metric.Name)
 		}

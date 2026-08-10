@@ -9,9 +9,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"sigs.k8s.io/yaml"
-
-	"github.com/erickivel/oksg/pkg/adapters/otel"
 )
 
 func TestDeployUsesHelmLintTemplateAndUpgrade(t *testing.T) {
@@ -56,16 +53,6 @@ func TestChartEnablesVictoriaMetricsRetryDeduplication(t *testing.T) {
 	require.Contains(t, string(values), "dedup.minScrapeInterval: 1ms")
 }
 
-func TestChartUsesOTLPGRPCExporterName(t *testing.T) {
-	valuesPath := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel", "values.yaml")
-	values, err := os.ReadFile(valuesPath)
-	require.NoError(t, err)
-
-	require.Equal(t, 2, strings.Count(string(values), "exporters:\n      otlp_grpc:"))
-	require.NotContains(t, string(values), "exporters:\n      otlp:")
-	require.NotContains(t, string(values), "exporters: [otlp]")
-}
-
 func TestChartHostNetworkAccuracyContract(t *testing.T) {
 	chartRoot := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel")
 	values, err := os.ReadFile(filepath.Join(chartRoot, "values.yaml"))
@@ -79,51 +66,22 @@ func TestChartHostNetworkAccuracyContract(t *testing.T) {
 
 	configMap, err := os.ReadFile(filepath.Join(chartRoot, "templates", "agent-configmap.yaml"))
 	require.NoError(t, err)
-	require.Contains(t, string(configMap), "if .Values.agent.hostNetwork")
-	require.Contains(t, string(configMap), `unset $scrapers "network"`)
+	require.NotContains(t, string(configMap), "hostNetwork")
+	require.Contains(t, string(configMap), "generated collector-plan values")
 }
 
-func TestChartDefaultCollectorConfigsIsolateMetricProvenance(t *testing.T) {
+func TestChartRequiresGeneratedCollectorConfiguration(t *testing.T) {
 	valuesPath := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel", "values.yaml")
 	valuesRaw, err := os.ReadFile(valuesPath)
 	require.NoError(t, err)
-
-	var values struct {
-		Agent struct {
-			CollectorConfig string `yaml:"collectorConfig"`
-		} `yaml:"agent"`
-		Gateway struct {
-			CollectorConfig string `yaml:"collectorConfig"`
-		} `yaml:"gateway"`
-	}
-	require.NoError(t, yaml.Unmarshal(valuesRaw, &values))
-
-	var agent, gateway otel.CollectorConfig
-	require.NoError(t, yaml.Unmarshal([]byte(values.Agent.CollectorConfig), &agent))
-	require.NoError(t, yaml.Unmarshal([]byte(values.Gateway.CollectorConfig), &gateway))
-
-	const sourceTagger = "transform/oksg-source"
-	require.Contains(t, agent.Processors, sourceTagger)
-	agentTagger, err := yaml.Marshal(agent.Processors[sourceTagger])
+	require.NotContains(t, string(valuesRaw), "collectorConfig:")
+	chartRoot := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel", "templates")
+	agent, err := os.ReadFile(filepath.Join(chartRoot, "agent-configmap.yaml"))
 	require.NoError(t, err)
-	require.Contains(t, string(agentTagger), `datapoint.attributes["oksg_source"]`)
-	require.Contains(t, string(agentTagger), `"kubelet"`)
-	require.Contains(t, string(agentTagger), `"host-os"`)
-	require.Equal(t, []string{"kubelet_stats", "host_metrics"}, agent.Service.Pipelines["metrics"].Receivers)
-	require.Contains(t, agent.Service.Pipelines["metrics"].Processors, sourceTagger)
-	require.Equal(t, []string{"otlp"}, agent.Service.Pipelines["metrics/otlp"].Receivers)
-	require.NotContains(t, agent.Service.Pipelines["metrics/otlp"].Processors, sourceTagger)
-
-	require.Contains(t, gateway.Receivers, "k8s_cluster")
-	require.Contains(t, gateway.Processors, sourceTagger)
-	gatewayTagger, err := yaml.Marshal(gateway.Processors[sourceTagger])
+	gateway, err := os.ReadFile(filepath.Join(chartRoot, "gateway-configmap.yaml"))
 	require.NoError(t, err)
-	require.Contains(t, string(gatewayTagger), `datapoint.attributes["oksg_source"]`)
-	require.Contains(t, string(gatewayTagger), `"kube-cluster"`)
-	require.Equal(t, []string{"k8s_cluster"}, gateway.Service.Pipelines["metrics"].Receivers)
-	require.Contains(t, gateway.Service.Pipelines["metrics"].Processors, sourceTagger)
-	require.Equal(t, []string{"otlp"}, gateway.Service.Pipelines["metrics/otlp"].Receivers)
-	require.NotContains(t, gateway.Service.Pipelines["metrics/otlp"].Processors, sourceTagger)
+	require.Contains(t, string(agent), "required")
+	require.Contains(t, string(gateway), "required")
 }
 
 func contains(values []string, needle string) bool {

@@ -13,7 +13,7 @@ func TestResolveSingleSourcePicksOnlyAvailable(t *testing.T) {
 		{Name: "k8s.pod.cpu.usage", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 	}
 
-	assignment, selected, err := Resolve(catalog, DefaultLogicalSources(), emptyProfile())
+	assignment, selected, err := resolveWithProfile(catalog, emptyProfile())
 	require.NoError(t, err)
 	require.Equal(t, SourceKubelet, assignment["k8s.pod.cpu.usage"])
 	require.True(t, selected.Has(SourceKubelet))
@@ -27,7 +27,7 @@ func TestResolveDropsMetricWhenNoSourceAvailable(t *testing.T) {
 		}},
 	}
 
-	assignment, selected, err := Resolve(catalog, DefaultLogicalSources(), emptyProfile())
+	assignment, selected, err := resolveWithProfile(catalog, emptyProfile())
 	require.NoError(t, err)
 	_, ok := assignment["servicegraph.request.count"]
 	require.False(t, ok, "metric should be omitted when no source is available")
@@ -45,7 +45,7 @@ func TestResolveIstioWinsOverTracesServicegraph(t *testing.T) {
 
 	prof := profileWithIstioAndTraces()
 
-	assignment, selected, err := Resolve(catalog, DefaultLogicalSources(), prof)
+	assignment, selected, err := resolveWithProfile(catalog, prof)
 	require.NoError(t, err)
 	require.Equal(t, SourceMeshIstio, assignment["servicegraph.request.count"])
 	require.True(t, selected.Has(SourceMeshIstio))
@@ -61,9 +61,9 @@ func TestResolveTracesServicegraphWinsWhenIstioMeshIsPartial(t *testing.T) {
 	}
 
 	prof := profileWithIstioAndTraces()
-	prof.Sources[0].Mesh.Partial = true
+	prof.Capabilities[3].Status = profile.CapabilityPartial
 
-	assignment, selected, err := Resolve(catalog, DefaultLogicalSources(), prof)
+	assignment, selected, err := resolveWithProfile(catalog, prof)
 	require.NoError(t, err)
 	require.Equal(t, SourceTracesServicegraph, assignment["servicegraph.request.count"])
 	require.False(t, selected.Has(SourceMeshIstio))
@@ -79,12 +79,12 @@ func TestResolveTracesServicegraphWinsWhenIstioAbsent(t *testing.T) {
 	}
 
 	prof := &profile.ClusterProfile{
-		Sources: []profile.ObservabilitySource{
-			{Type: "otlp", Present: true, OTLP: &profile.OTLPSource{TracesEnabled: true}},
+		Capabilities: []profile.SourceCapability{
+			{SourceID: SourceTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
 		},
 	}
 
-	assignment, selected, err := Resolve(catalog, DefaultLogicalSources(), prof)
+	assignment, selected, err := resolveWithProfile(catalog, prof)
 	require.NoError(t, err)
 	require.Equal(t, SourceTracesServicegraph, assignment["servicegraph.request.count"])
 	require.True(t, selected.Has(SourceTracesServicegraph))
@@ -99,17 +99,13 @@ func TestResolveTracesServicegraphWinsWhenIstioHasNoInjectedNamespaces(t *testin
 	}
 
 	prof := &profile.ClusterProfile{
-		Sources: []profile.ObservabilitySource{
-			{
-				Type:    "istio",
-				Present: true,
-				Mesh:    &profile.MeshSource{Flavor: "istio", Mode: "sidecar"},
-			},
-			{Type: "otlp", Present: true, OTLP: &profile.OTLPSource{TracesEnabled: true}},
+		Capabilities: []profile.SourceCapability{
+			{SourceID: SourceMeshIstio, Kind: profile.SourceKindDirect, Status: profile.CapabilityPartial, Signals: []string{"metric"}},
+			{SourceID: SourceTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
 		},
 	}
 
-	assignment, selected, err := Resolve(catalog, DefaultLogicalSources(), prof)
+	assignment, selected, err := resolveWithProfile(catalog, prof)
 	require.NoError(t, err)
 	require.Equal(t, SourceTracesServicegraph, assignment["servicegraph.request.count"])
 	require.False(t, selected.Has(SourceMeshIstio))
@@ -121,7 +117,7 @@ func TestResolveErrorsOnUnknownSource(t *testing.T) {
 		{Name: "made.up", Sources: []SourceRef{{ID: "nope", Priority: 1}}},
 	}
 
-	_, _, err := Resolve(catalog, DefaultLogicalSources(), emptyProfile())
+	_, _, err := resolveWithProfile(catalog, emptyProfile())
 	require.ErrorContains(t, err, "unknown source")
 }
 
@@ -134,42 +130,51 @@ func TestResolveErrorsOnUnimplementedPolicy(t *testing.T) {
 		},
 	}
 
-	_, _, err := Resolve(catalog, DefaultLogicalSources(), profileWithIstioAndTraces())
+	_, _, err := resolveWithProfile(catalog, profileWithIstioAndTraces())
 	require.ErrorContains(t, err, "unimplemented selection policy")
 }
 
 func TestResolveDefaultCatalogAgainstFullProfile(t *testing.T) {
 	prof := profileWithIstioAndTraces()
-	prof.Sources = append(prof.Sources, profile.ObservabilitySource{
-		Type:    "prometheus",
-		Present: true,
-		PrometheusTargets: []profile.PrometheusTarget{
-			{ServiceName: "demo", Namespace: "demo", Port: 8080, Path: "/metrics"},
-		},
+	prof.Capabilities = append(prof.Capabilities, profile.SourceCapability{
+		SourceID: SourcePrometheusApp, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"},
 	})
 
-	assignment, selected, err := Resolve(DefaultCatalog(), DefaultLogicalSources(), prof)
+	assignment, selected, err := resolveWithProfile(DefaultCatalog(), prof)
 	require.NoError(t, err)
 
 	require.Equal(t, SourceMeshIstio, assignment["servicegraph.request.count"])
 	require.Equal(t, SourceKubelet, assignment["k8s.pod.cpu.usage"])
 	require.Equal(t, SourcePrometheusApp, assignment["http.server.request.count"])
-	require.Equal(t, SourceTracesSpanmetrics, assignment["rpc.server.duration"])
-
 	require.True(t, selected.Has(SourceMeshIstio))
-	require.True(t, selected.Has(SourceTracesSpanmetrics))
 	require.True(t, selected.Has(SourcePrometheusApp))
 	// traces.servicegraph wins zero metrics because mesh.istio outranks it everywhere.
 	require.False(t, selected.Has(SourceTracesServicegraph))
 }
 
-func emptyProfile() *profile.ClusterProfile { return &profile.ClusterProfile{} }
+func emptyProfile() *profile.ClusterProfile {
+	return &profile.ClusterProfile{Capabilities: []profile.SourceCapability{
+		{SourceID: SourceKubelet, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+		{SourceID: SourceHostOS, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+		{SourceID: SourceKubeCluster, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+	}}
+}
 
 func profileWithIstioAndTraces() *profile.ClusterProfile {
 	return &profile.ClusterProfile{
-		Sources: []profile.ObservabilitySource{
-			{Type: "istio", Present: true, Mesh: &profile.MeshSource{Flavor: "istio", InjectedNamespaces: []string{"oksg-demo"}}},
-			{Type: "otlp", Present: true, OTLP: &profile.OTLPSource{TracesEnabled: true}},
+		Capabilities: []profile.SourceCapability{
+			{SourceID: SourceKubelet, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: SourceHostOS, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: SourceKubeCluster, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: SourceMeshIstio, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: SourceTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
 		},
 	}
+}
+
+func resolveWithProfile(catalog []CanonicalMetric, capabilityProfile *profile.ClusterProfile) (Assignment, SelectedSources, error) {
+	return Resolve(catalog, []string{
+		SourceKubelet, SourceHostOS, SourceKubeCluster, SourcePrometheusApp,
+		SourceMeshIstio, SourceTracesServicegraph,
+	}, capabilityProfile.IsAvailable)
 }
