@@ -29,8 +29,6 @@ type CatalogStat struct {
 }
 
 // SourceStat is the per-source count and last-seen for one canonical metric.
-// A SourceID of "" represents samples that arrived without a source label
-// (legacy / partially-instrumented producers).
 type SourceStat struct {
 	SourceID    string
 	SampleCount int64

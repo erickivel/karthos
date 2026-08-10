@@ -41,12 +41,12 @@ type MetricSourcePolicy struct {
 	mismatch   atomic.Uint64
 }
 
-// NewMetricSourcePolicy constructs a policy from the logical-source registry.
-func NewMetricSourcePolicy(registry []metrics.LogicalSource, assignment metrics.Assignment) *MetricSourcePolicy {
+// NewMetricSourcePolicy constructs a policy from the compiled telemetry source IDs.
+func NewMetricSourcePolicy(registry []string, assignment metrics.Assignment) *MetricSourcePolicy {
 	registered := make(map[string]struct{}, len(registry))
-	for _, source := range registry {
-		if source.ID != "" {
-			registered[source.ID] = struct{}{}
+	for _, sourceID := range registry {
+		if sourceID != "" {
+			registered[sourceID] = struct{}{}
 		}
 	}
 	assignmentCopy := make(metrics.Assignment, len(assignment))

@@ -248,22 +248,6 @@ func TestBuildPromQLDefaultCountersUseExactWindowAndPreserveFilters(t *testing.T
 	}
 }
 
-func TestBuildPromQLErrorRatioUsesCanonicalContextAndCompleteBranches(t *testing.T) {
-	got := buildPromQL(query.MetricQuery{
-		MetricName:   "servicegraph.request.error.ratio",
-		EdgeSourceID: entities.EntityID("svc-a"),
-		EdgeTargetID: entities.EntityID("svc-b"),
-	})
-
-	context := strings.Join(query.ServicegraphRequestContextLabels(), ",")
-	assert.Contains(t, got, "sum by ("+context+")")
-	assert.Contains(t, got, "servicegraph_request_error_count")
-	assert.Contains(t, got, "servicegraph_request_count")
-	assert.Contains(t, got, `edge_client_id="svc-a",edge_server_id="svc-b"`)
-	assert.Contains(t, got, "last_over_time(")
-	assert.Contains(t, got, "== count by")
-}
-
 func TestBuildPromQLExplicitCounterModes(t *testing.T) {
 	base := query.MetricQuery{MetricName: "servicegraph.request.count", Window: 90 * time.Second}
 
@@ -372,7 +356,7 @@ func TestParseQueryRangeResponse_SkipsNonFiniteValues(t *testing.T) {
 				"metric": {
 					"__name__": "rpc_server_request_count",
 					"entity_id": "svc1",
-					"source": "traces.spanmetrics"
+					"source": "traces.servicegraph"
 				},
 				"values": [
 					[1742644800, "+Inf"],

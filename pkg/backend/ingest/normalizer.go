@@ -11,14 +11,15 @@ import (
 
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/oksg/pkg/sources"
 )
 
 // OTLPNormalizer normalizes OTLP metric envelopes into semconv MetricSamples.
 type OTLPNormalizer struct {
-	resolver       EntityResolver
-	dialect        *metrics.DialectRegistry
-	sourceDialects sourceDialectRegistry
-	sourcePolicy   *MetricSourcePolicy
+	resolver     EntityResolver
+	dialect      *metrics.DialectRegistry
+	sourcePolicy *MetricSourcePolicy
 }
 
 // NormalizerOption configures optional behavior on the OTLPNormalizer.
@@ -29,7 +30,7 @@ type NormalizerOption func(*OTLPNormalizer)
 // with topology derivation.
 func WithAssignment(a metrics.Assignment) NormalizerOption {
 	return func(n *OTLPNormalizer) {
-		n.sourcePolicy = NewMetricSourcePolicy(metrics.DefaultLogicalSources(), a)
+		n.sourcePolicy = NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), a)
 	}
 }
 
@@ -51,10 +52,9 @@ func NewOTLPNormalizer(resolver EntityResolver, dialect *metrics.DialectRegistry
 		panic("ingest.NewOTLPNormalizer: dialect registry is required")
 	}
 	n := &OTLPNormalizer{
-		resolver:       resolver,
-		dialect:        dialect,
-		sourceDialects: newSourceDialectRegistry(),
-		sourcePolicy:   NewMetricSourcePolicy(metrics.DefaultLogicalSources(), nil),
+		resolver:     resolver,
+		dialect:      dialect,
+		sourcePolicy: NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil),
 	}
 	for _, opt := range opts {
 		opt(n)
@@ -89,15 +89,14 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
-			translatedName := n.dialect.Translate(metric.Name)
-			mapping, ok := metrics.OTLPSemconvMetrics[translatedName]
-			if !ok {
-				continue
-			}
-
 			// Histograms are decomposed into _sum / _count pairs.
 			if h := metric.GetHistogram(); h != nil {
 				for _, dp := range h.DataPoints {
+					translatedName := n.dialect.TranslateForSource(firstKVString(dp.Attributes, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm), metric.Name)
+					mapping, ok := metrics.OTLPSemconvMetrics[translatedName]
+					if !ok {
+						continue
+					}
 					validation := n.sourcePolicy.Validate(translatedName, dp.Attributes)
 					if !validation.Accepted() {
 						n.sourcePolicy.RecordRejection(validation)
@@ -107,35 +106,35 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 						continue
 					}
 					plan := newNormalizationPlan(metric.Name, translatedName, validation.Source, envelope.Resource, dp.Attributes, mapping)
-					if err := n.sourceDialects.apply(ctx, n.resolver, &plan); err != nil {
-						return nil, fmt.Errorf("apply %s metric dialect: %w", plan.source, err)
+					if err := applySourceNormalization(ctx, n.resolver, &plan); err != nil {
+						return nil, fmt.Errorf("apply %s source module: %w", plan.Source, err)
 					}
-					if plan.skip || plan.metricName == "" {
+					if plan.Skip || plan.MetricName == "" {
 						continue
 					}
 
 					ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
-					sumValue := *dp.Sum * plan.conversionFactor
+					sumValue := *dp.Sum * plan.ConversionFactor
 					countValue := float64(dp.Count)
 					if usesDeltaHistogramSemantics(h.AggregationTemporality) {
-						plan.labels["temporality"] = "delta"
+						plan.Labels["temporality"] = "delta"
 					}
 
 					samples = append(samples,
 						metrics.MetricSample{
-							MetricName: plan.metricName + "_sum",
-							EntityID:   plan.entityID,
+							MetricName: plan.MetricName + "_sum",
+							EntityID:   plan.EntityID,
 							Value:      sumValue,
 							Timestamp:  ts,
-							Labels:     plan.labels,
-							Unit:       plan.unit,
+							Labels:     plan.Labels,
+							Unit:       plan.Unit,
 						},
 						metrics.MetricSample{
-							MetricName: plan.metricName + "_count",
-							EntityID:   plan.entityID,
+							MetricName: plan.MetricName + "_count",
+							EntityID:   plan.EntityID,
 							Value:      countValue,
 							Timestamp:  ts,
-							Labels:     cloneLabels(plan.labels),
+							Labels:     cloneLabels(plan.Labels),
 							Unit:       metrics.UnitCount,
 						},
 					)
@@ -145,6 +144,11 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 
 			dps := collectScalarDataPoints(metric)
 			for _, dp := range dps {
+				translatedName := n.dialect.TranslateForSource(firstKVString(dp.Attributes, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm), metric.Name)
+				mapping, ok := metrics.OTLPSemconvMetrics[translatedName]
+				if !ok {
+					continue
+				}
 				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 				validation := n.sourcePolicy.Validate(translatedName, dp.Attributes)
 				if !validation.Accepted() {
@@ -152,33 +156,33 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					continue
 				}
 				plan := newNormalizationPlan(metric.Name, translatedName, validation.Source, envelope.Resource, dp.Attributes, mapping)
-				if err := n.sourceDialects.apply(ctx, n.resolver, &plan); err != nil {
-					return nil, fmt.Errorf("apply %s metric dialect: %w", plan.source, err)
+				if err := applySourceNormalization(ctx, n.resolver, &plan); err != nil {
+					return nil, fmt.Errorf("apply %s source module: %w", plan.Source, err)
 				}
-				if plan.skip || plan.metricName == "" {
+				if plan.Skip || plan.MetricName == "" {
 					continue
 				}
-				value := dp.Value * plan.conversionFactor
+				value := dp.Value * plan.ConversionFactor
 				if usesDeltaCounterSemantics(mapping, dp.AggregationTemporality) {
-					plan.labels["temporality"] = "delta"
+					plan.Labels["temporality"] = "delta"
 				}
 
 				samples = append(samples, metrics.MetricSample{
-					MetricName: plan.metricName,
-					EntityID:   plan.entityID,
+					MetricName: plan.MetricName,
+					EntityID:   plan.EntityID,
 					Value:      value,
 					Timestamp:  ts,
-					Labels:     plan.labels,
-					Unit:       plan.unit,
+					Labels:     plan.Labels,
+					Unit:       plan.Unit,
 				})
-				for _, derived := range plan.derived {
+				for _, derived := range plan.Derived {
 					samples = append(samples, metrics.MetricSample{
-						MetricName: derived.metricName,
-						EntityID:   plan.entityID,
-						Value:      dp.Value * derived.conversionFactor,
+						MetricName: derived.MetricName,
+						EntityID:   plan.EntityID,
+						Value:      dp.Value * derived.ConversionFactor,
 						Timestamp:  ts,
-						Labels:     cloneLabels(plan.labels),
-						Unit:       derived.unit,
+						Labels:     cloneLabels(plan.Labels),
+						Unit:       derived.Unit,
 					})
 				}
 			}

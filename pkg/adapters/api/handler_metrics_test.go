@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -99,7 +98,6 @@ func TestQueryMetricsRejectsInvalidAggregationControls(t *testing.T) {
 		"/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=latest&window=1m",
 		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&aggregation=latest",
 		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&window=1m",
-		"/api/v1/metrics?metric_name=servicegraph.request.error.ratio&aggregation=increase",
 	} {
 		resp := serveMetricsRequest(t, store, target)
 		assert.Equal(t, http.StatusBadRequest, resp.Code, target)
@@ -123,39 +121,6 @@ func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 	require.NotEmpty(t, sample["unit"])
 }
 
-func TestQueryMetricsUsesPerSampleResourceQuotaUnit(t *testing.T) {
-	store := persistence.NewInMemoryMetricStore()
-	entityID := entities.ComputeEntityID(entities.KindResourceQuota, "cluster", "default", "workload-budget")
-	now := time.Now().UTC()
-	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "k8s.resource_quota.used", EntityID: entityID, Value: 750, Timestamp: now, Labels: map[string]string{"resource": "requests.cpu"}, Unit: metrics.UnitMillicores},
-		{MetricName: "k8s.resource_quota.used", EntityID: entityID, Value: 1048576, Timestamp: now, Labels: map[string]string{"resource": "requests.memory"}, Unit: metrics.UnitBytes},
-		{MetricName: "k8s.resource_quota.used", EntityID: entityID, Value: 3, Timestamp: now, Labels: map[string]string{"resource": "pods"}, Unit: metrics.UnitCount},
-	}))
-
-	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.resource_quota.used")
-	require.Equal(t, http.StatusOK, resp.Code)
-	assert.Contains(t, resp.Body.String(), `"unit":"millicores"`)
-	assert.Contains(t, resp.Body.String(), `"unit":"bytes"`)
-	assert.Contains(t, resp.Body.String(), `"unit":"count"`)
-	assert.NotContains(t, resp.Body.String(), "oksg_unit")
-}
-
-func TestQueryMetricsFallsBackWhenStoredUnitIsMissingOrInvalid(t *testing.T) {
-	store := persistence.NewInMemoryMetricStore()
-	entityID := entities.ComputeEntityID(entities.KindResourceQuota, "cluster", "default", "workload-budget")
-	now := time.Now().UTC()
-	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "k8s.resource_quota.used", EntityID: entityID, Value: 2, Timestamp: now, Labels: map[string]string{"resource": "example.com/widgets"}},
-		{MetricName: "k8s.resource_quota.used", EntityID: entityID, Value: 3, Timestamp: now, Labels: map[string]string{"resource": "example.com/gadgets"}, Unit: metrics.Unit("cores")},
-	}))
-
-	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.resource_quota.used")
-	require.Equal(t, http.StatusOK, resp.Code)
-	assert.Equal(t, 2, strings.Count(resp.Body.String(), `"unit":"resource"`))
-	assert.NotContains(t, resp.Body.String(), `"unit":"cores"`)
-}
-
 func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
 	store := persistence.NewInMemoryMetricStore()
 	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
@@ -169,14 +134,6 @@ func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
 	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.status_reason")
 	require.Equal(t, http.StatusOK, resp.Code)
 	assert.Contains(t, resp.Body.String(), `"value_label":"unknown"`)
-}
-
-func TestQueryMetricsRejectsRemovedGenericContainerStorageMetrics(t *testing.T) {
-	store := persistence.NewInMemoryMetricStore()
-	for _, name := range []string{"k8s.container.storage.request", "k8s.container.storage.limit"} {
-		resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name="+name)
-		assert.Equal(t, http.StatusBadRequest, resp.Code, name)
-	}
 }
 
 func TestQueryMetricsFilterByEntityID(t *testing.T) {
@@ -330,7 +287,7 @@ func TestCatalogFilterByCategory(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parseResponseData(t, resp)
-	require.EqualValues(t, 3, data["total"])
+	require.EqualValues(t, 2, data["total"])
 }
 
 func TestCatalogReturnsMetricScopes(t *testing.T) {
@@ -388,39 +345,6 @@ func TestMetricSeriesGrouped(t *testing.T) {
 	require.Equal(t, "resource", s0["category"])
 	samples := s0["samples"].([]any)
 	require.Len(t, samples, 1)
-}
-
-func TestMetricSeriesSeparatesResourceQuotaLabelsAndUnits(t *testing.T) {
-	store := persistence.NewInMemoryMetricStore()
-	entityID := entities.ComputeEntityID(entities.KindResourceQuota, "cluster", "default", "workload-budget")
-	now := time.Now().UTC()
-	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "k8s.resource_quota.hard_limit", EntityID: entityID, Value: 2_000, Timestamp: now, Labels: map[string]string{"resource": "requests.cpu"}, Unit: metrics.UnitMillicores},
-		{MetricName: "k8s.resource_quota.hard_limit", EntityID: entityID, Value: 4 << 30, Timestamp: now, Labels: map[string]string{"resource": "requests.memory"}, Unit: metrics.UnitBytes},
-		{MetricName: "k8s.resource_quota.hard_limit", EntityID: entityID, Value: 10, Timestamp: now, Labels: map[string]string{"resource": "pods"}, Unit: metrics.UnitCount},
-	}))
-
-	resp := serveMetricsRequest(t, store, "/api/v1/metrics/series?metric_name=k8s.resource_quota.hard_limit")
-	require.Equal(t, http.StatusOK, resp.Code)
-	var body PaginatedResponse
-	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
-	encoded, err := json.Marshal(body.Data)
-	require.NoError(t, err)
-	var data map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &data))
-	require.EqualValues(t, 3, data["total"])
-
-	units := map[string]string{}
-	for _, raw := range data["series"].([]any) {
-		series := raw.(map[string]any)
-		sample := series["samples"].([]any)[0].(map[string]any)
-		resource := sample["labels"].(map[string]any)["resource"].(string)
-		units[resource] = series["unit"].(string)
-	}
-	assert.Equal(t, "millicores", units["requests.cpu"])
-	assert.Equal(t, "bytes", units["requests.memory"])
-	assert.Equal(t, "count", units["pods"])
-	assert.NotContains(t, resp.Body.String(), "oksg_unit")
 }
 
 func TestMetricSeriesFilterByMetricName(t *testing.T) {

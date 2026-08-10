@@ -21,25 +21,6 @@ type MetricQuery struct {
 	Unit         metrics.Unit
 }
 
-var servicegraphRequestContextLabels = []string{
-	"entity_id",
-	"source",
-	"edge_client",
-	"edge_client_id",
-	"edge_server",
-	"edge_server_id",
-	"connection_type",
-	"virtual_node",
-	"client_http_method",
-	"server_http_method",
-}
-
-// ServicegraphRequestContextLabels returns the canonical label identity used
-// when request and error branches are combined into an error ratio.
-func ServicegraphRequestContextLabels() []string {
-	return append([]string(nil), servicegraphRequestContextLabels...)
-}
-
 type EdgeQuery struct {
 	Source entities.EntityID
 	Target entities.EntityID

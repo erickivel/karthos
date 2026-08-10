@@ -43,8 +43,6 @@ func (h *EntityHandler) handleListEntities(w http.ResponseWriter, r *http.Reques
 	if result == nil {
 		result = []entities.Entity{}
 	}
-	result = dedupeEntities(result)
-
 	slices.SortFunc(result, func(a, b entities.Entity) int {
 		if c := cmp.Compare(string(a.Kind()), string(b.Kind())); c != 0 {
 			return c

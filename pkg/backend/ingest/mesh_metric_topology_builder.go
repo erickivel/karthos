@@ -15,6 +15,8 @@ import (
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/core/topology"
+	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/oksg/pkg/sources/istio"
 )
 
 func isServiceGraphEdgeMetric(metricName, translatedName string) bool {
@@ -34,7 +36,7 @@ type MeshMetricTopologyBuilder struct {
 
 func NewMeshMetricTopologyBuilder(dialect *metrics.DialectRegistry, clusterName string, policy *MetricSourcePolicy) *MeshMetricTopologyBuilder {
 	if policy == nil {
-		policy = NewMetricSourcePolicy(metrics.DefaultLogicalSources(), nil)
+		policy = NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil)
 	}
 	return &MeshMetricTopologyBuilder{dialect: dialect, clusterName: clusterName, sourcePolicy: policy}
 }
@@ -196,7 +198,7 @@ func meshMetadata(attrs []*commonpb.KeyValue) map[string]string {
 		semconv.AttrMeshResponseFlags,
 		semconv.AttrMeshID,
 	} {
-		if value := meshAttrValue(attrs, key); value != "" {
+		if value := istio.MeshAttributeValue(attrs, key); value != "" {
 			metadata[key] = value
 		}
 	}

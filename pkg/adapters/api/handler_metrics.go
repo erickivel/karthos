@@ -149,7 +149,7 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 		// A generic resolved unit marks a heterogeneous family whose physical
 		// unit is carried by the sample (currently ResourceQuota). Fixed-unit
 		// metrics, especially counter modes, must keep the mode-aware resolved
-		// unit even when raw storage carries a legacy presentation unit.
+		// unit even when raw storage carries a presentation unit that differs.
 		if resolved.Unit == metrics.UnitResource && metrics.IsValidUnit(s.Unit) {
 			unit = s.Unit
 		}
@@ -266,7 +266,6 @@ func (h *MetricsHandler) handleGetCatalogStats(w http.ResponseWriter, r *http.Re
 	entries := make([]catalogStatsEntry, 0, len(catalog))
 	for _, m := range catalog {
 		entry := catalogStatsEntry{MetricName: m.Name}
-		seen := map[string]struct{}{}
 		// One row per declared source — zero-fill if nothing arrived.
 		for _, src := range m.Sources {
 			ss := indexed[srcKey{metric: m.Name, source: src.ID}]
@@ -276,30 +275,6 @@ func (h *MetricsHandler) handleGetCatalogStats(w http.ResponseWriter, r *http.Re
 				SampleCount: ss.SampleCount,
 				LastSeenAt:  formatLastSeen(ss.LastSeenAt),
 			})
-			seen[src.ID] = struct{}{}
-		}
-		// Surface any unexpected sources observed in storage that aren't in
-		// the catalog declaration (e.g. legacy producers, or samples with no
-		// `source` label which collapse to SourceID ""). Drop the SourceID ""
-		// case entirely when the metric has any declared source — it's noise
-		// next to the canonical breakdown.
-		for _, cs := range rawStats {
-			if cs.MetricName != m.Name {
-				continue
-			}
-			for _, ss := range cs.BySource {
-				if _, declared := seen[ss.SourceID]; declared {
-					continue
-				}
-				if ss.SourceID == "" && len(m.Sources) > 0 {
-					continue
-				}
-				entry.BySource = append(entry.BySource, catalogStatsBySource{
-					SourceID:    ss.SourceID,
-					SampleCount: ss.SampleCount,
-					LastSeenAt:  formatLastSeen(ss.LastSeenAt),
-				})
-			}
 		}
 		entries = append(entries, entry)
 	}

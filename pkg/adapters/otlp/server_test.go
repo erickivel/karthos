@@ -22,11 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	backendingest "github.com/erickivel/oksg/pkg/backend/ingest"
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
 func TestServerAcceptsMetricsOverGRPC(t *testing.T) {
@@ -176,49 +173,6 @@ func TestServerAcceptsTracesOverHTTP(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Eventually(t, func() bool { return len(tracesSink.envelopes) == 1 }, 2*time.Second, 50*time.Millisecond)
 	require.Equal(t, schema.SignalTrace, tracesSink.envelopes[0].SignalType)
-}
-
-func TestDebugGraphEndpoint(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	graphStore := persistence.NewInMemoryGraphStore()
-	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
-	require.NoError(t, err)
-
-	// Seed the store with one edge.
-	idA := entities.ComputeEntityID(entities.KindService, "cluster", "svc-a")
-	idB := entities.ComputeEntityID(entities.KindService, "cluster", "svc-b")
-	edge := topology.NewEdge(idA, idB, topology.RelCalls, time.Now())
-	require.NoError(t, graphStore.PutSnapshot(ctx, topology.Snapshot{
-		Graph: topology.Graph{Edges: []topology.Edge{edge}},
-	}))
-
-	metricsSink := &recordingIngestor{}
-	server, err := NewServer(Config{
-		GRPCListenAddress:   "127.0.0.1:0",
-		HTTPListenAddress:   "127.0.0.1:0",
-		HealthListenAddress: "127.0.0.1:0",
-		EnabledSignals:      []string{"metric"},
-		GraphStore:          graphStore,
-	}, backendingest.NewEnvelopeBuilder(func() time.Time { return time.Now() }), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
-	require.NoError(t, err)
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- server.Run(ctx) }()
-	defer func() {
-		cancel()
-		require.NoError(t, <-errCh)
-	}()
-
-	resp, err := http.Get("http://" + server.HealthAddress() + "/debug/graph")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Contains(t, string(body), `"edges"`)
 }
 
 type recordingIngestor struct {

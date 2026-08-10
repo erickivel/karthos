@@ -374,15 +374,15 @@ func TestStatusDegradesWhenPodHealthBranchFails(t *testing.T) {
 	require.EqualValues(t, 1, pods["unknown"])
 }
 
-func TestDiscoveryReturnsProfileSummary(t *testing.T) {
+func TestDiscoveryReturnsCapabilityProfile(t *testing.T) {
 	ms := persistence.NewInMemoryMetadataStore()
 	require.NoError(t, ms.PutDiscovery(context.Background(), profile.ClusterProfile{
 		ClusterID:   entities.ComputeEntityID(entities.KindCluster, "test-cluster"),
 		ClusterName: "test-cluster",
-		Nodes:       []entities.Node{{EntityID: "n1"}},
-		Namespaces:  []entities.Namespace{{EntityID: "ns1"}, {EntityID: "ns2"}},
-		Workloads:   []entities.Workload{{EntityID: "w1"}, {EntityID: "w2"}, {EntityID: "w3"}},
-		Services:    []entities.Service{{EntityID: "s1"}},
+		Capabilities: []profile.SourceCapability{
+			{SourceID: "kubernetes.structure", Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"structure"}},
+			{SourceID: "prometheus.app", Kind: profile.SourceKindDirect, Status: profile.CapabilityUnavailable},
+		},
 	}))
 
 	srv := newTestServer(t, Config{MetadataStore: ms})
@@ -394,10 +394,9 @@ func TestDiscoveryReturnsProfileSummary(t *testing.T) {
 
 	data := parseResponseData(t, resp)
 	require.Equal(t, "test-cluster", data["cluster_name"])
-	require.EqualValues(t, 1, data["node_count"])
-	require.EqualValues(t, 2, data["namespace_count"])
-	require.EqualValues(t, 3, data["workload_count"])
-	require.EqualValues(t, 1, data["service_count"])
+	capabilities := data["capabilities"].([]any)
+	require.Len(t, capabilities, 2)
+	require.NotContains(t, data, "node_count")
 }
 
 func TestDiscoveryReturns404WhenEmpty(t *testing.T) {

@@ -209,6 +209,28 @@ func (r *OTLPEntityResolver) resolveCanonicalService(ctx context.Context, servic
 	return "", "", false
 }
 
+// ClusterName implements the source-module normalization contract.
+func (r *OTLPEntityResolver) ClusterName() string { return r.clusterName }
+
+// ResolveServiceMetricEntity implements the source-module normalization contract.
+func (r *OTLPEntityResolver) ResolveServiceMetricEntity(ctx context.Context, resource map[string]string, serviceName, namespaceHint string) (entities.EntityID, bool) {
+	if serviceName == "" {
+		return "", false
+	}
+	if id, _, ok := r.resolveCanonicalService(ctx, serviceName, namespaceHint); ok {
+		return id, true
+	}
+	namespace := resource[semconv.ResourceK8sNamespaceName]
+	if namespace == "" {
+		return "", false
+	}
+	resourceService := resource[semconv.ResourceServiceName]
+	if (resourceService == "" || resourceService == serviceName) || resource[semconv.ResourceK8sNodeName] == "" {
+		return entities.ComputeEntityID(entities.KindService, r.clusterName, namespace, serviceName), true
+	}
+	return "", false
+}
+
 func serviceEntityName(entity entities.Entity) string {
 	if stored, ok := entity.(persistence.StoredEntity); ok && stored.Name != "" {
 		return stored.Name

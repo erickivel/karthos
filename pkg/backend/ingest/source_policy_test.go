@@ -13,6 +13,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/oksg/pkg/sources"
 )
 
 func makeNumberDataPoint(value float64, attrs map[string]string) *metricspb.NumberDataPoint {
@@ -50,12 +51,12 @@ func TestOTLPNormalizerRequiresRegisteredMetricSource(t *testing.T) {
 }
 
 func TestOTLPNormalizerSourceAssignmentAndMixedBatch(t *testing.T) {
-	policy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), metrics.Assignment{
+	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
 		"k8s.pod.cpu.usage": metrics.SourceKubelet,
 	})
 	normalizer := ingest.NewOTLPNormalizer(
 		ingest.NewOTLPEntityResolver(testCluster),
-		metrics.NewDialectRegistryFromSources(metrics.DefaultLogicalSources()),
+		metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()),
 		ingest.WithSourcePolicy(policy),
 	)
 
@@ -87,7 +88,7 @@ func TestOTLPNormalizerUnknownMetricDoesNotCountSourceViolation(t *testing.T) {
 }
 
 func TestMetricSourcePolicyRejectionCountersAreConcurrentSafe(t *testing.T) {
-	policy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), nil)
+	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil)
 	validation := ingest.SourceValidation{Reason: ingest.SourceRejectionMissing}
 	const workers = 32
 	const increments = 100
@@ -142,10 +143,10 @@ func TestOTLPNormalizerRejectsWrongSourceForSpecializedCanonicalMetrics(t *testi
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), tt.assignment)
+			policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), tt.assignment)
 			normalizer := ingest.NewOTLPNormalizer(
 				ingest.NewOTLPEntityResolver(testCluster),
-				metrics.NewDialectRegistryFromSources(metrics.DefaultLogicalSources()),
+				metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()),
 				ingest.WithSourcePolicy(policy),
 			)
 			rm := makeGaugeRMWithAttrs(tt.metricName, 1, uint64(time.Now().UnixNano()), tt.attrs)
@@ -158,7 +159,7 @@ func TestOTLPNormalizerRejectsWrongSourceForSpecializedCanonicalMetrics(t *testi
 }
 
 func TestMetricSourcePolicyRejectsAmbiguousDescendantAssignments(t *testing.T) {
-	policy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), metrics.Assignment{
+	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
 		"system.disk.io.read":  metrics.SourceHostOS,
 		"system.disk.io.write": metrics.SourceKubelet,
 	})
@@ -170,7 +171,7 @@ func TestMetricSourcePolicyRejectsAmbiguousDescendantAssignments(t *testing.T) {
 }
 
 func TestMetricSourcePolicyExactAssignmentPrecedesConflictingDescendants(t *testing.T) {
-	policy := ingest.NewMetricSourcePolicy(metrics.DefaultLogicalSources(), metrics.Assignment{
+	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
 		"system.disk.io":       metrics.SourceHostOS,
 		"system.disk.io.read":  metrics.SourceHostOS,
 		"system.disk.io.write": metrics.SourceKubelet,

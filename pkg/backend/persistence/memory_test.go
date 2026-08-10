@@ -2,7 +2,6 @@ package persistence
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -172,8 +171,6 @@ func TestMetricStore_QueryCatalogStats(t *testing.T) {
 		{MetricName: "servicegraph.request.count", EntityID: idA, Value: 1.0, Timestamp: now.Add(-10 * time.Minute), Labels: map[string]string{"source": "mesh.istio"}},
 		// Out of window — must be excluded
 		{MetricName: "k8s.pod.cpu.usage", EntityID: idA, Value: 9.9, Timestamp: now.Add(-2 * time.Hour), Labels: map[string]string{"source": "kubelet"}},
-		// No source label — collapses to SourceID ""
-		{MetricName: "k8s.pod.memory.working_set", EntityID: idA, Value: 1024, Timestamp: now.Add(-1 * time.Minute)},
 	}))
 
 	stats, err := store.QueryCatalogStats(ctx, time.Hour)
@@ -195,10 +192,6 @@ func TestMetricStore_QueryCatalogStats(t *testing.T) {
 	assert.Equal(t, "mesh.istio", traffic[0].SourceID)
 	assert.EqualValues(t, 1, traffic[0].SampleCount)
 
-	mem := byMetric["k8s.pod.memory.working_set"]
-	require.Len(t, mem, 1)
-	assert.Equal(t, "", mem[0].SourceID)
-	assert.EqualValues(t, 1, mem[0].SampleCount)
 }
 
 // ─── GraphStore tests ─────────────────────────────────────────────────────────
@@ -781,208 +774,6 @@ func TestMetricStoreCumulativeIncreaseRequiresBaselineInsideDoubleWindowHistory(
 		require.Len(t, got, 1)
 		assert.Equal(t, 40.0, got[0].Value)
 	})
-}
-
-func TestMetricStoreErrorRatioRequiresCompleteMatureBranches(t *testing.T) {
-	end := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
-	entity := svc("ratio")
-	makeBranch := func(metric, failed string, baseline, final float64, mature bool) []metrics.MetricSample {
-		labels := map[string]string{"temporality": "cumulative", "failed": failed, "edge_client": "a", "edge_server": "b"}
-		start := end.Add(-30 * time.Second)
-		if mature {
-			start = end.Add(-70 * time.Second)
-		}
-		return []metrics.MetricSample{
-			{MetricName: metric, EntityID: entity, Value: baseline, Timestamp: start, Labels: labels},
-			{MetricName: metric, EntityID: entity, Value: baseline, Timestamp: end.Add(-30 * time.Second), Labels: labels},
-			{MetricName: metric, EntityID: entity, Value: final, Timestamp: end, Labels: labels},
-		}
-	}
-	q := query.MetricQuery{MetricName: "servicegraph.request.error.ratio", Aggregation: metrics.AggregationWindowRatio, Window: time.Minute, To: end, Unit: metrics.UnitRatio}
-
-	complete := NewInMemoryMetricStore()
-	var completeSamples []metrics.MetricSample
-	completeSamples = append(completeSamples, makeBranch("servicegraph.request.count", "false", 100, 130, true)...)
-	completeSamples = append(completeSamples, makeBranch("servicegraph.request.count", "true", 20, 30, true)...)
-	completeSamples = append(completeSamples, makeBranch("servicegraph.request.error.count", "false", 0, 0, true)...)
-	completeSamples = append(completeSamples, makeBranch("servicegraph.request.error.count", "true", 5, 15, true)...)
-	require.NoError(t, complete.Write(context.Background(), completeSamples))
-	ratio, err := complete.Query(context.Background(), q)
-	require.NoError(t, err)
-	require.Len(t, ratio, 1)
-	assert.Equal(t, 0.25, ratio[0].Value)
-
-	incomplete := NewInMemoryMetricStore()
-	completeSamples = append(completeSamples, makeBranch("servicegraph.request.count", "partial", 0, 1, false)...)
-	require.NoError(t, incomplete.Write(context.Background(), completeSamples))
-	ratio, err = incomplete.Query(context.Background(), q)
-	require.NoError(t, err)
-	assert.Empty(t, ratio)
-}
-
-func TestMetricStoreErrorRatioUsesCanonicalRequestContextForIstioStatusSeries(t *testing.T) {
-	store := NewInMemoryMetricStore()
-	end := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
-	entity := svc("ratio-istio-status")
-	makeSeries := func(metricName, status string, baseline, final float64) []metrics.MetricSample {
-		labels := map[string]string{
-			"temporality":               "cumulative",
-			"source":                    "mesh.istio",
-			"edge_client":               "checkout",
-			"edge_client_id":            "service:demo:checkout",
-			"edge_server":               "payments",
-			"edge_server_id":            "service:demo:payments",
-			"http.response.status_code": status,
-		}
-		return []metrics.MetricSample{
-			{MetricName: metricName, EntityID: entity, Value: baseline, Timestamp: end.Add(-70 * time.Second), Labels: labels},
-			{MetricName: metricName, EntityID: entity, Value: baseline, Timestamp: end.Add(-30 * time.Second), Labels: labels},
-			{MetricName: metricName, EntityID: entity, Value: final, Timestamp: end, Labels: labels},
-		}
-	}
-
-	var samples []metrics.MetricSample
-	samples = append(samples, makeSeries("servicegraph.request.count", "200", 100, 130)...)
-	samples = append(samples, makeSeries("servicegraph.request.count", "503", 20, 30)...)
-	samples = append(samples, makeSeries("servicegraph.request.error.count", "503", 5, 15)...)
-	require.NoError(t, store.Write(context.Background(), samples))
-
-	got, err := store.Query(context.Background(), query.MetricQuery{
-		MetricName:  "servicegraph.request.error.ratio",
-		Aggregation: metrics.AggregationWindowRatio,
-		Window:      time.Minute,
-		To:          end,
-		Unit:        metrics.UnitRatio,
-	})
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, 0.25, got[0].Value)
-	assert.NotContains(t, got[0].Labels, "http.response.status_code")
-	assert.NotContains(t, got[0].Labels, "temporality")
-}
-
-func TestMetricStoreErrorRatioIgnoresStaleSeriesOutsideCurrentWindow(t *testing.T) {
-	store := NewInMemoryMetricStore()
-	end := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
-	entity := svc("ratio-stale-series")
-	labels := func(failed string) map[string]string {
-		return map[string]string{
-			"temporality":    "cumulative",
-			"failed":         failed,
-			"source":         "mesh.istio",
-			"edge_client":    "checkout",
-			"edge_client_id": "service:demo:checkout",
-			"edge_server":    "payments",
-			"edge_server_id": "service:demo:payments",
-		}
-	}
-	var samples []metrics.MetricSample
-	for _, metricName := range []string{"servicegraph.request.count", "servicegraph.request.error.count"} {
-		// This historical branch shares the public request context but has no
-		// sample in the requested minute, so VM's last_over_time participant
-		// count excludes it.
-		samples = append(samples,
-			metrics.MetricSample{MetricName: metricName, EntityID: entity, Value: 10, Timestamp: end.Add(-4 * time.Minute), Labels: labels("false")},
-			metrics.MetricSample{MetricName: metricName, EntityID: entity, Value: 20, Timestamp: end.Add(-3 * time.Minute), Labels: labels("false")},
-		)
-	}
-	for _, point := range []struct {
-		offset   time.Duration
-		requests float64
-		errors   float64
-	}{{-70 * time.Second, 100, 5}, {-30 * time.Second, 110, 5}, {0, 140, 15}} {
-		samples = append(samples,
-			metrics.MetricSample{MetricName: "servicegraph.request.count", EntityID: entity, Value: point.requests, Timestamp: end.Add(point.offset), Labels: labels("true")},
-			metrics.MetricSample{MetricName: "servicegraph.request.error.count", EntityID: entity, Value: point.errors, Timestamp: end.Add(point.offset), Labels: labels("true")},
-		)
-	}
-	require.NoError(t, store.Write(context.Background(), samples))
-
-	got, err := store.Query(context.Background(), query.MetricQuery{
-		MetricName:  "servicegraph.request.error.ratio",
-		Aggregation: metrics.AggregationWindowRatio,
-		Window:      time.Minute,
-		To:          end,
-		Unit:        metrics.UnitRatio,
-	})
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, 0.25, got[0].Value)
-}
-
-func TestMetricStoreErrorRatioDoesNotMutateStoredLabels(t *testing.T) {
-	store := NewInMemoryMetricStore()
-	end := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
-	entity := svc("ratio-labels")
-	labels := map[string]string{
-		"temporality": "cumulative",
-		"failed":      "true",
-		"edge_client": "a",
-		"edge_server": "b",
-	}
-	var samples []metrics.MetricSample
-	for _, metricName := range []string{"servicegraph.request.count", "servicegraph.request.error.count"} {
-		samples = append(samples,
-			metrics.MetricSample{MetricName: metricName, EntityID: entity, Value: 10, Timestamp: end.Add(-time.Minute), Labels: labels},
-			metrics.MetricSample{MetricName: metricName, EntityID: entity, Value: 20, Timestamp: end, Labels: labels},
-		)
-	}
-	require.NoError(t, store.Write(context.Background(), samples))
-
-	_, err := store.Query(context.Background(), query.MetricQuery{
-		MetricName:  "servicegraph.request.error.ratio",
-		Aggregation: metrics.AggregationWindowRatio,
-		Window:      time.Minute,
-		To:          end,
-		Unit:        metrics.UnitRatio,
-	})
-	require.NoError(t, err)
-
-	stored, err := store.Query(context.Background(), query.MetricQuery{MetricName: "servicegraph.request.error.count"})
-	require.NoError(t, err)
-	require.NotEmpty(t, stored)
-	for _, sample := range stored {
-		assert.Equal(t, "true", sample.Labels["failed"])
-	}
-}
-
-func TestMetricStoreErrorRatioConcurrentQueriesPreserveStoredLabels(t *testing.T) {
-	store := NewInMemoryMetricStore()
-	end := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
-	labels := map[string]string{"temporality": "cumulative", "failed": "true", "edge_client": "a", "edge_server": "b"}
-	var samples []metrics.MetricSample
-	for _, metricName := range []string{"servicegraph.request.count", "servicegraph.request.error.count"} {
-		samples = append(samples,
-			metrics.MetricSample{MetricName: metricName, EntityID: svc("ratio-race"), Value: 10, Timestamp: end.Add(-time.Minute), Labels: labels},
-			metrics.MetricSample{MetricName: metricName, EntityID: svc("ratio-race"), Value: 20, Timestamp: end, Labels: labels},
-		)
-	}
-	require.NoError(t, store.Write(context.Background(), samples))
-	ratioQuery := query.MetricQuery{MetricName: "servicegraph.request.error.ratio", Aggregation: metrics.AggregationWindowRatio, Window: time.Minute, To: end, Unit: metrics.UnitRatio}
-	rawQuery := query.MetricQuery{MetricName: "servicegraph.request.error.count"}
-
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			for range 100 {
-				_, _ = store.Query(context.Background(), ratioQuery)
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			for range 100 {
-				got, err := store.Query(context.Background(), rawQuery)
-				if assert.NoError(t, err) {
-					for _, sample := range got {
-						assert.Equal(t, "true", sample.Labels["failed"])
-					}
-				}
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 func TestMetricStoreWindowMeanCumulative(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
-// StatusHandler serves system status and discovery profile endpoints.
+// StatusHandler serves system status and capability profile endpoints.
 type StatusHandler struct {
 	metadataStore    persistence.MetadataStore
 	graphStore       persistence.GraphStore
@@ -292,26 +292,19 @@ func (h *StatusHandler) handleGetDiscovery(w http.ResponseWriter, r *http.Reques
 
 	prof, err := h.metadataStore.GetDiscovery(r.Context())
 	if err != nil {
-		h.logger.Warn("failed to get discovery profile", logging.Error(err))
-		writeError(w, http.StatusInternalServerError, "failed to retrieve discovery profile")
+		h.logger.Warn("failed to get capability profile", logging.Error(err))
+		writeError(w, http.StatusInternalServerError, "failed to retrieve capability profile")
 		return
 	}
 	if prof == nil {
-		writeError(w, http.StatusNotFound, "no discovery profile available")
+		writeError(w, http.StatusNotFound, "no capability profile available")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"cluster_id":            prof.ClusterID,
-		"cluster_name":          prof.ClusterName,
-		"discovered_at":         prof.DiscoveredAt,
-		"node_count":            len(prof.Nodes),
-		"namespace_count":       len(prof.Namespaces),
-		"workload_count":        len(prof.Workloads),
-		"service_count":         len(prof.Services),
-		"ingress_count":         len(prof.Ingresses),
-		"sources":               prof.Sources,
-		"collection_paths":      prof.CollectionPaths,
-		"recommended_receivers": prof.RecommendedReceivers,
+		"cluster_id":    prof.ClusterID,
+		"cluster_name":  prof.ClusterName,
+		"discovered_at": prof.DiscoveredAt,
+		"capabilities":  prof.Capabilities,
 	})
 }

@@ -245,7 +245,7 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, edges := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+	nodes, edges := snap.Graph.Nodes, snap.Graph.Edges
 
 	kindCounts := map[string]int{}
 	nsSet := map[string]struct{}{}
@@ -330,7 +330,7 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, _ := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+	nodes := snap.Graph.Nodes
 
 	kindFilter := entities.EntityKind(r.URL.Query().Get("kind"))
 	nsFilter := r.URL.Query().Get("namespace")
@@ -398,7 +398,7 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, edges := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+	nodes, edges := snap.Graph.Nodes, snap.Graph.Edges
 
 	var found *topology.Node
 	for i := range nodes {
@@ -473,10 +473,6 @@ func (h *GraphHandler) handleListEdges(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("failed to query edges", logging.Error(err))
 		writeError(w, http.StatusInternalServerError, "failed to query edges")
 		return
-	}
-
-	if snap, snapErr := h.graphStore.GetLatest(r.Context()); snapErr == nil && snap != nil {
-		_, edges = canonicalizeGraph(snap.Graph.Nodes, edges)
 	}
 
 	var filtered []topology.Edge

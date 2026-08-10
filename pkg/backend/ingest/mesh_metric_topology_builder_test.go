@@ -16,10 +16,11 @@ import (
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/core/topology"
+	"github.com/erickivel/oksg/pkg/sources"
 )
 
 func TestMeshMetricTopologyBuilderBuildsCallsEdgeFromIstioServicegraphMetric(t *testing.T) {
-	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(metrics.DefaultLogicalSources(), nil))
+	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	env := makeMeshMetricEnvelope(t, "istio_requests_total", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":                          "gateway-go",
 		"server":                          "service-a-python",
@@ -47,7 +48,7 @@ func TestMeshMetricTopologyBuilderBuildsCallsEdgeFromIstioServicegraphMetric(t *
 }
 
 func TestMeshMetricTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing.T) {
-	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(metrics.DefaultLogicalSources(), nil))
+	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	envelopeTimestamp := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
 	dataPointTimestamp := envelopeTimestamp.Add(5 * time.Minute)
 	env := makeMeshMetricEnvelope(t, "istio_requests_total", envelopeTimestamp, dataPointTimestamp, map[string]string{
@@ -67,7 +68,7 @@ func TestMeshMetricTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing.
 }
 
 func TestMeshMetricTopologyBuilderIgnoresNonServicegraphMetrics(t *testing.T) {
-	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(metrics.DefaultLogicalSources(), nil))
+	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	env := makeMeshMetricEnvelope(t, "k8s.pod.cpu.usage", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":           "gateway-go",
 		"server":           "service-a-python",
@@ -81,7 +82,7 @@ func TestMeshMetricTopologyBuilderIgnoresNonServicegraphMetrics(t *testing.T) {
 }
 
 func TestMeshMetricTopologyBuilderRejectsInvalidSourceWithoutCreatingNodesOrEdges(t *testing.T) {
-	policy := NewMetricSourcePolicy(metrics.DefaultLogicalSources(), metrics.Assignment{
+	policy := NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
 		"servicegraph.request.count": metrics.SourceMeshIstio,
 	})
 	builder := NewMeshMetricTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", policy)

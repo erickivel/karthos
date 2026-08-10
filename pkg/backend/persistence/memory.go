@@ -43,9 +43,6 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 	defer s.mu.RUnlock()
 
 	if q.Aggregation != "" && q.Aggregation != metrics.AggregationLatest {
-		if q.Aggregation == metrics.AggregationWindowRatio && q.MetricName == "servicegraph.request.error.ratio" {
-			return s.queryErrorRatio(q), nil
-		}
 		if q.Aggregation == metrics.AggregationWindowMean {
 			return s.queryWindowMean(q), nil
 		}
@@ -195,16 +192,6 @@ func resetAwareIncrease(series []metrics.MetricSample) float64 {
 	return total
 }
 
-func (s *InMemoryMetricStore) queryErrorRatio(q query.MetricQuery) []metrics.MetricSample {
-	requestsQ := q
-	requestsQ.MetricName = "servicegraph.request.count"
-	requestsQ.Aggregation = metrics.AggregationIncrease
-	requestsQ.Unit = metrics.UnitCount
-	errorsQ := requestsQ
-	errorsQ.MetricName = "servicegraph.request.error.count"
-	return completeMemoryRatios(s.filteredSamples(errorsQ, false), s.filteredSamples(requestsQ, false), q)
-}
-
 func (s *InMemoryMetricStore) queryWindowMean(q query.MetricQuery) []metrics.MetricSample {
 	branch := func(suffix string) map[string]metrics.MetricSample {
 		branchQuery := q
@@ -247,65 +234,6 @@ func (s *InMemoryMetricStore) queryWindowMean(q query.MetricQuery) []metrics.Met
 	return result
 }
 
-func completeMemoryRatios(errorRaw, requestRaw []metrics.MetricSample, q query.MetricQuery) []metrics.MetricSample {
-	aggregate := func(raw []metrics.MetricSample) (map[string]float64, map[string]int, map[string]int, map[string]metrics.MetricSample) {
-		totals, observed, mature := map[string]float64{}, map[string]int{}, map[string]int{}
-		representatives := map[string]metrics.MetricSample{}
-		full := map[string][]metrics.MetricSample{}
-		for _, sample := range raw {
-			full[memorySeriesKey(sample, false)] = append(full[memorySeriesKey(sample, false)], sample)
-		}
-		for _, series := range full {
-			if !memorySeriesObservedInWindow(series, q) {
-				continue
-			}
-			contextKey := memoryContextKey(series[0])
-			observed[contextKey]++
-			if value, ok := aggregateMemorySeries(series, query.MetricQuery{Aggregation: metrics.AggregationIncrease, Window: q.Window, To: q.To, Unit: metrics.UnitCount}); ok {
-				mature[contextKey]++
-				totals[contextKey] += value.Value
-				value.Labels = memoryContextLabels(value.Labels)
-				representatives[contextKey] = value
-			}
-		}
-		return totals, observed, mature, representatives
-	}
-	errors, errorObserved, errorMature, reps := aggregate(errorRaw)
-	requests, requestObserved, requestMature, _ := aggregate(requestRaw)
-	var result []metrics.MetricSample
-	for key, denominator := range requests {
-		if denominator <= 0 || requestObserved[key] != requestMature[key] || errorObserved[key] == 0 || errorObserved[key] != errorMature[key] {
-			continue
-		}
-		sample := reps[key]
-		sample.MetricName, sample.Value, sample.Unit = q.MetricName, errors[key]/denominator, q.Unit
-		result = append(result, sample)
-	}
-	return result
-}
-
-func memorySeriesObservedInWindow(series []metrics.MetricSample, q query.MetricQuery) bool {
-	if len(series) == 0 {
-		return false
-	}
-	end := q.To
-	if end.IsZero() {
-		end = series[0].Timestamp
-		for _, sample := range series[1:] {
-			if sample.Timestamp.After(end) {
-				end = sample.Timestamp
-			}
-		}
-	}
-	start := end.Add(-q.Window)
-	for _, sample := range series {
-		if !sample.Timestamp.Before(start) && !sample.Timestamp.After(end) {
-			return true
-		}
-	}
-	return false
-}
-
 func memorySeriesKey(sample metrics.MetricSample, excludeFailed bool) string {
 	labels := make(map[string]string, len(sample.Labels))
 	for key, value := range sample.Labels {
@@ -318,26 +246,8 @@ func memorySeriesKey(sample metrics.MetricSample, excludeFailed bool) string {
 	return sample.MetricName + "|" + string(sample.EntityID) + "|" + string(encoded)
 }
 
-func memoryContextKey(sample metrics.MetricSample) string {
-	labels := memoryContextLabels(sample.Labels)
-	encoded, _ := json.Marshal(labels)
-	return string(sample.EntityID) + "|" + string(encoded)
-}
-
-func memoryContextLabels(labels map[string]string) map[string]string {
-	contextLabels := make(map[string]string, len(labels))
-	for _, key := range query.ServicegraphRequestContextLabels() {
-		if value, ok := labels[key]; ok {
-			contextLabels[key] = value
-		}
-	}
-	return contextLabels
-}
-
 // QueryCatalogStats aggregates per-(metric, source) sample counts and
 // last-seen timestamps across samples that fall inside [now-lookback, now].
-// The source dimension is read from semconv.LabelSource on each sample;
-// samples with no source label collapse to SourceID "".
 func (s *InMemoryMetricStore) QueryCatalogStats(_ context.Context, lookback time.Duration) ([]CatalogStat, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

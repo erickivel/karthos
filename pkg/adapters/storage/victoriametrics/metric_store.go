@@ -386,8 +386,6 @@ func escapeLabelValue(v string) string {
 	return v
 }
 
-var servicegraphRequestContext = strings.Join(query.ServicegraphRequestContextLabels(), ",")
-
 // buildPromQL constructs a PromQL selector from a MetricQuery.
 func buildPromQL(q query.MetricQuery) string {
 	if q.MetricName == "" {
@@ -415,8 +413,6 @@ func buildPromQL(q query.MetricQuery) string {
 		}
 	}
 	switch q.MetricName {
-	case "servicegraph.request.error.ratio":
-		return servicegraphErrorRatio(q)
 	case "oksg.container.health.status":
 		// Per-container composite. Priority order: restarting > not_ready > healthy.
 		// Each clause uses the `(predicate) * 0 + N` idiom so a clause emits
@@ -504,25 +500,6 @@ func activeCounterRate(q query.MetricQuery) string {
 	window := durationExpr(q.Window)
 	cumulative := metricSelectorWithMatchers(q, `temporality!="delta"`)
 	return fmt.Sprintf("(rate(%s[%s]) and (count_over_time(%s[%s]) >= 2))", cumulative, window, cumulative, window)
-}
-
-func servicegraphErrorRatio(q query.MetricQuery) string {
-	errorsQ := withMetricName(q, "servicegraph.request.error.count")
-	requestsQ := withMetricName(q, "servicegraph.request.count")
-	errors := exactWindowIncrease(errorsQ)
-	requests := exactWindowIncrease(requestsQ)
-	errorTotal := fmt.Sprintf("sum by (%s) (%s)", servicegraphRequestContext, errors)
-	requestTotal := fmt.Sprintf("sum by (%s) (%s)", servicegraphRequestContext, requests)
-	errorCoverage := completeBranchGate(errorsQ, errors)
-	requestCoverage := completeBranchGate(requestsQ, requests)
-	return fmt.Sprintf("(%s / clamp_min(%s, 1e-9)) and on (%s) %s and on (%s) %s", errorTotal, requestTotal, servicegraphRequestContext, errorCoverage, servicegraphRequestContext, requestCoverage)
-}
-
-func completeBranchGate(q query.MetricQuery, mature string) string {
-	window := durationExpr(q.Window)
-	observed := fmt.Sprintf("count by (%s) (last_over_time(%s[%s]))", servicegraphRequestContext, metricSelector(q), window)
-	matureCount := fmt.Sprintf("count by (%s) (%s)", servicegraphRequestContext, mature)
-	return fmt.Sprintf("(%s == %s)", observed, matureCount)
 }
 
 func durationExpr(window time.Duration) string {
