@@ -138,8 +138,7 @@ sequenceDiagram
 | `pkg/backend/ingest/metric_topology_builder.go` | `MetricTopologyBuilder` | Extracts structural `runs_on`/`contains` edges and nodes from metric resource attributes |
 | `pkg/backend/ingest/mesh_metric_topology_builder.go` | `MeshMetricTopologyBuilder` | Derives `calls` edges from servicegraph-shaped mesh metrics with `mesh.istio` provenance |
 | `pkg/backend/ingest/composite_topology_builder.go` | `CompositeTopologyBuilder` | Chains topology builders so the metric path runs structural + mesh builders together |
-| `pkg/backend/ingest/structural_topology_builder.go` | `K8sStructuralTopologyBuilder` | Derives `exposes`/`routes_to`/`uses`/`mounts` edges from ClusterProfile |
-| `pkg/backend/ingest/structural_topology_ingestor.go` | `StructuralTopologyIngestor` | Ingests K8s structural topology from ClusterProfile into GraphStore |
+| `pkg/sources/structure` | `kubernetes.structure` | Direct in-cluster refresh of Kubernetes entities and `exposes`/`routes_to`/`uses`/`mounts` edges into GraphStore |
 | `pkg/core/metrics/{catalog,sources,dialect,resolver}.go` | Metrics pipeline | Catalog, source registry, dialect translation, and priority-based source arbitration |
 | `pkg/core/semconv/keys.go` | Attribute keys | OTLP semantic-convention attribute key constants shared across ingest and topology |
 | `pkg/backend/persistence/memory.go` | `MetricStore` | Thread-safe in-memory `MetricStore`; supports write, time-range queries, and catalog stats |
@@ -240,7 +239,7 @@ What it does today:
 - accepts exports from the agent
 - can also accept OTLP-native application telemetry
 - scrapes annotated application metrics once through static Service-DNS targets
-- collects Kubernetes API-backed metrics with `k8s_cluster`, including workload/controller counts, HPA replicas, ResourceQuota usage, pod phases, node conditions, and node allocatable resources; structural discovery emits matching graph nodes for those controller, HPA, and ResourceQuota entity IDs
+- collects Kubernetes API-backed container configuration/status, pod phase/status-reason, and node-condition metrics with `k8s_cluster`
 - applies `memory_limiter` and `batch`
 - exports to the backend OTLP gRPC endpoint
 - uses send-queue and retry settings for basic transport resilience
@@ -249,7 +248,7 @@ Operational notes:
 
 - the gateway is deployed as a single Deployment replica
 - its job is collection and forwarding only; it does not perform semantic normalization or persistence
-- generated v0.156 component IDs use `k8s_cluster`, `span_metrics`, and `service_graph`; the gateway disables `connector.spanmetrics.includeCollectorInstanceID` so spanmetrics public series identity remains compatible with pre-upgrade data
+- generated v0.156 component IDs use `k8s_cluster` and `service_graph`
 
 ### 3. Backend OTLP Ingest
 
@@ -284,17 +283,13 @@ The backend serves a scalar metrics API, so OTLP metrics are normalized into can
 - The gateway servicegraph connector flushes metrics every 15 seconds and retains unmatched spans for 30 seconds so independently batched client/server exports can be paired before an edge expires.
 - Kubelet network metrics preserve `direction` and `network_interface_name`, keeping receive/transmit and separate node interfaces as distinct raw series.
 - Pod-volume metrics normalize resource/datapoint attributes to `volume_name`, `volume_type`, and optional `persistentvolumeclaim_name`. When a volume datapoint carries a resolvable PVC identity, the normalizer stores the sample against the PVC entity. Otherwise it remains pod-scoped and stays distinct by volume name/type.
-- ResourceQuota samples carry their resolved unit (`millicores`, `bytes`, `count`, or fallback `resource`) through VictoriaMetrics in the reserved `oksg_unit` label. Reads validate and remove that internal label before the API returns public labels.
-- `k8s.container.storage.request` and `k8s.container.storage.limit` are disabled and not canonical metrics; ephemeral-storage and volume metrics are the supported alternatives.
 
 ### Request, Error, and Duration Semantics
 
 The semconv names stay stable across storage and the API, but the semantics still come from the upstream emitters:
 
 - Counter metrics use the catalog-declared default aggregation. Rate-presented counters default to exact one-minute `window_rate`; cumulative counters such as restarts default to `latest`. Callers can select `latest`, `increase`, `window_rate`, or cumulative `active_rate` with a validated `1m..1h` window.
-- `servicegraph.request.error.ratio` is not stored directly; the API divides baseline-gated error and request increases by entity, source, edge identity, connection type, and client/server HTTP methods. `failed` is excluded from grouping, and incomplete branches yield no data.
 - `http_request_duration_seconds` translates to `http.server.request.duration` and is normalized from seconds to nanoseconds.
-- `traces.span.metrics.duration` translates to `rpc.server.duration` and is normalized from milliseconds to nanoseconds unless the collector configuration is explicitly changed to export seconds.
 - `traces_service_graph_request_server` translates to `servicegraph.request.duration` and is normalized from seconds to nanoseconds.
 
 The default counter query window is 1 minute and can be overridden through the API up to 1 hour. Responses report the normalized effective mode and window.
@@ -330,10 +325,10 @@ After routing, envelopes are normalized into canonical domain objects.
 Metric path:
 
 - `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label use the PVC identity before the generic resource fallback. Entity resolution errors fail the envelope.
-- `OTLPNormalizer` first uses the core `metrics.DialectRegistry` for raw-name translation and `OTLPSemconvMetrics` for generic kind/unit metadata. It then delegates collector-specific labels, entity attachment, directional variants, and conversions to the internal registry in `source_dialect.go`; each source implementation is isolated in its own `source_dialect_*.go` file. The shared normalizer only traverses scalar/histogram datapoints, enforces source assignment, applies planned conversions, marks delta semantics, and emits raw samples. ResourceQuota samples preserve the `resource` label and derive concrete sample units from it when possible (`millicores`, `bytes`, or `count`; otherwise `resource`). Application Prometheus samples resolve to Service entities from preserved `namespace` / `service` scrape labels. Servicegraph connector and Istio mesh metrics are enriched with stable edge identity and bounded source dimensions. Dotted OTLP labels are normalized to Prometheus-safe names. Pod status-reason integers receive public `value_label` strings at the API boundary, including `6 -> unknown`. Istio request-duration histograms are converted from milliseconds to nanoseconds, histograms are stored as `_sum`/`_count`, and `servicegraph.request.error.ratio` remains query-derived. Unrecognized metric names are silently skipped.
+- `OTLPNormalizer` first uses the core `metrics.DialectRegistry` for raw-name translation and `OTLPSemconvMetrics` for generic kind/unit metadata. It then dispatches through the selected static source module in `pkg/sources`; each source package owns collector-specific labels, entity attachment, directional variants, and conversions via the narrow `pkg/sources/contract` boundary. The shared normalizer only traverses scalar/histogram datapoints, enforces source assignment, applies planned conversions, marks delta semantics, and emits raw samples. Application Prometheus samples resolve to Service entities from preserved `namespace` / `service` scrape labels. Servicegraph connector and Istio mesh metrics are enriched with stable edge identity and bounded source dimensions. Dotted OTLP labels are normalized to Prometheus-safe names. Pod status-reason integers receive public `value_label` strings at the API boundary. Istio request-duration histograms are converted from milliseconds to nanoseconds, and histograms are stored as `_sum`/`_count`. Unrecognized metric names are silently skipped.
 - `MetricStore` stores the resulting samples in memory or VictoriaMetrics. Supports time-range, entity-filtered, edge-filtered, and catalog-stats queries.
 - `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. Helm deployments require live Pod lifecycle validation: a `runs_on` refresh needs matching `k8s.pod.uid` and `k8s.node.name` from a scheduled Pod. Its public Pod and Node endpoints remain name-based, but the `runs_on` edge identity is versioned by Pod UID and carries `k8s.cluster.name` for lifecycle reconciliation. The backend fail-closes only `runs_on` while its Pod List/Watch state is unavailable; metric ingestion and `contains` topology continue. When Kubernetes reports a `Succeeded` or `Failed` Pod, it synchronously writes one immutable RFC3339 `terminal_deadline` for that exact UID/node assignment before arming local grace or allowing further `runs_on` refreshes. If that first write fails, that terminal UID is immediately fail-closed: its grace-period refreshes are dropped while the original deadline is retried asynchronously, without extension. A same-name replacement is checked by UID before retirement, so an old timer retires only the old assignment. `MeshMetricTopologyBuilder` parses servicegraph-shaped mesh metrics and emits `calls` edges with `mesh.istio` provenance plus protocol, mTLS, principal, and response metadata. Mesh `calls` edges take `FirstSeen`/`LastSeen` from the metric datapoint timestamp, falling back to the envelope timestamp only when the datapoint has no timestamp.
-- `GraphStore` accumulates edges and nodes across snapshots. Re-observed active edges have their `LastSeen` updated; nodes are merged by entity ID. For each UID-versioned `runs_on` edge, storage is the concurrency authority for one-way `active → pending terminal → retired` transitions. The terminal marker uses a conditional upsert that returns either `pending` or `retired`; a delayed retry that observes `retired` cannot re-arm or recreate the old UID. Before accepting metric refreshes after startup, the backend reconciles only persisted UID-versioned `runs_on` assignments whose `k8s.cluster.name` equals its configured cluster. It retires old non-terminal assignments absent from the authoritative Pod List/Watch snapshot. An unexpired confirmed initial `terminal_deadline` remains latest-active and is returned to the tracker to re-arm the original timer after a restart, including when the same terminal UID remains in the initial List. A retry-only marker is explicitly unconfirmed: if that UID is absent or replaced at restart, reconciliation retires it immediately, intentionally losing the remaining grace instead of risking a stale old assignment in the latest graph. Existing deadlines are immutable and are never reset by a restart. At the deadline, latest-graph queries exclude the edge even before the callback completes; retirement then records RFC3339 `retired_at` without changing `first_seen` or advancing `last_seen`. A retired edge remains in the audit-capable `/api/v1/graph/edges`. Direct deletion or replacement retires a non-terminal old assignment immediately. If a terminal UID with a confirmed initial marker is deleted or replaced during its 60-second grace, it remains active through the recorded deadline and only that UID is retired then. Retirement persistence, and retries after an initial terminal-marker failure, run asynchronously with retry-until-cancellation and fixed bounded per-attempt backoff. Legacy `runs_on` edges without cluster metadata are intentionally not reconciled, rather than risking deletion of another cluster's data; no migration is performed. This POC does not materialize historical graph snapshots and does not provide `graph?at=` replay.
+- `GraphStore` accumulates edges and nodes across snapshots. Re-observed active edges have their `LastSeen` updated; nodes are merged by entity ID. For each UID-versioned `runs_on` edge, storage is the concurrency authority for one-way `active → pending terminal → retired` transitions. The terminal marker uses a conditional upsert that returns either `pending` or `retired`; a delayed retry that observes `retired` cannot re-arm or recreate the old UID. Before accepting metric refreshes after startup, the backend reconciles persisted UID-versioned `runs_on` assignments whose `k8s.cluster.name` equals its configured cluster. It retires non-terminal assignments absent from the authoritative Pod List/Watch snapshot. An unexpired confirmed initial `terminal_deadline` remains latest-active and is returned to the tracker to re-arm the original timer after a restart, including when the same terminal UID remains in the initial List. A retry-only marker is explicitly unconfirmed: if that UID is absent or replaced at restart, reconciliation retires it immediately, intentionally losing the remaining grace instead of risking a stale assignment in the latest graph. Existing deadlines are immutable and are never reset by a restart. At the deadline, latest-graph queries exclude the edge even before the callback completes; retirement then records RFC3339 `retired_at` without changing `first_seen` or advancing `last_seen`. A retired edge remains in the audit-capable `/api/v1/graph/edges`. Direct deletion or replacement retires a non-terminal assignment immediately. If a terminal UID with a confirmed initial marker is deleted or replaced during its 60-second grace, it remains active through the recorded deadline and only that UID is retired then. Retirement persistence, and retries after an initial terminal-marker failure, run asynchronously with retry-until-cancellation and fixed bounded per-attempt backoff. This POC does not materialize historical graph snapshots and does not provide `graph?at=` replay.
 
 Trace path:
 
@@ -363,8 +358,7 @@ Agent Collector
         v
 Gateway Collector
   - otlp receive
-  - k8s_cluster (workloads, jobs, HPAs, quotas, pod phases, node conditions)
-  - spanmetrics connector (when OTLP traces present)
+  - k8s_cluster (container configuration/status, pod phases, node conditions)
   - servicegraph connector (when OTLP traces present)
   - memory_limiter
   - batch
@@ -383,8 +377,8 @@ OKSG Backend
           edges: calls (service→service via peer.service attribute)
   - Periodic topology flush (default 60s)
     └── BufferedTopologyIngestor → GraphStore.PutSnapshot(consolidated snapshot)
-  - Structural topology (at startup, if --discovery-profile provided)
-    └── StructuralTopologyIngestor(K8sStructuralTopologyBuilder) → GraphStore
+  - kubernetes.structure refresh (at startup and on a TTL-safe timer)
+    └── direct in-cluster Kubernetes API inventory → GraphStore
           edges: exposes (service→workload), routes_to (ingress→service),
                  uses (workload→configmap/secret), mounts (workload→pvc),
                  contains (workload→pod when discovery can resolve ownership)
@@ -392,7 +386,7 @@ OKSG Backend
 
 REST API Server (:8080) — all list endpoints support cursor-based pagination
   - /api/v1/status         → system_status (nominal/degraded/disconnected), freshness
-  - /api/v1/discovery      → MetadataStore → discovery profile summary
+  - /api/v1/discovery      → MetadataStore → capability profile summary
   - /api/v1/graph          → GraphStore → snapshot + kind/relation counts + available_filters
   - /api/v1/graph/nodes    → GraphStore + EntityRegistry → enriched nodes (name, namespace, status)
   - /api/v1/graph/nodes/id → GraphStore + EntityRegistry → node detail + enriched edges

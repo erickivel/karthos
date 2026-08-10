@@ -24,7 +24,7 @@ Key coverage areas:
 - Pod lifecycle validation: UID/node matching, synchronous immutable `terminal_deadline` persistence before grace activation, fail-closed terminal refreshes on an initial marker-write failure with retry of the original deadline, confirmed-initial versus retry-only marker provenance (an absent/replaced retry-only UID retires immediately at restart), atomic active→pending→retired storage transitions that prevent delayed marker resurrection across delete/replace/crash/restart interleavings, cluster-scoped startup reconciliation and re-arming across same-UID/deleted/replaced restart states, deadline exclusion from latest reads with `retired_at` audit history, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
 - `InMemoryGraphStore`: node accumulation and deduplication across snapshots
-- `/debug/graph` endpoint correctness
+- `/api/v1/graph` public graph-contract correctness
 - Helm deploy command assembly
 - structured JSON logger behavior
 - `discovery-job` mode orchestration
@@ -79,13 +79,21 @@ What each stage does:
   runs `helm upgrade --install` for agent, gateway, backend, and frontend
 - `test:e2e:verify`
   checks Helm status, pod readiness including the frontend rollout, and recent agent/gateway/backend logs
-- generated values can also carry collector `featureGates`; v0.156 agent gates are empty and the gateway disables `connector.spanmetrics.includeCollectorInstanceID` for compatibility
+- generated values can also carry collector `featureGates`; v0.156 agent and gateway gates are empty for the focused core
 
 `test:e2e:deploy` waits for the demo app Deployments and pods before discovery
-runs. This keeps discovery profiles from capturing terminating rollout pods
+runs. This keeps capability profiles from capturing terminating rollout pods
 that would later appear as duplicate topology cards.
 
 ## Scenario Expectations
+
+### Strict source-contract checks
+
+`task test:e2e:scenario:detector-failure` proves discovery fails closed and
+writes no capability profile when its Kubernetes probe cannot run.
+`task test:e2e:scenario:source-contract-rejection` temporarily mounts a
+fingerprint-mismatched plan, verifies backend startup rejection, and restores
+the valid ConfigMap and rollout automatically.
 
 ### Prometheus Available
 
@@ -95,7 +103,7 @@ This scenario covers Prometheus discovery, deploy, controlled traffic, and live
 VictoriaMetrics/API assertions. The `e2e:scenario:prometheus` task invokes the
 standalone runner, warms the cumulative servicegraph baseline, sends 30 normal
 and 10 intentional `/error` requests, and verifies the resulting increases,
-window rates, active rates, units, metadata, duration, and error ratio.
+window rates, active rates, units, metadata, and duration.
 
 It is a deployment-compatibility scenario, not retired-Pod lifecycle proof.
 The retired `runs_on` contract is unit-tested in this repository and is
@@ -112,7 +120,7 @@ Expected:
 
 - Prometheus-annotated services are detected
 - gateway-go emits OTLP traces (instrumented with OTel Go SDK, `peer.service` attributes set)
-- generated Helm values include Prometheus receiver config and the gateway `span_metrics`/`service_graph` component IDs
+- generated Helm values include Prometheus receiver config and the selected gateway `service_graph` component ID
 - agent DaemonSet, gateway Deployment, backend Deployment, and frontend Deployment become ready
 - backend logs show accepted metric envelopes after the gateway forwards traffic
 - generated traffic flows through `gateway-go -> service-a-python` and `gateway-go -> service-b-node`; the error fixture uses `gateway-go /error`, passes `force_error=true` downstream, returns 5xx responses, and marks the corresponding spans as error status
@@ -120,10 +128,9 @@ Expected:
 - `/api/v1/metrics` returns semconv servicegraph samples for `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
 - servicegraph samples preserve `failed`, `connection_type`, and distinct `client_http_method` / `server_http_method` labels when emitted; duration `_sum` and `_count` carry identical labels
 - raw canonical servicegraph cumulative counters increase by exactly 40 requests and 10 errors for each of the three internal edges during the controlled traffic window; the scenario captures before/after VM baselines because collector v0.156 emits cumulative servicegraph Sums
-- after a mature baseline, explicit increases are `40/10`, default and explicit one-minute window rates are approximately `0.667/0.167` per second, cumulative active rate is available, response metadata/units match the selected mode, and every edge ratio is `0.25`
+- after a mature baseline, explicit increases are `40/10`, default and explicit one-minute window rates are approximately `0.667/0.167` per second, cumulative active rate is available, and response metadata/units match the selected mode
 - the controlled 40-request run can legitimately add 40 `otelcol_connector_servicegraph_expired_edges`: root inbound gateway server spans have no in-cluster client span to pair with. Internal pairing correctness is determined from the exact three internal edge totals, not from a zero global-expiration expectation; the generated connector pairing TTL remains 30 seconds
-- `servicegraph.request.error.ratio` remains query-derived, groups by edge plus request context while excluding `failed`, and must return `0.25 ± 0.02` for every controlled internal edge
-- `/debug/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
+- `/api/v1/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
 - Traffic topology mode intentionally stays aggregated at service/workload readability even when the granularity control is set to runtime or detailed; pod replica cards are not expected in Traffic mode
 
 ### Istio Mesh Available
@@ -190,8 +197,6 @@ task test:e2e:traffic TRAFFIC_ERROR_REQUESTS=10  # optional: send more error tra
 task test:e2e:debug:api             # verify backend REST API access
 curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq .
 curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.error.count" | jq .
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.error.ratio" | jq .
-task test:e2e:debug:graph           # inspect topology graph snapshot
 ```
 
 Configurable variables (all override-able on the command line):
@@ -205,12 +210,10 @@ Configurable variables (all override-able on the command line):
 | `TRAFFIC_ERROR_EVERY` | `5` | In `e2e:traffic:watch`, every Nth request uses `/error`; set `0` to disable |
 | `TRAFFIC_INTERVAL` | `0.5` | Seconds between requests |
 
-Use the debug tasks to inspect backend state after traffic has flowed:
+Use the API shortcut to inspect backend state after traffic has flowed:
 
 ```bash
 task test:e2e:debug:api      # query backend /api/v1/status on a dedicated local port
-task test:e2e:debug:metrics  # memory-store only; external storage users should query /api/v1/metrics or VictoriaMetrics directly
-task test:e2e:debug:graph    # dump full topology graph snapshot
 ```
 
 Recommended local port convention during e2e work:
@@ -255,10 +258,9 @@ Coverage currently includes:
 
 Topology metric assertions should stay entity-scoped. Pod CPU and memory are
 valid on pod cards, servicegraph request rates are valid on service and ingress
-traffic cards, node allocatable CPU and memory are valid on Kubernetes node
-cards, and workload readiness uses `k8s.deployment.available` over discovered
-`k8s.workload.replicas` metadata. PVC storage should only be asserted when the
-backend exposes paired PVC-resolved volume capacity and available samples.
+traffic cards, node CPU and memory are valid on Kubernetes node cards, and PVC
+storage should only be asserted when the backend exposes paired PVC-resolved
+volume capacity and available samples.
 
 ### No Telemetry Fallback
 
@@ -287,7 +289,7 @@ When changing the e2e flow, keep log inspection and rendered Helm artifacts easy
 ## Cleanup
 
 ```bash
-task test:e2e:reset       # remove OTel collectors and the applied discovery-profile ConfigMap
+task test:e2e:reset       # remove OTel collectors and the applied source-contract ConfigMap
 task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
 task test:e2e:reset-all   # remove both OTel collectors and all demo fixtures
 task test:e2e:teardown    # destroy the kind cluster and local registry

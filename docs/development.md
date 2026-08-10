@@ -32,18 +32,13 @@ Do not add large framework dependencies before there is a concrete need for them
 cmd/
   discovery-job/   implemented discovery/plan/deploy CLI
   backend/         OTLP ingest, semantic normalization, and REST API runtime
-  controller/      placeholder
   schema-gen/      schema helper
 
 pkg/
   adapters/api/          REST API server (handlers + response envelope + pagination)
-  adapters/autoinstrumentation/ reserved boundary for OTel operator integration (doc.go only)
-  adapters/istio/        reserved boundary for Istio-specific source adapters (doc.go only)
   adapters/kubernetes/   discovery adapter (Prometheus + OTLP + Istio mesh detection)
-  adapters/obi/          reserved boundary for eBPF / OBI ingestion (doc.go only)
   adapters/otel/         source planner; Helm values builder; transform/oksg-source processor
   adapters/otlp/         OTLP gRPC and HTTP server adapter
-  adapters/prometheus/   reserved boundary for Prometheus / OpenMetrics adapters (doc.go only)
   adapters/storage/      storage factory and config (memory or external backends)
   adapters/storage/postgresql/     PostgreSQL implementations (pgx/v5)
   adapters/storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
@@ -62,23 +57,16 @@ pkg/
   collector/configgen/   Helm values builder
   collector/deployer/    Helm runner
   core/entities/         canonical graph-facing entities and stable IDs
-  core/featurestore/     reserved for future model-ready features
   core/logging/          shared JSON stdout logger
   core/metrics/          canonical catalog, dialect maps, source registry,
                          resolver, OTLP semconv mappings, units
                          (catalog.go, sources.go, dialect.go, resolver.go,
                           otel_mappings.go, canonical.go, sample.go, unit.go)
-  core/registry/         canonical metric registry contracts
   core/schema/           raw telemetry envelopes, validation, schema versions
   core/semconv/          OTLP semantic-convention attribute key constants
   core/topology/         graph nodes, edges, relations, and snapshots
-  discovery/detectors/   Detector interface (Name, Detect → ObservabilitySource)
-  discovery/profile/     ClusterProfile, ObservabilitySource, Mesh types
-
-  modeling/
-    scenarios/       reserved scenario definitions
-    predictors/      predictor interfaces only
-    simulation/      reserved simulation boundary
+  discovery/profile/     capability-only ClusterProfile and bounded evidence types
+  sources/               compiled module inventory; structure/ owns live Kubernetes topology
 
 web/
   src/
@@ -116,8 +104,6 @@ web/
 
 deploy/
   helm/              Helm charts and release packaging
-  manifests/         raw manifest placeholder
-  examples/          example deployment placeholder
 
 test/
   e2e/
@@ -153,8 +139,8 @@ task ci              # backend checks plus frontend Docker build verification
 
 ```bash
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
-./bin/discovery-job --mode=plan --profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/discovery-job --mode=deploy --profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
+./bin/discovery-job --mode=plan --capability-profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
+./bin/discovery-job --mode=deploy --capability-profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
 ./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --api-listen-address=0.0.0.0:8080 --status-stale-seconds=300 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s --node-ttl=24h
 # With external storage:
 ./bin/backend --storage-backend=external --postgres-dsn="postgres://oksg:pass@localhost:5432/oksg" --victoriametrics-url="http://localhost:8428" --raw-store-enabled=true --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s --node-ttl=24h
@@ -165,7 +151,7 @@ Notes:
 - use file outputs for `discover` and `plan` when you need clean machine-readable artifacts
 - `plan` now emits Helm values, not raw manifests
 - `deploy` uses Helm, not `kubectl apply`
-- collector runtime flags are driven from Helm values; Collector Contrib is pinned to `0.156.0`, the removed kubelet CPU feature gate is absent, and `gateway.featureGates` disables `connector.spanmetrics.includeCollectorInstanceID` to preserve public spanmetrics identity
+- collector runtime flags are generated from the collector plan; Collector Contrib is pinned to `0.156.0`
 - `--node-ttl` / `OKSG_NODE_TTL` controls topology node aging (default `24h`). Nodes absent from snapshots for longer than this value are hidden from `GetLatest` so deleted entities stop surfacing indefinitely. Set `0` to disable.
 
 ## Helm Ownership
@@ -192,7 +178,7 @@ OKSG-owned components log structured JSON to stdout only.
 
 When you replace a flow or interface:
 
-- remove dead functions and retired compatibility code
+- remove dead functions and retired code
 - delete obsolete templates
 - rewrite stale docs and task examples in the same change
 
@@ -254,24 +240,17 @@ kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.i
 kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=backend --tail=30
 ```
 
-## Inspecting the Backend Store
+## Inspecting Backend Data
 
-The backend exposes debug endpoints on its health port (13133):
-
-- `/debug/metrics` — all metric samples currently in the in-memory store as JSON; when external VictoriaMetrics storage is enabled, use `/api/v1/metrics` or VictoriaMetrics directly instead
-- `/debug/graph` — current topology snapshot including accumulated nodes and edges as JSON
+Use the versioned REST API for graph and metric inspection. The health port
+(`13133`) exposes health checks only; graph and metric data are not debug
+endpoints.
 
 Use the task shortcuts:
 
 ```bash
-# Dump all stored metric samples (port-forwards, curls, then cleans up)
-task test:e2e:debug:metrics
-
 # Verify backend REST API access on a dedicated local port
 task test:e2e:debug:api
-
-# Dump the current topology graph snapshot
-task test:e2e:debug:graph
 
 # Filter backend logs for write confirmations and skipped-entity warnings
 task test:e2e:debug:logs
@@ -280,9 +259,9 @@ task test:e2e:debug:logs
 Or run the steps manually:
 
 ```bash
-kubectl port-forward -n oksg-system deployment/oksg-backend 13133:13133 &
-curl -s http://localhost:13133/debug/metrics | jq '.[0:10]'
-curl -s http://localhost:13133/debug/graph | jq '.graph.edges[0:5]'
+kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq '.data.samples[0:10]'
+curl -s http://localhost:18081/api/v1/graph | jq '.data.edges[0:5]'
 kill %1
 ```
 
@@ -291,35 +270,15 @@ For external-storage e2e runs, prefer:
 ```bash
 curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq '.data.samples[0:10]'
 curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.duration&edge_source_id=<source>&edge_target_id=<target>" | jq .
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.error.ratio&edge_source_id=<source>&edge_target_id=<target>" | jq .
 ```
 
 Notes:
 
 - Counter presentation is catalog-driven. Rate-presented counters default to `aggregation=window_rate&window=1m`, while callers may explicitly request `latest`, `increase`, `window_rate`, or `active_rate` when that metric declares the mode. Cumulative counters such as container restarts retain their catalog-declared `latest` default.
-- `servicegraph.request.error.ratio` is query-derived from mature, baseline-gated request and error increases over the selected window. It returns no data when a participating branch lacks a trustworthy baseline instead of dividing partial totals.
 - Istio metrics enter through `metrics.IstioDialect`, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
 - The Metrics Explorer entity search and breadcrumb filter are driven by the latest graph snapshot (`useGraphSnapshot`), not the historical `/api/v1/entities` registry. Edge mode lists `calls` edges from the same snapshot.
 
-### Reading the graph output
-
-A graph snapshot from `/debug/graph` looks like:
-
-```json
-{
-  "graph": {
-    "nodes": [
-      {"id": "...", "kind": "pod", ...}
-    ],
-    "edges": [
-      {"source": "...", "target": "...", "relation": "runs_on", ...},
-      {"source": "...", "target": "...", "relation": "calls", ...}
-    ]
-  }
-}
-```
-
-Expected edge relations after telemetry flows:
+Expected graph edge relations after telemetry flows:
 - `runs_on`: pod → node (from kubeletstats resource attributes)
 - `contains`: namespace → pod, pod → container (from kubeletstats resource attributes)
 - `calls`: service → service (from OTLP trace `peer.service` attributes, when traces are enabled)
@@ -336,7 +295,7 @@ A skipped envelope (expected for raw host metrics without node context or unsupp
 {"level":"warn","msg":"skipping envelope: unresolvable entity","source":"otlp/grpc","resource":{"k8s.deployment.name":"..."}}
 ```
 
-Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet). `k8s_cluster` workload/controller resources such as deployments, daemonsets, statefulsets, replicasets, jobs, cronjobs, HPAs, ResourceQuotas, and replication controllers are part of the canonical model and should resolve.
+Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet).
 
 The chart's accuracy-first default is `agent.hostNetwork=true`, which renders
 `hostNetwork: true` with `dnsPolicy: ClusterFirstWithHostNet`. This lets the

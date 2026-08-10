@@ -173,18 +173,18 @@ The backend API is then available at `http://localhost:18081/api/v1/...`.
 The Postgres graph store ages out nodes whose most recent containing snapshot
 is older than `OKSG_NODE_TTL` (default 24h, see `latestNodeQuery` in
 `pkg/adapters/storage/postgresql/graph_store.go`). Workload, Ingress,
-ConfigMap, Secret, and PVC nodes are produced **only** by the structural
-ingestion path (`pkg/backend/ingest/structural_topology_*.go`) — runtime
-OTLP signals never re-emit them. So:
+ConfigMap, Secret, and PVC nodes are produced **only** by the direct
+Kubernetes structure module (`pkg/sources/structure`) — runtime OTLP signals
+never re-emit them. So:
 
-- The structural ingester must be re-run on a timer strictly shorter than
+- The structure module must refresh on a timer strictly shorter than
   `NodeTTL`, otherwise these entity kinds disappear from `/api/v1/graph`
   after the TTL window. This is the regression that produced "ownership is
   missing Ingress / ConfigMap / Workload" reports.
-- `cmd/backend/main.go:runDiscoveryRefreshLoop` does this on
-  `OKSG_DISCOVERY_REFRESH_INTERVAL` (default 10m). DO NOT remove the loop or
+- `cmd/backend/main.go:runStructureRefreshLoop` does this on
+  `OKSG_STRUCTURE_REFRESH_INTERVAL` (default 10m). DO NOT remove the loop or
   raise the interval to ≥ NodeTTL.
-- If you change `defaultNodeTTL` or `defaultDiscoveryRefreshInterval`,
+- If you change `defaultNodeTTL` or `defaultStructureRefreshInterval`,
   preserve the strict inequality `discovery_refresh_interval < node_ttl`.
 - Pods/containers/services/nodes/namespaces survive without this loop because
   OTLP keeps them fresh; structural-only kinds do not.
@@ -207,7 +207,7 @@ OTLP signals never re-emit them. So:
   docs or audit notes, and validate the documented behavior against the live
   generated configuration and emitted telemetry whenever feasible.
 - Only after that verification should you change the semconv metric registry, dialect translations, unit conversions, query-time derivations, storage expectations, or UI assumptions.
-- Do not infer telemetry semantics from a metric name alone. Connectors such as `spanmetrics` and `servicegraph` can emit counters, histograms, and unit defaults that differ from what the semconv name suggests.
+- Do not infer telemetry semantics from a metric name alone. Connectors such as `servicegraph` can emit counters, histograms, and unit defaults that differ from what the semconv name suggests.
 - Isolate collector and service integration behavior in the corresponding
   dialect or adapter instead of adding source-specific branches to shared
   normalization, storage, or API code. Shared code should depend on a narrow

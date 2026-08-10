@@ -28,14 +28,12 @@ Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Helm Values -> 
 | `pkg/core/metrics` | Catalog, dialect, source registry, resolver — see [metrics-pipeline.md](metrics-pipeline.md) |
 | `pkg/core/semconv` | Shared OTLP semantic-convention attribute key constants |
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
-| `pkg/discovery/{profile,detectors}` | `ClusterProfile`, `ObservabilitySource`, detector contract |
+| `pkg/discovery/profile` | Capability-only `ClusterProfile` and bounded source evidence |
+| `pkg/sources` | Compiled source-module inventory; `structure/` owns direct Kubernetes structural refresh |
 | `cmd/discovery-job` | `discover` / `plan` / `deploy` CLI |
 | `cmd/backend` | OTLP ingest, normalization, REST API, structural-topology refresh loop |
 | `web/` | React frontend (Vite + TypeScript) — Cluster Overview, Topology Graph, Metrics Explorer |
 | `deploy/helm/oksg-otel` | Helm chart packaging agent, gateway, backend, frontend, optional storage subcharts |
-
-`pkg/adapters/{autoinstrumentation,istio,obi,prometheus}` are reserved
-adapter boundaries (`doc.go` only) for future integrations.
 
 ## Collection Plane
 
@@ -43,12 +41,11 @@ The source planner emits collector intent that the values builder turns into
 typed Helm values. Receivers and connectors:
 
 - kubeletstats as component ID `kubelet_stats` (always; pod, container, volume metrics)
-- hostmetrics as component ID `host_metrics` (always; per-node CPU, memory, disk, network, load, paging, filesystem, and connection data). Agent pods use the host network by default so interface counters describe the node; opting out removes only the network scraper rather than publishing collector-pod traffic as node truth.
-- `k8scluster` (always on the gateway; workload/controller counts, pod phases, node conditions, resource quotas, HPA replica counts)
+- hostmetrics as component ID `host_metrics` (always; per-node CPU, memory, disk, filesystem, and network data). Agent pods use the host network so interface counters describe the node.
+- `k8s_cluster` (always on the gateway; container requests/limits/status, pod phase/reason, and selected node conditions)
 - `prometheus` on the singleton gateway for application Service-DNS targets (scrape jobs stamp `oksg_source=prometheus.app`)
 - `mesh-istio` Prometheus job (only when discovery finds a complete sidecar mesh; each DaemonSet agent scrapes only `istio-proxy:15020/stats/prometheus` Pods on its own node, rewrites Istio labels into servicegraph `client`/`server` edge attributes, and stamps `oksg_source=mesh.istio`)
 - `otlp` receivers (when discovery finds workloads with `oksg.io/otlp-traces: "true"` or ports `4317`/`4318`)
-- spanmetrics as component ID `span_metrics` (gateway, when traces are present; cluster-wide single instance to avoid double-counting; v0.156 instance-ID dimension disabled for compatibility)
 - servicegraph as component ID `service_graph` (gateway, when traces are present and the mesh does not own the POC service-graph coverage; it is the sole selected source for a partial mesh)
 
 Collector-owned agent and gateway pipelines run a `transform/oksg-source`
@@ -67,15 +64,14 @@ The backend ingest pipeline:
 |-----------|------|------|
 | `OTLPEntityResolver` | `pkg/backend/ingest/entity_resolver.go` | Maps OTLP resource attributes to deterministic `EntityID` (SHA-256 of kind + cluster + attributes). Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > namespace > service. Volume metrics with a PVC label resolve to the PVC entity before the generic fallback. |
 | `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Performs generic OTLP scalar/histogram traversal, canonical mapping, source-assignment enforcement, conversion application, and sample emission. Histograms are stored as `_sum`/`_count`; delta-valued series are preserved raw with `temporality=delta`. |
-| Source dialect registry | `pkg/backend/ingest/source_dialect.go` | Dispatches bounded source-specific behavior to one `source_dialect_*.go` implementation per logical source. Dialects own directional variants, source labels, entity/edge attachment, ResourceQuota units, servicegraph enrichment, and mesh metadata. OTLP temporality handling remains generic and follows the payload contract. |
+| Source normalization modules | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}` | Each module owns bounded source-specific labels, directional variants, entity/edge attachment, conversions, and derived metrics through the shared `pkg/sources/contract` boundary. OTLP temporality handling remains generic. |
 | `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | `runs_on` (pod→node), `contains` (namespace→pod, pod→container) plus topology nodes for those entity kinds. In Helm deployments, `runs_on` additionally requires a live matching Pod UID and node from Kubernetes lifecycle state. |
 | `MeshMetricTopologyBuilder` | `pkg/backend/ingest/mesh_metric_topology_builder.go` | `calls` edges with `mesh.istio` provenance from servicegraph-shaped Istio metrics, preserving protocol, mTLS, principal, response-flag, and HTTP/gRPC status labels. Uses datapoint timestamp for `FirstSeen`/`LastSeen`. |
 | `TraceTopologyBuilder` | `pkg/backend/ingest/topology_builder.go` | `calls` edges from OTLP spans where `peer.service` is set; deduplicated within a batch by edge ID. |
-| `K8sStructuralTopologyBuilder` | `pkg/backend/ingest/structural_topology_builder.go` | `exposes`, `routes_to`, `uses`, `mounts` from `ClusterProfile` (provenance `k8s-api`, confidence 1.0). |
+| `kubernetes.structure` | `pkg/sources/structure` | Direct Kubernetes API refresh of `exposes`, `routes_to`, `uses`, `mounts`, and containment with `k8s-api` provenance. |
 | `CompositeTopologyBuilder` | `pkg/backend/ingest/composite_topology_builder.go` | Chains topology builders so the metric path runs structural and mesh together. |
 | `MultiIngestor` | `pkg/backend/ingest/normalizing_ingestor.go` | Fans an envelope to `NormalizingIngestor → MetricStore` and `BufferedTopologyIngestor → GraphStore`. |
 | `BufferedTopologyIngestor` | `pkg/backend/ingest/buffered_topology_ingestor.go` | Accumulates edges/nodes from metric and trace builders; flushes one consolidated snapshot to `GraphStore` per flush window (default `OKSG_TOPOLOGY_FLUSH_INTERVAL=60s`). |
-| `StructuralTopologyIngestor` | `pkg/backend/ingest/structural_topology_ingestor.go` | Unbuffered ingest path used to seed the graph from a `ClusterProfile` at startup. |
 
 The `--cluster-name` flag (or `OKSG_CLUSTER_NAME`) controls the cluster name
 component of every entity ID; default `default`.
@@ -123,9 +119,9 @@ Edge model (Standard tier):
 | workload | `mounts` | pvc | K8s API (pod spec volumes) |
 
 Workload, ingress, configmap, secret, and PVC nodes are produced **only** by
-the structural path, never by OTLP. The backend therefore re-runs the
-structural ingester every `OKSG_DISCOVERY_REFRESH_INTERVAL` (default `10m`).
-Invariant: `discovery_refresh_interval < node_ttl` (default `OKSG_NODE_TTL=24h`).
+the direct Kubernetes structure module, never by OTLP. The backend therefore
+refreshes that module every `OKSG_STRUCTURE_REFRESH_INTERVAL` (default `10m`).
+Invariant: `structure_refresh_interval < node_ttl` (default `OKSG_NODE_TTL=24h`).
 Violating it makes structural-only kinds disappear from `/api/v1/graph`
 after the TTL window.
 
@@ -141,7 +137,7 @@ Store interfaces (`pkg/backend/persistence/`):
 |-----------|----------------|
 | `MetricStore` | Write and query canonical metric samples |
 | `GraphStore` | Topology snapshots (nodes per snapshot, accumulated edges) |
-| `MetadataStore` | Cluster discovery profiles |
+| `MetadataStore` | Cluster capability profiles |
 | `RawStore` | Raw telemetry envelopes (optional) |
 | `EntityRegistry` | Canonical entity records |
 
@@ -177,7 +173,7 @@ implementations.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/status` | System status (nominal/degraded/disconnected), freshness, components, runtime health summary |
-| GET | `/api/v1/discovery` | Discovery profile summary |
+| GET | `/api/v1/discovery` | Capability profile summary |
 | GET | `/api/v1/graph` | Full topology snapshot with kind/relation counts and available filters |
 | GET | `/api/v1/graph/nodes` | Enriched graph nodes (filter: `kind`, `namespace`) |
 | GET | `/api/v1/graph/nodes/{id}` | Node with enriched inbound/outbound edges |
@@ -192,7 +188,7 @@ implementations.
 All list endpoints support cursor-based pagination (`page_size`,
 `next_token`). Query-time derivations (rate windows for counter-derived
 metrics, sum/count averaging for histograms, the
-`servicegraph.request.error.ratio` formula) are documented in
+histogram means) are documented in
 [api-reference.md](api-reference.md) and [runtime-flow.md](runtime-flow.md).
 
 REST API flags:

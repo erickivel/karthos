@@ -92,7 +92,7 @@ Configuration:
 
 ### GET /api/v1/discovery
 
-Discovery profile summary. Returns 404 if no profile has been loaded.
+Capability profile summary. Returns 404 if no capability profile has been loaded.
 
 ```bash
 curl -s http://localhost:18081/api/v1/discovery | jq .
@@ -270,18 +270,16 @@ samples exist and stored history spans the requested window. Delta series use
 `sum_over_time()` for exact increases and return no data for `active_rate`.
 
 For cardinality control, normalized Prometheus application metrics drop raw
-legacy `path` and volatile target `pod` / `instance` labels. They retain a
+raw `path` and volatile target `pod` / `instance` labels. They retain a
 bounded `http_route` only when the application or collector supplied
 `http.route` / `http_route`; the normalizer never derives it from a raw path.
 Without that route, the canonical application metric is service-level
-aggregation rather than per-path data. Spanmetrics drops `span.name` /
-`span_name` while retaining method, status, and span-kind dimensions.
+aggregation rather than per-path data.
 
-`servicegraph.request.error.ratio` divides baseline-gated error/request increases after grouping by request context and excluding `failed`. It emits no result when any participating error or request branch is immature, preventing partial totals. Histogram means use the same validated window and exact sum/count increases.
 - `oksg.container.health.status` -> integer-encoded enum (1=healthy, 2=running_not_ready, 3=restarting) derived from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Priority order: restarting > not_ready > healthy. Empty result means no recent sample (treat as unknown).
 - `oksg.pod.health.status` -> integer-encoded enum (1=healthy, 4=pending, 5=succeeded, 6=failed, 7=unknown) derived from `k8s.pod.phase`. running_not_ready and restarting at pod scope are a follow-up — see `oksg.container.health.status` for those today.
 - `k8s.pod.status_reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
-- `http.server.request.duration` / `rpc.server.duration` / `servicegraph.request.duration` / `servicegraph.request.body.size` / `servicegraph.response.body.size` -> temporality-aware `<metric>_sum` rate divided by the corresponding `<metric>_count` rate
+- `http.server.request.duration` / `servicegraph.request.duration` -> temporality-aware `<metric>_sum` rate divided by the corresponding `<metric>_count` rate
 
 The integer→label mapping for any enum metric is documented in the catalog row's `Description` field (see `GET /api/v1/metrics/catalog`); UIs should read it from the catalog rather than hard-coding.
 
@@ -369,9 +367,7 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 
 Samples preserve the public normalized `labels` map. Kubelet network samples expose `direction` and `network_interface_name`; volume samples expose `volume_name`, `volume_type`, and `persistentvolumeclaim_name` when PVC-backed. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so consumers can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Bounded source provenance also includes boolean `failed` as the strings `"true"` / `"false"`, `connection_type` (absent, `messaging_system`, or `database`), separate `virtual_node` (`client` or `server`), and distinct client/server HTTP methods when the collector emits them; these labels define separate raw series. True incremental samples carry `temporality=delta`; collector v0.156 servicegraph series are cumulative and therefore do not carry that label. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
 
-ResourceQuota metrics are heterogeneous. Their catalog unit is `resource`, but each sample uses the unit resolved from its `resource` label: CPU is `millicores`; memory, storage, ephemeral storage, and huge pages are `bytes`; object resources and `count/*` are `count`; unknown extended resources remain `resource`. The internal VictoriaMetrics persistence label `oksg_unit` is never included in public labels. A missing or invalid stored unit falls back to the catalog/query unit.
-
-Returns 400 for invalid time/duration syntax, windows outside `1m..1h`, unknown modes, or controls unsupported by the selected metric. Ratios and histogram means accept `window` only; gauges and enum metrics reject both controls.
+Returns 400 for invalid time/duration syntax, windows outside `1m..1h`, unknown modes, or controls unsupported by the selected metric. Histogram means accept `window` only; gauges and enum metrics reject both controls.
 
 ### GET /api/v1/metrics/series
 
@@ -422,9 +418,9 @@ Response:
 }
 ```
 
-Different entities, edges, dimension labels, or units produce separate series. This is especially important for ResourceQuota: `resource=requests.cpu` (`millicores`), `resource=requests.memory` (`bytes`), and `resource=pods` (`count`) never share a series or numeric axis.
+Different entities, edges, dimension labels, or units produce separate series.
 
-The removed names `k8s.container.storage.request` and `k8s.container.storage.limit` are not catalog metrics and return HTTP 400. Use `k8s.container.ephemeral_storage.{request,limit}` for ephemeral storage and `k8s.volume.*` for mounted volume capacity/usage.
+The removed names `k8s.container.storage.request` and `k8s.container.storage.limit` are not catalog metrics and return HTTP 400. The focused catalog retains `k8s.volume.*` for mounted-volume capacity and usage.
 
 ### GET /api/v1/metrics/catalog
 
@@ -436,7 +432,7 @@ List semconv-native metric definitions.
 
 Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both; an `applies_to` array describing the graph entity kinds an entity-scoped metric is valid for; and a `sources` array describing which logical sources can produce the metric and at what priority. Edge-only metrics omit `applies_to`.
 
-The `sources` array drives runtime arbitration: at backend startup the resolver (`pkg/core/metrics/resolver.go`) picks the highest-priority (smallest `priority` value) source whose detector returns true for the cluster's discovery profile. The planner only deploys receivers for selected sources; the ingester drops samples whose `oksg_source` attribute disagrees with the assigned source. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
+The `sources` array drives runtime arbitration: the generic resolver picks the highest-priority (smallest `priority` value) source whose compiled capability is available. The source plan records that result; the planner deploys only selected module contributions, and the ingester drops samples whose `oksg_source` attribute disagrees with the mounted assignment. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
 
 The array is exposed in priority order (lower number = higher priority); UIs that need a single "primary source" label should render `sources[0].id`. The full array is informational — lower-priority entries are fallbacks the resolver did not pick. The currently-active source per metric is not exposed on the catalog endpoint today; consumers that need it should read the `source` label on actual sample responses from `/api/v1/metrics/series`.
 
