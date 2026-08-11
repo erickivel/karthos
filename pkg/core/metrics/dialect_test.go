@@ -32,6 +32,21 @@ func TestBuiltInDialectsTranslateKnownMetrics(t *testing.T) {
 	require.Equal(t, "servicegraph.request.duration", registry.Translate("istio_request_duration_milliseconds"))
 }
 
+func TestIstioDialectTranslatesProtocolCountersToQueryableCanonicals(t *testing.T) {
+	for rawName, canonicalName := range map[string]string{
+		"istio_request_messages_total":       "servicegraph.grpc.request.message.count",
+		"istio_response_messages_total":      "servicegraph.grpc.response.message.count",
+		"istio_tcp_connections_opened_total": "servicegraph.tcp.connection.open.count",
+		"istio_tcp_connections_closed_total": "servicegraph.tcp.connection.close.count",
+		"istio_tcp_sent_bytes_total":         "servicegraph.tcp.bytes.sent",
+		"istio_tcp_received_bytes_total":     "servicegraph.tcp.bytes.received",
+	} {
+		translated, ok := IstioDialect.Translate(rawName)
+		require.Truef(t, ok, "missing Istio translation for %s", rawName)
+		require.Equal(t, canonicalName, translated)
+	}
+}
+
 func TestSourceDialectRegistryTranslatesKubeletContainerMetrics(t *testing.T) {
 	registry := NewSourceDialectRegistry(map[string]Dialect{SourceKubelet: KubeletDialect, SourceKubeCluster: KubeClusterDialect})
 
