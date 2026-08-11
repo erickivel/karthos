@@ -76,7 +76,8 @@ What each stage does:
 - `test:e2e:plan`
   writes `bin/e2e/otel-values.yaml` and optional rendered chart output under `bin/e2e/rendered`
 - `test:e2e:apply-otel`
-  runs `helm upgrade --install` for agent, gateway, backend, and frontend
+  runs `helm upgrade --install` for agent, gateway, backend, and frontend;
+  the same generated values render the chart-owned source-contract ConfigMap
 - `test:e2e:verify`
   checks Helm status, pod readiness including the frontend rollout, and recent agent/gateway/backend logs
 - generated values can also carry collector `featureGates`; v0.156 agent and gateway gates are empty for the focused core
@@ -91,9 +92,9 @@ that would later appear as duplicate topology cards.
 
 `task test:e2e:scenario:detector-failure` proves discovery fails closed and
 writes no capability profile when its Kubernetes probe cannot run.
-`task test:e2e:scenario:source-contract-rejection` temporarily mounts a
-fingerprint-mismatched plan, verifies backend startup rejection, and restores
-the valid ConfigMap and rollout automatically.
+`task test:e2e:scenario:source-contract-rejection` temporarily mutates the
+Helm-owned contract only as a fault injection, verifies backend startup
+rejection, then restores the valid ConfigMap and rollout automatically.
 
 ### Prometheus Available
 
@@ -146,7 +147,7 @@ Expected:
 - generated Helm values include a dedicated 15-second `mesh-istio` Prometheus scrape job that selects `istio-proxy` containers and stamps Prometheus-safe `oksg_source=mesh.istio`; the cadence keeps multiple cumulative samples inside the default one-minute aggregation window
 - generated Helm values place discovered application Prometheus Service-DNS jobs on the singleton gateway and stamp them with `oksg_source=prometheus.app`; agent Prometheus remains reserved for Istio pod discovery
 - application Prometheus annotations are not required for mesh metrics
-- mesh-derived samples normalize to existing servicegraph edge metrics, including `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
+- mesh-derived samples normalize to servicegraph edge metrics: HTTP request count/duration/error plus gRPC request/response messages and TCP opened/closed/sent/received counters
 - graph `calls` edges include `mesh.istio` provenance, advance `last_seen` from metric datapoint timestamps, and preserve mesh metadata such as `network.protocol.name`, `mesh.security.policy`, and peer SPIFFE principals
 - an injected Go fixture warms the protocol counters, waits 180 seconds so the collector can capture a mature baseline and the warm-up leaves the one-minute window, then emits exactly 20 unary calls plus five bidirectional request/response messages and ten fresh 1,024-byte TCP echo connections
 - destination-sidecar raw counters and canonical VictoriaMetrics counters increase by `25/25` gRPC messages, `10/10` TCP opened/closed connections, and `10,240/10,240` TCP sent/received bytes
@@ -289,7 +290,7 @@ When changing the e2e flow, keep log inspection and rendered Helm artifacts easy
 ## Cleanup
 
 ```bash
-task test:e2e:reset       # remove OTel collectors and the applied source-contract ConfigMap
+task test:e2e:reset       # remove the Helm-owned OTel release and source contract
 task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
 task test:e2e:reset-all   # remove both OTel collectors and all demo fixtures
 task test:e2e:teardown    # destroy the kind cluster and local registry

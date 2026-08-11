@@ -22,6 +22,8 @@ sequenceDiagram
     R-->>SP: metric assignments and selected modules
     SP->>H: selected contributions
     H-->>CLI: otel-values.yaml + source-plan sidecar
+    CLI->>H: deploy generated values
+    H-->>CLI: Helm-owned source-contract ConfigMap
 ```
 
 ## Capability profile
@@ -61,16 +63,20 @@ It includes:
 - the complete canonical metric-to-source assignment.
 
 The compiler consumes the same result to include only selected receiver,
-connector, scrape, pipeline, and source-stamp fragments. Helm receives the
-generated collector configuration; the E2E deployment task mounts the profile
-and plan together as the `oksg-source-contract` ConfigMap.
+connector, scrape, pipeline, and source-stamp fragments. Generated values also
+carry the capability profile and resolved plan under `backend.sourceContract`.
+Helm renders both into one release-scoped `*-source-contract` ConfigMap and
+mounts it in the backend. Normal deployment has no imperative ConfigMap apply
+or rollout-restart step.
 
 ## Runtime contract
 
 Backend startup requires both mounted files. It recomputes the profile
-fingerprint, rejects a mismatch, and validates selected and assigned source
-IDs against the compiled source inventory. It uses the mounted assignment for
-ingestion policy and does not resolve sources again.
+fingerprint, rejects a mismatch, verifies the full static capability inventory,
+and validates the plan as the exact catalog projection: no unknown, missing,
+or extra metrics; only selected, available telemetry sources; and no
+assignment to an unselected source. It uses that mounted assignment for
+ingestion policy and never resolves sources again at runtime.
 
 The backend independently creates an in-cluster Kubernetes client for
 `kubernetes.structure`. That module refreshes the canonical structural graph

@@ -27,10 +27,11 @@ relations between them, with metrics attached to nodes and edges.
 | `pkg/adapters/storage` | Storage factory; `postgresql/` and `victoriametrics/` external backends |
 | `pkg/backend/ingest` | Envelope builder, signal router, normalizer, topology builders, ingestors |
 | `pkg/backend/persistence` | Store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) and in-memory implementations |
-| `pkg/core/metrics` | Canonical catalog, per-source dialects, logical source registry, resolver, OTLP mappings |
+| `pkg/core/metrics` | Canonical catalog, generic dialect and resolver contracts, OTLP mappings |
+| `pkg/sources` | Static source-module inventory, collector contributions, and source-owned normalization |
 | `pkg/core/semconv` | OTLP semantic-convention attribute key constants |
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
-| `pkg/discovery/{profile,detectors}` | ClusterProfile and detector contracts |
+| `pkg/discovery/profile` | Capability-only ClusterProfile contract and bounded evidence types |
 | `web/` | React frontend (Vite + TypeScript) |
 | `deploy/helm/oksg-otel` | Helm chart packaging agent, gateway, backend, frontend, and optional storage subcharts |
 | `test/e2e/{apps,scenarios,kind}` | Demo fixtures (`base`, `with-prometheus`, `with-istio`) and scenario scripts |
@@ -105,7 +106,7 @@ forwards `/api/*` to `http://localhost:18081`.
 ### Cleanup
 
 ```bash
-task test:e2e:reset           # remove OTel collectors and source-contract ConfigMap
+task test:e2e:reset           # remove the Helm-owned OTel release and source contract
 task test:e2e:reset-apps      # remove demo fixtures
 task test:e2e:reset-all       # both
 task test:e2e:teardown        # destroy cluster and registry

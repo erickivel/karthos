@@ -4,10 +4,15 @@ OKSG turns Kubernetes discovery and OpenTelemetry-driven runtime telemetry
 into a queryable system graph. Control flow:
 
 ```text
-Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Helm Values -> Helm Release
+Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Generated Helm Values
+                                                                  |                |
+                                                                  |                v
+                                                                  |       Helm source-contract ConfigMap
+                                                                  v                |
+                                                             Helm Release ---------+
                                                                         |
                                                                         v
-                                          Backend (OTLP ingest, normalization, topology, REST API)
+                              Backend (strict contract validation, OTLP ingest, normalization, topology, REST API)
                                                                         |
                                                                         v
                                                               React frontend (web/)
@@ -25,13 +30,13 @@ Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Helm Values -> 
 | `pkg/collector/{configgen,deployer}` | Collector config → typed Helm values → `helm lint/template/upgrade-install` |
 | `pkg/backend/ingest` | Envelope build, signal routing, normalization, topology builders, ingestors |
 | `pkg/backend/persistence` | Store interfaces and in-memory implementations |
-| `pkg/core/metrics` | Catalog, dialect, source registry, resolver — see [metrics-pipeline.md](metrics-pipeline.md) |
+| `pkg/core/metrics` | Catalog, generic dialect and resolver contracts — see [metrics-pipeline.md](metrics-pipeline.md) |
 | `pkg/core/semconv` | Shared OTLP semantic-convention attribute key constants |
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
 | `pkg/discovery/profile` | Capability-only `ClusterProfile` and bounded source evidence |
 | `pkg/sources` | Compiled source-module inventory; `structure/` owns direct Kubernetes structural refresh |
 | `cmd/discovery-job` | `discover` / `plan` / `deploy` CLI |
-| `cmd/backend` | OTLP ingest, normalization, REST API, structural-topology refresh loop |
+| `cmd/backend` | Mounted source-contract validation, OTLP ingest, normalization, REST API, structural refresh loop |
 | `web/` | React frontend (Vite + TypeScript) — Cluster Overview, Topology Graph, Metrics Explorer |
 | `deploy/helm/oksg-otel` | Helm chart packaging agent, gateway, backend, frontend, optional storage subcharts |
 
@@ -217,11 +222,12 @@ Design system, projection-mode rules, and layout details:
 
 The Helm chart in `deploy/helm/oksg-otel/` owns Kubernetes resource shape
 (namespace, agent ConfigMap + ServiceAccount + RBAC + DaemonSet, gateway
-ConfigMap + ServiceAccount + Service + Deployment, backend Service +
-Deployment, frontend Service + Deployment + ConfigMap, optional storage
-subcharts). The planner produces collector configuration embedded into
-release values; the chart renders final resources. Do not reintroduce ad
-hoc manifest rendering in Go.
+ConfigMap + ServiceAccount + Service + Deployment, one backend source-contract
+ConfigMap + Service + Deployment, frontend Service + Deployment + ConfigMap,
+optional storage subcharts). The planner produces collector configuration plus
+the compiled capability-profile/source-plan contract embedded into release
+values; the chart renders final resources. Do not reintroduce ad hoc manifest
+rendering in Go.
 
 PostgreSQL (Bitnami) and VictoriaMetrics (single-node) are subchart
 dependencies, gated by `storage.postgresql.enabled` /
@@ -233,8 +239,8 @@ dependencies, run `helm dependency build deploy/helm/oksg-otel/`.
 
 ## Configuration Model
 
-- **Helm values** — operator-facing deployment settings: image, namespace, enabled signal classes, OTLP endpoints, log levels
-- **ConfigMaps** — structured collector configuration for agent and gateway
+- **Helm values** — generated deployment settings, collector configuration, and the compiled backend source contract
+- **ConfigMaps** — structured collector configuration for agent and gateway plus the chart-owned backend source contract
 - **Secrets** — credentials and sensitive settings
 - **Env vars** — runtime toggles and pod/node metadata only
 

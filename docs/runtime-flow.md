@@ -1,8 +1,9 @@
 # Runtime Flow
 
-What happens after the OTel collection plane is deployed: agent collection,
-gateway forwarding, backend OTLP ingest, normalization, and topology
-accumulation. For the discover/plan/deploy upstream of this, see
+What happens after Helm deploys the OTel collection plane: the backend loads
+its mandatory chart-owned source contract, refreshes Kubernetes structure,
+then accepts agent and gateway telemetry for generic ingestion, normalization,
+and topology accumulation. For the discover/plan/deploy upstream of this, see
 [`discovery-flow.md`](./discovery-flow.md). For the metrics catalog /
 dialect / source arbitration, see [`metrics-pipeline.md`](./metrics-pipeline.md).
 
@@ -73,17 +74,15 @@ sequenceDiagram
     participant MS as MetricStore
 
     Note over Main: Process startup
+    Main->>Main: Load mounted profile + plan; validate exact static contract
+    Main->>Main: NewStores(storage configuration)
+    Main->>Main: Refresh kubernetes.structure through in-cluster API
+    Main->>Main: Build registry dialects + MetricSourcePolicy from mounted plan
     Main->>Main: NewOTLPEntityResolver(clusterName)
-    Main->>Main: NewOTLPNormalizer(resolver, dialectRegistry)
-    Main->>Main: NewTraceTopologyBuilder(resolver)
-    Main->>Main: NewMetricStore()
-    Main->>Main: NewGraphStore()
-    Main->>Main: NewMetricTopologyBuilder(clusterName)
-    Main->>NI: NewNormalizingIngestor(normalizer, metricStore)
-    Main->>Main: NewTopologyIngestor(metricTopoBuilder, graphStore)
-    Main->>Main: NewMultiIngestor(normalizingIngestor, metricTopologyIngestor)
-    Main->>Main: NewTopologyIngestor(traceTopoBuilder, graphStore)
-    Main->>Router: NewSignalRouter(multiIngestor, traceTopologyIngestor)
+    Main->>Main: NewOTLPNormalizer(resolver, dialects, source policy)
+    Main->>NI: NewNormalizingIngestor(normalizer, metric store)
+    Main->>Main: NewBufferedTopologyIngestor(metric + trace builders, graph store)
+    Main->>Router: NewSignalRouter(normalizing and topology ingestors)
     Main->>Builder: ingest.NewEnvelopeBuilder(clock)
     Main->>Server: otlp.NewServer(config, builder, router, logger)
     Main->>Server: server.Run(ctx)
@@ -125,7 +124,7 @@ sequenceDiagram
 
 | File | Type | Role |
 |------|------|------|
-| `cmd/backend/main.go` | Binary entrypoint | Parses config (including `--cluster-name`), wires normalization pipeline, starts server |
+| `cmd/backend/main.go` | Binary entrypoint | Loads and strictly validates the mounted source contract, refreshes structure in-cluster, wires generic ingestion, and starts OTLP plus `/api/v1` servers |
 | `pkg/adapters/otlp/server.go` | `Server` | OTLP gRPC/HTTP listener, delegates to builder + router |
 | `pkg/backend/ingest/otlp.go` | `EnvelopeBuilder` | Converts OTLP protos → `[]schema.RawEnvelope` |
 | `pkg/backend/ingest/otlp.go` | `SignalRouter` | Routes envelopes by signal type to the right `Ingestor` |
@@ -139,7 +138,7 @@ sequenceDiagram
 | `pkg/backend/ingest/mesh_metric_topology_builder.go` | `MeshMetricTopologyBuilder` | Derives `calls` edges from servicegraph-shaped mesh metrics with `mesh.istio` provenance |
 | `pkg/backend/ingest/composite_topology_builder.go` | `CompositeTopologyBuilder` | Chains topology builders so the metric path runs structural + mesh builders together |
 | `pkg/sources/structure` | `kubernetes.structure` | Direct in-cluster refresh of Kubernetes entities and `exposes`/`routes_to`/`uses`/`mounts` edges into GraphStore |
-| `pkg/core/metrics/{catalog,sources,dialect,resolver}.go` | Metrics pipeline | Catalog, source registry, dialect translation, and priority-based source arbitration |
+| `pkg/core/metrics/{catalog,dialect,resolver}.go` + `pkg/sources/registry.go` | Metrics pipeline | Canonical catalog, generic dialect/resolver contracts, and the static source-module inventory |
 | `pkg/core/semconv/keys.go` | Attribute keys | OTLP semantic-convention attribute key constants shared across ingest and topology |
 | `pkg/backend/persistence/memory.go` | `MetricStore` | Thread-safe in-memory `MetricStore`; supports write, time-range queries, and catalog stats |
 | `pkg/backend/persistence/memory.go` | `GraphStore` | Thread-safe in-memory `GraphStore`; accumulates edges and nodes, updates `LastSeen` on re-observation |
@@ -337,7 +336,12 @@ Trace path:
 
 ### 7. Source-Mismatch Drop
 
-At backend startup, `cmd/backend/main.go` resolves the optional profile assignment, constructs one `MetricSourcePolicy`, and shares it with the normalizer and mesh topology builder.
+At backend startup, `cmd/backend/main.go` requires the mounted capability profile
+and resolved source plan. It verifies the profile fingerprint, the complete
+static module inventory, selected available telemetry sources, and the exact
+catalog assignment projection without rerunning arbitration. It then constructs
+one `MetricSourcePolicy` from that plan and shares it with the normalizer and
+mesh topology builder.
 
 Before entity resolution, the shared `MetricSourcePolicy` requires every recognized canonical datapoint to carry a registered `oksg.source` or `oksg_source` and enforces its assigned winner. Invalid datapoints are dropped while valid siblings continue in the acknowledged batch. Atomic missing, unknown, and assignment-mismatch counters are exposed internally to tests. Mesh topology uses the same decision without recording a second rejection, so invalid servicegraph datapoints cannot create edges. See [metrics-pipeline.md](metrics-pipeline.md) for the full contract.
 

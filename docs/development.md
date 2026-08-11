@@ -42,15 +42,9 @@ pkg/
   adapters/storage/      storage factory and config (memory or external backends)
   adapters/storage/postgresql/     PostgreSQL implementations (pgx/v5)
   adapters/storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
-  backend/ingest/        envelope build, signal routing, entity resolution,
-                         OTLP normalization, structural / mesh / trace topology
-                         builders, composite + multi ingestor, metadata helpers
-                         (entity_resolver.go, normalizer.go, topology_builder.go,
-                          metric_topology_builder.go, mesh_metric_topology_builder.go,
-                          composite_topology_builder.go, structural_topology_builder.go,
-                          structural_topology_ingestor.go, normalizing_ingestor.go,
-                          buffered_topology_ingestor.go, multi_ingestor_test.go,
-                          plus otlp.go, ingest.go, semantic.go, metadata.go)
+  backend/ingest/        generic envelope build, signal routing, entity resolution,
+                         source-policy enforcement, normalization orchestration, and
+                         metric / mesh / trace topology builders
   backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
                          RawStore, EntityRegistry) and in-memory implementations
   backend/query/         graph and metrics query contracts
@@ -58,15 +52,14 @@ pkg/
   collector/deployer/    Helm runner
   core/entities/         canonical graph-facing entities and stable IDs
   core/logging/          shared JSON stdout logger
-  core/metrics/          canonical catalog, dialect maps, source registry,
-                         resolver, OTLP semconv mappings, units
-                         (catalog.go, sources.go, dialect.go, resolver.go,
-                          otel_mappings.go, canonical.go, sample.go, unit.go)
+  core/metrics/          canonical catalog, generic dialect and resolver contracts,
+                         OTLP semconv mappings, samples, aggregation, and units
   core/schema/           raw telemetry envelopes, validation, schema versions
   core/semconv/          OTLP semantic-convention attribute key constants
   core/topology/         graph nodes, edges, relations, and snapshots
   discovery/profile/     capability-only ClusterProfile and bounded evidence types
-  sources/               compiled module inventory; structure/ owns live Kubernetes topology
+  sources/               static module inventory and source-owned normalization
+                         packages; structure/ owns live Kubernetes topology
 
 web/
   src/
@@ -140,17 +133,23 @@ task ci              # backend checks plus frontend Docker build verification
 ```bash
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
 ./bin/discovery-job --mode=plan --capability-profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/discovery-job --mode=deploy --capability-profile=profile.json --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/backend --grpc-listen-address=0.0.0.0:4317 --http-listen-address=0.0.0.0:4318 --health-listen-address=0.0.0.0:13133 --api-listen-address=0.0.0.0:8080 --status-stale-seconds=300 --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s --node-ttl=24h
-# With external storage:
-./bin/backend --storage-backend=external --postgres-dsn="postgres://oksg:pass@localhost:5432/oksg" --victoriametrics-url="http://localhost:8428" --raw-store-enabled=true --enabled-signals=metric,trace --cluster-name=oksg-test --topology-flush-interval=60s --node-ttl=24h
+./bin/discovery-job --mode=deploy --capability-profile=profile.json --values-output=otel-values.yaml --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
+
+# Diagnose the Helm-deployed backend; it requires an in-cluster source contract.
+kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
+curl http://localhost:18081/api/v1/status
 ```
 
 Notes:
 
-- use file outputs for `discover` and `plan` when you need clean machine-readable artifacts
-- `plan` now emits Helm values, not raw manifests
-- `deploy` uses Helm, not `kubectl apply`
+- `--output` writes only the `discover` capability profile. `plan` and `deploy`
+  write a values artifact only through `--values-output`.
+- `plan` emits Helm values, not raw manifests. It also writes the resolved-plan
+  sidecar beside `--values-output` unless `--resolved-plan-output` is supplied.
+- `deploy` compiles, validates, and applies those values through Helm. It needs no
+  post-deployment ConfigMap or rollout step.
+- the backend is supported only as a Helm workload because it requires the mounted,
+  chart-owned capability profile and resolved source plan.
 - collector runtime flags are generated from the collector plan; Collector Contrib is pinned to `0.156.0`
 - `--node-ttl` / `OKSG_NODE_TTL` controls topology node aging (default `24h`). Nodes absent from snapshots for longer than this value are hidden from `GetLatest` so deleted entities stop surfacing indefinitely. Set `0` to disable.
 
@@ -163,6 +162,12 @@ The chart owns Kubernetes resource rendering. When changing deployment behavior:
 3. update chart templates when Kubernetes resource shape changes
 4. update `values.schema.json` whenever values shape changes
 5. update `deploy/images/backend/Dockerfile` and e2e image build flow when backend runtime packaging changes
+
+The chart owns one release-scoped `*-source-contract` ConfigMap. Generated
+`backend.sourceContract.capabilityProfile` and `.sourcePlan` values become the
+two mounted JSON files, and the backend Deployment hashes that rendered
+ConfigMap. Changing either compiled artifact therefore rolls the backend
+without an imperative restart.
 
 Do not reintroduce ad hoc manifest rendering in Go.
 

@@ -11,7 +11,7 @@ update them in the same change.
 | [Architecture](architecture.md) | Layers, component boundaries, Helm deployment model, logging policy |
 | [Discovery Flow](discovery-flow.md) | Discovery → release-values → Helm install sequence |
 | [Runtime Flow](runtime-flow.md) | Post-deploy telemetry path through agent, gateway, backend ingest |
-| [Metrics Pipeline](metrics-pipeline.md) | Catalog, dialect translation, source registry, resolver |
+| [Metrics Pipeline](metrics-pipeline.md) | Catalog, source-module dialect translation, resolver |
 | [API Reference](api-reference.md) | REST API endpoints, query params, response shapes |
 | [Frontend Design Spec](frontend-design-spec.md) | Frontend stack, design system, projection modes |
 | [Testing](testing.md) | Unit tests, kind-based e2e tasks, scenario validation |
@@ -31,10 +31,13 @@ update them in the same change.
 Kubernetes Cluster
       |
       v
-Discovery Adapter -> ClusterProfile -> Resolver -> Source Planner -> Helm Values -> Helm Release
-                                          |
-                                          v
-                       Backend (OTLP ingest -> Normalizer -> Topology builders -> Stores -> REST API)
+Discovery Adapter -> ClusterProfile -> Resolver -> Source Planner -> Generated Helm Values
+                                                              |
+                                                              v
+                                              Helm source-contract ConfigMap -> Helm Release
+                                                                 |
+                                                                 v
+                       Backend (strict validation -> OTLP ingest -> Normalizer -> Topology builders -> Stores -> REST API)
                                           |
                                           v
                               React frontend (/, /topology, /metrics)

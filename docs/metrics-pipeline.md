@@ -141,16 +141,13 @@ A dialect is a `map[rawName]canonicalName`. The built-in dialects:
 | `KubeletDialect` | `container.cpu.usage` → `k8s.container.cpu.usage`, `container.memory.usage` → `k8s.container.memory.usage` |
 | `KubeClusterDialect` | `k8s.container.cpu_request` → `k8s.container.cpu.request`, `k8s.container.memory_limit` → `k8s.container.memory.limit`, plus the cpu_limit and memory_request equivalents |
 | `ServicegraphDialect` | `traces_service_graph_request_total` → `servicegraph.request.count`, `traces_service_graph_request_server` → `servicegraph.request.duration`, `traces_service_graph_request_failed_total` → `servicegraph.request.error.count` |
-| `IstioDialect` | `istio_requests_total` → `servicegraph.request.count`, `istio_request_duration_milliseconds` → `servicegraph.request.duration`, plus body size, gRPC message, and TCP connection counters |
+| `IstioDialect` | `istio_requests_total` → `servicegraph.request.count`, `istio_request_duration_milliseconds` → `servicegraph.request.duration`, `istio_{request,response}_messages_total` → gRPC message counters, and `istio_tcp_{connections_{opened,closed}_total,{sent,received}_bytes_total}` → TCP edge counters |
 
 `DialectRegistry` chains dialects in the order their owning sources were
-registered; first match wins. Unknown names pass through unchanged so
+registered; first match wins. At startup, `cmd/backend` builds it from
+`sources.DefaultRegistry().Dialects()`, so the static module inventory remains
+the only dialect owner. Unknown names pass through unchanged so
 canonical-shaped metrics are not corrupted.
-
-`NewDialectRegistryFromSources(sources)` is the preferred constructor at
-startup: it walks the source registry and collects the non-nil dialects in
-order, so any change to the source list updates the dialect chain
-automatically.
 
 A core metrics dialect only renames the metric — it does **not** touch units,
 datapoint attributes, entity attachment, or histogram shape. After translation,
@@ -665,7 +662,6 @@ historical `graph?at=` reconstruction.
 | `pkg/core/metrics/canonical.go` | `CanonicalMetric`, `MetricCategory`, `MetricScope`, `SourceRef`, `SelectionPolicy`, source ID constants |
 | `pkg/core/metrics/catalog.go` | `defaultCatalog`, `DefaultCatalog()` |
 | `pkg/sources/registry.go` | Compiled source IDs and module inventory |
-| `pkg/core/metrics/sources.go` | Metric source descriptors and raw-name dialect mappings |
 | `pkg/core/metrics/dialect.go` | `Dialect`, `DialectMap`, `DialectRegistry`, `PrometheusDialect`, `ServicegraphDialect`, `IstioDialect` |
 | `pkg/core/metrics/resolver.go` | `Resolve`, `Assignment`, `SelectedSources` |
 | `pkg/core/metrics/otel_mappings.go` | `OTLPSemconvMetrics`, ingest-side units and kinds |
@@ -676,4 +672,4 @@ historical `graph?at=` reconstruction.
 | `pkg/sources/contract` | Narrow normalization plan, resolver interfaces, and bounded-label/entity helpers |
 | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}` | Source-owned normalization for kubelet, host OS, kube cluster, Prometheus app, servicegraph, and Istio |
 | `pkg/backend/ingest/mesh_metric_topology_builder.go` | Mesh `calls` edges from servicegraph-shaped Istio metrics |
-| `pkg/adapters/otel/source_planner.go` | Receivers/connectors gated on `SelectedSources`, `transform/oksg-source` processor |
+| `pkg/adapters/otel/source_planner.go` | Compiles receiver/connector contributions and the immutable resolved source plan |
