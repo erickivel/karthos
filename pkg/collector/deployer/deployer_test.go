@@ -3,12 +3,17 @@ package deployer
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/erickivel/oksg/pkg/adapters/otel"
+	"github.com/erickivel/oksg/pkg/collector/configgen"
+	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
 func TestDeployUsesHelmLintTemplateAndUpgrade(t *testing.T) {
@@ -82,6 +87,87 @@ func TestChartRequiresGeneratedCollectorConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(agent), "required")
 	require.Contains(t, string(gateway), "required")
+}
+
+func TestChartOwnsAndRollsTheCompiledSourceContract(t *testing.T) {
+	chartRoot := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel")
+	contractTemplate, err := os.ReadFile(filepath.Join(chartRoot, "templates", "source-contract-configmap.yaml"))
+	require.NoError(t, err)
+	require.Contains(t, string(contractTemplate), "capability-profile.json")
+	require.Contains(t, string(contractTemplate), "source-plan.json")
+	require.Contains(t, string(contractTemplate), ".Values.backend.sourceContract.capabilityProfile")
+	require.Contains(t, string(contractTemplate), ".Values.backend.sourceContract.sourcePlan")
+
+	backend, err := os.ReadFile(filepath.Join(chartRoot, "templates", "backend-deployment.yaml"))
+	require.NoError(t, err)
+	require.Contains(t, string(backend), "checksum/source-contract")
+	require.Contains(t, string(backend), "--capability-profile=/etc/oksg/capability-profile.json")
+	require.Contains(t, string(backend), "--source-plan=/etc/oksg/source-plan.json")
+
+	valuesSchema, err := os.ReadFile(filepath.Join(chartRoot, "values.schema.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(valuesSchema), "sourceContract")
+	require.Contains(t, string(valuesSchema), "capabilityProfile")
+	require.Contains(t, string(valuesSchema), "sourcePlan")
+}
+
+func TestRenderedChartValidatesAndRollsCompiledSourceContract(t *testing.T) {
+	helm, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm is required for chart-render integration coverage")
+	}
+
+	initial := renderedSourceContractChart(t, helm, "contract-test")
+	require.Contains(t, initial, "kind: ConfigMap")
+	require.Contains(t, initial, "name: oksg-otel-source-contract")
+	require.Contains(t, initial, "capability-profile.json: |-")
+	require.Contains(t, initial, "source-plan.json: |-")
+	require.Contains(t, initial, "--capability-profile=/etc/oksg/capability-profile.json")
+	require.Contains(t, initial, "--source-plan=/etc/oksg/source-plan.json")
+	require.Contains(t, initial, "mountPath: /etc/oksg")
+
+	updated := renderedSourceContractChart(t, helm, "contract-test-updated")
+	require.NotEqual(t, renderedContractChecksum(t, initial), renderedContractChecksum(t, updated))
+}
+
+func renderedSourceContractChart(t *testing.T, helm, clusterName string) string {
+	t.Helper()
+	capabilityProfile := &profile.ClusterProfile{
+		ClusterName: clusterName,
+		Capabilities: []profile.SourceCapability{
+			{SourceID: "kubernetes.structure", Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"structure"}},
+			{SourceID: "kubelet", Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: "host-os", Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: "kube-cluster", Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: "prometheus.app", Kind: profile.SourceKindDirect, Status: profile.CapabilityUnavailable},
+			{SourceID: "mesh.istio", Kind: profile.SourceKindDirect, Status: profile.CapabilityUnavailable},
+			{SourceID: "traces.servicegraph", Kind: profile.SourceKindDerived, Status: profile.CapabilityUnavailable},
+		},
+	}
+	plan, err := otel.NewSourcePlanner("oksg-system").Plan(context.Background(), capabilityProfile)
+	require.NoError(t, err)
+	values, err := configgen.NewGenerator().Generate(*plan)
+	require.NoError(t, err)
+
+	valuesPath := filepath.Join(t.TempDir(), "values.yaml")
+	require.NoError(t, os.WriteFile(valuesPath, values, 0o600))
+	chartPath := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel")
+	command := exec.CommandContext(t.Context(), helm, "template", "oksg-otel", chartPath, "--namespace", "oksg-system", "-f", valuesPath)
+	rendered, err := command.CombinedOutput()
+	require.NoErrorf(t, err, "helm template failed: %s", rendered)
+	return string(rendered)
+}
+
+func renderedContractChecksum(t *testing.T, rendered string) string {
+	t.Helper()
+	for _, line := range strings.Split(rendered, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "checksum/source-contract:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "checksum/source-contract:"))
+		}
+	}
+	t.Fatal("rendered backend deployment has no source-contract checksum")
+	return ""
 }
 
 func contains(values []string, needle string) bool {

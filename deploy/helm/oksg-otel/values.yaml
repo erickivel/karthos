@@ -65,8 +65,8 @@ backend:
   topologyFlushInterval: "60s"
   runtimeEnv: {}
   sourceContract:
-    enabled: true
-    configMapName: oksg-source-contract
+    capabilityProfile: {}
+    sourcePlan: {}
   resources: {}
 
 storage:

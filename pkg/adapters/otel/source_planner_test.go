@@ -2,6 +2,7 @@ package otel
 
 import (
 	"context"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,6 +23,29 @@ func TestPlanUsesOnlySelectedModuleContributions(t *testing.T) {
 	require.Contains(t, plan.AgentConfig.Service.Pipelines, "traces")
 	require.NotEmpty(t, plan.SourcePlan.ProfileFingerprint)
 	require.Equal(t, metrics.SourceMeshIstio, plan.SourcePlan.MetricAssignments["servicegraph.request.count"])
+}
+
+func TestPlanRetainsIstioProtocolCountersOwnedByTheMeshModule(t *testing.T) {
+	plan, err := NewSourcePlanner("oksg-system").Plan(context.Background(), fullCapabilityProfile())
+	require.NoError(t, err)
+
+	prometheus := plan.AgentConfig.Receivers["prometheus"].(map[string]any)
+	config := prometheus["config"].(map[string]any)
+	scrapes := config["scrape_configs"].([]map[string]any)
+	metricRelabels := scrapes[0]["metric_relabel_configs"].([]map[string]any)
+	regex := metricRelabels[0]["regex"].(string)
+
+	matcher := regexp.MustCompile("^" + regex + "$")
+	for _, metricName := range []string{
+		"istio_request_messages_total",
+		"istio_response_messages_total",
+		"istio_tcp_connections_opened_total",
+		"istio_tcp_connections_closed_total",
+		"istio_tcp_sent_bytes_total",
+		"istio_tcp_received_bytes_total",
+	} {
+		require.Truef(t, matcher.MatchString(metricName), "mesh scrape must retain %s", metricName)
+	}
 }
 
 func TestPlanExcludesUnavailableOptionalModules(t *testing.T) {

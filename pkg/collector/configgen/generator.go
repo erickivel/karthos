@@ -8,6 +8,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
+	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
 const (
@@ -112,8 +113,8 @@ type BackendValues struct {
 }
 
 type SourceContractValues struct {
-	Enabled       bool   `json:"enabled" yaml:"enabled"`
-	ConfigMapName string `json:"configMapName,omitempty" yaml:"configMapName,omitempty"`
+	CapabilityProfile profile.ClusterProfile  `json:"capabilityProfile" yaml:"capabilityProfile"`
+	SourcePlan        otel.ResolvedSourcePlan `json:"sourcePlan" yaml:"sourcePlan"`
 }
 
 type BackendService struct {
@@ -219,8 +220,8 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 				HealthPort: DefaultBackendHealthPort,
 			},
 			SourceContract: SourceContractValues{
-				Enabled:       true,
-				ConfigMapName: "oksg-source-contract",
+				CapabilityProfile: plan.CapabilityProfile,
+				SourcePlan:        plan.SourcePlan,
 			},
 		},
 		Secrets: SecretsValues{},

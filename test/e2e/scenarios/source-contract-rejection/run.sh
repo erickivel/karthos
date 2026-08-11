@@ -1,39 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
+CONTRACT_NAME="${HELM_RELEASE_NAME:-oksg-otel}-source-contract"
 TMPDIR_TEST="$(mktemp -d -t oksg-source-contract-rejection.XXXXXX)"
-BACKUP="${TMPDIR_TEST}/source-contract.yaml"
+BACKUP="${TMPDIR_TEST}/source-contract.json"
+RESTORE="${TMPDIR_TEST}/restore-source-contract.json"
 restore() {
-  kubectl apply -f "${BACKUP}" >/dev/null 2>&1 || true
-  kubectl rollout restart deployment/oksg-backend -n "${NAMESPACE}" >/dev/null 2>&1 || true
-  kubectl rollout status deployment/oksg-backend -n "${NAMESPACE}" --timeout=120s >/dev/null 2>&1 || true
+  local original_status=$?
+  local restore_status=0
+  set +e
+  if kubectl get configmap "${CONTRACT_NAME}" -n "${NAMESPACE}" -o json >"${RESTORE}" 2>/dev/null; then
+    python3 - "${BACKUP}" "${RESTORE}" <<'PY' >/dev/null 2>&1 || true
+import json
+import sys
+
+backup_path, restore_path = sys.argv[1:]
+backup = json.load(open(backup_path))
+restore = json.load(open(restore_path))
+restore["data"] = backup["data"]
+open(restore_path, "w").write(json.dumps(restore))
+PY
+    kubectl replace -f "${RESTORE}" >/dev/null 2>&1 || restore_status=1
+  else
+    restore_status=1
+  fi
+  task test:e2e:apply-otel >/dev/null 2>&1 || restore_status=1
+  # rollout restart adds an out-of-band Pod-template annotation. Helm preserves
+  # annotations it does not own, so remove it after Helm has restored the
+  # ConfigMap; that makes Kubernetes create a fresh Pod from the valid contract
+  # instead of continuing to reconcile the failed ReplicaSet.
+  kubectl annotate deployment/oksg-backend -n "${NAMESPACE}" kubectl.kubernetes.io/restartedAt- >/dev/null 2>&1 || restore_status=1
+  kubectl rollout status deployment/oksg-backend -n "${NAMESPACE}" --timeout=120s >/dev/null 2>&1 || restore_status=1
   rm -rf "${TMPDIR_TEST}"
+  if [[ ${original_status} -eq 0 && ${restore_status} -ne 0 ]]; then
+    exit "${restore_status}"
+  fi
+  exit "${original_status}"
 }
 trap restore EXIT
 
-kubectl get configmap oksg-source-contract -n "${NAMESPACE}" -o yaml >"${BACKUP}"
-PROFILE="${TMPDIR_TEST}/capability-profile.json"
-PLAN="${TMPDIR_TEST}/source-plan.json"
-kubectl get configmap oksg-source-contract -n "${NAMESPACE}" -o jsonpath='{.data.capability-profile\.json}' >"${PROFILE}"
-kubectl get configmap oksg-source-contract -n "${NAMESPACE}" -o jsonpath='{.data.source-plan\.json}' >"${PLAN}"
-python3 - "${PLAN}" <<'PY'
+kubectl get configmap "${CONTRACT_NAME}" -n "${NAMESPACE}" -o json >"${BACKUP}"
+MUTATED="${TMPDIR_TEST}/mutated-source-contract.json"
+kubectl get configmap "${CONTRACT_NAME}" -n "${NAMESPACE}" -o json >"${MUTATED}"
+python3 - "${MUTATED}" <<'PY'
 import json
 import sys
 path = sys.argv[1]
 data = json.load(open(path))
-data["profile_fingerprint"] = "intentionally-mismatched-fingerprint"
+plan = json.loads(data["data"]["source-plan.json"])
+plan["profile_fingerprint"] = "intentionally-mismatched-fingerprint"
+data["data"]["source-plan.json"] = json.dumps(plan)
 open(path, "w").write(json.dumps(data))
 PY
-kubectl create configmap oksg-source-contract -n "${NAMESPACE}" \
-  --from-file=capability-profile.json="${PROFILE}" \
-  --from-file=source-plan.json="${PLAN}" \
-  --dry-run=client -o yaml | kubectl apply -f -
+kubectl replace -f "${MUTATED}"
 kubectl rollout restart deployment/oksg-backend -n "${NAMESPACE}"
 if kubectl rollout status deployment/oksg-backend -n "${NAMESPACE}" --timeout=45s; then
   echo "backend accepted a fingerprint-mismatched source contract" >&2
   exit 1
 fi
-kubectl logs deployment/oksg-backend -n "${NAMESPACE}" --tail=80 | grep -Fq "source plan profile fingerprint does not match"
+FAILED_POD="$(kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/component=backend --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')"
+kubectl logs "pod/${FAILED_POD}" -n "${NAMESPACE}" --previous --tail=80 | grep -Fq "source plan profile fingerprint does not match"
 echo "Source-plan fingerprint mismatch is fail-closed: PASS"

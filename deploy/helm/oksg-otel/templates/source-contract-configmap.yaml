@@ -1,0 +1,16 @@
+{{- if .Values.backend.enabled }}
+{{- $profile := required "backend.sourceContract.capabilityProfile is required" .Values.backend.sourceContract.capabilityProfile }}
+{{- $plan := required "backend.sourceContract.sourcePlan is required" .Values.backend.sourceContract.sourcePlan }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "oksg-otel.sourceContractName" . }}
+  namespace: {{ include "oksg-otel.namespace" . }}
+  labels:
+    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
+data:
+  capability-profile.json: |-
+{{ $profile | toPrettyJson | nindent 4 }}
+  source-plan.json: |-
+{{ $plan | toPrettyJson | nindent 4 }}
+{{- end }}

@@ -58,7 +58,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig")
 	clusterName := fs.String("cluster-name", defaultClusterName, "name of the cluster being discovered")
 	profilePath := fs.String("capability-profile", "", "path to capability profile JSON")
-	outputPath := fs.String("output", "", "output file path")
+	outputPath := fs.String("output", "", "output file path for discover capability profile")
 	valuesOutputPath := fs.String("values-output", "", "output file path for generated Helm values")
 	resolvedPlanOutputPath := fs.String("resolved-plan-output", "", "output path for resolved source plan JSON (defaults beside --values-output)")
 	renderedOutputPath := fs.String("rendered-output", "", "directory for helm template output")
@@ -79,6 +79,9 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *mode != "discover" && *outputPath != "" {
+		return fmt.Errorf("--output is only supported in discover mode; use --values-output for generated Helm values")
+	}
 
 	logger, err := logging.New("discovery-job", *logLevel)
 	if err != nil {
@@ -90,7 +93,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 		activeNamespace = *helmNamespace
 	}
 
-	valuesPath := coalesce(*valuesOutputPath, *outputPath)
+	valuesPath := *valuesOutputPath
 	resolvedPlanPath := coalesce(*resolvedPlanOutputPath, defaultResolvedPlanPath(valuesPath))
 	deployOptions := deployer.Options{
 		ReleaseName:  *releaseName,
@@ -124,7 +127,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	switch *mode {
 	case "discover":
 		if deps.discover == nil {
-			deps.discover = realDependenciesWithKubeconfig(*kubeconfig, *clusterName, *namespace, *targetNamespace).discover
+			deps.discover = realDependenciesWithKubeconfig(*kubeconfig, *clusterName, *targetNamespace).discover
 		}
 		clusterProfile, err := deps.discover(ctx)
 		if err != nil {
@@ -242,7 +245,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	}
 }
 
-func realDependenciesWithKubeconfig(kubeconfig, clusterName, namespace, targetNamespace string) dependencies {
+func realDependenciesWithKubeconfig(kubeconfig, clusterName, targetNamespace string) dependencies {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return dependencies{
@@ -267,12 +270,7 @@ func realDependenciesWithKubeconfig(kubeconfig, clusterName, namespace, targetNa
 	}
 
 	adapter := k8sadapter.NewDiscoveryAdapter(clientset, clusterName, httpProbe, opts...)
-	return dependencies{
-		discover:  adapter.Discover,
-		planner:   otel.NewSourcePlanner(namespace),
-		generator: defaultGenerator(configgen.GeneratorOptions{}),
-		deployer:  deployer.New(nil),
-	}
+	return dependencies{discover: adapter.Discover}
 }
 
 func defaultGenerator(options configgen.GeneratorOptions) generator {

@@ -26,13 +26,14 @@ type SourcePlanner interface {
 }
 
 type Plan struct {
-	ClusterName    string
-	Namespace      string
-	EnabledSignals []string
-	Backend        BackendConfig
-	AgentConfig    CollectorConfig
-	GatewayConfig  CollectorConfig
-	SourcePlan     ResolvedSourcePlan
+	ClusterName       string
+	Namespace         string
+	EnabledSignals    []string
+	Backend           BackendConfig
+	AgentConfig       CollectorConfig
+	GatewayConfig     CollectorConfig
+	CapabilityProfile profile.ClusterProfile
+	SourcePlan        ResolvedSourcePlan
 }
 
 // ResolvedSourcePlan is the deployment contract shared by collector
@@ -43,6 +44,83 @@ type ResolvedSourcePlan struct {
 	ProfileFingerprint string             `json:"profile_fingerprint"`
 	SelectedSources    []string           `json:"selected_sources"`
 	MetricAssignments  metrics.Assignment `json:"metric_assignments"`
+}
+
+// Validate verifies that a mounted plan is a complete projection of the
+// compiled catalog and module inventory. It deliberately does not rerun source
+// arbitration: the profile fingerprint binds this checked artifact to the
+// discovery snapshot that produced it.
+func (p ResolvedSourcePlan) Validate(capabilityProfile *profile.ClusterProfile, modules sources.Registry) error {
+	if err := capabilityProfile.Validate(modules.IDs()); err != nil {
+		return fmt.Errorf("validate capability profile: %w", err)
+	}
+
+	metricSources := make(map[string]struct{}, len(modules.MetricIDs()))
+	for _, sourceID := range modules.MetricIDs() {
+		metricSources[sourceID] = struct{}{}
+	}
+	selected := make(map[string]struct{}, len(p.SelectedSources))
+	for _, sourceID := range p.SelectedSources {
+		if _, ok := metricSources[sourceID]; !ok {
+			return fmt.Errorf("source plan selects unknown telemetry source %q", sourceID)
+		}
+		if _, duplicate := selected[sourceID]; duplicate {
+			return fmt.Errorf("source plan selects source %q more than once", sourceID)
+		}
+		if !capabilityProfile.IsAvailable(sourceID) {
+			return fmt.Errorf("source plan selects unavailable source %q", sourceID)
+		}
+		selected[sourceID] = struct{}{}
+	}
+
+	catalog := metrics.CatalogByName()
+	selectedUsed := make(map[string]bool, len(selected))
+	for metricName, sourceID := range p.MetricAssignments {
+		metric, ok := catalog[metricName]
+		if !ok {
+			return fmt.Errorf("source plan assigns unknown catalog metric %q", metricName)
+		}
+		if _, ok := selected[sourceID]; !ok {
+			return fmt.Errorf("source plan assigns metric %q to unselected source %q", metricName, sourceID)
+		}
+		if !metricHasSource(metric, sourceID) {
+			return fmt.Errorf("source plan assigns metric %q to unsupported source %q", metricName, sourceID)
+		}
+		selectedUsed[sourceID] = true
+	}
+	for sourceID := range selected {
+		if !selectedUsed[sourceID] {
+			return fmt.Errorf("source plan selects unused source %q", sourceID)
+		}
+	}
+
+	for metricName, metric := range catalog {
+		available := false
+		for _, source := range metric.Sources {
+			if capabilityProfile.IsAvailable(source.ID) {
+				available = true
+				break
+			}
+		}
+		_, assigned := p.MetricAssignments[metricName]
+		if available && !assigned {
+			return fmt.Errorf("source plan must assign every available catalog metric: %q", metricName)
+		}
+		if !available && assigned {
+			return fmt.Errorf("source plan assigns unavailable catalog metric %q", metricName)
+		}
+	}
+
+	return nil
+}
+
+func metricHasSource(metric metrics.CanonicalMetric, sourceID string) bool {
+	for _, source := range metric.Sources {
+		if source.ID == sourceID {
+			return true
+		}
+	}
+	return false
 }
 
 type BackendConfig struct {
@@ -276,9 +354,10 @@ func (p *planner) Plan(_ context.Context, clusterProfile *profile.ClusterProfile
 	}
 
 	return &Plan{
-		ClusterName:    clusterLabel,
-		Namespace:      p.namespace,
-		EnabledSignals: enabledSignals,
+		ClusterName:       clusterLabel,
+		Namespace:         p.namespace,
+		EnabledSignals:    enabledSignals,
+		CapabilityProfile: *clusterProfile,
 		Backend: BackendConfig{
 			Enabled:      true,
 			GRPCEndpoint: DefaultBackendGRPCEndpoint,

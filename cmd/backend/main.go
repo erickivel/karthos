@@ -502,6 +502,10 @@ func loadSourceContract(cfg config) (*profile.ClusterProfile, oteladapter.Resolv
 	if err := json.Unmarshal(profileData, &capabilityProfile); err != nil {
 		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("decode capability profile: %w", err)
 	}
+	modules := sources.DefaultRegistry()
+	if err := capabilityProfile.Validate(modules.IDs()); err != nil {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("validate mounted capability profile: %w", err)
+	}
 	planData, err := os.ReadFile(cfg.SourcePlan)
 	if err != nil {
 		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("read source plan: %w", err)
@@ -517,24 +521,8 @@ func loadSourceContract(cfg config) (*profile.ClusterProfile, oteladapter.Resolv
 	if sourcePlan.ProfileFingerprint == "" || sourcePlan.ProfileFingerprint != fingerprint {
 		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan profile fingerprint does not match mounted capability profile")
 	}
-	known := make(map[string]struct{}, len(sources.DefaultRegistry().MetricIDs()))
-	for _, sourceID := range sources.DefaultRegistry().MetricIDs() {
-		known[sourceID] = struct{}{}
-	}
-	selected := make(map[string]struct{}, len(sourcePlan.SelectedSources))
-	for _, sourceID := range sourcePlan.SelectedSources {
-		if _, ok := known[sourceID]; !ok {
-			return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan selects unknown source %q", sourceID)
-		}
-		selected[sourceID] = struct{}{}
-	}
-	for metricName, sourceID := range sourcePlan.MetricAssignments {
-		if _, ok := known[sourceID]; !ok {
-			return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan assigns metric %q to unknown source %q", metricName, sourceID)
-		}
-		if _, ok := selected[sourceID]; !ok {
-			return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan assigns metric %q to unselected source %q", metricName, sourceID)
-		}
+	if err := sourcePlan.Validate(&capabilityProfile, modules); err != nil {
+		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("validate mounted source plan: %w", err)
 	}
 	return &capabilityProfile, sourcePlan, nil
 }

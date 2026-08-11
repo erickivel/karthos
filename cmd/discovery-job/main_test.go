@@ -10,6 +10,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
 	"github.com/erickivel/oksg/pkg/collector/configgen"
+	"github.com/erickivel/oksg/pkg/collector/deployer"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
@@ -29,6 +30,9 @@ func TestRunPlanWritesResolvedSourcePlanBesideValues(t *testing.T) {
 	values, err := os.ReadFile(valuesPath)
 	require.NoError(t, err)
 	require.Contains(t, string(values), "collectorConfig")
+	require.Contains(t, string(values), "sourceContract")
+	require.Contains(t, string(values), "capabilityProfile")
+	require.Contains(t, string(values), "sourcePlan")
 	resolved, err := os.ReadFile(valuesPath + ".source-plan.json")
 	require.NoError(t, err)
 	require.Contains(t, string(resolved), "profile_fingerprint")
@@ -49,6 +53,49 @@ func TestRunDiscoverWritesCapabilityProfile(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(payload), "capabilities")
 }
+
+func TestRunDeployAppliesGeneratedHelmValuesAndWritesRequestedArtifact(t *testing.T) {
+	tempDir := t.TempDir()
+	profilePath := filepath.Join(tempDir, "profile.json")
+	valuesPath := filepath.Join(tempDir, "otel-values.yaml")
+	require.NoError(t, os.WriteFile(profilePath, []byte(capabilityProfileJSON), 0o644))
+
+	generatedValues := []byte("backend:\n  sourceContract:\n    capabilityProfile: {}\n    sourcePlan: {}\n")
+	deployer := &recordingDeployer{}
+	err := run(context.Background(), []string{
+		"--mode=deploy",
+		"--capability-profile=" + profilePath,
+		"--values-output=" + valuesPath,
+	}, dependencies{
+		planner:   staticPlanner{plan: &otel.Plan{}},
+		generator: staticGenerator{values: generatedValues},
+		deployer:  deployer,
+	})
+	require.NoError(t, err)
+	require.Equal(t, generatedValues, deployer.appliedValues)
+	writtenValues, err := os.ReadFile(valuesPath)
+	require.NoError(t, err)
+	require.Equal(t, append(generatedValues, '\n'), writtenValues)
+}
+
+type staticPlanner struct{ plan *otel.Plan }
+
+func (p staticPlanner) Plan(context.Context, *profile.ClusterProfile) (*otel.Plan, error) {
+	return p.plan, nil
+}
+
+type staticGenerator struct{ values []byte }
+
+func (g staticGenerator) Generate(otel.Plan) ([]byte, error) { return g.values, nil }
+
+type recordingDeployer struct{ appliedValues []byte }
+
+func (d *recordingDeployer) Apply(_ context.Context, values []byte, _ deployer.Options) error {
+	d.appliedValues = append([]byte(nil), values...)
+	return nil
+}
+
+func (d *recordingDeployer) Template(context.Context, []byte, deployer.Options) error { return nil }
 
 const capabilityProfileJSON = `{
   "cluster_name": "kind-test",

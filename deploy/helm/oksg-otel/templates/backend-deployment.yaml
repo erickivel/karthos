@@ -14,6 +14,8 @@ spec:
       app.kubernetes.io/component: backend
   template:
     metadata:
+      annotations:
+        checksum/source-contract: {{ include (print $.Template.BasePath "/source-contract-configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
         app.kubernetes.io/component: backend
@@ -32,10 +34,8 @@ spec:
             - --enabled-signals={{ join "," .Values.enabledSignals }}
             - --cluster-name={{ .Values.global.clusterName }}
             - --pod-lifecycle-required=true
-            {{- if .Values.backend.sourceContract.enabled }}
             - --capability-profile=/etc/oksg/capability-profile.json
             - --source-plan=/etc/oksg/source-plan.json
-            {{- end }}
           env:
             - name: OKSG_LOG_LEVEL
               value: {{ .Values.global.logging.level | quote }}
@@ -79,18 +79,14 @@ spec:
               port: health
             initialDelaySeconds: 15
             periodSeconds: 20
-          {{- if .Values.backend.sourceContract.enabled }}
           volumeMounts:
             - name: source-contract
               mountPath: /etc/oksg
               readOnly: true
-          {{- end }}
           resources:
 {{ toYaml .Values.backend.resources | indent 12 }}
-      {{- if .Values.backend.sourceContract.enabled }}
       volumes:
         - name: source-contract
           configMap:
-            name: {{ .Values.backend.sourceContract.configMapName }}
-      {{- end }}
+            name: {{ include "oksg-otel.sourceContractName" . }}
 {{- end }}

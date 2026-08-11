@@ -110,24 +110,17 @@ tasks:
     deps: [e2e:ensure-build]
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
+      - helm dependency build {{.HELM_CHART_PATH}}
       - "{{.DISCOVERY_JOB_BIN}} --mode=plan --capability-profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}}"
 
-  e2e:apply-source-contract:
-    desc: Create or update the capability profile and resolved source-plan ConfigMap for backend validation
-    cmds:
-      - >-
-        kubectl create configmap oksg-source-contract
-        --from-file=capability-profile.json={{.PROFILE_PATH}}
-        --from-file=source-plan.json={{.VALUES_PATH}}.source-plan.json
-        -n {{.KIND_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
-
   e2e:apply-otel:
-    desc: Install or upgrade the OTel Helm release with generated values and external storage
+    desc: Install or upgrade the OTel Helm release and its generated source contract
     cmds:
       - helm dependency build {{.HELM_CHART_PATH}}
       - >-
         helm upgrade --install {{.HELM_RELEASE_NAME}} {{.HELM_CHART_PATH}}
         --namespace {{.KIND_NAMESPACE}} --create-namespace
+        --force-conflicts
         -f {{.VALUES_PATH}}
         --set storage.backend=external
         --set storage.postgresql.enabled=true
@@ -136,8 +129,6 @@ tasks:
         --set frontend.image.repository={{.FRONTEND_IMAGE_REPOSITORY}}
         --set frontend.image.tag={{.FRONTEND_IMAGE_TAG}}
         --set frontend.image.pullPolicy={{.FRONTEND_IMAGE_PULL_POLICY}}
-      - kubectl rollout restart deployment/oksg-backend -n {{.KIND_NAMESPACE}}
-      - kubectl rollout restart deployment/oksg-frontend -n {{.KIND_NAMESPACE}}
 
   e2e:verify:
     desc: Verify generated collectors and storage backends are deployed
@@ -160,7 +151,6 @@ tasks:
     desc: Remove deployed OTel Helm release
     cmds:
       - helm uninstall {{.HELM_RELEASE_NAME}} --namespace {{.KIND_NAMESPACE}} || true
-      - kubectl delete configmap oksg-source-contract -n {{.KIND_NAMESPACE}} --ignore-not-found
 
   e2e:reset-apps:
     desc: Remove deployed demo fixtures across all e2e app namespaces
@@ -214,7 +204,6 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
-      - task: e2e:apply-source-contract
       - task: e2e:verify
 
   e2e:scenario:prometheus:
@@ -231,7 +220,6 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
-      - task: e2e:apply-source-contract
       - task: e2e:verify
       - task: e2e:traffic
         vars:
@@ -252,7 +240,6 @@ tasks:
       - task: e2e:discover
       - task: e2e:plan
       - task: e2e:apply-otel
-      - task: e2e:apply-source-contract
       - task: e2e:verify
 
   e2e:scenario:detector-failure:

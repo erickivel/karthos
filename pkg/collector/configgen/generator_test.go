@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
+	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
 
 func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
@@ -95,11 +96,30 @@ func TestBuildUsesV0156FeatureGates(t *testing.T) {
 	require.Empty(t, values.Gateway.FeatureGates)
 }
 
-func TestBuildMountsTheSourceContractInsteadOfADiscoveryProfile(t *testing.T) {
-	values, err := NewGenerator().Build(otel.Plan{})
+func TestBuildEmbedsResolvedSourcePlanForHelmOwnedContract(t *testing.T) {
+	resolved := otel.ResolvedSourcePlan{
+		ProfileFingerprint: "profile-fingerprint",
+		SelectedSources:    []string{"kubelet"},
+		MetricAssignments:  map[string]string{"k8s.pod.cpu.usage": "kubelet"},
+	}
+	values, err := NewGenerator().Build(otel.Plan{SourcePlan: resolved})
 	require.NoError(t, err)
-	require.True(t, values.Backend.SourceContract.Enabled)
-	require.Equal(t, "oksg-source-contract", values.Backend.SourceContract.ConfigMapName)
+	require.Equal(t, resolved, values.Backend.SourceContract.SourcePlan)
+}
+
+func TestBuildEmbedsCapabilityProfileForHelmOwnedContract(t *testing.T) {
+	capabilityProfile := profile.ClusterProfile{
+		ClusterName: "kind-test",
+		Capabilities: []profile.SourceCapability{{
+			SourceID: "kubelet",
+			Kind:     profile.SourceKindDirect,
+			Status:   profile.CapabilityAvailable,
+			Signals:  []string{"metric"},
+		}},
+	}
+	values, err := NewGenerator().Build(otel.Plan{CapabilityProfile: capabilityProfile})
+	require.NoError(t, err)
+	require.Equal(t, capabilityProfile, values.Backend.SourceContract.CapabilityProfile)
 }
 
 func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -79,28 +80,103 @@ func TestValidateStructureRefreshIntervalRequiresStrictNodeTTLBound(t *testing.T
 }
 
 func TestLoadSourceContractRejectsMismatchedProfileFingerprint(t *testing.T) {
-	dir := t.TempDir()
-	profilePath := filepath.Join(dir, "capability-profile.json")
-	planPath := filepath.Join(dir, "source-plan.json")
-	capabilityProfile := profile.ClusterProfile{
-		ClusterID:   entities.NewCluster("test", nil).ID(),
-		ClusterName: "test",
-		Capabilities: []profile.SourceCapability{{
-			SourceID: metrics.SourceKubelet,
-			Kind:     profile.SourceKindDirect,
-			Status:   profile.CapabilityAvailable,
-			Signals:  []string{"metrics"},
-		}},
-	}
-	writeJSONFile(t, profilePath, capabilityProfile)
-	writeJSONFile(t, planPath, otel.ResolvedSourcePlan{
-		ProfileFingerprint: "wrong",
-		SelectedSources:    []string{metrics.SourceKubelet},
-		MetricAssignments:  metrics.Assignment{"system.cpu.utilization": metrics.SourceKubelet},
-	})
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	sourcePlan.ProfileFingerprint = "wrong"
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
 
 	_, _, err := loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
 	require.ErrorContains(t, err, "fingerprint does not match")
+}
+
+func TestLoadSourceContractAcceptsCompleteCompiledContract(t *testing.T) {
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
+
+	loadedProfile, loadedPlan, err := loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
+	require.NoError(t, err)
+	require.Equal(t, capabilityProfile.ClusterID, loadedProfile.ClusterID)
+	require.Equal(t, sourcePlan.MetricAssignments, loadedPlan.MetricAssignments)
+}
+
+func TestLoadSourceContractRejectsProfileWithoutEveryCompiledModule(t *testing.T) {
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	capabilityProfile.Capabilities = capabilityProfile.Capabilities[:len(capabilityProfile.Capabilities)-1]
+	fingerprint, err := capabilityProfile.Fingerprint()
+	require.NoError(t, err)
+	sourcePlan.ProfileFingerprint = fingerprint
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
+
+	_, _, err = loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
+	require.ErrorContains(t, err, "missing compiled module")
+}
+
+func TestLoadSourceContractRejectsIncompleteMetricAssignments(t *testing.T) {
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	for metricName := range sourcePlan.MetricAssignments {
+		delete(sourcePlan.MetricAssignments, metricName)
+		break
+	}
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
+
+	_, _, err := loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
+	require.ErrorContains(t, err, "must assign every available catalog metric")
+}
+
+func TestLoadSourceContractRejectsUnknownMetricAssignment(t *testing.T) {
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	sourcePlan.MetricAssignments["not.a.canonical.metric"] = metrics.SourceKubelet
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
+
+	_, _, err := loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
+	require.ErrorContains(t, err, "assigns unknown catalog metric")
+}
+
+func TestLoadSourceContractRejectsUnavailableSelectedSource(t *testing.T) {
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	sourcePlan.SelectedSources = append(sourcePlan.SelectedSources, metrics.SourceMeshIstio)
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
+
+	_, _, err := loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
+	require.ErrorContains(t, err, "selects unavailable source")
+}
+
+func TestLoadSourceContractRejectsAssignmentToUnselectedSource(t *testing.T) {
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	sourcePlan.SelectedSources = sourcePlan.SelectedSources[1:]
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
+
+	_, _, err := loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
+	require.ErrorContains(t, err, "to unselected source")
+}
+
+func completeSourceContract(t *testing.T) (profile.ClusterProfile, otel.ResolvedSourcePlan) {
+	t.Helper()
+	capabilityProfile := profile.ClusterProfile{
+		ClusterID:   entities.NewCluster("test", nil).ID(),
+		ClusterName: "test",
+		Capabilities: []profile.SourceCapability{
+			{SourceID: metrics.SourceKubernetesStructure, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"structure"}},
+			{SourceID: metrics.SourceKubelet, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: metrics.SourceHostOS, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: metrics.SourceKubeCluster, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+			{SourceID: metrics.SourcePrometheusApp, Kind: profile.SourceKindDirect, Status: profile.CapabilityUnavailable},
+			{SourceID: metrics.SourceMeshIstio, Kind: profile.SourceKindDirect, Status: profile.CapabilityUnavailable},
+			{SourceID: metrics.SourceTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityUnavailable},
+		},
+	}
+	planned, err := otel.NewSourcePlanner("oksg-system").Plan(context.Background(), &capabilityProfile)
+	require.NoError(t, err)
+	return capabilityProfile, planned.SourcePlan
+}
+
+func writeSourceContract(t *testing.T, capabilityProfile profile.ClusterProfile, sourcePlan otel.ResolvedSourcePlan) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	profilePath := filepath.Join(dir, "capability-profile.json")
+	planPath := filepath.Join(dir, "source-plan.json")
+	writeJSONFile(t, profilePath, capabilityProfile)
+	writeJSONFile(t, planPath, sourcePlan)
+	return profilePath, planPath
 }
 
 func writeJSONFile(t *testing.T, path string, value any) {
