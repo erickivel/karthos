@@ -11,12 +11,14 @@ import (
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/oksg/pkg/sources/detection"
 	"github.com/erickivel/oksg/pkg/sources/hostos"
 	"github.com/erickivel/oksg/pkg/sources/istio"
 	"github.com/erickivel/oksg/pkg/sources/kubecluster"
 	"github.com/erickivel/oksg/pkg/sources/kubelet"
 	"github.com/erickivel/oksg/pkg/sources/prometheusapp"
 	"github.com/erickivel/oksg/pkg/sources/servicegraph"
+	"github.com/erickivel/oksg/pkg/sources/structure"
 )
 
 const (
@@ -47,8 +49,10 @@ type CollectorContribution struct {
 // metric dialect or collector contribution.
 type Module struct {
 	ID           string
+	Kind         profile.SourceKind
 	MetricSource bool
 	Dialect      metrics.Dialect
+	Detect       func(detection.Inventory) profile.SourceCapability
 	Contribute   func(*CollectorContribution, *profile.ClusterProfile)
 	Normalize    contract.Normalizer
 }
@@ -58,29 +62,51 @@ type Registry struct{ modules []Module }
 
 func DefaultRegistry() Registry {
 	return Registry{modules: []Module{
-		{ID: IDKubernetesStructure},
+		{ID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Detect: structure.Detect},
 		{
-			ID: IDKubelet, Dialect: metrics.KubeletDialect, MetricSource: true,
+			ID: IDKubelet, Kind: profile.SourceKindDirect, Dialect: metrics.KubeletDialect, MetricSource: true, Detect: kubelet.Detect,
 			Contribute: contributeKubelet, Normalize: kubelet.Normalize,
 		},
-		{ID: IDHostOS, MetricSource: true, Contribute: contributeHostOS, Normalize: hostos.Normalize},
+		{ID: IDHostOS, Kind: profile.SourceKindDirect, MetricSource: true, Detect: hostos.Detect, Contribute: contributeHostOS, Normalize: hostos.Normalize},
 		{
-			ID: IDKubeCluster, Dialect: metrics.KubeClusterDialect, MetricSource: true,
+			ID: IDKubeCluster, Kind: profile.SourceKindDirect, Dialect: metrics.KubeClusterDialect, MetricSource: true, Detect: kubecluster.Detect,
 			Contribute: contributeKubeCluster, Normalize: kubecluster.Normalize,
 		},
 		{
-			ID: IDPrometheusApp, Dialect: metrics.PrometheusDialect, MetricSource: true,
+			ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Dialect: metrics.PrometheusDialect, MetricSource: true, Detect: prometheusapp.Detect,
 			Contribute: contributePrometheusApp, Normalize: prometheusapp.Normalize,
 		},
 		{
-			ID: IDMeshIstio, Dialect: metrics.IstioDialect, MetricSource: true,
+			ID: IDMeshIstio, Kind: profile.SourceKindDirect, Dialect: metrics.IstioDialect, MetricSource: true, Detect: istio.Detect,
 			Contribute: contributeMeshIstio, Normalize: istio.Normalize,
 		},
 		{
-			ID: IDTracesServicegraph, Dialect: metrics.ServicegraphDialect, MetricSource: true,
+			ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Dialect: metrics.ServicegraphDialect, MetricSource: true, Detect: servicegraph.Detect,
 			Contribute: contributeServicegraph, Normalize: servicegraph.Normalize,
 		},
 	}}
+}
+
+// Detect runs every compiled source detector in static registry order. A
+// detector may mark its source unavailable, but cannot impersonate another
+// module or change its direct/derived identity.
+func (r Registry) Detect(inventory detection.Inventory) ([]profile.SourceCapability, error) {
+	capabilities := make([]profile.SourceCapability, 0, len(r.modules))
+	for _, module := range r.modules {
+		if module.Detect == nil {
+			return nil, fmt.Errorf("compiled source module %q has no detector", module.ID)
+		}
+		capability := module.Detect(inventory)
+		if capability.SourceID != module.ID {
+			return nil, fmt.Errorf("compiled source module %q returned capability for %q", module.ID, capability.SourceID)
+		}
+		if capability.Kind != module.Kind {
+			return nil, fmt.Errorf("compiled source module %q returned kind %q, expected %q", module.ID, capability.Kind, module.Kind)
+		}
+		capabilities = append(capabilities, capability)
+	}
+	sort.Slice(capabilities, func(i, j int) bool { return capabilities[i].SourceID < capabilities[j].SourceID })
+	return capabilities, nil
 }
 
 // Normalize applies the selected compiled module and leaves the default entity
