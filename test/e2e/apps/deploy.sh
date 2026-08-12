@@ -80,13 +80,19 @@ if [[ "${CLUSTER_ENGINE}" == "k3s" ]]; then
 fi
 
 kubectl apply -f "${RENDERED_APPS}"
+active_deployments=()
 while IFS= read -r deployment; do
+  replicas="$(kubectl get "${deployment}" -n oksg-demo -o jsonpath='{.spec.replicas}')"
+  if [[ "${replicas:-1}" == "0" ]]; then
+    continue
+  fi
+  active_deployments+=("${deployment}")
   kubectl rollout restart -n oksg-demo "${deployment}"
 done < <(kubectl get deployments -n oksg-demo -o name)
 
-while IFS= read -r deployment; do
+for deployment in "${active_deployments[@]}"; do
   kubectl rollout status -n oksg-demo "${deployment}" --timeout=120s
-done < <(kubectl get deployments -n oksg-demo -o name)
+done
 
 if kubectl get pod ops-toolbox -n oksg-sparse >/dev/null 2>&1; then
   kubectl wait --for=condition=ready pod/ops-toolbox -n oksg-sparse --timeout=120s

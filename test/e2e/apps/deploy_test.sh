@@ -98,8 +98,14 @@ YAML
     if [[ "${2:-}" == "nodes" ]]; then
       printf 'test-node\n'
     elif [[ "${2:-}" == "deployments" ]]; then
-      printf 'deployment/gateway\n'
+      printf 'deployment/gateway\ndeployment/config-bundle\n'
+    elif [[ "${2:-}" == "deployment/gateway" ]]; then
+      printf '1'
+    elif [[ "${2:-}" == "deployment/config-bundle" ]]; then
+      printf '0'
     fi
+    ;;
+  rollout)
     ;;
 esac
 EOF
@@ -120,5 +126,10 @@ for image in gateway-go service-a-python service-b-node mesh-protocol-go; do
   grep -Fqx "remote docker push ${DEPLOY_TEST_REGISTRY}/${image}:run-tag" "${DEPLOY_TEST_LOG}"
 done
 grep -Fqx '        - image: registry.k8s.io/pause:3.10' "${DEPLOY_TEST_APPLY_MANIFEST}"
+grep -Fqx 'kubectl rollout restart -n oksg-demo deployment/gateway' "${DEPLOY_TEST_LOG}"
+if grep -Fq 'kubectl rollout restart -n oksg-demo deployment/config-bundle' "${DEPLOY_TEST_LOG}"; then
+  echo "zero-replica config-bundle must not be restarted" >&2
+  exit 1
+fi
 
 echo "deploy uses built fixture image tags: PASS"

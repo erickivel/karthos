@@ -6,6 +6,16 @@ CONTRACT_NAME="${HELM_RELEASE_NAME:-oksg-otel}-source-contract"
 TMPDIR_TEST="$(mktemp -d -t oksg-source-contract-rejection.XXXXXX)"
 BACKUP="${TMPDIR_TEST}/source-contract.json"
 RESTORE="${TMPDIR_TEST}/restore-source-contract.json"
+wait_for_observed_generation() {
+  local timeout="${1:-45s}"
+  local generation
+  generation="$(kubectl get deployment/oksg-backend -n "${NAMESPACE}" -o jsonpath='{.metadata.generation}')"
+  if [[ -z "${generation}" ]]; then
+    echo "could not read backend deployment generation" >&2
+    return 1
+  fi
+  kubectl wait --for=jsonpath='{.status.observedGeneration}'="${generation}" deployment/oksg-backend -n "${NAMESPACE}" --timeout="${timeout}"
+}
 restore() {
   local original_status=$?
   local restore_status=0
@@ -31,6 +41,7 @@ PY
   # ConfigMap; that makes Kubernetes create a fresh Pod from the valid contract
   # instead of continuing to reconcile the failed ReplicaSet.
   kubectl annotate deployment/oksg-backend -n "${NAMESPACE}" kubectl.kubernetes.io/restartedAt- >/dev/null 2>&1 || restore_status=1
+  wait_for_observed_generation 120s >/dev/null 2>&1 || restore_status=1
   kubectl rollout status deployment/oksg-backend -n "${NAMESPACE}" --timeout=120s >/dev/null 2>&1 || restore_status=1
   rm -rf "${TMPDIR_TEST}"
   if [[ ${original_status} -eq 0 && ${restore_status} -ne 0 ]]; then
@@ -55,6 +66,7 @@ open(path, "w").write(json.dumps(data))
 PY
 kubectl replace -f "${MUTATED}"
 kubectl rollout restart deployment/oksg-backend -n "${NAMESPACE}"
+wait_for_observed_generation
 if kubectl rollout status deployment/oksg-backend -n "${NAMESPACE}" --timeout=45s; then
   echo "backend accepted a fingerprint-mismatched source contract" >&2
   exit 1

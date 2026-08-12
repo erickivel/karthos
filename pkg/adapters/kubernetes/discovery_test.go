@@ -19,7 +19,7 @@ import (
 
 func TestDiscoverProducesDeterministicCapabilityProfile(t *testing.T) {
 	client := fake.NewClientset(&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo", Annotations: map[string]string{"prometheus.io/scrape": "true", "prometheus.io/port": "8080", "oksg.io/otlp-traces": "true"}}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}, {Port: 4317}}}})
-	adapter := NewDiscoveryAdapter(client, "test", func(context.Context, string) bool { return true })
+	adapter := NewDiscoveryAdapter(client, "test")
 
 	result, err := adapter.Discover(context.Background())
 	require.NoError(t, err)
@@ -37,11 +37,26 @@ func TestDiscoverProducesDeterministicCapabilityProfile(t *testing.T) {
 	require.Equal(t, profile.CapabilityAvailable, servicegraph.Status)
 }
 
-func TestDiscoverFailsWhenModuleProbeCannotListServices(t *testing.T) {
-	client := fake.NewClientset()
-	client.PrependReactor("list", "services", func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("denied") })
-	adapter := NewDiscoveryAdapter(client, "test", nil)
+func TestDiscoverFailsWhenARequiredKubernetesListIsDenied(t *testing.T) {
+	tests := []struct {
+		name     string
+		resource string
+	}{
+		{name: "nodes", resource: "nodes"},
+		{name: "services", resource: "services"},
+		{name: "namespaces", resource: "namespaces"},
+		{name: "pods", resource: "pods"},
+		{name: "webhooks", resource: "mutatingwebhookconfigurations"},
+	}
 
-	_, err := adapter.Discover(context.Background())
-	require.ErrorContains(t, err, "detect prometheus.app/traces.servicegraph: list services: denied")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := fake.NewClientset()
+			client.PrependReactor("list", tt.resource, func(k8stesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("denied") })
+			adapter := NewDiscoveryAdapter(client, "test")
+
+			_, err := adapter.Discover(context.Background())
+			require.ErrorContains(t, err, "list "+tt.resource+": denied")
+		})
+	}
 }
