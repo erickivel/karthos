@@ -57,7 +57,6 @@ type PrometheusTarget struct {
 	Namespace   string `json:"namespace"`
 	Port        int32  `json:"port"`
 	Path        string `json:"path"`
-	Reachable   bool   `json:"reachable"`
 }
 
 type OTLPEvidence struct {

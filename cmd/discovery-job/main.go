@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -269,32 +267,12 @@ func realDependenciesWithKubeconfig(kubeconfig, clusterName, targetNamespace str
 		opts = append(opts, k8sadapter.WithTargetNamespaces(targetNamespace))
 	}
 
-	adapter := k8sadapter.NewDiscoveryAdapter(clientset, clusterName, httpProbe, opts...)
+	adapter := k8sadapter.NewDiscoveryAdapter(clientset, clusterName, opts...)
 	return dependencies{discover: adapter.Discover}
 }
 
 func defaultGenerator(options configgen.GeneratorOptions) generator {
 	return configgen.NewGeneratorWithOptions(options)
-}
-
-func httpProbe(ctx context.Context, url string) bool {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false
-	}
-
-	client := &http.Client{Timeout: 3 * time.Second}
-	response, err := client.Do(request)
-	if err != nil {
-		return false
-	}
-
-	healthy := response.StatusCode >= 200 && response.StatusCode < 400
-	if err := response.Body.Close(); err != nil {
-		return false
-	}
-
-	return healthy
 }
 
 func readProfile(path string) (*profile.ClusterProfile, error) {
