@@ -77,10 +77,10 @@ When adding new configuration:
 
 ```go
 // BAD: hardcoded cluster name
-adapter := NewDiscoveryAdapter(client, "kind-test", probe)
+adapter := NewDiscoveryAdapter(client, "kind-test")
 
 // GOOD: configurable via flag/parameter
-adapter := NewDiscoveryAdapter(client, clusterName, probe)
+adapter := NewDiscoveryAdapter(client, clusterName)
 ```
 
 ```yaml

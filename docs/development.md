@@ -36,7 +36,7 @@ cmd/
 
 pkg/
   adapters/api/          REST API server (handlers + response envelope + pagination)
-  adapters/kubernetes/   discovery adapter (Prometheus + OTLP + Istio mesh detection)
+  adapters/kubernetes/   Kubernetes inventory adapter plus live Pod lifecycle validation
   adapters/otel/         source planner; Helm values builder; transform/oksg-source processor
   adapters/otlp/         OTLP gRPC and HTTP server adapter
   adapters/storage/      storage factory and config (memory or external backends)
@@ -58,8 +58,9 @@ pkg/
   core/semconv/          OTLP semantic-convention attribute key constants
   core/topology/         graph nodes, edges, relations, and snapshots
   discovery/profile/     capability-only ClusterProfile and bounded evidence types
-  sources/               static module inventory and source-owned normalization
-                         packages; structure/ owns live Kubernetes topology
+  sources/               static module inventory and source-owned detection,
+                         collector contribution, and normalization; structure/
+                         owns live Kubernetes topology
 
 web/
   src/

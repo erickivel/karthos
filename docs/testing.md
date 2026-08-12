@@ -91,10 +91,14 @@ that would later appear as duplicate topology cards.
 ### Strict source-contract checks
 
 `task test:e2e:scenario:detector-failure` proves discovery fails closed and
-writes no capability profile when its Kubernetes probe cannot run.
+writes no capability profile when a required Kubernetes discovery-inventory
+list cannot run.
 `task test:e2e:scenario:source-contract-rejection` temporarily mutates the
 Helm-owned contract only as a fault injection, verifies backend startup
 rejection, then restores the valid ConfigMap and rollout automatically.
+It waits for the Deployment controller to observe each restart generation
+before judging rollout status, so an old healthy ReplicaSet cannot mask the
+new contract result.
 
 ### Prometheus Available
 

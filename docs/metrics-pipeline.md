@@ -76,17 +76,18 @@ catalog only declares which source IDs can produce each canonical metric.
 
 | ID | Availability evidence | Dialect |
 |----|-----------------------|---------|
-| `kubernetes.structure` | direct Kubernetes API access | non-metric structural assembly |
-| `kubelet`, `host-os`, `kube-cluster` | direct Kubernetes capability probe | source-owned mapping |
+| `kubernetes.structure` | successfully listed Kubernetes discovery inventory | non-metric structural assembly |
+| `kubelet`, `host-os`, `kube-cluster` | successfully listed Kubernetes discovery inventory | source-owned mapping |
 | `prometheus.app` | bounded annotated Service targets | `PrometheusDialect` |
 | `mesh.istio` | complete injected sidecar mesh evidence | `IstioDialect` |
 | `traces.servicegraph` | derived trace-capable OTLP evidence | `ServicegraphDialect` |
 
-Each static module owns its source-specific capability interpretation,
-collector contribution, stamps, and dialect. The generic resolver receives
-only module IDs and capability availability, then writes the selected IDs and
-metric assignments to the mounted source plan. A module without a dialect
-already emits canonical-shaped names. The
+Each static module owns its source-specific capability detector, collector
+contribution, stamps, and dialect. The Kubernetes adapter lists the typed
+inventory once; no module performs a parallel API probe. The generic resolver
+receives only module IDs and capability availability, then writes the selected
+IDs and metric assignments to the mounted source plan. A module without a
+dialect already emits canonical-shaped names. The
 kubeletstats receiver emits a mix of `k8s.*` and upstream `container.*` names,
 so its source dialect maps container usage metrics onto the public
 `k8s.container.*` catalog names.
@@ -645,10 +646,10 @@ historical `graph?at=` reconstruction.
 
 ## 8. Adding a New Source
 
-1. Add one static module in `pkg/sources` with capability interpretation,
-   collector contribution, source stamps, and any dialect.
-2. Add a deterministic capability record for it to discovery; do not add a
-   runtime override or fallback.
+1. Add one static module in `pkg/sources` with a pure detector over the typed
+   Kubernetes inventory, collector contribution, source stamps, and any dialect.
+2. Register its deterministic capability record in the static source registry;
+   do not add a runtime override, fallback, or central discovery switch.
 3. Cite the source ID in catalog entries that can come from it, with a
    priority value relative to existing producers of the same metric.
 4. Add unit and contract tests for the module and its source-plan assignment.
@@ -661,7 +662,8 @@ historical `graph?at=` reconstruction.
 |------|------|
 | `pkg/core/metrics/canonical.go` | `CanonicalMetric`, `MetricCategory`, `MetricScope`, `SourceRef`, `SelectionPolicy`, source ID constants |
 | `pkg/core/metrics/catalog.go` | `defaultCatalog`, `DefaultCatalog()` |
-| `pkg/sources/registry.go` | Compiled source IDs and module inventory |
+| `pkg/sources/registry.go` | Compiled source IDs, module inventory, and detector dispatch |
+| `pkg/sources/detection` | Typed Kubernetes discovery inventory shared by static detectors |
 | `pkg/core/metrics/dialect.go` | `Dialect`, `DialectMap`, `DialectRegistry`, `PrometheusDialect`, `ServicegraphDialect`, `IstioDialect` |
 | `pkg/core/metrics/resolver.go` | `Resolve`, `Assignment`, `SelectedSources` |
 | `pkg/core/metrics/otel_mappings.go` | `OTLPSemconvMetrics`, ingest-side units and kinds |

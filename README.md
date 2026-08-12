@@ -20,7 +20,7 @@ relations between them, with metrics attached to nodes and edges.
 | `cmd/discovery-job` | Discover, plan, and deploy CLI |
 | `cmd/backend` | OTLP ingest, normalization, topology builders, REST API, discovery-refresh loop |
 | `cmd/schema-gen` | JSON Schema generation helper |
-| `pkg/adapters/kubernetes` | Discovery adapter (Prometheus + OTLP + Istio detection) |
+| `pkg/adapters/kubernetes` | Kubernetes API inventory adapter plus live Pod UID/node lifecycle validation |
 | `pkg/adapters/otel` | Source planner and Helm values builder |
 | `pkg/adapters/otlp` | OTLP gRPC/HTTP server adapter |
 | `pkg/adapters/api` | REST API server, handlers, response envelope, pagination |
@@ -28,7 +28,7 @@ relations between them, with metrics attached to nodes and edges.
 | `pkg/backend/ingest` | Envelope builder, signal router, normalizer, topology builders, ingestors |
 | `pkg/backend/persistence` | Store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) and in-memory implementations |
 | `pkg/core/metrics` | Canonical catalog, generic dialect and resolver contracts, OTLP mappings |
-| `pkg/sources` | Static source-module inventory, collector contributions, and source-owned normalization |
+| `pkg/sources` | Static source-module inventory with source-owned detection, collector contributions, and normalization |
 | `pkg/core/semconv` | OTLP semantic-convention attribute key constants |
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
 | `pkg/discovery/profile` | Capability-only ClusterProfile contract and bounded evidence types |

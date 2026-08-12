@@ -14,8 +14,9 @@ sequenceDiagram
     participant SP as resolved source plan
     participant H as Helm compiler
 
-    CLI->>M: discover
-    M->>K: direct source-specific probes
+    CLI->>K: list required discovery inventory once
+    K-->>CLI: typed Kubernetes observations
+    CLI->>M: detect from typed inventory
     M-->>P: all seven capability records
     CLI->>P: write profile.json
     CLI->>R: plan(profile)
@@ -47,6 +48,13 @@ metric source.
 Detector API failures fail discovery. They are never interpreted as an absent
 source. Mesh detection is `partial` when its injection/proxy requirements are
 not complete and is therefore not eligible for metric arbitration.
+
+The Kubernetes adapter owns only the required API lists and error propagation.
+Each compiled source module owns its capability interpretation: the three
+always-present receiver sources, structural availability, annotated Prometheus
+targets, Istio mesh completeness, or derived OTLP trace evidence. No detector
+performs independent Kubernetes API calls, so all modules evaluate one typed
+inventory captured by the adapter.
 
 ## Source planning
 

@@ -22,7 +22,7 @@ Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Generated Helm 
 
 | Path | Role |
 |------|------|
-| `pkg/adapters/kubernetes` | Discovery adapter plus live Pod lifecycle validation — Prometheus targets, OTLP-capable workloads, Istio sidecar mesh, and UID/node List/Watch state |
+| `pkg/adapters/kubernetes` | Kubernetes API inventory adapter plus live Pod lifecycle validation — lists discovery observations once and maintains UID/node List/Watch state |
 | `pkg/adapters/otel` | Source planner; Helm values builder; `transform/oksg-source` processor |
 | `pkg/adapters/otlp` | OTLP gRPC + HTTP ingest server |
 | `pkg/adapters/api` | Versioned REST API server (handlers, response envelope, pagination) |
@@ -34,7 +34,7 @@ Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Generated Helm 
 | `pkg/core/semconv` | Shared OTLP semantic-convention attribute key constants |
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
 | `pkg/discovery/profile` | Capability-only `ClusterProfile` and bounded source evidence |
-| `pkg/sources` | Compiled source-module inventory; `structure/` owns direct Kubernetes structural refresh |
+| `pkg/sources` | Compiled source-module inventory; each module owns detection, collector contribution, and normalization; `structure/` owns direct Kubernetes structural refresh |
 | `cmd/discovery-job` | `discover` / `plan` / `deploy` CLI |
 | `cmd/backend` | Mounted source-contract validation, OTLP ingest, normalization, REST API, structural refresh loop |
 | `web/` | React frontend (Vite + TypeScript) — Cluster Overview, Topology Graph, Metrics Explorer |
