@@ -37,7 +37,7 @@ cmd/
 pkg/
   adapters/api/          REST API server (handlers + response envelope + pagination)
   adapters/kubernetes/   Kubernetes inventory adapter plus live Pod lifecycle validation
-  adapters/otel/         source planner; Helm values builder; transform/oksg-source processor
+  adapters/otel/         OpenTelemetry adapter: renders OTel configuration and source-stamp processor syntax
   adapters/otlp/         OTLP gRPC and HTTP server adapter
   adapters/storage/      storage factory and config (memory or external backends)
   adapters/storage/postgresql/     PostgreSQL implementations (pgx/v5)
@@ -48,6 +48,8 @@ pkg/
   backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
                          RawStore, EntityRegistry) and in-memory implementations
   backend/query/         graph and metrics query contracts
+  collector/spec/        provider-neutral typed collection requirements and compiled CollectionPlan
+  collector/             generic composition of selected source requirements
   collector/configgen/   Helm values builder
   collector/deployer/    Helm runner
   core/entities/         canonical graph-facing entities and stable IDs
@@ -59,7 +61,8 @@ pkg/
   core/topology/         graph nodes, edges, relations, and snapshots
   discovery/profile/     capability-only ClusterProfile and bounded evidence types
   sources/               static module inventory and source-owned detection,
-                         collector contribution, and normalization; structure/
+                         semantic collection requirements, source-plan contract,
+                         and normalization; structure/
                          owns live Kubernetes topology
 
 web/

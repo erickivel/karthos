@@ -4,12 +4,12 @@ OKSG turns Kubernetes discovery and OpenTelemetry-driven runtime telemetry
 into a queryable system graph. Control flow:
 
 ```text
-Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Generated Helm Values
-                                                                  |                |
-                                                                  |                v
-                                                                  |       Helm source-contract ConfigMap
-                                                                  v                |
-                                                             Helm Release ---------+
+Kubernetes API -> ClusterProfile -> Source Plan -> Generic Collection Plan -> OTel Adapter -> Generated Helm Values
+                                                                                                      |                |
+                                                                                                      |                v
+                                                                                                      |       Helm source-contract ConfigMap
+                                                                                                      v                |
+                                                                                                 Helm Release ---------+
                                                                         |
                                                                         v
                               Backend (strict contract validation, OTLP ingest, normalization, topology, REST API)
@@ -23,18 +23,18 @@ Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Generated Helm 
 | Path | Role |
 |------|------|
 | `pkg/adapters/kubernetes` | Kubernetes API inventory adapter plus live Pod lifecycle validation — lists discovery observations once and maintains UID/node List/Watch state |
-| `pkg/adapters/otel` | Source planner; Helm values builder; `transform/oksg-source` processor |
+| `pkg/adapters/otel` | OpenTelemetry adapter: renders receiver, connector, processor, pipeline, exporter, and source-stamp syntax from the generic collection plan |
 | `pkg/adapters/otlp` | OTLP gRPC + HTTP ingest server |
 | `pkg/adapters/api` | Versioned REST API server (handlers, response envelope, pagination) |
 | `pkg/adapters/storage` | Storage factory; `postgresql/` and `victoriametrics/` external implementations |
-| `pkg/collector/{configgen,deployer}` | Collector config → typed Helm values → `helm lint/template/upgrade-install` |
+| `pkg/collector/{spec,configgen,deployer}` | Provider-neutral collection requirements and composition → Helm values → `helm lint/template/upgrade-install` |
 | `pkg/backend/ingest` | Envelope build, signal routing, normalization, topology builders, ingestors |
 | `pkg/backend/persistence` | Store interfaces and in-memory implementations |
 | `pkg/core/metrics` | Catalog, generic dialect and resolver contracts — see [metrics-pipeline.md](metrics-pipeline.md) |
 | `pkg/core/semconv` | Shared OTLP semantic-convention attribute key constants |
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
 | `pkg/discovery/profile` | Capability-only `ClusterProfile` and bounded source evidence |
-| `pkg/sources` | Compiled source-module inventory; each module owns detection, collector contribution, and normalization; `structure/` owns direct Kubernetes structural refresh |
+| `pkg/sources` | Compiled source-module inventory; each module owns detection, semantic collection requirements, and normalization; `sources/contract` owns the mounted source-plan contract; `structure/` owns direct Kubernetes structural refresh |
 | `cmd/discovery-job` | `discover` / `plan` / `deploy` CLI |
 | `cmd/backend` | Mounted source-contract validation, OTLP ingest, normalization, REST API, structural refresh loop |
 | `web/` | React frontend (Vite + TypeScript) — Cluster Overview, Topology Graph, Metrics Explorer |
@@ -42,8 +42,10 @@ Kubernetes API -> ClusterProfile -> Resolver -> SourcePlanner -> Generated Helm 
 
 ## Collection Plane
 
-The source planner emits collector intent that the values builder turns into
-typed Helm values. Receivers and connectors:
+Static source modules emit semantic collection requirements. The generic
+collector composer aggregates them with the resolved source plan, the OTel
+adapter renders OTel-specific configuration, and the Helm values compiler
+packages that output with the mounted source contract. Receivers and connectors:
 
 - kubeletstats as component ID `kubelet_stats` (always; pod, container, volume metrics)
 - hostmetrics as component ID `host_metrics` (always; per-node CPU, memory, disk, filesystem, and network data). Agent pods use the host network so interface counters describe the node.

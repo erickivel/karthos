@@ -432,7 +432,7 @@ List semconv-native metric definitions.
 
 Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both; an `applies_to` array describing the graph entity kinds an entity-scoped metric is valid for; and a `sources` array describing which logical sources can produce the metric and at what priority. Edge-only metrics omit `applies_to`.
 
-The `sources` array drives runtime arbitration: the generic resolver picks the highest-priority (smallest `priority` value) source whose compiled capability is available. The source plan records that result; the planner deploys only selected module contributions, and the ingester drops samples whose `oksg_source` attribute disagrees with the mounted assignment. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
+The `sources` array drives runtime arbitration: the generic resolver picks the highest-priority (smallest `priority` value) source whose compiled capability is available. The source plan records that result; the generic collector composer includes selected semantic requirements and the OTel adapter renders them, while the ingester drops samples whose `oksg_source` attribute disagrees with the mounted assignment. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
 
 The array is exposed in priority order (lower number = higher priority); UIs that need a single "primary source" label should render `sources[0].id`. The full array is informational — lower-priority entries are fallbacks the resolver did not pick. The currently-active source per metric is not exposed on the catalog endpoint today; consumers that need it should read the `source` label on actual sample responses from `/api/v1/metrics/series`.
 

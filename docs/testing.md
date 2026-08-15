@@ -16,7 +16,7 @@ modules: `instrumented/gateway-go` and `mesh-protocol-go`.
 Key coverage areas:
 
 - Kubernetes discovery adapter behavior
-- source planner receiver selection (including prometheus+traces combined profile)
+- source-plan resolution, generic collection composition, and OTel adapter rendering (including Prometheus plus trace intake)
 - Helm values generation
 - backend OTLP envelope conversion and routing
 - OTLP gRPC and HTTP ingest integration

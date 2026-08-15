@@ -7,6 +7,13 @@ and topology accumulation. For the discover/plan/deploy upstream of this, see
 [`discovery-flow.md`](./discovery-flow.md). For the metrics catalog /
 dialect / source arbitration, see [`metrics-pipeline.md`](./metrics-pipeline.md).
 
+Before this runtime begins, static source modules resolve the source contract
+and emit provider-neutral collection requirements. `pkg/collector` composes
+those requirements into one deterministic collection plan, and only
+`pkg/adapters/otel` translates that plan into OpenTelemetry Collector syntax.
+The backend consumes the mounted generic source contract, never OTel planning
+types or collector-specific source-selection logic.
+
 ## Sequence Diagram
 
 ```mermaid

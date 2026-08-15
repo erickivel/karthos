@@ -31,7 +31,7 @@ update them in the same change.
 Kubernetes Cluster
       |
       v
-Discovery Adapter -> ClusterProfile -> Resolver -> Source Planner -> Generated Helm Values
+Discovery Adapter -> ClusterProfile -> Source Plan -> Generic Collection Plan -> OTel Adapter -> Generated Helm Values
                                                               |
                                                               v
                                               Helm source-contract ConfigMap -> Helm Release

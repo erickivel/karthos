@@ -204,12 +204,15 @@ func Resolve(catalog []CanonicalMetric, sourceIDs []string,
 
 The output drives two consumers:
 
-### 4a. Planner (`pkg/adapters/otel/source_planner.go`)
+### 4a. Collection composition and OTel rendering
 
-The planner deploys only receivers/connectors whose source ID appears in
-`SelectedSources`. For example, when an active sidecar Istio source is present
-and wins all `servicegraph.*` metrics, the gateway omits the `service_graph`
-connector entirely. The planner installs `transform/oksg-source` only on
+`pkg/sources` resolves the immutable source plan. `pkg/collector` composes
+typed, provider-neutral requirements from the selected modules. The OTel
+adapter renders the resulting receivers and connectors. When an active sidecar
+Istio source wins all `servicegraph.*` metrics, the generic plan keeps trace
+intake requested by the available servicegraph module but omits the derived
+servicegraph requirement, so the OTel adapter omits the `service_graph`
+connector. The adapter installs `transform/oksg-source` only on
 collector-owned receiver/connector pipelines, where it stamps `oksg_source`
 from the receiver-determined wire-name namespace. OTLP metrics use separate
 `metrics/otlp` pipelines without inferred stamping: already-stamped agent
@@ -459,10 +462,10 @@ prometheus, servicegraph connector, istio scrape):
   `deploy/helm/oksg-otel/values.yaml` (search the file for `tag:`) and
   confirm the metric appears under `metrics:` with `enabled: true`.
 - If `enabled: false` (common — e.g. `system.cpu.utilization` in the
-  hostmetrics cpu scraper), enable it explicitly under the receiver's
-  `metrics:` block in `pkg/adapters/otel/source_planner.go`. Add an
-  assertion in `pkg/adapters/otel/source_planner_test.go` that the
-  enable lives in the generated config.
+  hostmetrics cpu scraper), add the semantic requirement in its source
+  module's `contribution.go`, then render it in
+  `pkg/adapters/otel/compiler.go`. Add an adapter assertion that the enabled
+  metric appears in the rendered configuration.
 - Note the metric's **wire-format name** exactly as written in the
   upstream `metadata.yaml`. This is what the OTel pipeline sees on the
   wire, and it often differs from the OTel semconv canonical we use in
@@ -485,7 +488,8 @@ If the wire name and the catalog canonical differ:
 
 ### Step 3 — OTTL source tagger: stamp `oksg_source` correctly
 
-`buildOksgSourceTagger` in `pkg/adapters/otel/source_planner.go` runs on
+`sourceTagger` in `pkg/adapters/otel/compiler.go` renders the generic source
+stamp selectors on
 collector-owned agent and gateway pipelines **before** the dialect (which lives
 in the backend). It never runs on `metrics/otlp`. OTTL rules therefore see
 **wire-format names**, not canonical names.
@@ -507,8 +511,7 @@ For each metric:
   in the catalog row. Mismatch is silently fatal:
   `shouldDropForSource` (`pkg/backend/ingest/normalizer.go`) drops every
   datapoint whose tag disagrees with the catalog assignment.
-- Add a planner test asserting the tagger statement is present
-  (mirror `TestPlanTagsK8sContainerMetricsAsKubeCluster`).
+- Add an OTel adapter test asserting the rendered tagger statement is present.
 
 ### Step 4 — OTLP mapping: declare unit/kind/conversion
 
@@ -647,7 +650,7 @@ historical `graph?at=` reconstruction.
 ## 8. Adding a New Source
 
 1. Add one static module in `pkg/sources` with a pure detector over the typed
-   Kubernetes inventory, collector contribution, source stamps, and any dialect.
+   Kubernetes inventory, semantic collection requirement, source stamps, and any dialect.
 2. Register its deterministic capability record in the static source registry;
    do not add a runtime override, fallback, or central discovery switch.
 3. Cite the source ID in catalog entries that can come from it, with a
@@ -672,6 +675,10 @@ historical `graph?at=` reconstruction.
 | `pkg/backend/ingest/normalizer.go` | Generic OTLP iteration, `OTLPNormalizer`, shared source-policy enforcement, conversion application, and raw sample emission |
 | `pkg/backend/ingest/source_policy.go` | Registered provenance, assignment validation, and atomic rejection accounting |
 | `pkg/sources/contract` | Narrow normalization plan, resolver interfaces, and bounded-label/entity helpers |
+| `pkg/sources/contract/source_plan.go` | Mounted resolved source-plan contract and static inventory validation |
+| `pkg/collector/spec` | Provider-neutral collection requirements and `CollectionPlan` |
+| `pkg/collector/composer.go` | Deterministic generic composition from selected modules and the resolved source plan |
 | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}` | Source-owned normalization for kubelet, host OS, kube cluster, Prometheus app, servicegraph, and Istio |
+| `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}/contribution.go` | Source-owned semantic collection requirements |
 | `pkg/backend/ingest/mesh_metric_topology_builder.go` | Mesh `calls` edges from servicegraph-shaped Istio metrics |
-| `pkg/adapters/otel/source_planner.go` | Compiles receiver/connector contributions and the immutable resolved source plan |
+| `pkg/adapters/otel/compiler.go` | Renders OpenTelemetry-specific configuration from the generic collection plan |

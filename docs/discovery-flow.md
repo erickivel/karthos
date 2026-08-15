@@ -12,7 +12,9 @@ sequenceDiagram
     participant P as capability profile
     participant R as generic resolver
     participant SP as resolved source plan
-    participant H as Helm compiler
+    participant C as generic collector composer
+    participant O as OTel adapter
+    participant H as Helm values compiler
 
     CLI->>K: list required discovery inventory once
     K-->>CLI: typed Kubernetes observations
@@ -21,7 +23,10 @@ sequenceDiagram
     CLI->>P: write profile.json
     CLI->>R: plan(profile)
     R-->>SP: metric assignments and selected modules
-    SP->>H: selected contributions
+    SP->>C: selected source plan
+    M->>C: semantic collection requirements
+    C->>O: provider-neutral collection plan
+    O->>H: OTel collector configuration
     H-->>CLI: otel-values.yaml + source-plan sidecar
     CLI->>H: deploy generated values
     H-->>CLI: Helm-owned source-contract ConfigMap
@@ -70,9 +75,12 @@ It includes:
 - selected source module IDs;
 - the complete canonical metric-to-source assignment.
 
-The compiler consumes the same result to include only selected receiver,
-connector, scrape, pipeline, and source-stamp fragments. Generated values also
-carry the capability profile and resolved plan under `backend.sourceContract`.
+The generic collector composer consumes the same result to include only the
+selected semantic metric requirements, while an available servicegraph module
+may still request trace intake when Istio wins its metrics. The OTel adapter
+renders receivers, connectors, scrapes, pipelines, and source stamps from that
+generic plan. Generated values also carry the capability profile and resolved
+plan under `backend.sourceContract`.
 Helm renders both into one release-scoped `*-source-contract` ConfigMap and
 mounts it in the backend. Normal deployment has no imperative ConfigMap apply
 or rollout-restart step.
