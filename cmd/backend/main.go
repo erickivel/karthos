@@ -12,7 +12,6 @@ import (
 
 	"github.com/erickivel/oksg/pkg/adapters/api"
 	kubernetesadapter "github.com/erickivel/oksg/pkg/adapters/kubernetes"
-	oteladapter "github.com/erickivel/oksg/pkg/adapters/otel"
 	"github.com/erickivel/oksg/pkg/adapters/otlp"
 	"github.com/erickivel/oksg/pkg/adapters/storage"
 	"github.com/erickivel/oksg/pkg/backend/ingest"
@@ -23,6 +22,7 @@ import (
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 	"github.com/erickivel/oksg/pkg/sources/structure"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -487,42 +487,42 @@ func runStructureRefreshLoop(ctx context.Context, interval time.Duration, refres
 	}
 }
 
-func loadSourceContract(cfg config) (*profile.ClusterProfile, oteladapter.ResolvedSourcePlan, error) {
+func loadSourceContract(cfg config) (*profile.ClusterProfile, contract.ResolvedSourcePlan, error) {
 	if cfg.CapabilityProfile == "" {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("capability profile path is required")
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("capability profile path is required")
 	}
 	if cfg.SourcePlan == "" {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan path is required")
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("source plan path is required")
 	}
 	profileData, err := os.ReadFile(cfg.CapabilityProfile)
 	if err != nil {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("read capability profile: %w", err)
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("read capability profile: %w", err)
 	}
 	var capabilityProfile profile.ClusterProfile
 	if err := json.Unmarshal(profileData, &capabilityProfile); err != nil {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("decode capability profile: %w", err)
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("decode capability profile: %w", err)
 	}
 	modules := sources.DefaultRegistry()
 	if err := capabilityProfile.Validate(modules.IDs()); err != nil {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("validate mounted capability profile: %w", err)
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("validate mounted capability profile: %w", err)
 	}
 	planData, err := os.ReadFile(cfg.SourcePlan)
 	if err != nil {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("read source plan: %w", err)
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("read source plan: %w", err)
 	}
-	var sourcePlan oteladapter.ResolvedSourcePlan
+	var sourcePlan contract.ResolvedSourcePlan
 	if err := json.Unmarshal(planData, &sourcePlan); err != nil {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("decode source plan: %w", err)
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("decode source plan: %w", err)
 	}
 	fingerprint, err := capabilityProfile.Fingerprint()
 	if err != nil {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("fingerprint capability profile: %w", err)
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("fingerprint capability profile: %w", err)
 	}
 	if sourcePlan.ProfileFingerprint == "" || sourcePlan.ProfileFingerprint != fingerprint {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("source plan profile fingerprint does not match mounted capability profile")
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("source plan profile fingerprint does not match mounted capability profile")
 	}
-	if err := sourcePlan.Validate(&capabilityProfile, modules); err != nil {
-		return nil, oteladapter.ResolvedSourcePlan{}, fmt.Errorf("validate mounted source plan: %w", err)
+	if err := sourcePlan.Validate(&capabilityProfile, modules.ContractInventory()); err != nil {
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("validate mounted source plan: %w", err)
 	}
 	return &capabilityProfile, sourcePlan, nil
 }

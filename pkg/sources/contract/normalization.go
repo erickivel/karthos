@@ -1,4 +1,5 @@
-// Package contract contains the narrow source-module normalization boundary.
+// Package contract contains narrow source-module normalization and source-plan
+// boundaries shared by the static registry, collector composition, and backend.
 package contract
 
 import (

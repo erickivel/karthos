@@ -12,8 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
+	"github.com/erickivel/oksg/pkg/collector"
 	"github.com/erickivel/oksg/pkg/collector/configgen"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources"
 )
 
 func TestDeployUsesHelmLintTemplateAndUpgrade(t *testing.T) {
@@ -144,9 +146,14 @@ func renderedSourceContractChart(t *testing.T, helm, clusterName string) string 
 			{SourceID: "traces.servicegraph", Kind: profile.SourceKindDerived, Status: profile.CapabilityUnavailable},
 		},
 	}
-	plan, err := otel.NewSourcePlanner("oksg-system").Plan(context.Background(), capabilityProfile)
+	registry := sources.DefaultRegistry()
+	sourcePlan, err := registry.ResolveSourcePlan(capabilityProfile)
 	require.NoError(t, err)
-	values, err := configgen.NewGenerator().Generate(*plan)
+	collectionPlan, err := collector.NewComposer("oksg-system").Compose(capabilityProfile, sourcePlan)
+	require.NoError(t, err)
+	plan, err := otel.NewCompiler().Compile(collectionPlan)
+	require.NoError(t, err)
+	values, err := configgen.NewGenerator().Generate(plan, *capabilityProfile, sourcePlan)
 	require.NoError(t, err)
 
 	valuesPath := filepath.Join(t.TempDir(), "values.yaml")

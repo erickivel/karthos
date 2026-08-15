@@ -12,6 +12,7 @@ import (
 	"github.com/erickivel/oksg/pkg/collector/configgen"
 	"github.com/erickivel/oksg/pkg/collector/deployer"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
 func TestRunPlanWritesResolvedSourcePlanBesideValues(t *testing.T) {
@@ -24,7 +25,7 @@ func TestRunPlanWritesResolvedSourcePlanBesideValues(t *testing.T) {
 		"--mode=plan",
 		"--capability-profile=" + profilePath,
 		"--values-output=" + valuesPath,
-	}, dependencies{planner: otel.NewSourcePlanner("oksg-system"), generator: defaultGenerator(configgen.GeneratorOptions{})})
+	}, dependencies{planner: newCommandPlanner("oksg-system"), generator: defaultGenerator(configgen.GeneratorOptions{})})
 	require.NoError(t, err)
 
 	values, err := os.ReadFile(valuesPath)
@@ -67,7 +68,7 @@ func TestRunDeployAppliesGeneratedHelmValuesAndWritesRequestedArtifact(t *testin
 		"--capability-profile=" + profilePath,
 		"--values-output=" + valuesPath,
 	}, dependencies{
-		planner:   staticPlanner{plan: &otel.Plan{}},
+		planner:   staticPlanner{plan: &deploymentPlan{}},
 		generator: staticGenerator{values: generatedValues},
 		deployer:  deployer,
 	})
@@ -78,15 +79,17 @@ func TestRunDeployAppliesGeneratedHelmValuesAndWritesRequestedArtifact(t *testin
 	require.Equal(t, append(generatedValues, '\n'), writtenValues)
 }
 
-type staticPlanner struct{ plan *otel.Plan }
+type staticPlanner struct{ plan *deploymentPlan }
 
-func (p staticPlanner) Plan(context.Context, *profile.ClusterProfile) (*otel.Plan, error) {
+func (p staticPlanner) Plan(context.Context, *profile.ClusterProfile) (*deploymentPlan, error) {
 	return p.plan, nil
 }
 
 type staticGenerator struct{ values []byte }
 
-func (g staticGenerator) Generate(otel.Plan) ([]byte, error) { return g.values, nil }
+func (g staticGenerator) Generate(otel.Deployment, profile.ClusterProfile, contract.ResolvedSourcePlan) ([]byte, error) {
+	return g.values, nil
+}
 
 type recordingDeployer struct{ appliedValues []byte }
 

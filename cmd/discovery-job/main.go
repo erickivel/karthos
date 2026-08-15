@@ -13,18 +13,53 @@ import (
 
 	k8sadapter "github.com/erickivel/oksg/pkg/adapters/kubernetes"
 	"github.com/erickivel/oksg/pkg/adapters/otel"
+	"github.com/erickivel/oksg/pkg/collector"
 	"github.com/erickivel/oksg/pkg/collector/configgen"
 	"github.com/erickivel/oksg/pkg/collector/deployer"
 	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
 type planner interface {
-	Plan(ctx context.Context, profile *profile.ClusterProfile) (*otel.Plan, error)
+	Plan(ctx context.Context, profile *profile.ClusterProfile) (*deploymentPlan, error)
 }
 
 type generator interface {
-	Generate(plan otel.Plan) ([]byte, error)
+	Generate(deployment otel.Deployment, capabilityProfile profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) ([]byte, error)
+}
+
+type deploymentPlan struct {
+	Deployment        otel.Deployment
+	CapabilityProfile profile.ClusterProfile
+	SourcePlan        contract.ResolvedSourcePlan
+}
+
+type commandPlanner struct {
+	modules  sources.Registry
+	composer *collector.Composer
+	compiler *otel.Compiler
+}
+
+func newCommandPlanner(namespace string) *commandPlanner {
+	return &commandPlanner{modules: sources.DefaultRegistry(), composer: collector.NewComposer(namespace), compiler: otel.NewCompiler()}
+}
+
+func (p *commandPlanner) Plan(_ context.Context, capabilityProfile *profile.ClusterProfile) (*deploymentPlan, error) {
+	sourcePlan, err := p.modules.ResolveSourcePlan(capabilityProfile)
+	if err != nil {
+		return nil, err
+	}
+	collectionPlan, err := p.composer.Compose(capabilityProfile, sourcePlan)
+	if err != nil {
+		return nil, err
+	}
+	deployment, err := p.compiler.Compile(collectionPlan)
+	if err != nil {
+		return nil, err
+	}
+	return &deploymentPlan{Deployment: deployment, CapabilityProfile: *capabilityProfile, SourcePlan: sourcePlan}, nil
 }
 
 type deployerInterface interface {
@@ -60,7 +95,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	valuesOutputPath := fs.String("values-output", "", "output file path for generated Helm values")
 	resolvedPlanOutputPath := fs.String("resolved-plan-output", "", "output path for resolved source plan JSON (defaults beside --values-output)")
 	renderedOutputPath := fs.String("rendered-output", "", "directory for helm template output")
-	namespace := fs.String("namespace", otel.DefaultNamespace, "namespace for generated collector resources")
+	namespace := fs.String("namespace", collector.DefaultNamespace, "namespace for generated collector resources")
 	helmNamespace := fs.String("helm-namespace", "", "namespace for Helm release resources (defaults to --namespace)")
 	releaseName := fs.String("release-name", defaultReleaseName, "helm release name")
 	chartPath := fs.String("chart-path", configgen.DefaultChartPath, "path to the Helm chart")
@@ -148,7 +183,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = otel.NewSourcePlanner(activeNamespace)
+			deps.planner = newCommandPlanner(activeNamespace)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator(generatorOptions)
@@ -158,7 +193,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			logger.Error("planning failed", logging.Error(err))
 			return err
 		}
-		values, err := deps.generator.Generate(*plan)
+		values, err := deps.generator.Generate(plan.Deployment, plan.CapabilityProfile, plan.SourcePlan)
 		if err != nil {
 			logger.Error("generate helm values failed", logging.Error(err))
 			return err
@@ -194,7 +229,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = otel.NewSourcePlanner(activeNamespace)
+			deps.planner = newCommandPlanner(activeNamespace)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator(generatorOptions)
@@ -207,7 +242,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			logger.Error("planning failed", logging.Error(err))
 			return err
 		}
-		values, err := deps.generator.Generate(*plan)
+		values, err := deps.generator.Generate(plan.Deployment, plan.CapabilityProfile, plan.SourcePlan)
 		if err != nil {
 			logger.Error("generate helm values failed", logging.Error(err))
 			return err

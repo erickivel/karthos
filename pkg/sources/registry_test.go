@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/erickivel/oksg/pkg/collector/spec"
+	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources/detection"
 )
@@ -30,6 +32,32 @@ func TestDefaultRegistryContainsEveryCompiledModuleExactlyOnce(t *testing.T) {
 	prometheus, ok := registry.Lookup(IDPrometheusApp)
 	require.True(t, ok)
 	require.True(t, prometheus.MetricSource)
+}
+
+func TestRegistryAppendsTypedRequirementsFromSelectedModules(t *testing.T) {
+	capabilityProfile := &profile.ClusterProfile{Capabilities: []profile.SourceCapability{
+		{SourceID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"structure"}},
+		{SourceID: IDKubelet, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+		{SourceID: IDHostOS, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+		{SourceID: IDKubeCluster, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+		{SourceID: IDPrometheusApp, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{PrometheusTargets: []profile.PrometheusTarget{{ServiceName: "gateway", Namespace: "demo", Port: 8080, Path: "/metrics"}}}},
+		{SourceID: IDMeshIstio, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{Mesh: &profile.MeshEvidence{Flavor: "istio", InjectedNamespaces: []string{"demo"}}}},
+		{SourceID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{OTLP: &profile.OTLPEvidence{TracesEnabled: true}}},
+	}}
+	registry := DefaultRegistry()
+	sourcePlan, err := registry.ResolveSourcePlan(capabilityProfile)
+	require.NoError(t, err)
+
+	plan := spec.CollectionPlan{}
+	require.NoError(t, registry.AppendRequirements(&plan, capabilityProfile, sourcePlan))
+	require.NotNil(t, plan.Agent.Kubelet)
+	require.NotNil(t, plan.Agent.HostOS)
+	require.NotNil(t, plan.Agent.Istio)
+	require.NotNil(t, plan.Gateway.KubeCluster)
+	require.NotNil(t, plan.Gateway.Prometheus)
+	require.True(t, plan.Agent.OTLP.Traces)
+	require.Nil(t, plan.Gateway.ServiceGraph)
+	require.Equal(t, metrics.SourceMeshIstio, sourcePlan.MetricAssignments["servicegraph.request.count"])
 }
 
 func TestDefaultRegistryDetectsEveryCompiledModuleFromOneInventory(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 
+	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources/contract"
@@ -31,29 +32,16 @@ const (
 	IDTracesServicegraph  = metrics.SourceTracesServicegraph
 )
 
-// CollectorContribution is the source-owned part of compiled OTel
-// configuration. The OTel adapter only composes these fragments with generic
-// transport, batching and export configuration.
-type CollectorContribution struct {
-	AgentReceivers         map[string]any
-	GatewayReceivers       map[string]any
-	GatewayConnectors      map[string]any
-	AgentMetricReceivers   []string
-	GatewayMetricReceivers []string
-	AgentSourceStamps      []string
-	GatewaySourceStamps    []string
-}
-
-// Module owns one source's capability identity, wire-name dialect, collector
-// contribution and source stamps. Structural modules intentionally have no
-// metric dialect or collector contribution.
+// Module owns one source's capability identity, wire-name dialect, semantic
+// collection requirements, and source-specific normalization. Structural
+// modules intentionally have no metric dialect or collection requirements.
 type Module struct {
 	ID           string
 	Kind         profile.SourceKind
 	MetricSource bool
 	Dialect      metrics.Dialect
 	Detect       func(detection.Inventory) profile.SourceCapability
-	Contribute   func(*CollectorContribution, *profile.ClusterProfile)
+	Contribute   func(*collectorspec.CollectionPlan, profile.SourceCapability, bool)
 	Normalize    contract.Normalizer
 }
 
@@ -63,33 +51,15 @@ type Registry struct{ modules []Module }
 func DefaultRegistry() Registry {
 	return Registry{modules: []Module{
 		{ID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Detect: structure.Detect},
-		{
-			ID: IDKubelet, Kind: profile.SourceKindDirect, Dialect: metrics.KubeletDialect, MetricSource: true, Detect: kubelet.Detect,
-			Contribute: contributeKubelet, Normalize: kubelet.Normalize,
-		},
-		{ID: IDHostOS, Kind: profile.SourceKindDirect, MetricSource: true, Detect: hostos.Detect, Contribute: contributeHostOS, Normalize: hostos.Normalize},
-		{
-			ID: IDKubeCluster, Kind: profile.SourceKindDirect, Dialect: metrics.KubeClusterDialect, MetricSource: true, Detect: kubecluster.Detect,
-			Contribute: contributeKubeCluster, Normalize: kubecluster.Normalize,
-		},
-		{
-			ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Dialect: metrics.PrometheusDialect, MetricSource: true, Detect: prometheusapp.Detect,
-			Contribute: contributePrometheusApp, Normalize: prometheusapp.Normalize,
-		},
-		{
-			ID: IDMeshIstio, Kind: profile.SourceKindDirect, Dialect: metrics.IstioDialect, MetricSource: true, Detect: istio.Detect,
-			Contribute: contributeMeshIstio, Normalize: istio.Normalize,
-		},
-		{
-			ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Dialect: metrics.ServicegraphDialect, MetricSource: true, Detect: servicegraph.Detect,
-			Contribute: contributeServicegraph, Normalize: servicegraph.Normalize,
-		},
+		{ID: IDKubelet, Kind: profile.SourceKindDirect, Dialect: metrics.KubeletDialect, MetricSource: true, Detect: kubelet.Detect, Contribute: kubelet.Contribute, Normalize: kubelet.Normalize},
+		{ID: IDHostOS, Kind: profile.SourceKindDirect, MetricSource: true, Detect: hostos.Detect, Contribute: hostos.Contribute, Normalize: hostos.Normalize},
+		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Dialect: metrics.KubeClusterDialect, MetricSource: true, Detect: kubecluster.Detect, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
+		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Dialect: metrics.PrometheusDialect, MetricSource: true, Detect: prometheusapp.Detect, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
+		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Dialect: metrics.IstioDialect, MetricSource: true, Detect: istio.Detect, Contribute: istio.Contribute, Normalize: istio.Normalize},
+		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Dialect: metrics.ServicegraphDialect, MetricSource: true, Detect: servicegraph.Detect, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize},
 	}}
 }
 
-// Detect runs every compiled source detector in static registry order. A
-// detector may mark its source unavailable, but cannot impersonate another
-// module or change its direct/derived identity.
 func (r Registry) Detect(inventory detection.Inventory) ([]profile.SourceCapability, error) {
 	capabilities := make([]profile.SourceCapability, 0, len(r.modules))
 	for _, module := range r.modules {
@@ -109,8 +79,6 @@ func (r Registry) Detect(inventory detection.Inventory) ([]profile.SourceCapabil
 	return capabilities, nil
 }
 
-// Normalize applies the selected compiled module and leaves the default entity
-// resolution to the generic ingestion layer when the module did not specialize it.
 func (r Registry) Normalize(ctx context.Context, resolver contract.EntityResolver, plan *contract.Plan) error {
 	module, ok := r.Lookup(plan.Source)
 	if !ok || !module.MetricSource || module.Normalize == nil {
@@ -137,6 +105,10 @@ func (r Registry) MetricIDs() []string {
 	return ids
 }
 
+func (r Registry) ContractInventory() contract.StaticSourceInventory {
+	return contract.StaticSourceInventory{ModuleIDs: r.IDs(), MetricSourceIDs: r.MetricIDs()}
+}
+
 func (r Registry) Lookup(id string) (Module, bool) {
 	for _, module := range r.modules {
 		if module.ID == id {
@@ -156,30 +128,52 @@ func (r Registry) Dialects() map[string]metrics.Dialect {
 	return dialects
 }
 
-// Contribute applies exactly the selected source modules in stable registry
-// order. A selected ID without a compiled telemetry module fails closed.
-func (r Registry) Contribute(selected metrics.SelectedSources, capabilityProfile *profile.ClusterProfile) (CollectorContribution, error) {
-	result := CollectorContribution{
-		AgentReceivers:    map[string]any{},
-		GatewayReceivers:  map[string]any{},
-		GatewayConnectors: map[string]any{},
+// ResolveSourcePlan performs source arbitration once, producing the mounted
+// contract used later by generic collection composition and backend startup.
+func (r Registry) ResolveSourcePlan(capabilityProfile *profile.ClusterProfile) (contract.ResolvedSourcePlan, error) {
+	if err := capabilityProfile.Validate(r.IDs()); err != nil {
+		return contract.ResolvedSourcePlan{}, fmt.Errorf("validate capability profile: %w", err)
+	}
+	assignment, selected, err := metrics.Resolve(metrics.DefaultCatalog(), r.MetricIDs(), capabilityProfile.IsAvailable)
+	if err != nil {
+		return contract.ResolvedSourcePlan{}, fmt.Errorf("resolve sources: %w", err)
+	}
+	fingerprint, err := capabilityProfile.Fingerprint()
+	if err != nil {
+		return contract.ResolvedSourcePlan{}, fmt.Errorf("fingerprint capability profile: %w", err)
+	}
+	selectedSourceIDs := make([]string, 0, len(selected))
+	for sourceID := range selected {
+		selectedSourceIDs = append(selectedSourceIDs, sourceID)
+	}
+	sort.Strings(selectedSourceIDs)
+	return contract.ResolvedSourcePlan{ProfileFingerprint: fingerprint, SelectedSources: selectedSourceIDs, MetricAssignments: assignment}, nil
+}
+
+// AppendRequirements lets each available static module append typed semantic
+// requirements. Selection gates metric collection; servicegraph may still
+// request trace intake when it is available but loses metric arbitration.
+func (r Registry) AppendRequirements(out *collectorspec.CollectionPlan, capabilityProfile *profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) error {
+	if err := sourcePlan.Validate(capabilityProfile, r.ContractInventory()); err != nil {
+		return err
+	}
+	selected := make(map[string]bool, len(sourcePlan.SelectedSources))
+	for _, sourceID := range sourcePlan.SelectedSources {
+		selected[sourceID] = true
 	}
 	for _, module := range r.modules {
-		if !selected.Has(module.ID) {
+		capability, _ := capabilityProfile.Capability(module.ID)
+		if capability.Status != profile.CapabilityAvailable || module.Contribute == nil {
 			continue
 		}
-		if !module.MetricSource || module.Contribute == nil {
-			return CollectorContribution{}, fmt.Errorf("selected source %q has no telemetry contribution", module.ID)
-		}
-		module.Contribute(&result, capabilityProfile)
+		module.Contribute(out, capability, selected[module.ID])
 	}
 	for sourceID := range selected {
 		module, ok := r.Lookup(sourceID)
-		if !ok || !module.MetricSource {
-			return CollectorContribution{}, fmt.Errorf("selected source %q is not a compiled telemetry module", sourceID)
+		if !ok || !module.MetricSource || module.Contribute == nil {
+			return fmt.Errorf("selected source %q has no semantic collection requirements", sourceID)
 		}
 	}
-	sort.Strings(result.AgentMetricReceivers)
-	sort.Strings(result.GatewayMetricReceivers)
-	return result, nil
+	out.Normalize()
+	return nil
 }

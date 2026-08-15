@@ -91,32 +91,6 @@ func (p *ClusterProfile) IsAvailable(sourceID string) bool {
 	return ok && capability.Status == CapabilityAvailable
 }
 
-func (p *ClusterProfile) PrometheusTargets() []PrometheusTarget {
-	capability, ok := p.Capability("prometheus.app")
-	if !ok {
-		return nil
-	}
-	return append([]PrometheusTarget(nil), capability.Evidence.PrometheusTargets...)
-}
-
-func (p *ClusterProfile) Mesh() *MeshEvidence {
-	capability, ok := p.Capability("mesh.istio")
-	if !ok || capability.Status != CapabilityAvailable || capability.Evidence.Mesh == nil {
-		return nil
-	}
-	copy := *capability.Evidence.Mesh
-	copy.InjectedNamespaces = append([]string(nil), copy.InjectedNamespaces...)
-	return &copy
-}
-
-func (p *ClusterProfile) OTLPSignals() (metricsEnabled, tracesEnabled bool) {
-	capability, ok := p.Capability("traces.servicegraph")
-	if !ok || capability.Evidence.OTLP == nil {
-		return false, false
-	}
-	return capability.Evidence.OTLP.MetricsEnabled, capability.Evidence.OTLP.TracesEnabled
-}
-
 // Sort normalizes collection ordering before serializing an artifact.
 func (p *ClusterProfile) Sort() {
 	if p == nil {

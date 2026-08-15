@@ -9,6 +9,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
 const (
@@ -113,8 +114,8 @@ type BackendValues struct {
 }
 
 type SourceContractValues struct {
-	CapabilityProfile profile.ClusterProfile  `json:"capabilityProfile" yaml:"capabilityProfile"`
-	SourcePlan        otel.ResolvedSourcePlan `json:"sourcePlan" yaml:"sourcePlan"`
+	CapabilityProfile profile.ClusterProfile      `json:"capabilityProfile" yaml:"capabilityProfile"`
+	SourcePlan        contract.ResolvedSourcePlan `json:"sourcePlan" yaml:"sourcePlan"`
 }
 
 type BackendService struct {
@@ -143,8 +144,8 @@ func NewGeneratorWithOptions(options GeneratorOptions) *Generator {
 	}
 }
 
-func (g *Generator) Generate(plan otel.Plan) ([]byte, error) {
-	values, err := g.Build(plan)
+func (g *Generator) Generate(deployment otel.Deployment, capabilityProfile profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) ([]byte, error) {
+	values, err := g.Build(deployment, capabilityProfile, sourcePlan)
 	if err != nil {
 		return nil, err
 	}
@@ -156,13 +157,13 @@ func (g *Generator) Generate(plan otel.Plan) ([]byte, error) {
 	return payload, nil
 }
 
-func (g *Generator) Build(plan otel.Plan) (*Values, error) {
-	agentConfig, err := yaml.Marshal(plan.AgentConfig)
+func (g *Generator) Build(deployment otel.Deployment, capabilityProfile profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) (*Values, error) {
+	agentConfig, err := yaml.Marshal(deployment.AgentConfig)
 	if err != nil {
 		return nil, fmt.Errorf("marshal agent config: %w", err)
 	}
 
-	gatewayConfig, err := yaml.Marshal(plan.GatewayConfig)
+	gatewayConfig, err := yaml.Marshal(deployment.GatewayConfig)
 	if err != nil {
 		return nil, fmt.Errorf("marshal gateway config: %w", err)
 	}
@@ -174,17 +175,17 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 
 	return &Values{
 		Global: GlobalValues{
-			ClusterName: plan.ClusterName,
-			Namespace:   plan.Namespace,
+			ClusterName: deployment.ClusterName,
+			Namespace:   deployment.Namespace,
 			ReleaseName: g.options.ReleaseName,
 			ChartPath:   g.options.ChartPath,
 			Image:       g.options.CollectorImage,
 			Logging:     logging,
 		},
-		EnabledSignals: plan.EnabledSignals,
+		EnabledSignals: deployment.EnabledSignals,
 		Namespace: NamespaceSpec{
 			Create: true,
-			Name:   plan.Namespace,
+			Name:   deployment.Namespace,
 		},
 		Agent: AgentValues{
 			ComponentValues: ComponentValues{
@@ -210,18 +211,18 @@ func (g *Generator) Build(plan otel.Plan) (*Values, error) {
 			},
 		},
 		Backend: BackendValues{
-			Enabled:      plan.Backend.Enabled,
-			GRPCEndpoint: plan.Backend.GRPCEndpoint,
-			HTTPEndpoint: plan.Backend.HTTPEndpoint,
+			Enabled:      deployment.Backend.Enabled,
+			GRPCEndpoint: deployment.Backend.GRPCEndpoint,
+			HTTPEndpoint: deployment.Backend.HTTPEndpoint,
 			Image:        g.options.BackendImage,
 			Service: BackendService{
-				GRPCPort:   endpointPort(plan.Backend.GRPCEndpoint, 4317),
-				HTTPPort:   endpointPort(plan.Backend.HTTPEndpoint, 4318),
+				GRPCPort:   endpointPort(deployment.Backend.GRPCEndpoint, 4317),
+				HTTPPort:   endpointPort(deployment.Backend.HTTPEndpoint, 4318),
 				HealthPort: DefaultBackendHealthPort,
 			},
 			SourceContract: SourceContractValues{
-				CapabilityProfile: plan.CapabilityProfile,
-				SourcePlan:        plan.SourcePlan,
+				CapabilityProfile: capabilityProfile,
+				SourcePlan:        sourcePlan,
 			},
 		},
 		Secrets: SecretsValues{},

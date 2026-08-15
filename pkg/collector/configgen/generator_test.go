@@ -7,12 +7,26 @@ import (
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
-func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
-	renderer := NewGenerator()
+type testGenerator struct{ *Generator }
 
-	values, err := renderer.Generate(otel.Plan{
+func newTestGenerator() testGenerator { return testGenerator{NewGenerator()} }
+func newTestGeneratorWithOptions(options GeneratorOptions) testGenerator {
+	return testGenerator{NewGeneratorWithOptions(options)}
+}
+func (g testGenerator) Generate(deployment otel.Deployment) ([]byte, error) {
+	return g.Generator.Generate(deployment, profile.ClusterProfile{}, contract.ResolvedSourcePlan{})
+}
+func (g testGenerator) Build(deployment otel.Deployment) (*Values, error) {
+	return g.Generator.Build(deployment, profile.ClusterProfile{}, contract.ResolvedSourcePlan{})
+}
+
+func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
+	renderer := newTestGenerator()
+
+	values, err := renderer.Generate(otel.Deployment{
 		ClusterName:    "kind-test",
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric", "trace"},
@@ -86,8 +100,8 @@ func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 }
 
 func TestBuildUsesV0156FeatureGates(t *testing.T) {
-	renderer := NewGenerator()
-	values, err := renderer.Build(otel.Plan{})
+	renderer := newTestGenerator()
+	values, err := renderer.Build(otel.Deployment{})
 	require.NoError(t, err)
 
 	require.Equal(t, "0.156.0", values.Global.Image.Tag)
@@ -97,12 +111,12 @@ func TestBuildUsesV0156FeatureGates(t *testing.T) {
 }
 
 func TestBuildEmbedsResolvedSourcePlanForHelmOwnedContract(t *testing.T) {
-	resolved := otel.ResolvedSourcePlan{
+	resolved := contract.ResolvedSourcePlan{
 		ProfileFingerprint: "profile-fingerprint",
 		SelectedSources:    []string{"kubelet"},
 		MetricAssignments:  map[string]string{"k8s.pod.cpu.usage": "kubelet"},
 	}
-	values, err := NewGenerator().Build(otel.Plan{SourcePlan: resolved})
+	values, err := NewGenerator().Build(otel.Deployment{}, profile.ClusterProfile{}, resolved)
 	require.NoError(t, err)
 	require.Equal(t, resolved, values.Backend.SourceContract.SourcePlan)
 }
@@ -117,15 +131,15 @@ func TestBuildEmbedsCapabilityProfileForHelmOwnedContract(t *testing.T) {
 			Signals:  []string{"metric"},
 		}},
 	}
-	values, err := NewGenerator().Build(otel.Plan{CapabilityProfile: capabilityProfile})
+	values, err := NewGenerator().Build(otel.Deployment{}, capabilityProfile, contract.ResolvedSourcePlan{})
 	require.NoError(t, err)
 	require.Equal(t, capabilityProfile, values.Backend.SourceContract.CapabilityProfile)
 }
 
 func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
-	renderer := NewGenerator()
+	renderer := newTestGenerator()
 
-	values, err := renderer.Generate(otel.Plan{
+	values, err := renderer.Generate(otel.Deployment{
 		ClusterName:    "kind-test",
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
@@ -176,9 +190,9 @@ func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
 }
 
 func TestGenerateIncludesK8sclusterInGatewayConfig(t *testing.T) {
-	renderer := NewGenerator()
+	renderer := newTestGenerator()
 
-	values, err := renderer.Generate(otel.Plan{
+	values, err := renderer.Generate(otel.Deployment{
 		ClusterName:    "kind-test",
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
@@ -220,9 +234,9 @@ func TestGenerateIncludesK8sclusterInGatewayConfig(t *testing.T) {
 }
 
 func TestGenerateIncludesServicegraphConnectorWhenPresent(t *testing.T) {
-	renderer := NewGenerator()
+	renderer := newTestGenerator()
 
-	values, err := renderer.Generate(otel.Plan{
+	values, err := renderer.Generate(otel.Deployment{
 		ClusterName:    "kind-test",
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric", "trace"},
@@ -277,9 +291,9 @@ func TestGenerateIncludesServicegraphConnectorWhenPresent(t *testing.T) {
 }
 
 func TestGenerateBaselinePlanHasNoConnectorsSection(t *testing.T) {
-	renderer := NewGenerator()
+	renderer := newTestGenerator()
 
-	values, err := renderer.Generate(otel.Plan{
+	values, err := renderer.Generate(otel.Deployment{
 		ClusterName:    "kind-test",
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
@@ -314,7 +328,7 @@ func TestGenerateBaselinePlanHasNoConnectorsSection(t *testing.T) {
 }
 
 func TestGenerateUsesConfiguredBackendImageOverrides(t *testing.T) {
-	renderer := NewGeneratorWithOptions(GeneratorOptions{
+	renderer := newTestGeneratorWithOptions(GeneratorOptions{
 		BackendImage: ImageValues{
 			Repository: "localhost:5001/oksg-backend",
 			Tag:        "phase3",
@@ -322,7 +336,7 @@ func TestGenerateUsesConfiguredBackendImageOverrides(t *testing.T) {
 		},
 	})
 
-	values, err := renderer.Generate(otel.Plan{
+	values, err := renderer.Generate(otel.Deployment{
 		ClusterName:    "kind-test",
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
@@ -358,12 +372,12 @@ func TestGenerateUsesConfiguredBackendImageOverrides(t *testing.T) {
 }
 
 func TestGenerateUsesConfiguredReleaseMetadataOverrides(t *testing.T) {
-	renderer := NewGeneratorWithOptions(GeneratorOptions{
+	renderer := newTestGeneratorWithOptions(GeneratorOptions{
 		ReleaseName: "custom-otel",
 		ChartPath:   "./deploy/helm/custom-otel",
 	})
 
-	values, err := renderer.Generate(otel.Plan{
+	values, err := renderer.Generate(otel.Deployment{
 		ClusterName:    "kind-test",
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,10 +9,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/adapters/otel"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
 func TestParseConfigAppliesDefaults(t *testing.T) {
@@ -149,7 +149,7 @@ func TestLoadSourceContractRejectsAssignmentToUnselectedSource(t *testing.T) {
 	require.ErrorContains(t, err, "to unselected source")
 }
 
-func completeSourceContract(t *testing.T) (profile.ClusterProfile, otel.ResolvedSourcePlan) {
+func completeSourceContract(t *testing.T) (profile.ClusterProfile, contract.ResolvedSourcePlan) {
 	t.Helper()
 	capabilityProfile := profile.ClusterProfile{
 		ClusterID:   entities.NewCluster("test", nil).ID(),
@@ -164,12 +164,12 @@ func completeSourceContract(t *testing.T) (profile.ClusterProfile, otel.Resolved
 			{SourceID: metrics.SourceTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityUnavailable},
 		},
 	}
-	planned, err := otel.NewSourcePlanner("oksg-system").Plan(context.Background(), &capabilityProfile)
+	planned, err := sources.DefaultRegistry().ResolveSourcePlan(&capabilityProfile)
 	require.NoError(t, err)
-	return capabilityProfile, planned.SourcePlan
+	return capabilityProfile, planned
 }
 
-func writeSourceContract(t *testing.T, capabilityProfile profile.ClusterProfile, sourcePlan otel.ResolvedSourcePlan) (string, string) {
+func writeSourceContract(t *testing.T, capabilityProfile profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	profilePath := filepath.Join(dir, "capability-profile.json")
