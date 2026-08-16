@@ -428,10 +428,10 @@ Pipeline for a complete active sidecar Istio mesh:
    filter accepts the sample because `oksg_source` matches the assigned
    source. The unit map applies the duration ms→ns conversion when the
    companion `servicegraph.request.duration` arrives.
-6. **MeshMetricTopologyBuilder** parses the same envelope and emits
-   `topology.Edge{Relation:"calls", Provenance:["mesh.istio"], ...}` with
-   protocol, mTLS principal, and response metadata pulled from
-   datapoint attributes.
+6. **MetricCallsTopologyBuilder** parses the same envelope after source-policy
+   validation. The static source registry delegates recognition and bounded
+   metadata to the validated source module; the generic builder emits the
+   resulting `topology.Edge{Relation:"calls", ...}` and deduplicates it.
 7. **API** serves the metric using its catalog default (`window_rate`, 1 minute)
    and returns the effective mode/window metadata; callers can explicitly select
    `latest`, `increase`, or cumulative `active_rate`. It serves
@@ -680,5 +680,5 @@ historical `graph?at=` reconstruction.
 | `pkg/collector/composer.go` | Deterministic generic composition from selected modules and the resolved source plan |
 | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}` | Source-owned normalization for kubelet, host OS, kube cluster, Prometheus app, servicegraph, and Istio |
 | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}/contribution.go` | Source-owned semantic collection requirements |
-| `pkg/backend/ingest/mesh_metric_topology_builder.go` | Mesh `calls` edges from servicegraph-shaped Istio metrics |
+| `pkg/backend/ingest/metric_calls_topology_builder.go` | Generic metric-derived `calls` edge assembly after source-module classification |
 | `pkg/adapters/otel/compiler.go` | Renders OpenTelemetry-specific configuration from the generic collection plan |
