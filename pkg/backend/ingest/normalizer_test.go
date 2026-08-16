@@ -3,7 +3,7 @@ package ingest_test
 import (
 	"context"
 	"encoding/json"
-	"strings"
+	"errors"
 	"testing"
 	"time"
 
@@ -15,6 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/backend/ingest"
+	"github.com/erickivel/oksg/pkg/backend/persistence"
+	"github.com/erickivel/oksg/pkg/backend/query"
+	"github.com/erickivel/oksg/pkg/core/entities"
 
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
@@ -23,14 +26,23 @@ import (
 
 const testCluster = "test-cluster"
 
+type failingEntityRegistry struct {
+	persistence.EntityRegistry
+	err error
+}
+
+func (r failingEntityRegistry) UpsertEntity(context.Context, entities.Entity) error {
+	return r.err
+}
+
 func marshalPayload(rm *metricspb.ResourceMetrics) json.RawMessage {
 	b, _ := protojson.Marshal(rm)
 	return json.RawMessage(b)
 }
 
-func makeEnvelope(t *testing.T, resource map[string]string, rm *metricspb.ResourceMetrics) schema.RawEnvelope {
+func makeEnvelope(t *testing.T, source string, resource map[string]string, rm *metricspb.ResourceMetrics) schema.RawEnvelope {
 	t.Helper()
-	stampTestMetricSources(rm)
+	stampMetricSource(rm, source)
 	return makeEnvelopeWithoutSourceStamp(t, resource, rm)
 }
 
@@ -47,11 +59,9 @@ func makeEnvelopeWithoutSourceStamp(t *testing.T, resource map[string]string, rm
 	return env
 }
 
-func stampTestMetricSources(rm *metricspb.ResourceMetrics) {
-	registry := metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects())
+func stampMetricSource(rm *metricspb.ResourceMetrics, source string) {
 	for _, scope := range rm.ScopeMetrics {
 		for _, metric := range scope.Metrics {
-			source := testMetricSource(metric.Name, registry.Translate(metric.Name))
 			for _, dp := range metricAttributeSetsForTest(metric) {
 				if testAttr(dp, "oksg.source") != "" || testAttr(dp, "oksg_source") != "" {
 					continue
@@ -89,40 +99,6 @@ func testAttr(attrs *[]*commonpb.KeyValue, key string) string {
 		}
 	}
 	return ""
-}
-
-func testMetricSource(rawName, canonicalName string) string {
-	switch {
-	case strings.HasPrefix(rawName, "istio_"):
-		return metrics.SourceMeshIstio
-	case strings.HasPrefix(rawName, "traces_service_graph_"), strings.HasPrefix(rawName, "traces.service.graph."):
-		return metrics.SourceTracesServicegraph
-	case strings.HasPrefix(rawName, "http_"):
-		return metrics.SourcePrometheusApp
-	case strings.HasPrefix(rawName, "system."):
-		return metrics.SourceHostOS
-	case rawName == "k8s.node.condition",
-		strings.HasPrefix(rawName, "k8s.deployment."),
-		strings.HasPrefix(rawName, "k8s.replicaset."),
-		strings.HasPrefix(rawName, "k8s.resource_quota."),
-		strings.HasPrefix(rawName, "k8s.pod.phase"),
-		strings.HasPrefix(rawName, "k8s.pod.status_reason"),
-		strings.Contains(rawName, "_request"), strings.Contains(rawName, "_limit"):
-		return metrics.SourceKubeCluster
-	}
-	for _, metric := range metrics.DefaultCatalog() {
-		if metric.Name != canonicalName || len(metric.Sources) == 0 {
-			continue
-		}
-		best := metric.Sources[0]
-		for _, source := range metric.Sources[1:] {
-			if source.Priority < best.Priority {
-				best = source
-			}
-		}
-		return best.ID
-	}
-	return metrics.SourceKubelet
 }
 
 func podResource() map[string]string {
@@ -243,7 +219,7 @@ func TestOTLPNormalizer_MemoryMetric(t *testing.T) {
 	tsNano := uint64(time.Now().UnixNano())
 
 	rm := makeGaugeRM("k8s.pod.memory.working_set", 1048576, tsNano)
-	env := makeEnvelope(t, podResource(), rm)
+	env := makeEnvelope(t, metrics.SourceKubelet, podResource(), rm)
 
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
@@ -259,7 +235,7 @@ func TestOTLPNormalizer_UnmappedMetricSkipped(t *testing.T) {
 	tsNano := uint64(time.Now().UnixNano())
 
 	rm := makeGaugeRM("some.unknown.metric", 42.0, tsNano)
-	env := makeEnvelope(t, podResource(), rm)
+	env := makeEnvelope(t, metrics.SourceKubelet, podResource(), rm)
 
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
@@ -272,11 +248,27 @@ func TestOTLPNormalizer_EntityResolutionError(t *testing.T) {
 
 	rm := makeGaugeRM("k8s.pod.cpu.usage", 0.5, tsNano)
 
-	env := makeEnvelope(t, map[string]string{"some.unknown.attr": "value"}, rm)
+	env := makeEnvelope(t, metrics.SourceKubelet, map[string]string{"some.unknown.attr": "value"}, rm)
 
 	_, err := normalizer.Normalize(context.Background(), env)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resolve entity")
+}
+
+func TestNormalizingIngestor_RejectsMetricWhenEntityPersistenceFails(t *testing.T) {
+	entityErr := errors.New("entity registry unavailable")
+	resolver := ingest.NewOTLPEntityResolverWithRegistry(testCluster, failingEntityRegistry{err: entityErr})
+	normalizer := ingest.NewOTLPNormalizer(resolver, metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()))
+	store := persistence.NewInMemoryMetricStore()
+	ingestor := ingest.NewNormalizingIngestor(normalizer, store, nil)
+	env := makeEnvelope(t, metrics.SourceKubelet, podResource(), makeGaugeRM("k8s.pod.cpu.usage", 0.5, uint64(time.Now().UnixNano())))
+
+	err := ingestor.Ingest(context.Background(), env)
+	require.ErrorIs(t, err, entityErr)
+
+	samples, err := store.Query(context.Background(), query.MetricQuery{})
+	require.NoError(t, err)
+	assert.Empty(t, samples)
 }
 
 func makeGaugeRMWithAttrs(metricName string, value float64, tsNano uint64, attrs map[string]string) *metricspb.ResourceMetrics {
@@ -316,50 +308,61 @@ func TestOTLPNormalizer_HistogramWithZeroCountSkipped(t *testing.T) {
 	tsNano := uint64(time.Now().UnixNano())
 
 	rm := makeHistogramRM("http_request_duration_seconds", 1.5, 0, tsNano)
-	env := makeEnvelope(t, podResource(), rm)
+	env := makeEnvelope(t, metrics.SourcePrometheusApp, podResource(), rm)
 
 	samples, err := normalizer.Normalize(context.Background(), env)
 	require.NoError(t, err)
 	assert.Empty(t, samples)
 }
 
-// TestOTLPNormalizer_SourceMismatchDropped verifies that when an Assignment is
-// configured, samples whose oksg_source disagrees with the assigned source are
-// dropped and counted, while matching samples pass through.
+func TestOTLPNormalizer_DropsScalarDataPointWithoutTimestamp(t *testing.T) {
+	normalizer := newNormalizer()
+	env := makeEnvelope(t, metrics.SourceKubelet, podResource(), makeGaugeRM("k8s.pod.cpu.usage", 0.5, 0))
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	assert.Empty(t, samples)
+}
+
+func TestOTLPNormalizer_DropsHistogramDataPointWithoutTimestamp(t *testing.T) {
+	normalizer := newNormalizer()
+	env := makeEnvelope(t, metrics.SourcePrometheusApp, podResource(), makeHistogramRM("http_request_duration_seconds", 1.5, 3, 0))
+
+	samples, err := normalizer.Normalize(context.Background(), env)
+	require.NoError(t, err)
+	assert.Empty(t, samples)
+}
+
+// TestOTLPNormalizer_SourceMismatchDropped verifies that assignment enforcement
+// retains only samples stamped by the assigned source.
 func TestOTLPNormalizer_SourceMismatchDropped(t *testing.T) {
 	resolver := ingest.NewOTLPEntityResolver(testCluster)
-	dialect := metrics.NewDialectRegistry(
-		metrics.PrometheusDialect,
-		metrics.ServicegraphDialect,
-		metrics.IstioDialect,
-	)
+	dialect := metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects())
 
 	assignment := metrics.Assignment{
 		"k8s.pod.cpu.usage": metrics.SourceMeshIstio,
 	}
-	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithAssignment(assignment))
+	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), assignment)
+	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithSourcePolicy(policy))
 
 	tsNano := uint64(time.Now().UnixNano())
 
 	rmKubelet := makeGaugeRMWithAttr("k8s.pod.cpu.usage", 0.5, tsNano, "oksg_source", metrics.SourceKubelet)
-	envKubelet := makeEnvelope(t, podResource(), rmKubelet)
+	envKubelet := makeEnvelope(t, metrics.SourceKubelet, podResource(), rmKubelet)
 	samples, err := normalizer.Normalize(context.Background(), envKubelet)
 	require.NoError(t, err)
 	require.Empty(t, samples, "kubelet sample must be dropped when istio is the assigned source")
-	require.Equal(t, uint64(1), normalizer.DroppedSampleCount())
 
 	rmIstio := makeGaugeRMWithAttr("k8s.pod.cpu.usage", 0.75, tsNano, "oksg_source", metrics.SourceMeshIstio)
-	envIstio := makeEnvelope(t, podResource(), rmIstio)
+	envIstio := makeEnvelope(t, metrics.SourceMeshIstio, podResource(), rmIstio)
 	samples, err = normalizer.Normalize(context.Background(), envIstio)
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
 	require.InDelta(t, 750.0, samples[0].Value, 1e-9)
-	require.Equal(t, uint64(1), normalizer.DroppedSampleCount())
 
 	rmUntagged := makeGaugeRM("k8s.pod.cpu.usage", 1.0, tsNano)
 	envUntagged := makeEnvelopeWithoutSourceStamp(t, podResource(), rmUntagged)
 	samples, err = normalizer.Normalize(context.Background(), envUntagged)
 	require.NoError(t, err)
 	require.Empty(t, samples, "recognized untagged samples must be rejected")
-	require.Equal(t, uint64(2), normalizer.DroppedSampleCount())
 }

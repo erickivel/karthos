@@ -25,15 +25,6 @@ type OTLPNormalizer struct {
 // NormalizerOption configures optional behavior on the OTLPNormalizer.
 type NormalizerOption func(*OTLPNormalizer)
 
-// WithAssignment configures assignment enforcement while retaining the built-in
-// logical-source registry. Prefer WithSourcePolicy when the policy is shared
-// with topology derivation.
-func WithAssignment(a metrics.Assignment) NormalizerOption {
-	return func(n *OTLPNormalizer) {
-		n.sourcePolicy = NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), a)
-	}
-}
-
 // WithSourcePolicy shares one source policy with the normalizer.
 func WithSourcePolicy(policy *MetricSourcePolicy) NormalizerOption {
 	return func(n *OTLPNormalizer) {
@@ -62,16 +53,6 @@ func NewOTLPNormalizer(resolver EntityResolver, dialect *metrics.DialectRegistry
 	return n
 }
 
-// DroppedSampleCount returns the total number of provenance-policy rejections.
-func (n *OTLPNormalizer) DroppedSampleCount() uint64 {
-	return n.sourcePolicy.DroppedSampleCount()
-}
-
-// DroppedSampleCountForReason returns the number of rejections for one reason.
-func (n *OTLPNormalizer) DroppedSampleCountForReason(reason SourceRejectionReason) uint64 {
-	return n.sourcePolicy.DroppedSampleCountForReason(reason)
-}
-
 // Normalize deserializes a protojson-encoded ResourceMetrics from the envelope payload,
 // resolves the entity, and maps each recognized metric to a canonical MetricSample.
 //
@@ -92,6 +73,9 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 			// Histograms are decomposed into _sum / _count pairs.
 			if h := metric.GetHistogram(); h != nil {
 				for _, dp := range h.DataPoints {
+					if dp.TimeUnixNano == 0 {
+						continue
+					}
 					translatedName := n.dialect.TranslateForSource(firstKVString(dp.Attributes, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm), metric.Name)
 					mapping, ok := metrics.OTLPSemconvMetrics[translatedName]
 					if !ok {
@@ -99,7 +83,6 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					}
 					validation := n.sourcePolicy.Validate(translatedName, dp.Attributes)
 					if !validation.Accepted() {
-						n.sourcePolicy.RecordRejection(validation)
 						continue
 					}
 					if dp.Count == 0 || dp.Sum == nil {
@@ -144,6 +127,9 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 
 			dps := collectScalarDataPoints(metric)
 			for _, dp := range dps {
+				if dp.TimeUnixNano == 0 {
+					continue
+				}
 				translatedName := n.dialect.TranslateForSource(firstKVString(dp.Attributes, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm), metric.Name)
 				mapping, ok := metrics.OTLPSemconvMetrics[translatedName]
 				if !ok {
@@ -152,7 +138,6 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 				validation := n.sourcePolicy.Validate(translatedName, dp.Attributes)
 				if !validation.Accepted() {
-					n.sourcePolicy.RecordRejection(validation)
 					continue
 				}
 				plan := newNormalizationPlan(metric.Name, translatedName, validation.Source, envelope.Resource, dp.Attributes, mapping)

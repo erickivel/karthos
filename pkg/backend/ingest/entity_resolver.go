@@ -156,14 +156,16 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 	}
 
 	if r.registry != nil {
-		_ = r.registry.UpsertEntity(ctx, persistence.StoredEntity{
+		if err := r.registry.UpsertEntity(ctx, persistence.StoredEntity{
 			EntityID:   id,
 			EntityKind: kind,
 			Cluster:    r.clusterName,
 			Namespace:  namespace,
 			Name:       name,
 			Metadata:   resource,
-		})
+		}); err != nil {
+			return "", fmt.Errorf("upsert resolved entity %s: %w", id, err)
+		}
 	}
 
 	return id, nil
