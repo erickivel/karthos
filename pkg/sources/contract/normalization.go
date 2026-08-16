@@ -42,6 +42,11 @@ type DerivedMetric struct {
 }
 type Normalizer func(context.Context, EntityResolver, *Plan) error
 
+// CallsEdgeClassifier identifies source-owned metrics that can derive a calls
+// edge and returns the source-specific metadata to retain on that edge.
+// Generic ingestion owns provenance validation and edge assembly.
+type CallsEdgeClassifier func(rawMetricName, canonicalMetricName string, attrs []*commonpb.KeyValue) (map[string]string, bool)
+
 func NewPlan(raw, canonical, source string, resource map[string]string, attrs []*commonpb.KeyValue, mapping metrics.OTLPMetricMapping) Plan {
 	return Plan{RawMetricName: raw, MetricName: canonical, Source: source, Resource: resource, Attrs: attrs, Labels: map[string]string{semconv.LabelSource: source}, ConversionFactor: mapping.ConversionFactor, Unit: mapping.Unit}
 }

@@ -2,9 +2,12 @@ package servicegraph
 
 import (
 	"context"
+	"strings"
+
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+
 	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/sources/contract"
-	"strings"
 )
 
 func Normalize(ctx context.Context, resolver contract.EntityResolver, plan *contract.Plan) error {
@@ -15,4 +18,13 @@ func Normalize(ctx context.Context, resolver contract.EntityResolver, plan *cont
 	contract.PreserveLabels(plan.Attrs, plan.Labels, "failed", "connection_type", "virtual_node", "client_http.method:client_http_method", "server_http.method:server_http_method", semconv.AttrClientNamespace, semconv.AttrServerNamespace)
 	plan.Skip = !contract.ApplyServiceGraphEdgeLabels(ctx, resolver, plan)
 	return nil
+}
+
+// CallsEdgeMetadata recognizes metrics emitted by the derived servicegraph
+// source. Its calls edges need no source-specific metadata.
+func CallsEdgeMetadata(rawMetricName, canonicalMetricName string, _ []*commonpb.KeyValue) (map[string]string, bool) {
+	if !strings.HasPrefix(rawMetricName, "traces_service_graph_") && !strings.HasPrefix(rawMetricName, "traces.service.graph.") && !strings.HasPrefix(canonicalMetricName, "servicegraph.") {
+		return nil, false
+	}
+	return nil, true
 }

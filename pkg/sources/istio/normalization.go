@@ -29,8 +29,35 @@ func Normalize(ctx context.Context, resolver contract.EntityResolver, plan *cont
 	}
 	return nil
 }
+
+// CallsEdgeMetadata recognizes Istio's servicegraph-shaped metrics and keeps
+// only its bounded mesh dimensions for the generic calls edge.
+func CallsEdgeMetadata(rawMetricName, canonicalMetricName string, attrs []*commonpb.KeyValue) (map[string]string, bool) {
+	if !strings.HasPrefix(rawMetricName, "istio_") || !strings.HasPrefix(canonicalMetricName, "servicegraph.") {
+		return nil, false
+	}
+	metadata := make(map[string]string)
+	for _, key := range meshAttributeKeys {
+		if value := MeshAttributeValue(attrs, key); value != "" {
+			metadata[key] = value
+		}
+	}
+	return metadata, true
+}
+
+var meshAttributeKeys = []string{
+	semconv.AttrNetworkProtocolName,
+	semconv.AttrHTTPStatusCode,
+	semconv.AttrGRPCStatusCode,
+	semconv.AttrMeshPolicy,
+	semconv.AttrMeshSourcePrincipal,
+	semconv.AttrMeshDestinationPrincipal,
+	semconv.AttrMeshResponseFlags,
+	semconv.AttrMeshID,
+}
+
 func preserveMesh(attrs []*commonpb.KeyValue, labels map[string]string) {
-	for _, key := range []string{semconv.AttrNetworkProtocolName, semconv.AttrHTTPStatusCode, semconv.AttrGRPCStatusCode, semconv.AttrMeshPolicy, semconv.AttrMeshSourcePrincipal, semconv.AttrMeshDestinationPrincipal, semconv.AttrMeshResponseFlags, semconv.AttrMeshID} {
+	for _, key := range meshAttributeKeys {
 		if value := MeshAttributeValue(attrs, key); value != "" {
 			labels[key] = value
 		}

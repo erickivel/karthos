@@ -60,6 +60,16 @@ func TestRegistryAppendsTypedRequirementsFromSelectedModules(t *testing.T) {
 	require.Equal(t, metrics.SourceMeshIstio, sourcePlan.MetricAssignments["servicegraph.request.count"])
 }
 
+func TestRegistryDelegatesCallsEdgeClassificationToSourceModule(t *testing.T) {
+	registry := DefaultRegistry()
+	metadata, ok := registry.CallsEdgeMetadata(IDMeshIstio, "istio_requests_total", "servicegraph.request.count", nil)
+	require.True(t, ok)
+	require.Empty(t, metadata)
+
+	_, ok = registry.CallsEdgeMetadata(IDKubelet, "k8s.pod.cpu.usage", "k8s.pod.cpu.usage", nil)
+	require.False(t, ok)
+}
+
 func TestDefaultRegistryDetectsEveryCompiledModuleFromOneInventory(t *testing.T) {
 	inventory := detection.Inventory{
 		ClusterName:      "test",

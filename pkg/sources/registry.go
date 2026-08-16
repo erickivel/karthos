@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sort"
 
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+
 	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
@@ -43,6 +45,7 @@ type Module struct {
 	Detect       func(detection.Inventory) profile.SourceCapability
 	Contribute   func(*collectorspec.CollectionPlan, profile.SourceCapability, bool)
 	Normalize    contract.Normalizer
+	CallsEdge    contract.CallsEdgeClassifier
 }
 
 // Registry is the one compiled inventory of source modules.
@@ -55,8 +58,8 @@ func DefaultRegistry() Registry {
 		{ID: IDHostOS, Kind: profile.SourceKindDirect, MetricSource: true, Detect: hostos.Detect, Contribute: hostos.Contribute, Normalize: hostos.Normalize},
 		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Dialect: metrics.KubeClusterDialect, MetricSource: true, Detect: kubecluster.Detect, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
 		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Dialect: metrics.PrometheusDialect, MetricSource: true, Detect: prometheusapp.Detect, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
-		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Dialect: metrics.IstioDialect, MetricSource: true, Detect: istio.Detect, Contribute: istio.Contribute, Normalize: istio.Normalize},
-		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Dialect: metrics.ServicegraphDialect, MetricSource: true, Detect: servicegraph.Detect, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize},
+		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Dialect: metrics.IstioDialect, MetricSource: true, Detect: istio.Detect, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata},
+		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Dialect: metrics.ServicegraphDialect, MetricSource: true, Detect: servicegraph.Detect, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata},
 	}}
 }
 
@@ -85,6 +88,16 @@ func (r Registry) Normalize(ctx context.Context, resolver contract.EntityResolve
 		return fmt.Errorf("no compiled source module registered for %q", plan.Source)
 	}
 	return module.Normalize(ctx, resolver, plan)
+}
+
+// CallsEdgeMetadata dispatches source-specific calls-edge recognition and
+// metadata extraction through the compiled source module.
+func (r Registry) CallsEdgeMetadata(sourceID, rawMetricName, canonicalMetricName string, attrs []*commonpb.KeyValue) (map[string]string, bool) {
+	module, ok := r.Lookup(sourceID)
+	if !ok || module.CallsEdge == nil {
+		return nil, false
+	}
+	return module.CallsEdge(rawMetricName, canonicalMetricName, attrs)
 }
 
 func (r Registry) IDs() []string {
