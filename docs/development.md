@@ -284,7 +284,7 @@ curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.
 Notes:
 
 - Counter presentation is catalog-driven. Rate-presented counters default to `aggregation=window_rate&window=1m`, while callers may explicitly request `latest`, `increase`, `window_rate`, or `active_rate` when that metric declares the mode. Cumulative counters such as container restarts retain their catalog-declared `latest` default.
-- Istio metrics enter through `metrics.IstioDialect`, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
+- Istio metrics enter through the Istio source module's dialect, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
 - The Metrics Explorer entity search and breadcrumb filter are driven by the latest graph snapshot (`useGraphSnapshot`), not the historical `/api/v1/entities` registry. Edge mode lists `calls` edges from the same snapshot.
 
 Expected graph edge relations after telemetry flows:

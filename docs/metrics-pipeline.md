@@ -58,12 +58,9 @@ Important properties:
   query-derived exceptions tracked in `catalogSourcelessExceptions`) must
   appear in `OTLPSemconvMetrics` (`pkg/core/metrics/otel_mappings.go`); the
   test `TestDefaultCatalogMetricsHaveIngestOrQuerySupport` enforces this.
-- **Unsupported metrics stay out of the catalog.** Names that have no real
-  ingest path (e.g. the exploded `k8s.pod.network.io.{receive,transmit}` —
-  kubeletstats only emits the bare `k8s.pod.network.io` with a `direction`
-  attribute — and `k8s.node.*` capacity gauges) are explicitly excluded by
-  `TestDefaultCatalogExcludesUnsupportedMetrics` so the UI never advertises a
-  metric the backend cannot produce.
+- **Catalog inclusion requires a real path.** Add a metric only after its
+  receiver, source module, OTLP mapping, catalog row, and supported behavior
+  test exist. Do not use absence tests to preserve deferred scope.
 
 The current categories are `resource`, `traffic`, `latency`, `error`,
 `capacity`, and `health`. Categories drive the Metrics Explorer tab layout.
@@ -78,9 +75,9 @@ catalog only declares which source IDs can produce each canonical metric.
 |----|-----------------------|---------|
 | `kubernetes.structure` | successfully listed Kubernetes discovery inventory | non-metric structural assembly |
 | `kubelet`, `host-os`, `kube-cluster` | successfully listed Kubernetes discovery inventory | source-owned mapping |
-| `prometheus.app` | bounded annotated Service targets | `PrometheusDialect` |
-| `mesh.istio` | complete injected sidecar mesh evidence | `IstioDialect` |
-| `traces.servicegraph` | derived trace-capable OTLP evidence | `ServicegraphDialect` |
+| `prometheus.app` | bounded annotated Service targets | source-module dialect |
+| `mesh.istio` | complete injected sidecar mesh evidence | source-module dialect |
+| `traces.servicegraph` | derived trace-capable OTLP evidence | source-module dialect |
 
 Each static module owns its source-specific capability detector, collector
 contribution, stamps, and dialect. The Kubernetes adapter lists the typed
@@ -126,7 +123,7 @@ SourceTracesServicegraph
 
 ## 3. Dialect Translation
 
-`pkg/core/metrics/dialect.go` defines:
+`pkg/core/metrics/dialect.go` defines the generic interface:
 
 ```go
 type Dialect interface {
@@ -134,18 +131,19 @@ type Dialect interface {
 }
 ```
 
-A dialect is a `map[rawName]canonicalName`. The built-in dialects:
+A dialect is a `map[rawName]canonicalName`. Concrete maps live with the source
+that emits the wire names:
 
 | Dialect | Example translation |
 |---------|---------------------|
-| `PrometheusDialect` | `http_requests_total` → `http.server.request.count`, `http_request_duration_seconds` → `http.server.request.duration` |
-| `KubeletDialect` | `container.cpu.usage` → `k8s.container.cpu.usage`, `container.memory.usage` → `k8s.container.memory.usage` |
-| `KubeClusterDialect` | `k8s.container.cpu_request` → `k8s.container.cpu.request`, `k8s.container.memory_limit` → `k8s.container.memory.limit`, plus the cpu_limit and memory_request equivalents |
-| `ServicegraphDialect` | `traces_service_graph_request_total` → `servicegraph.request.count`, `traces_service_graph_request_server` → `servicegraph.request.duration`, `traces_service_graph_request_failed_total` → `servicegraph.request.error.count` |
-| `IstioDialect` | `istio_requests_total` → `servicegraph.request.count`, `istio_request_duration_milliseconds` → `servicegraph.request.duration`, `istio_{request,response}_messages_total` → gRPC message counters, and `istio_tcp_{connections_{opened,closed}_total,{sent,received}_bytes_total}` → TCP edge counters |
+| `prometheusapp.Dialect` | `http_requests_total` → `http.server.request.count`, `http_request_duration_seconds` → `http.server.request.duration` |
+| `kubelet.Dialect` | `container.cpu.usage` → `k8s.container.cpu.usage`, `container.memory.usage` → `k8s.container.memory.usage` |
+| `kubecluster.Dialect` | `k8s.container.cpu_request` → `k8s.container.cpu.request`, `k8s.container.memory_limit` → `k8s.container.memory.limit`, plus the cpu_limit and memory_request equivalents |
+| `servicegraph.Dialect` | `traces_service_graph_request_total` → `servicegraph.request.count`, `traces_service_graph_request_server` → `servicegraph.request.duration`, `traces_service_graph_request_failed_total` → `servicegraph.request.error.count` |
+| `istio.Dialect` | `istio_requests_total` → `servicegraph.request.count`, `istio_request_duration_milliseconds` → `servicegraph.request.duration`, `istio_{request,response}_messages_total` → gRPC message counters, and `istio_tcp_{connections_{opened,closed}_total,{sent,received}_bytes_total}` → TCP edge counters |
 
-`DialectRegistry` chains dialects in the order their owning sources were
-registered; first match wins. At startup, `cmd/backend` builds it from
+`DialectRegistry` looks up a source module's dialect after reading the stamped
+source ID. At startup, `cmd/backend` builds it from
 `sources.DefaultRegistry().Dialects()`, so the static module inventory remains
 the only dialect owner. Unknown names pass through unchanged so
 canonical-shaped metrics are not corrupted.
@@ -509,7 +507,7 @@ For each metric:
   exactly one tagger rule matches the wire name.
 - Confirm the source ID stamped by that rule equals the `Sources[].ID`
   in the catalog row. Mismatch is silently fatal:
-  `shouldDropForSource` (`pkg/backend/ingest/normalizer.go`) drops every
+  `MetricSourcePolicy.Validate` (`pkg/backend/ingest/source_policy.go`) drops every
   datapoint whose tag disagrees with the catalog assignment.
 - Add an OTel adapter test asserting the rendered tagger statement is present.
 
@@ -540,9 +538,9 @@ Add a `defaultCatalog` row in `pkg/core/metrics/catalog.go`:
 - `Sources`: the source IDs that can produce this metric, with priority.
   The IDs **must** match what the OTTL tagger stamps in step 3.
 
-Update `TestDefaultCatalogIncludesRequiredMetrics` to enforce presence
-plus unit/category/sources. Confirm the metric is not in
-`TestDefaultCatalogExcludesUnsupportedMetrics`.
+Update `TestDefaultCatalogIncludesRequiredMetrics` to enforce presence plus
+unit/category/sources, then add the source-module and normalizer behavior
+coverage for the supported path.
 
 If the metric is purely query-derived (e.g. ratios computed in PromQL,
 status enums composed from other metrics), the contract is different:
@@ -595,8 +593,8 @@ four points. Bisect with these reads:
 2. **Reaching backend?** Compare with
    `otelcol_exporter_sent_metric_points{exporter="otlp_grpc"}` on the
    gateway. Equal means everything left.
-3. **Dropped at normalizer?** Public operational diagnostics are deferred.
-   Tests can inspect `DroppedSampleCount()` and the reason-specific accessor.
+3. **Dropped at normalizer?** Inspect the source stamp and mounted source plan;
+   supported tests assert accepted and dropped canonical samples directly.
 4. **Dialect translation hit?** Add a normalizer test that feeds the
    wire name and asserts the canonical output. If it fails, the dialect
    is wrong (or the module dialect is still `nil`).
@@ -667,13 +665,14 @@ historical `graph?at=` reconstruction.
 | `pkg/core/metrics/catalog.go` | `defaultCatalog`, `DefaultCatalog()` |
 | `pkg/sources/registry.go` | Compiled source IDs, module inventory, and detector dispatch |
 | `pkg/sources/detection` | Typed Kubernetes discovery inventory shared by static detectors |
-| `pkg/core/metrics/dialect.go` | `Dialect`, `DialectMap`, `DialectRegistry`, `PrometheusDialect`, `ServicegraphDialect`, `IstioDialect` |
+| `pkg/core/metrics/dialect.go` | Generic `Dialect`, `DialectMap`, and `DialectRegistry` contracts |
+| `pkg/sources/{kubelet,kubecluster,prometheusapp,istio,servicegraph}/dialect.go` | Source-owned wire-name to canonical metric maps |
 | `pkg/core/metrics/resolver.go` | `Resolve`, `Assignment`, `SelectedSources` |
 | `pkg/core/metrics/otel_mappings.go` | `OTLPSemconvMetrics`, ingest-side units and kinds |
 | `pkg/core/metrics/unit.go` | Unit constants, conversion factors |
 | `pkg/core/semconv/keys.go` | OTLP attribute key constants |
 | `pkg/backend/ingest/normalizer.go` | Generic OTLP iteration, `OTLPNormalizer`, shared source-policy enforcement, conversion application, and raw sample emission |
-| `pkg/backend/ingest/source_policy.go` | Registered provenance, assignment validation, and atomic rejection accounting |
+| `pkg/backend/ingest/source_policy.go` | Registered provenance and assignment validation |
 | `pkg/sources/contract` | Narrow normalization plan, resolver interfaces, and bounded-label/entity helpers |
 | `pkg/sources/contract/source_plan.go` | Mounted resolved source-plan contract and static inventory validation |
 | `pkg/collector/spec` | Provider-neutral collection requirements and `CollectionPlan` |
