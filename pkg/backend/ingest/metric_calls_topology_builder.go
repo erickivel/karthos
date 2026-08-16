@@ -44,11 +44,11 @@ func (b *MetricCallsTopologyBuilder) Build(_ context.Context, envelope schema.Ra
 	seen := make(map[string]topology.Edge)
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
-			translated := b.dialect.Translate(metric.Name)
-			if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
-				continue
-			}
 			for _, dp := range metricAttributeSets(metric) {
+				translated := b.dialect.TranslateForSource(sourceFromAttrs(dp.Attributes), metric.Name)
+				if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
+					continue
+				}
 				metadata, ok := b.callsEdgeMetadata(metric.Name, translated, dp.Attributes)
 				if !ok {
 					continue
@@ -87,11 +87,11 @@ func (b *MetricCallsTopologyBuilder) BuildNodes(_ context.Context, envelope sche
 	seen := make(map[entities.EntityID]topology.Node)
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
-			translated := b.dialect.Translate(metric.Name)
-			if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
-				continue
-			}
 			for _, dp := range metricAttributeSets(metric) {
+				translated := b.dialect.TranslateForSource(sourceFromAttrs(dp.Attributes), metric.Name)
+				if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
+					continue
+				}
 				if _, ok := b.callsEdgeMetadata(metric.Name, translated, dp.Attributes); !ok {
 					continue
 				}

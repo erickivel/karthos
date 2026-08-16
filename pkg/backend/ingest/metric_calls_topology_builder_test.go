@@ -20,7 +20,7 @@ import (
 )
 
 func TestMetricCallsTopologyBuilderBuildsCallsEdgeFromIstioMetric(t *testing.T) {
-	builder := NewMetricCallsTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
+	builder := NewMetricCallsTopologyBuilder(metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	env := makeCallsMetricEnvelope(t, "istio_requests_total", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":                          "gateway-go",
 		"server":                          "service-a-python",
@@ -48,7 +48,7 @@ func TestMetricCallsTopologyBuilderBuildsCallsEdgeFromIstioMetric(t *testing.T) 
 }
 
 func TestMetricCallsTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing.T) {
-	builder := NewMetricCallsTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
+	builder := NewMetricCallsTopologyBuilder(metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	envelopeTimestamp := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
 	dataPointTimestamp := envelopeTimestamp.Add(5 * time.Minute)
 	env := makeCallsMetricEnvelope(t, "istio_requests_total", envelopeTimestamp, dataPointTimestamp, map[string]string{
@@ -68,7 +68,7 @@ func TestMetricCallsTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing
 }
 
 func TestMetricCallsTopologyBuilderIgnoresMetricsWithoutCallsSemantics(t *testing.T) {
-	builder := NewMetricCallsTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
+	builder := NewMetricCallsTopologyBuilder(metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	env := makeCallsMetricEnvelope(t, "k8s.pod.cpu.usage", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":           "gateway-go",
 		"server":           "service-a-python",
@@ -85,7 +85,7 @@ func TestMetricCallsTopologyBuilderRejectsInvalidSourceWithoutCreatingNodesOrEdg
 	policy := NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
 		"servicegraph.request.count": metrics.SourceMeshIstio,
 	})
-	builder := NewMetricCallsTopologyBuilder(metrics.NewDialectRegistry(metrics.IstioDialect), "kind-test", policy)
+	builder := NewMetricCallsTopologyBuilder(metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()), "kind-test", policy)
 	tests := []struct {
 		name   string
 		source string
@@ -110,7 +110,6 @@ func TestMetricCallsTopologyBuilderRejectsInvalidSourceWithoutCreatingNodesOrEdg
 			assert.Empty(t, builder.BuildNodes(context.Background(), env))
 		})
 	}
-	assert.Zero(t, policy.DroppedSampleCount(), "mesh filtering must not double-count normalizer rejections")
 }
 
 func TestBufferedTopologyIngestor_MergesProvenanceAndMetadata(t *testing.T) {

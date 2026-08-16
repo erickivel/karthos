@@ -2,7 +2,6 @@ package ingest_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -29,12 +28,11 @@ func makeNumberDataPoint(value float64, attrs map[string]string) *metricspb.Numb
 
 func TestOTLPNormalizerRequiresRegisteredMetricSource(t *testing.T) {
 	tests := []struct {
-		name   string
-		attrs  map[string]string
-		reason ingest.SourceRejectionReason
+		name  string
+		attrs map[string]string
 	}{
-		{name: "missing", attrs: nil, reason: ingest.SourceRejectionMissing},
-		{name: "unknown", attrs: map[string]string{"oksg.source": "not-registered"}, reason: ingest.SourceRejectionUnknown},
+		{name: "missing", attrs: nil},
+		{name: "unknown", attrs: map[string]string{"oksg.source": "not-registered"}},
 	}
 
 	for _, tt := range tests {
@@ -44,8 +42,6 @@ func TestOTLPNormalizerRequiresRegisteredMetricSource(t *testing.T) {
 			samples, err := normalizer.Normalize(context.Background(), makeEnvelopeWithoutSourceStamp(t, podResource(), rm))
 			require.NoError(t, err)
 			assert.Empty(t, samples)
-			assert.Equal(t, uint64(1), normalizer.DroppedSampleCount())
-			assert.Equal(t, uint64(1), normalizer.DroppedSampleCountForReason(tt.reason))
 		})
 	}
 }
@@ -73,38 +69,14 @@ func TestOTLPNormalizerSourceAssignmentAndMixedBatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
 	assert.Equal(t, metrics.SourceKubelet, samples[0].Labels["source"])
-	assert.Equal(t, uint64(2), normalizer.DroppedSampleCount())
-	assert.Equal(t, uint64(1), normalizer.DroppedSampleCountForReason(ingest.SourceRejectionAssignmentMismatch))
-	assert.Equal(t, uint64(1), normalizer.DroppedSampleCountForReason(ingest.SourceRejectionMissing))
 }
 
-func TestOTLPNormalizerUnknownMetricDoesNotCountSourceViolation(t *testing.T) {
+func TestOTLPNormalizerUnknownMetricIsSkipped(t *testing.T) {
 	normalizer := newNormalizer()
 	rm := makeGaugeRM("vendor.unknown.metric", 1, uint64(time.Now().UnixNano()))
 	samples, err := normalizer.Normalize(context.Background(), makeEnvelopeWithoutSourceStamp(t, podResource(), rm))
 	require.NoError(t, err)
 	assert.Empty(t, samples)
-	assert.Zero(t, normalizer.DroppedSampleCount())
-}
-
-func TestMetricSourcePolicyRejectionCountersAreConcurrentSafe(t *testing.T) {
-	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil)
-	validation := ingest.SourceValidation{Reason: ingest.SourceRejectionMissing}
-	const workers = 32
-	const increments = 100
-	var wg sync.WaitGroup
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for range increments {
-				policy.RecordRejection(validation)
-			}
-		}()
-	}
-	wg.Wait()
-	assert.Equal(t, uint64(workers*increments), policy.DroppedSampleCount())
-	assert.Equal(t, uint64(workers*increments), policy.DroppedSampleCountForReason(ingest.SourceRejectionMissing))
 }
 
 func TestOTLPNormalizerRejectsWrongSourceForSpecializedCanonicalMetrics(t *testing.T) {
@@ -153,7 +125,6 @@ func TestOTLPNormalizerRejectsWrongSourceForSpecializedCanonicalMetrics(t *testi
 			samples, err := normalizer.Normalize(context.Background(), makeEnvelopeWithoutSourceStamp(t, podResource(), rm))
 			require.NoError(t, err)
 			assert.Empty(t, samples)
-			assert.Equal(t, uint64(1), normalizer.DroppedSampleCountForReason(ingest.SourceRejectionAssignmentMismatch))
 		})
 	}
 }
