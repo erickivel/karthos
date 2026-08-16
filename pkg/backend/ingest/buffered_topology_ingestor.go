@@ -75,41 +75,17 @@ func (b *BufferedTopologyIngestor) Ingest(ctx context.Context, envelope schema.R
 		return nil
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	for _, e := range edges {
-		if existing, ok := b.edges[e.ID]; ok {
-			if e.LastSeen.After(existing.LastSeen) {
-				existing.LastSeen = e.LastSeen
-			}
-			existing.Confidence = e.Confidence
-			existing.Provenance = mergeStringSlices(existing.Provenance, e.Provenance)
-			existing.Metadata = mergeStringMaps(existing.Metadata, e.Metadata)
-			b.edges[e.ID] = existing
-		} else {
-			b.edges[e.ID] = e
-		}
-	}
-
-	for _, n := range nodes {
-		b.nodes[string(n.ID)] = n
-	}
-
 	ts := envelope.Timestamp
-	if b.from.IsZero() || ts.Before(b.from) {
-		b.from = ts
-	}
-	if ts.After(b.to) {
-		b.to = ts
-	}
+	to := ts
 	for _, e := range edges {
-		if e.LastSeen.After(b.to) {
-			b.to = e.LastSeen
+		if e.LastSeen.After(to) {
+			to = e.LastSeen
 		}
 	}
 
-	b.dirty = true
+	b.mu.Lock()
+	b.mergeLocked(edges, nodes, ts, to)
+	b.mu.Unlock()
 	return nil
 }
 
@@ -156,6 +132,9 @@ func (b *BufferedTopologyIngestor) Flush() {
 	}
 
 	if err := b.store.PutSnapshot(context.Background(), snapshot); err != nil {
+		b.mu.Lock()
+		b.mergeLocked(edgeSlice, nodeSlice, from, to)
+		b.mu.Unlock()
 		if b.logger != nil {
 			b.logger.Error("flush topology snapshot failed", logging.Error(err))
 		}
@@ -165,6 +144,37 @@ func (b *BufferedTopologyIngestor) Flush() {
 			logging.Any("nodes", len(nodeSlice)),
 		)
 	}
+}
+
+func (b *BufferedTopologyIngestor) mergeLocked(edges []topology.Edge, nodes []topology.Node, from, to time.Time) {
+	for _, edge := range edges {
+		if existing, ok := b.edges[edge.ID]; ok {
+			if existing.FirstSeen.IsZero() || (!edge.FirstSeen.IsZero() && edge.FirstSeen.Before(existing.FirstSeen)) {
+				existing.FirstSeen = edge.FirstSeen
+			}
+			if !edge.LastSeen.Before(existing.LastSeen) {
+				existing.LastSeen = edge.LastSeen
+				existing.Confidence = edge.Confidence
+				existing.Metadata = mergeStringMaps(existing.Metadata, edge.Metadata)
+			} else {
+				existing.Metadata = mergeStringMaps(edge.Metadata, existing.Metadata)
+			}
+			existing.Provenance = mergeStringSlices(existing.Provenance, edge.Provenance)
+			b.edges[edge.ID] = existing
+			continue
+		}
+		b.edges[edge.ID] = edge
+	}
+	for _, node := range nodes {
+		b.nodes[string(node.ID)] = node
+	}
+	if b.from.IsZero() || (!from.IsZero() && from.Before(b.from)) {
+		b.from = from
+	}
+	if to.After(b.to) {
+		b.to = to
+	}
+	b.dirty = true
 }
 
 // Close stops the background flush goroutine and performs a final flush.

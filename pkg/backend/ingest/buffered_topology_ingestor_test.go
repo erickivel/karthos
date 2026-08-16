@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +20,47 @@ import (
 type recordingGraphStore struct {
 	mu        sync.Mutex
 	snapshots []topology.Snapshot
+}
+
+type failOnceGraphStore struct {
+	recordingGraphStore
+	mu       sync.Mutex
+	failed   bool
+	failWith error
+}
+
+type blockingFailOnceGraphStore struct {
+	recordingGraphStore
+	mu       sync.Mutex
+	failed   bool
+	started  chan struct{}
+	release  chan struct{}
+	failWith error
+}
+
+func (s *blockingFailOnceGraphStore) PutSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
+	s.mu.Lock()
+	if !s.failed {
+		s.failed = true
+		s.mu.Unlock()
+		close(s.started)
+		<-s.release
+		return s.failWith
+	}
+	s.mu.Unlock()
+	return s.recordingGraphStore.PutSnapshot(ctx, snapshot)
+}
+
+func (s *failOnceGraphStore) PutSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
+	s.mu.Lock()
+	if !s.failed {
+		s.failed = true
+		err := s.failWith
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	return s.recordingGraphStore.PutSnapshot(ctx, snapshot)
 }
 
 func (r *recordingGraphStore) PutSnapshot(_ context.Context, snapshot topology.Snapshot) error {
@@ -108,6 +150,85 @@ func TestBufferedTopologyIngestor_AccumulatesEdges(t *testing.T) {
 	assert.Equal(t, 1, store.count(), "exactly one PutSnapshot after flush")
 	snap := store.last()
 	assert.Len(t, snap.Graph.Edges, 2, "both edges in consolidated snapshot")
+}
+
+func TestBufferedTopologyIngestor_RequeuesFailedSnapshotWithLaterObservations(t *testing.T) {
+	store := &failOnceGraphStore{failWith: errors.New("graph store unavailable")}
+	first := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	later := first.Add(time.Minute)
+	firstEdge := topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, first)
+	firstEdge.Metadata = map[string]string{"revision": "old"}
+	laterEdge := topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, later)
+	laterEdge.Metadata = map[string]string{"revision": "new"}
+	additionalEdge := topology.NewEdge("pod-b", "node-1", topology.RelRunsOn, later)
+	builder := &configuredBuilder{edges: []topology.Edge{firstEdge}}
+
+	buf := NewBufferedTopologyIngestor(
+		map[schema.SignalType]TopologyBuilder{schema.SignalMetric: builder},
+		store,
+		nil,
+		time.Hour,
+	)
+	defer buf.Close()
+
+	require.NoError(t, buf.Ingest(context.Background(), newEnvelope(t, schema.SignalMetric, first)))
+	buf.Flush()
+	require.Zero(t, store.count(), "the first store attempt fails")
+
+	builder.edges = []topology.Edge{laterEdge, additionalEdge}
+	require.NoError(t, buf.Ingest(context.Background(), newEnvelope(t, schema.SignalMetric, later)))
+	buf.Flush()
+
+	require.Equal(t, 1, store.count())
+	snapshot := store.last()
+	require.Len(t, snapshot.Graph.Edges, 2)
+	assert.Equal(t, first, snapshot.From)
+	assert.Equal(t, later, snapshot.To)
+	for _, edge := range snapshot.Graph.Edges {
+		if edge.ID != firstEdge.ID {
+			continue
+		}
+		assert.Equal(t, first, edge.FirstSeen)
+		assert.Equal(t, later, edge.LastSeen)
+		assert.Equal(t, "new", edge.Metadata["revision"])
+	}
+}
+
+func TestBufferedTopologyIngestor_RequeueDoesNotOverwriteConcurrentNewerObservation(t *testing.T) {
+	store := &blockingFailOnceGraphStore{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		failWith: errors.New("graph store unavailable"),
+	}
+	first := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	later := first.Add(time.Minute)
+	firstEdge := topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, first)
+	firstEdge.Metadata = map[string]string{"revision": "old"}
+	laterEdge := topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, later)
+	laterEdge.Metadata = map[string]string{"revision": "new"}
+	builder := &configuredBuilder{edges: []topology.Edge{firstEdge}}
+	buf := NewBufferedTopologyIngestor(map[schema.SignalType]TopologyBuilder{schema.SignalMetric: builder}, store, nil, time.Hour)
+	defer buf.Close()
+
+	require.NoError(t, buf.Ingest(context.Background(), newEnvelope(t, schema.SignalMetric, first)))
+	flushed := make(chan struct{})
+	go func() {
+		buf.Flush()
+		close(flushed)
+	}()
+	<-store.started
+
+	builder.edges = []topology.Edge{laterEdge}
+	require.NoError(t, buf.Ingest(context.Background(), newEnvelope(t, schema.SignalMetric, later)))
+	close(store.release)
+	<-flushed
+
+	buf.Flush()
+	require.Equal(t, 1, store.count())
+	edge := store.last().Graph.Edges[0]
+	assert.Equal(t, first, edge.FirstSeen)
+	assert.Equal(t, later, edge.LastSeen)
+	assert.Equal(t, "new", edge.Metadata["revision"])
 }
 
 func TestBufferedTopologyIngestor_EdgeMerging_LastSeenUpdated(t *testing.T) {
