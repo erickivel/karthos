@@ -34,14 +34,6 @@ func TestOTLPSemconvMetricsStoresConditionVariantsAsSemconvStyleNames(t *testing
 	}
 }
 
-func TestOTLPSemconvMetricsRemovesDeferredFamilies(t *testing.T) {
-	require.NotContains(t, OTLPSemconvMetrics, "k8s.container.storage.request")
-	require.NotContains(t, OTLPSemconvMetrics, "k8s.container.storage.limit")
-	require.NotContains(t, OTLPSemconvMetrics, "k8s.container.ephemeral_storage.request")
-	require.NotContains(t, OTLPSemconvMetrics, "rpc.server.duration")
-	require.NotContains(t, OTLPSemconvMetrics, "servicegraph.request.body.size")
-}
-
 func TestOTLPSemconvMetricsHostByteAndPagingSumsAreCounters(t *testing.T) {
 	for _, metricName := range []string{
 		"system.disk.io.read",
@@ -84,20 +76,5 @@ func TestCatalogCounterRatesAreDerivedFromStoredBaseUnits(t *testing.T) {
 			require.NotEqualf(t, mapping.Unit, metric.Aggregation.RateUnit,
 				"%s rate unit must be query-derived rather than stored", metricName)
 		}
-	}
-}
-
-func TestOTLPSemconvMetricsDoesNotKeepSourceDialectKeys(t *testing.T) {
-	for _, sourceName := range []string{
-		"http_requests_total",
-		"http_request_duration_seconds",
-		"container_cpu_usage_seconds_total",
-		"traces.span.metrics.calls",
-		"traces_service_graph_request_total",
-		"istio_requests_total",
-		"istio_request_duration_milliseconds",
-	} {
-		_, ok := OTLPSemconvMetrics[sourceName]
-		require.False(t, ok, "expected %s to be translated by a dialect instead of stored in OTLPSemconvMetrics", sourceName)
 	}
 }

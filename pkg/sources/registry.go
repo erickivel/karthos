@@ -54,12 +54,12 @@ type Registry struct{ modules []Module }
 func DefaultRegistry() Registry {
 	return Registry{modules: []Module{
 		{ID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Detect: structure.Detect},
-		{ID: IDKubelet, Kind: profile.SourceKindDirect, Dialect: metrics.KubeletDialect, MetricSource: true, Detect: kubelet.Detect, Contribute: kubelet.Contribute, Normalize: kubelet.Normalize},
+		{ID: IDKubelet, Kind: profile.SourceKindDirect, Dialect: kubelet.Dialect, MetricSource: true, Detect: kubelet.Detect, Contribute: kubelet.Contribute, Normalize: kubelet.Normalize},
 		{ID: IDHostOS, Kind: profile.SourceKindDirect, MetricSource: true, Detect: hostos.Detect, Contribute: hostos.Contribute, Normalize: hostos.Normalize},
-		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Dialect: metrics.KubeClusterDialect, MetricSource: true, Detect: kubecluster.Detect, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
-		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Dialect: metrics.PrometheusDialect, MetricSource: true, Detect: prometheusapp.Detect, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
-		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Dialect: metrics.IstioDialect, MetricSource: true, Detect: istio.Detect, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata},
-		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Dialect: metrics.ServicegraphDialect, MetricSource: true, Detect: servicegraph.Detect, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata},
+		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Dialect: kubecluster.Dialect, MetricSource: true, Detect: kubecluster.Detect, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
+		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Dialect: prometheusapp.Dialect, MetricSource: true, Detect: prometheusapp.Detect, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
+		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Dialect: istio.Dialect, MetricSource: true, Detect: istio.Detect, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata},
+		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Dialect: servicegraph.Dialect, MetricSource: true, Detect: servicegraph.Detect, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata},
 	}}
 }
 

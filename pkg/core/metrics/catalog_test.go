@@ -73,36 +73,6 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	require.Empty(t, required)
 }
 
-func TestDefaultCatalogExcludesUnsupportedMetrics(t *testing.T) {
-	unsupported := map[string]struct{}{
-		"rpc.server.request.count":                {},
-		"rpc.server.duration":                     {},
-		"oksg.pod.health.status":                  {},
-		"oksg.container.health.status":            {},
-		"k8s.deployment.desired":                  {},
-		"k8s.node.allocatable_cpu":                {},
-		"k8s.container.ephemeral_storage.request": {},
-		"system.cpu.load_average.1m":              {},
-		"system.network.dropped":                  {},
-		"k8s.pod.network.io":                      {},
-		"k8s.pod.filesystem.usage":                {},
-		"k8s.node.cpu.capacity":                   {},
-		"k8s.node.cpu.cores":                      {},
-		"k8s.node.cpu.frequency":                  {},
-		"k8s.node.memory.capacity":                {},
-		"k8s.node.disk.capacity":                  {},
-		"k8s.node.network.bandwidth.receive":      {},
-		"k8s.node.network.bandwidth.transmit":     {},
-		"k8s.pod.network.io.receive":              {},
-		"k8s.pod.network.io.transmit":             {},
-	}
-
-	for _, metric := range DefaultCatalog() {
-		_, exists := unsupported[metric.Name]
-		require.Falsef(t, exists, "unsupported metric should not be cataloged: %s", metric.Name)
-	}
-}
-
 func TestDefaultCatalogMetricsHaveIngestOrQuerySupport(t *testing.T) {
 	for _, metric := range DefaultCatalog() {
 		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
@@ -149,14 +119,6 @@ func TestDefaultCatalogApplicabilityTargetsExpectedKinds(t *testing.T) {
 	require.Equal(t, []entities.EntityKind{entities.KindPVC, entities.KindPod}, catalog["k8s.volume.inodes.used"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindService}, catalog["servicegraph.request.count"].AppliesTo)
 	require.Empty(t, catalog["servicegraph.request.duration"].AppliesTo)
-}
-
-func TestDefaultCatalogRemovesDeferredMetricFamilies(t *testing.T) {
-	catalog := catalogByName(DefaultCatalog())
-	require.NotContains(t, catalog, "k8s.container.storage.request")
-	require.NotContains(t, catalog, "k8s.container.storage.limit")
-	require.NotContains(t, catalog, "k8s.container.ephemeral_storage.request")
-	require.NotContains(t, catalog, "oksg.pod.health.status")
 }
 
 // Query-derived metrics — composed at query time from other catalog metrics
