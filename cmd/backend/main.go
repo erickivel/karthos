@@ -146,11 +146,11 @@ func run(ctx context.Context, args []string) error {
 	if podLifecycle != nil {
 		metricTopoBuilder = ingest.NewMetricTopologyBuilderWithLifecycle(cfg.ClusterName, podLifecycle)
 	}
-	meshMetricTopoBuilder := ingest.NewMeshMetricTopologyBuilder(dialect, cfg.ClusterName, sourcePolicy)
+	metricCallsTopoBuilder := ingest.NewMetricCallsTopologyBuilder(dialect, cfg.ClusterName, sourcePolicy)
 
 	bufferedTopo := ingest.NewBufferedTopologyIngestor(
 		map[schema.SignalType]ingest.TopologyBuilder{
-			schema.SignalMetric: ingest.NewCompositeTopologyBuilder(metricTopoBuilder, meshMetricTopoBuilder),
+			schema.SignalMetric: ingest.NewCompositeTopologyBuilder(metricTopoBuilder, metricCallsTopoBuilder),
 			schema.SignalTrace:  traceTopoBuilder,
 		},
 		stores.GraphStore,

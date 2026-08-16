@@ -3,7 +3,6 @@ package ingest
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -16,32 +15,27 @@ import (
 	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/sources"
-	"github.com/erickivel/oksg/pkg/sources/istio"
 )
 
-func isServiceGraphEdgeMetric(metricName, translatedName string) bool {
-	return strings.HasPrefix(metricName, "traces.service.graph.") ||
-		strings.HasPrefix(metricName, "traces_service_graph_") ||
-		strings.HasPrefix(metricName, "istio_") ||
-		strings.HasPrefix(translatedName, "servicegraph.")
-}
-
-// MeshMetricTopologyBuilder derives calls edges from mesh metrics that have
-// already been rewritten to the servicegraph edge attribute shape.
-type MeshMetricTopologyBuilder struct {
+// MetricCallsTopologyBuilder derives calls edges from metrics classified by
+// their source module. It owns generic provenance validation, edge assembly,
+// and deduplication; source modules own metric recognition and metadata.
+type MetricCallsTopologyBuilder struct {
 	dialect      *metrics.DialectRegistry
 	clusterName  string
 	sourcePolicy *MetricSourcePolicy
+	modules      sources.Registry
 }
 
-func NewMeshMetricTopologyBuilder(dialect *metrics.DialectRegistry, clusterName string, policy *MetricSourcePolicy) *MeshMetricTopologyBuilder {
+func NewMetricCallsTopologyBuilder(dialect *metrics.DialectRegistry, clusterName string, policy *MetricSourcePolicy) *MetricCallsTopologyBuilder {
+	modules := sources.DefaultRegistry()
 	if policy == nil {
-		policy = NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil)
+		policy = NewMetricSourcePolicy(modules.MetricIDs(), nil)
 	}
-	return &MeshMetricTopologyBuilder{dialect: dialect, clusterName: clusterName, sourcePolicy: policy}
+	return &MetricCallsTopologyBuilder{dialect: dialect, clusterName: clusterName, sourcePolicy: policy, modules: modules}
 }
 
-func (b *MeshMetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnvelope) ([]topology.Edge, error) {
+func (b *MetricCallsTopologyBuilder) Build(_ context.Context, envelope schema.RawEnvelope) ([]topology.Edge, error) {
 	var rm metricspb.ResourceMetrics
 	if err := protojson.Unmarshal(envelope.Payload, &rm); err != nil {
 		return nil, fmt.Errorf("unmarshal ResourceMetrics: %w", err)
@@ -51,17 +45,15 @@ func (b *MeshMetricTopologyBuilder) Build(_ context.Context, envelope schema.Raw
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
 			translated := b.dialect.Translate(metric.Name)
-			if !isServiceGraphEdgeMetric(metric.Name, translated) {
-				continue
-			}
 			if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
 				continue
 			}
 			for _, dp := range metricAttributeSets(metric) {
-				if !b.sourcePolicy.Validate(translated, dp.Attributes).Accepted() {
+				metadata, ok := b.callsEdgeMetadata(metric.Name, translated, dp.Attributes)
+				if !ok {
 					continue
 				}
-				edge, ok := b.edgeFromAttributes(metricTimestamp(envelope.Timestamp, dp.TimeUnixNano), dp.Attributes)
+				edge, ok := b.edgeFromAttributes(metricTimestamp(envelope.Timestamp, dp.TimeUnixNano), dp.Attributes, metadata)
 				if !ok {
 					continue
 				}
@@ -86,7 +78,7 @@ func (b *MeshMetricTopologyBuilder) Build(_ context.Context, envelope schema.Raw
 	return edges, nil
 }
 
-func (b *MeshMetricTopologyBuilder) BuildNodes(_ context.Context, envelope schema.RawEnvelope) []topology.Node {
+func (b *MetricCallsTopologyBuilder) BuildNodes(_ context.Context, envelope schema.RawEnvelope) []topology.Node {
 	var rm metricspb.ResourceMetrics
 	if err := protojson.Unmarshal(envelope.Payload, &rm); err != nil {
 		return nil
@@ -96,14 +88,11 @@ func (b *MeshMetricTopologyBuilder) BuildNodes(_ context.Context, envelope schem
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
 			translated := b.dialect.Translate(metric.Name)
-			if !isServiceGraphEdgeMetric(metric.Name, translated) {
-				continue
-			}
 			if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
 				continue
 			}
 			for _, dp := range metricAttributeSets(metric) {
-				if !b.sourcePolicy.Validate(translated, dp.Attributes).Accepted() {
+				if _, ok := b.callsEdgeMetadata(metric.Name, translated, dp.Attributes); !ok {
 					continue
 				}
 				client := kvString(dp.Attributes, semconv.AttrClient)
@@ -128,7 +117,15 @@ func (b *MeshMetricTopologyBuilder) BuildNodes(_ context.Context, envelope schem
 	return nodes
 }
 
-func (b *MeshMetricTopologyBuilder) edgeFromAttributes(timestamp time.Time, attrs []*commonpb.KeyValue) (topology.Edge, bool) {
+func (b *MetricCallsTopologyBuilder) callsEdgeMetadata(rawMetricName, canonicalMetricName string, attrs []*commonpb.KeyValue) (map[string]string, bool) {
+	validation := b.sourcePolicy.Validate(canonicalMetricName, attrs)
+	if !validation.Accepted() {
+		return nil, false
+	}
+	return b.modules.CallsEdgeMetadata(validation.Source, rawMetricName, canonicalMetricName, attrs)
+}
+
+func (b *MetricCallsTopologyBuilder) edgeFromAttributes(timestamp time.Time, attrs []*commonpb.KeyValue, metadata map[string]string) (topology.Edge, bool) {
 	client := kvString(attrs, semconv.AttrClient)
 	server := kvString(attrs, semconv.AttrServer)
 	clientNamespace := kvString(attrs, semconv.AttrClientNamespace)
@@ -146,7 +143,7 @@ func (b *MeshMetricTopologyBuilder) edgeFromAttributes(timestamp time.Time, attr
 	edge.LastSeen = timestamp
 	edge.Confidence = 1.0
 	edge.Provenance = []string{sourceFromAttrs(attrs)}
-	edge.Metadata = meshMetadata(attrs)
+	edge.Metadata = metadata
 	return edge, true
 }
 
@@ -184,25 +181,6 @@ func metricTimestamp(fallback time.Time, timeUnixNano uint64) time.Time {
 
 func sourceFromAttrs(attrs []*commonpb.KeyValue) string {
 	return firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm)
-}
-
-func meshMetadata(attrs []*commonpb.KeyValue) map[string]string {
-	metadata := make(map[string]string)
-	for _, key := range []string{
-		semconv.AttrNetworkProtocolName,
-		semconv.AttrHTTPStatusCode,
-		semconv.AttrGRPCStatusCode,
-		semconv.AttrMeshPolicy,
-		semconv.AttrMeshSourcePrincipal,
-		semconv.AttrMeshDestinationPrincipal,
-		semconv.AttrMeshResponseFlags,
-		semconv.AttrMeshID,
-	} {
-		if value := istio.MeshAttributeValue(attrs, key); value != "" {
-			metadata[key] = value
-		}
-	}
-	return metadata
 }
 
 func mergeStringMaps(left, right map[string]string) map[string]string {
