@@ -39,7 +39,7 @@ func TestServerAcceptsMetricsOverGRPC(t *testing.T) {
 		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"metric"},
-	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(metricsSink, nil), logger)
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)
@@ -87,7 +87,7 @@ func TestServerAcceptsGzipCompressedMetricsOverGRPC(t *testing.T) {
 		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"metric"},
-	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(metricsSink, nil, nil), logger)
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(metricsSink, nil), logger)
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)
@@ -139,7 +139,7 @@ func TestServerAcceptsTracesOverHTTP(t *testing.T) {
 		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"trace"},
-	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(nil, tracesSink, nil), logger)
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(nil, tracesSink), logger)
 	require.NoError(t, err)
 
 	errCh := make(chan error, 1)

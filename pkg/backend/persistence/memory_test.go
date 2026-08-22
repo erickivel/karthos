@@ -208,12 +208,55 @@ func TestGraphStore_PutAndGetLatest(t *testing.T) {
 	eAB := topology.NewEdge(idA, idB, topology.RelCalls, now)
 	eAC := topology.NewEdge(idA, idC, topology.RelCalls, now)
 
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(eAB, eAC)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(eAB, eAC)))
 
 	snap, err := store.GetLatest(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, snap)
 	assert.Len(t, snap.Graph.Edges, 2)
+}
+
+func TestGraphStore_UsesLatestStructuralSnapshotAndRetainsCurrentObservations(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	ingressID := entities.ComputeEntityID(entities.KindIngress, "cluster", "demo", "public-api")
+	serviceID := entities.ComputeEntityID(entities.KindService, "cluster", "demo", "api")
+	databaseID := entities.ComputeEntityID(entities.KindService, "cluster", "demo", "database")
+	route := topology.NewEdge(ingressID, serviceID, topology.RelRoutesTo, now)
+	calls := topology.NewEdge(serviceID, databaseID, topology.RelCalls, now)
+
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{
+		Graph: topology.Graph{
+			Nodes: []topology.Node{{ID: ingressID, Kind: entities.KindIngress}, {ID: serviceID, Kind: entities.KindService}},
+			Edges: []topology.Edge{route},
+		},
+		CreatedAt: now,
+	}))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(calls)))
+
+	// The later API projection no longer contains the deleted ingress or its route.
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{
+		Graph:     topology.Graph{Nodes: []topology.Node{{ID: serviceID, Kind: entities.KindService}}},
+		CreatedAt: now.Add(time.Minute),
+	}))
+
+	got, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Len(t, store.structuralSnapshots, 2, "each structural refresh remains in history")
+	assert.ElementsMatch(t, []entities.EntityID{serviceID}, nodeIDs(got.Graph.Nodes))
+	assert.Len(t, got.Graph.Edges, 1)
+	assert.Equal(t, topology.RelCalls, got.Graph.Edges[0].Relation)
+}
+
+func nodeIDs(nodes []topology.Node) []entities.EntityID {
+	ids := make([]entities.EntityID, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.ID)
+	}
+	return ids
 }
 
 func TestGraphStore_EdgeDeduplication(t *testing.T) {
@@ -233,8 +276,8 @@ func TestGraphStore_EdgeDeduplication(t *testing.T) {
 	// Same edge ID, different LastSeen.
 	assert.Equal(t, e1.ID, e2.ID)
 
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(e1)))
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(e2)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(e1)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(e2)))
 
 	snap, err := store.GetLatest(ctx)
 	require.NoError(t, err)
@@ -253,12 +296,12 @@ func TestGraphStore_RetiredRunsOnIsHiddenFromLatestAndImmutable(t *testing.T) {
 
 	runsOn := lifecycleRunsOnEdge(podID, nodeID, "uid-old", firstSeen)
 	contains := topology.NewEdge(podID, nodeID, topology.RelContains, firstSeen)
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(runsOn, contains)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(runsOn, contains)))
 	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, "uid-old", retiredAt))
 
 	staleRunsOn := lifecycleRunsOnEdge(podID, nodeID, "uid-old", firstSeen)
 	staleRunsOn.LastSeen = staleAt
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(staleRunsOn)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(staleRunsOn)))
 
 	latest, err := store.GetLatest(ctx)
 	require.NoError(t, err)
@@ -287,11 +330,11 @@ func TestGraphStore_ReplacementUIDBecomesLatestWhileOldAssignmentRemainsAuditHis
 	firstSeen := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 
 	old := lifecycleRunsOnEdge(podID, nodeID, "uid-old", firstSeen)
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(old)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(old)))
 	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, "uid-old", firstSeen.Add(time.Minute)))
 
 	newAssignment := lifecycleRunsOnEdge(podID, nodeID, "uid-new", firstSeen.Add(2*time.Minute))
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(newAssignment)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(newAssignment)))
 
 	latest, err := store.GetLatest(ctx)
 	require.NoError(t, err)
@@ -319,7 +362,7 @@ func TestGraphStore_RetirementBeforeFirstSnapshotKeepsLaterBufferedEdgeRetired(t
 
 	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, "uid-a", retiredAt))
 	buffered := lifecycleRunsOnEdge(podID, nodeID, "uid-a", retiredAt.Add(time.Minute))
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(buffered)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(buffered)))
 
 	latest, err := store.GetLatest(ctx)
 	require.NoError(t, err)
@@ -343,7 +386,7 @@ func TestGraphStore_TerminalGraceSurvivesReconciliationUntilItsDeadline(t *testi
 	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster-a", "node-a")
 	edge := lifecycleRunsOnEdge(podID, nodeID, "uid-terminal", observedAt)
 	edge.Metadata["k8s.cluster.name"] = "cluster-a"
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(edge)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(edge)))
 	_, err := store.MarkRunsOnTerminal(ctx, RunsOnTerminalGrace{
 		ClusterName: "cluster-a",
 		Namespace:   "default",
@@ -389,7 +432,7 @@ func TestGraphStore_RetirementWinsOverDelayedTerminalMarker(t *testing.T) {
 	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster-a", "node-a")
 	edge := lifecycleRunsOnEdge(podID, nodeID, "uid-old", observedAt)
 	edge.Metadata["k8s.cluster.name"] = "cluster-a"
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(edge)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(edge)))
 	require.NoError(t, store.RetireRunsOn(ctx, podID, nodeID, "uid-old", observedAt.Add(time.Second)))
 
 	state, err := store.MarkRunsOnTerminal(ctx, RunsOnTerminalGrace{
@@ -417,7 +460,7 @@ func TestGraphStore_ReconcileUnconfirmedTerminalMarkerWithReplacementRetiresImme
 	old.Metadata["k8s.cluster.name"] = "cluster-a"
 	newAssignment := lifecycleRunsOnEdge(podID, nodeID, "uid-new", now.Add(time.Second))
 	newAssignment.Metadata["k8s.cluster.name"] = "cluster-a"
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(old, newAssignment)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(old, newAssignment)))
 	_, err := store.MarkRunsOnTerminal(ctx, RunsOnTerminalGrace{
 		ClusterName: "cluster-a", Namespace: "default", PodName: "job-0", PodUID: "uid-old", NodeName: "node-a",
 		PodID: podID, NodeID: nodeID, ObservedAt: now, Deadline: now.Add(time.Minute), Confirmed: false,
@@ -459,7 +502,7 @@ func TestGraphStore_ReconcileRunsOnDoesNotCrossClusterBoundary(t *testing.T) {
 		"uid-b", retiredAt,
 	)
 	clusterB.Metadata["k8s.cluster.name"] = "cluster-b"
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(clusterA, clusterB)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(clusterA, clusterB)))
 
 	_, err := store.ReconcileRunsOn(ctx, "cluster-a", nil, retiredAt.Add(time.Minute))
 	require.NoError(t, err)
@@ -481,11 +524,11 @@ func TestGraphStore_NonRunsOnRetiredAtMetadataRemainsLatestAndRefreshable(t *tes
 	later := firstSeen.Add(time.Minute)
 	edge := topology.NewEdge(svc("api"), svc("db"), topology.RelCalls, firstSeen)
 	edge.Metadata = map[string]string{"retired_at": "application-level-marker"}
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(edge)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(edge)))
 
 	refresh := edge
 	refresh.LastSeen = later
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(refresh)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(refresh)))
 
 	latest, err := store.GetLatest(ctx)
 	require.NoError(t, err)
@@ -515,7 +558,7 @@ func TestGraphStore_QueryEdgesBySource(t *testing.T) {
 	eAC := topology.NewEdge(idA, idC, topology.RelCalls, now)
 	eDE := topology.NewEdge(idD, idE, topology.RelCalls, now)
 
-	require.NoError(t, store.PutSnapshot(ctx, newSnapshot(eAB, eAC, eDE)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(eAB, eAC, eDE)))
 
 	got, err := store.QueryEdges(ctx, query.EdgeQuery{Source: idA})
 	require.NoError(t, err)
@@ -534,7 +577,7 @@ func TestGraphStore_NilOnEmpty(t *testing.T) {
 	assert.Nil(t, snap)
 }
 
-func TestGraphStore_AccumulatesNodes(t *testing.T) {
+func TestGraphStore_StoresObservedNodes(t *testing.T) {
 	store := NewInMemoryGraphStore()
 	ctx := context.Background()
 
@@ -545,7 +588,7 @@ func TestGraphStore_AccumulatesNodes(t *testing.T) {
 			Edges: []topology.Edge{},
 		},
 	}
-	require.NoError(t, store.PutSnapshot(ctx, snap))
+	require.NoError(t, store.PutObservedSnapshot(ctx, snap))
 
 	got, err := store.GetLatest(ctx)
 	require.NoError(t, err)
@@ -570,8 +613,8 @@ func TestGraphStore_NodeDeduplication(t *testing.T) {
 			Nodes: []topology.Node{{ID: nodeID, Kind: entities.KindNode}},
 		},
 	}
-	require.NoError(t, store.PutSnapshot(ctx, snap1))
-	require.NoError(t, store.PutSnapshot(ctx, snap2))
+	require.NoError(t, store.PutObservedSnapshot(ctx, snap1))
+	require.NoError(t, store.PutObservedSnapshot(ctx, snap2))
 
 	got, err := store.GetLatest(ctx)
 	require.NoError(t, err)
@@ -579,14 +622,14 @@ func TestGraphStore_NodeDeduplication(t *testing.T) {
 	assert.Len(t, got.Graph.Nodes, 1)
 }
 
-func TestGraphStore_AccumulatesNodesAcrossSnapshots(t *testing.T) {
+func TestGraphStore_RetainsObservedNodesAcrossFlushes(t *testing.T) {
 	store := NewInMemoryGraphStore()
 	ctx := context.Background()
 
 	serviceID := entities.ComputeEntityID(entities.KindService, "cluster", "demo", "gateway")
 	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "demo", "gateway-pod")
 
-	structural := topology.Snapshot{
+	firstObservation := topology.Snapshot{
 		Graph: topology.Graph{
 			Nodes: []topology.Node{
 				{
@@ -615,8 +658,8 @@ func TestGraphStore_AccumulatesNodesAcrossSnapshots(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, store.PutSnapshot(ctx, structural))
-	require.NoError(t, store.PutSnapshot(ctx, runtime))
+	require.NoError(t, store.PutObservedSnapshot(ctx, firstObservation))
+	require.NoError(t, store.PutObservedSnapshot(ctx, runtime))
 
 	got, err := store.GetLatest(ctx)
 	require.NoError(t, err)
@@ -641,7 +684,7 @@ func TestGraphStore_NodeTTLAgesOutStaleNodes(t *testing.T) {
 	freshID := entities.ComputeEntityID(entities.KindPod, "cluster", "demo", "new-pod")
 
 	// Write a snapshot containing the stale node at t=base.
-	require.NoError(t, store.PutSnapshot(ctx, topology.Snapshot{
+	require.NoError(t, store.PutObservedSnapshot(ctx, topology.Snapshot{
 		Graph: topology.Graph{
 			Nodes: []topology.Node{{ID: staleID, Kind: entities.KindPod}},
 		},
@@ -649,7 +692,7 @@ func TestGraphStore_NodeTTLAgesOutStaleNodes(t *testing.T) {
 
 	// Advance past the TTL, then write a new snapshot with just the fresh node.
 	current = base.Add(2 * time.Hour)
-	require.NoError(t, store.PutSnapshot(ctx, topology.Snapshot{
+	require.NoError(t, store.PutObservedSnapshot(ctx, topology.Snapshot{
 		Graph: topology.Graph{
 			Nodes: []topology.Node{{ID: freshID, Kind: entities.KindPod}},
 		},

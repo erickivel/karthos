@@ -301,13 +301,14 @@ func (s *InMemoryMetricStore) QueryCatalogStats(_ context.Context, lookback time
 
 // InMemoryGraphStore is a thread-safe in-memory implementation of GraphStore.
 type InMemoryGraphStore struct {
-	mu       sync.RWMutex
-	snapshot *topology.Snapshot
-	edges    map[string]topology.Edge // keyed by edge ID
-	nodes    map[string]topology.Node // keyed by entity ID string
-	lastSeen map[string]time.Time     // node entity ID -> most recent PutSnapshot time
-	nodeTTL  time.Duration            // 0 = no TTL
-	nowFn    func() time.Time
+	mu                  sync.RWMutex
+	structuralSnapshots []topology.Snapshot
+	observedSnapshot    *topology.Snapshot
+	edges               map[string]topology.Edge // observed edges keyed by edge ID
+	nodes               map[string]topology.Node // observed nodes keyed by entity ID string
+	lastSeen            map[string]time.Time     // observed node entity ID -> most recent observation time
+	nodeTTL             time.Duration            // 0 = no TTL
+	nowFn               func() time.Time
 }
 
 // InMemoryGraphStoreOption configures an InMemoryGraphStore.
@@ -333,14 +334,23 @@ func NewInMemoryGraphStore(opts ...InMemoryGraphStoreOption) *InMemoryGraphStore
 	return s
 }
 
-// PutSnapshot replaces the current snapshot and merges its edges and nodes into
-// the accumulated maps. For edges already present, LastSeen is updated if the
-// incoming edge's LastSeen is later. New edges and nodes are added to their maps.
-func (s *InMemoryGraphStore) PutSnapshot(_ context.Context, snapshot topology.Snapshot) error {
+// PutStructuralSnapshot appends one complete Kubernetes projection. Earlier
+// projections remain available as history while GetLatest uses only the newest.
+func (s *InMemoryGraphStore) PutStructuralSnapshot(_ context.Context, snapshot topology.Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.snapshot = &snapshot
+	s.structuralSnapshots = append(s.structuralSnapshots, snapshot)
+	return nil
+}
+
+// PutObservedSnapshot merges telemetry-derived and lifecycle observations into
+// current state. It never changes structural snapshot history.
+func (s *InMemoryGraphStore) PutObservedSnapshot(_ context.Context, snapshot topology.Snapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.observedSnapshot = &snapshot
 
 	for _, e := range snapshot.Graph.Edges {
 		existing, ok := s.edges[e.ID]
@@ -379,39 +389,63 @@ func (s *InMemoryGraphStore) PutSnapshot(_ context.Context, snapshot topology.Sn
 	return nil
 }
 
-// GetLatest returns the latest snapshot with the current accumulated edges and nodes.
-// Returns nil, nil if no snapshot has been put.
+// GetLatest returns the newest complete structural projection composed with
+// current telemetry/lifecycle observations. Returns nil, nil before any write.
 func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.snapshot == nil {
+	if len(s.structuralSnapshots) == 0 && s.observedSnapshot == nil {
 		return nil, nil
 	}
 
-	edges := make([]topology.Edge, 0, len(s.edges))
+	var result topology.Snapshot
+	if len(s.structuralSnapshots) > 0 {
+		result = s.structuralSnapshots[len(s.structuralSnapshots)-1]
+	} else {
+		result = *s.observedSnapshot
+	}
+
+	edgesByID := make(map[string]topology.Edge, len(result.Graph.Edges)+len(s.edges))
 	for _, e := range s.edges {
 		if edgeRetired(e) || edgeTerminalDeadlineExpired(e, s.nowFn()) {
 			continue
 		}
-		edges = append(edges, e)
+		edgesByID[e.ID] = e
+	}
+	if len(s.structuralSnapshots) > 0 {
+		for _, edge := range result.Graph.Edges {
+			edgesByID[edge.ID] = edge
+		}
+	}
+	edges := make([]topology.Edge, 0, len(edgesByID))
+	for _, edge := range edgesByID {
+		edges = append(edges, edge)
 	}
 
 	var cutoff time.Time
 	if s.nodeTTL > 0 {
 		cutoff = s.nowFn().Add(-s.nodeTTL)
 	}
-	nodes := make([]topology.Node, 0, len(s.nodes))
+	nodesByID := make(map[string]topology.Node, len(result.Graph.Nodes)+len(s.nodes))
 	for id, n := range s.nodes {
 		if s.nodeTTL > 0 {
 			if ts, ok := s.lastSeen[id]; !ok || ts.Before(cutoff) {
 				continue
 			}
 		}
-		nodes = append(nodes, n)
+		nodesByID[id] = n
+	}
+	if len(s.structuralSnapshots) > 0 {
+		for _, node := range result.Graph.Nodes {
+			nodesByID[string(node.ID)] = node
+		}
+	}
+	nodes := make([]topology.Node, 0, len(nodesByID))
+	for _, node := range nodesByID {
+		nodes = append(nodes, node)
 	}
 
-	result := *s.snapshot
 	result.Graph.Edges = edges
 	result.Graph.Nodes = nodes
 	return &result, nil

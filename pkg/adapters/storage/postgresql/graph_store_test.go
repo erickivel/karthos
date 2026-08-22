@@ -19,15 +19,6 @@ func TestApplySnapshotTimestampSetsGraphTimestampFromCreatedAt(t *testing.T) {
 	assert.Equal(t, createdAt, snap.Graph.Timestamp)
 }
 
-func TestBuildLatestNodeQueryUsesSubSecondTTLPrecision(t *testing.T) {
-	t.Parallel()
-
-	sql, args := latestNodeQuery(250 * time.Millisecond)
-
-	assert.Contains(t, sql, "WHERE ts.created_at > NOW() - $1::interval")
-	assert.Equal(t, []any{"250ms"}, args)
-}
-
 func TestRetiredRunsOnSQLKeepsAuditEdgeOutOfLatestAndBlocksStaleRefreshes(t *testing.T) {
 	assert.Contains(t, latestActiveEdgeQuery, "relation <> 'runs_on' OR (")
 	assert.Contains(t, latestActiveEdgeQuery, "NOT (metadata ? 'retired_at')")

@@ -122,7 +122,7 @@ func TestBuildTraceEnvelopesFromOTLPRequest(t *testing.T) {
 func TestSignalRouterRoutesBySignalType(t *testing.T) {
 	metricsSink := &recordingIngestor{}
 	tracesSink := &recordingIngestor{}
-	router := NewSignalRouter(metricsSink, tracesSink, nil)
+	router := NewSignalRouter(metricsSink, tracesSink)
 
 	metricEnvelope, err := schema.NewRawEnvelope(
 		"otlp/grpc",

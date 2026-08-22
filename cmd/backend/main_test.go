@@ -27,7 +27,6 @@ func TestParseConfigAppliesDefaults(t *testing.T) {
 	require.Equal(t, defaultStorageBackend, cfg.StorageBackend)
 	require.Equal(t, "", cfg.PostgresDSN)
 	require.Equal(t, "", cfg.VMURL)
-	require.False(t, cfg.RawStoreEnabled)
 }
 
 func TestParseConfigAllowsSignalOverride(t *testing.T) {
@@ -47,13 +46,11 @@ func TestParseConfigStorageFlags(t *testing.T) {
 		"--storage-backend=external",
 		"--postgres-dsn=postgres://localhost/oksg",
 		"--victoriametrics-url=http://localhost:8428",
-		"--raw-store-enabled",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "external", cfg.StorageBackend)
 	require.Equal(t, "postgres://localhost/oksg", cfg.PostgresDSN)
 	require.Equal(t, "http://localhost:8428", cfg.VMURL)
-	require.True(t, cfg.RawStoreEnabled)
 }
 
 func TestParseConfigParsesNodeTTLAndFlushInterval(t *testing.T) {

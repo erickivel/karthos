@@ -171,7 +171,7 @@ The backend API is then available at `http://localhost:18081/api/v1/...`.
 ## Discovery Refresh & Node TTL Invariant
 
 The Postgres graph store ages out nodes whose most recent containing snapshot
-is older than `OKSG_NODE_TTL` (default 24h, see `latestNodeQuery` in
+is older than `OKSG_NODE_TTL` (default 24h, see `loadLatestObservedNodes` in
 `pkg/adapters/storage/postgresql/graph_store.go`). Workload, Ingress,
 ConfigMap, Secret, and PVC nodes are produced **only** by the direct
 Kubernetes structure module (`pkg/sources/structure`) — runtime OTLP signals

@@ -31,18 +31,18 @@ const provenance = "k8s-api"
 type Module struct {
 	client   kubernetes.Interface
 	cluster  string
-	graphs   persistence.GraphStore
+	graphs   persistence.StructuralSnapshotStore
 	entities persistence.EntityRegistry
 	now      func() time.Time
 }
 
-func New(client kubernetes.Interface, cluster string, graphs persistence.GraphStore, entities persistence.EntityRegistry) *Module {
+func New(client kubernetes.Interface, cluster string, graphs persistence.StructuralSnapshotStore, entities persistence.EntityRegistry) *Module {
 	return &Module{client: client, cluster: cluster, graphs: graphs, entities: entities, now: time.Now}
 }
 
-// Refresh observes the current Kubernetes API state and replaces the current
+// Refresh observes the current Kubernetes API state and appends one complete
 // structural snapshot. Runtime telemetry topology continues through its own
-// ingestion path.
+// observation path.
 func (m *Module) Refresh(ctx context.Context) error {
 	if m.client == nil {
 		return fmt.Errorf("structure module Kubernetes client is required")
@@ -63,11 +63,8 @@ func (m *Module) Refresh(ctx context.Context) error {
 			}
 		}
 	}
-	if len(edges) == 0 && len(nodes) == 0 {
-		return nil
-	}
 	now := m.now().UTC()
-	return m.graphs.PutSnapshot(ctx, topology.Snapshot{
+	return m.graphs.PutStructuralSnapshot(ctx, topology.Snapshot{
 		Version:   schema.CurrentVersion,
 		Graph:     topology.Graph{Nodes: nodes, Edges: edges, Timestamp: now},
 		From:      now,

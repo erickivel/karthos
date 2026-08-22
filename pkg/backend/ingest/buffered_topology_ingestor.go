@@ -16,7 +16,7 @@ import (
 // It implements the Ingestor interface.
 type BufferedTopologyIngestor struct {
 	builders map[schema.SignalType]TopologyBuilder
-	store    persistence.GraphStore
+	store    persistence.ObservationSnapshotStore
 	logger   *logging.Logger
 
 	mu    sync.Mutex
@@ -35,7 +35,7 @@ type BufferedTopologyIngestor struct {
 // the background flush goroutine.
 func NewBufferedTopologyIngestor(
 	builders map[schema.SignalType]TopologyBuilder,
-	store persistence.GraphStore,
+	store persistence.ObservationSnapshotStore,
 	logger *logging.Logger,
 	interval time.Duration,
 ) *BufferedTopologyIngestor {
@@ -131,7 +131,7 @@ func (b *BufferedTopologyIngestor) Flush() {
 		CreatedAt: time.Now().UTC(),
 	}
 
-	if err := b.store.PutSnapshot(context.Background(), snapshot); err != nil {
+	if err := b.store.PutObservedSnapshot(context.Background(), snapshot); err != nil {
 		b.mu.Lock()
 		b.mergeLocked(edgeSlice, nodeSlice, from, to)
 		b.mu.Unlock()

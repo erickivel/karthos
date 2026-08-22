@@ -35,8 +35,21 @@ type SourceStat struct {
 	LastSeenAt  time.Time
 }
 
+// StructuralSnapshotStore stores complete, directly observed Kubernetes
+// projections. Each write is retained as a point-in-time structural history.
+type StructuralSnapshotStore interface {
+	PutStructuralSnapshot(ctx context.Context, snapshot topology.Snapshot) error
+}
+
+// ObservationSnapshotStore stores telemetry-derived and lifecycle observations.
+// These observations are current state, not a complete Kubernetes projection.
+type ObservationSnapshotStore interface {
+	PutObservedSnapshot(ctx context.Context, snapshot topology.Snapshot) error
+}
+
 type GraphStore interface {
-	PutSnapshot(ctx context.Context, snapshot topology.Snapshot) error
+	StructuralSnapshotStore
+	ObservationSnapshotStore
 	GetLatest(ctx context.Context) (*topology.Snapshot, error)
 	QueryEdges(ctx context.Context, q query.EdgeQuery) ([]topology.Edge, error)
 }

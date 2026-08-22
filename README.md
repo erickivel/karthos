@@ -26,7 +26,7 @@ relations between them, with metrics attached to nodes and edges.
 | `pkg/adapters/api` | REST API server, handlers, response envelope, pagination |
 | `pkg/adapters/storage` | Storage factory; `postgresql/` and `victoriametrics/` external backends |
 | `pkg/backend/ingest` | Envelope builder, signal router, normalizer, topology builders, ingestors |
-| `pkg/backend/persistence` | Store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `RawStore`, `EntityRegistry`) and in-memory implementations |
+| `pkg/backend/persistence` | Store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `EntityRegistry`) and in-memory implementations |
 | `pkg/core/metrics` | Canonical catalog, generic dialect and resolver contracts, OTLP mappings |
 | `pkg/collector` | Generic collection-plan composition, provider-neutral requirements, Helm values compilation, and deployment |
 | `pkg/sources` | Static source-module inventory with source-owned detection, semantic collection requirements, and normalization |

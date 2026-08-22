@@ -19,27 +19,11 @@ func TestNewStores_MemoryBackend(t *testing.T) {
 	assert.NotNil(t, stores.GraphStore)
 	assert.NotNil(t, stores.MetadataStore)
 	assert.NotNil(t, stores.EntityRegistry)
-	assert.Nil(t, stores.RawStore, "raw store should be nil when disabled")
 }
 
-func TestNewStores_MemoryBackendWithRaw(t *testing.T) {
-	stores, err := NewStores(context.Background(), StorageConfig{
-		Backend:    BackendMemory,
-		RawEnabled: true,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stores.Close()) })
-
-	assert.NotNil(t, stores.RawStore, "raw store should be non-nil when enabled")
-}
-
-func TestNewStores_EmptyBackendDefaultsToMemory(t *testing.T) {
-	stores, err := NewStores(context.Background(), StorageConfig{})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stores.Close()) })
-
-	assert.NotNil(t, stores.MetricStore)
-	assert.NotNil(t, stores.GraphStore)
+func TestNewStoresRequiresExplicitBackend(t *testing.T) {
+	_, err := NewStores(context.Background(), StorageConfig{})
+	require.ErrorContains(t, err, "unsupported storage backend")
 }
 
 func TestNewStores_ExternalRequiresPostgresDSN(t *testing.T) {

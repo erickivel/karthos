@@ -46,7 +46,7 @@ pkg/
                          source-policy enforcement, normalization orchestration, and
                          metric / mesh / trace topology builders
   backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
-                         RawStore, EntityRegistry) and in-memory implementations
+                         EntityRegistry) and in-memory implementations
   backend/query/         graph and metrics query contracts
   collector/spec/        provider-neutral typed collection requirements and compiled CollectionPlan
   collector/             generic composition of selected source requirements

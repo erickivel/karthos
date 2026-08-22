@@ -220,7 +220,7 @@ func TestPodLifecycleTrackerInitialReconciliationRetiresPreseededReplacement(t *
 	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
 	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
 	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old", "k8s.cluster.name": "cluster"}
-	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+	require.NoError(t, store.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
 
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-new", "node-a"))
@@ -260,7 +260,7 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
 	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
 	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old", "k8s.cluster.name": cluster}
-	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+	require.NoError(t, store.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
 
 	firstWatcher := watch.NewRaceFreeFake()
 	firstClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
@@ -303,7 +303,7 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 	newAssignment := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
 	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-new")
 	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new", "k8s.cluster.name": cluster}
-	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
+	require.NoError(t, store.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
 
 	secondWatcher := watch.NewRaceFreeFake()
 	secondClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-new", "node-a"))
@@ -440,7 +440,7 @@ func TestPodLifecycleTrackerRestoresPersistedDeadlineForTerminalUIDStillListed(t
 	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, observedAt)
 	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-terminal")
 	old.Metadata = map[string]string{"k8s.pod.uid": "uid-terminal", "k8s.cluster.name": cluster}
-	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+	require.NoError(t, store.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
 	_, err := store.MarkRunsOnTerminal(context.Background(), persistence.RunsOnTerminalGrace{
 		ClusterName: cluster, Namespace: "default", PodName: "job-0", PodUID: "uid-terminal", NodeName: "node-a",
 		PodID: podID, NodeID: nodeID, ObservedAt: observedAt, Deadline: deadline, Confirmed: true,
@@ -490,7 +490,7 @@ func TestPodLifecycleTrackerRetirementWinsWhenDelayedMarkerRetriesAcrossRestart(
 	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
 	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
 	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old", "k8s.cluster.name": cluster}
-	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+	require.NoError(t, store.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
 
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
@@ -545,7 +545,7 @@ func TestPodLifecycleTrackerRetirementWinsWhenDelayedMarkerRetriesAcrossRestart(
 	newAssignment := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
 	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-new")
 	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new", "k8s.cluster.name": cluster}
-	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
+	require.NoError(t, store.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
 	watcher.Add(podForLifecycle("default", "job-0", "uid-new", "node-a"))
 	close(allowRetry)
 	require.Eventually(t, func() bool {
@@ -594,7 +594,7 @@ func TestPodLifecycleTrackerRestartRetiresUnconfirmedRetryMarkerAfterReplacement
 	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
 	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
 	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old", "k8s.cluster.name": cluster}
-	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+	require.NoError(t, store.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
 
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
@@ -649,7 +649,7 @@ func TestPodLifecycleTrackerRestartRetiresUnconfirmedRetryMarkerAfterReplacement
 	newAssignment := topology.NewEdge(podID, nodeID, topology.RelRunsOn, time.Now().UTC())
 	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-new")
 	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new", "k8s.cluster.name": cluster}
-	require.NoError(t, store.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
+	require.NoError(t, store.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
 	close(allowRetryWrite)
 	require.Eventually(t, func() bool {
 		edges, err := store.QueryEdges(context.Background(), query.EdgeQuery{Source: podID})

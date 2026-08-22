@@ -57,7 +57,6 @@ type config struct {
 	StorageBackend        string
 	PostgresDSN           string
 	VMURL                 string
-	RawStoreEnabled       bool
 	TopologyFlushInterval time.Duration
 	StatusStaleSeconds    int
 	NodeTTL               time.Duration
@@ -95,7 +94,6 @@ func run(ctx context.Context, args []string) error {
 		Backend:     storage.StorageBackend(cfg.StorageBackend),
 		PostgresDSN: cfg.PostgresDSN,
 		VMURL:       cfg.VMURL,
-		RawEnabled:  cfg.RawStoreEnabled,
 		NodeTTL:     cfg.NodeTTL,
 	})
 	if err != nil {
@@ -165,7 +163,6 @@ func run(ctx context.Context, args []string) error {
 			bufferedTopo,
 		),
 		bufferedTopo,
-		stores.RawStore,
 	)
 
 	logger.Info("normalization pipeline configured",
@@ -231,7 +228,6 @@ func parseConfig(args []string) (config, error) {
 	storageBackend := fs.String("storage-backend", envOrDefault("OKSG_STORAGE_BACKEND", defaultStorageBackend), "storage backend: memory or external")
 	postgresDSN := fs.String("postgres-dsn", envOrDefault("OKSG_POSTGRES_DSN", ""), "PostgreSQL connection string")
 	vmURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
-	rawStoreEnabled := fs.Bool("raw-store-enabled", envOrDefault("OKSG_RAW_STORE_ENABLED", "false") == "true", "enable raw envelope persistence")
 	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
 	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
 	nodeTTLStr := fs.String("node-ttl", envOrDefault("OKSG_NODE_TTL", defaultNodeTTL.String()), "topology node TTL; nodes absent from snapshots for longer than this age out (0 disables)")
@@ -283,7 +279,6 @@ func parseConfig(args []string) (config, error) {
 		StorageBackend:           *storageBackend,
 		PostgresDSN:              *postgresDSN,
 		VMURL:                    *vmURL,
-		RawStoreEnabled:          *rawStoreEnabled,
 		TopologyFlushInterval:    topologyFlushInterval,
 		StatusStaleSeconds:       *statusStaleSeconds,
 		NodeTTL:                  nodeTTL,

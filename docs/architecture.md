@@ -132,9 +132,15 @@ Invariant: `structure_refresh_interval < node_ttl` (default `OKSG_NODE_TTL=24h`)
 Violating it makes structural-only kinds disappear from `/api/v1/graph`
 after the TTL window.
 
-`InMemoryGraphStore` accumulates nodes and edges across snapshots and
-updates `LastSeen` on re-observed edges. The Postgres `GraphStore` mirrors
-this with `ON CONFLICT DO UPDATE SET last_seen = GREATEST(...)`.
+`GraphStore` separates two write paths. The direct Kubernetes structure module
+appends complete, immutable structural snapshots. Telemetry and Pod lifecycle
+ingestion update only the current observation state, preserving active
+`runs_on` and `calls` behavior. Reads compose the newest structural snapshot
+with those current observations; an object omitted by the next Kubernetes
+refresh disappears from the current graph but remains in the earlier
+structural snapshot. PostgreSQL retains the structural snapshots and their
+edges separately; the in-memory implementation follows the same composition
+rules.
 
 ## Persistence
 
@@ -143,19 +149,20 @@ Store interfaces (`pkg/backend/persistence/`):
 | Interface | Responsibility |
 |-----------|----------------|
 | `MetricStore` | Write and query canonical metric samples |
-| `GraphStore` | Topology snapshots (nodes per snapshot, accumulated edges) |
+| `GraphStore` | Append-only structural snapshots plus current telemetry/lifecycle observations |
 | `MetadataStore` | Cluster capability profiles |
-| `RawStore` | Raw telemetry envelopes (optional) |
 | `EntityRegistry` | Canonical entity records |
 
 `pkg/adapters/storage/factory.go` returns `Stores` based on
 `StorageConfig.Backend`:
 
 - `memory` (default) — in-memory implementations, no external deps
-- `external` — PostgreSQL (graph, metadata, raw, entities) + VictoriaMetrics (metrics)
+- `external` — PostgreSQL (graph, metadata, entities) + VictoriaMetrics (metrics)
 
 PostgreSQL uses `pgx/v5`; schema migrations run on startup via
-`CREATE TABLE IF NOT EXISTS`. VictoriaMetrics uses the Prometheus-compatible
+`CREATE TABLE IF NOT EXISTS`. The structural-snapshot model requires a fresh
+external PostgreSQL schema; it deliberately has no legacy converter or reader.
+VictoriaMetrics uses the Prometheus-compatible
 HTTP API (`/api/v1/import/prometheus` for write, `/api/v1/query_range` for
 read) — no snappy/protobuf dependencies.
 
@@ -166,7 +173,6 @@ Backend storage flags:
 | `--storage-backend` | `OKSG_STORAGE_BACKEND` | `memory` |
 | `--postgres-dsn` | `OKSG_POSTGRES_DSN` | `""` |
 | `--victoriametrics-url` | `OKSG_VICTORIAMETRICS_URL` | `""` |
-| `--raw-store-enabled` | `OKSG_RAW_STORE_ENABLED` | `false` |
 | `--topology-flush-interval` | `OKSG_TOPOLOGY_FLUSH_INTERVAL` | `60s` |
 | `--node-ttl` | `OKSG_NODE_TTL` | `24h` |
 

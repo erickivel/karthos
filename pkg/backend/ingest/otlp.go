@@ -12,7 +12,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/schema"
 )
 
@@ -83,28 +82,19 @@ func (b *EnvelopeBuilder) timestamp() time.Time {
 }
 
 type SignalRouter struct {
-	metrics  Ingestor
-	traces   Ingestor
-	rawStore persistence.RawStore
+	metrics Ingestor
+	traces  Ingestor
 }
 
 // NewSignalRouter creates a router that dispatches envelopes by signal type.
-// rawStore is optional (nil disables raw envelope persistence).
-func NewSignalRouter(metrics, traces Ingestor, rawStore persistence.RawStore) *SignalRouter {
+func NewSignalRouter(metrics, traces Ingestor) *SignalRouter {
 	return &SignalRouter{
-		metrics:  metrics,
-		traces:   traces,
-		rawStore: rawStore,
+		metrics: metrics,
+		traces:  traces,
 	}
 }
 
 func (r *SignalRouter) Route(ctx context.Context, envelope schema.RawEnvelope) error {
-	if r.rawStore != nil {
-		if err := r.rawStore.WriteRaw(ctx, []schema.RawEnvelope{envelope}); err != nil {
-			return fmt.Errorf("write raw envelope: %w", err)
-		}
-	}
-
 	switch envelope.SignalType {
 	case schema.SignalMetric:
 		if r.metrics == nil {

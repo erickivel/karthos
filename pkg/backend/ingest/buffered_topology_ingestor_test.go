@@ -16,7 +16,7 @@ import (
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
-// recordingGraphStore records PutSnapshot calls for test assertions.
+// recordingGraphStore records observation snapshots for test assertions.
 type recordingGraphStore struct {
 	mu        sync.Mutex
 	snapshots []topology.Snapshot
@@ -38,7 +38,7 @@ type blockingFailOnceGraphStore struct {
 	failWith error
 }
 
-func (s *blockingFailOnceGraphStore) PutSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
+func (s *blockingFailOnceGraphStore) PutObservedSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
 	s.mu.Lock()
 	if !s.failed {
 		s.failed = true
@@ -48,10 +48,10 @@ func (s *blockingFailOnceGraphStore) PutSnapshot(ctx context.Context, snapshot t
 		return s.failWith
 	}
 	s.mu.Unlock()
-	return s.recordingGraphStore.PutSnapshot(ctx, snapshot)
+	return s.recordingGraphStore.PutObservedSnapshot(ctx, snapshot)
 }
 
-func (s *failOnceGraphStore) PutSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
+func (s *failOnceGraphStore) PutObservedSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
 	s.mu.Lock()
 	if !s.failed {
 		s.failed = true
@@ -60,10 +60,10 @@ func (s *failOnceGraphStore) PutSnapshot(ctx context.Context, snapshot topology.
 		return err
 	}
 	s.mu.Unlock()
-	return s.recordingGraphStore.PutSnapshot(ctx, snapshot)
+	return s.recordingGraphStore.PutObservedSnapshot(ctx, snapshot)
 }
 
-func (r *recordingGraphStore) PutSnapshot(_ context.Context, snapshot topology.Snapshot) error {
+func (r *recordingGraphStore) PutObservedSnapshot(_ context.Context, snapshot topology.Snapshot) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.snapshots = append(r.snapshots, snapshot)
@@ -138,16 +138,16 @@ func TestBufferedTopologyIngestor_AccumulatesEdges(t *testing.T) {
 
 	env1 := newEnvelope(t, schema.SignalMetric, now)
 	require.NoError(t, buf.Ingest(context.Background(), env1))
-	assert.Equal(t, 0, store.count(), "no PutSnapshot before flush")
+	assert.Equal(t, 0, store.count(), "no observation snapshot before flush")
 
 	builder.edges = []topology.Edge{edge2}
 	env2 := newEnvelope(t, schema.SignalMetric, now.Add(time.Second))
 	require.NoError(t, buf.Ingest(context.Background(), env2))
-	assert.Equal(t, 0, store.count(), "still no PutSnapshot before flush")
+	assert.Equal(t, 0, store.count(), "still no observation snapshot before flush")
 
 	buf.Flush()
 
-	assert.Equal(t, 1, store.count(), "exactly one PutSnapshot after flush")
+	assert.Equal(t, 1, store.count(), "exactly one observation snapshot after flush")
 	snap := store.last()
 	assert.Len(t, snap.Graph.Edges, 2, "both edges in consolidated snapshot")
 }
@@ -304,7 +304,7 @@ func TestBufferedTopologyIngestor_NoDirtyData_FlushIsNoop(t *testing.T) {
 
 	buf.Flush()
 
-	assert.Equal(t, 0, store.count(), "flush with no ingested data should not call PutSnapshot")
+	assert.Equal(t, 0, store.count(), "flush with no ingested data should not write an observation snapshot")
 }
 
 func TestBufferedTopologyIngestor_SignalTypeRouting(t *testing.T) {
@@ -459,5 +459,5 @@ func TestBufferedTopologyIngestor_PeriodicFlush(t *testing.T) {
 	// Wait for at least one tick to fire.
 	require.Eventually(t, func() bool {
 		return store.count() > 0
-	}, time.Second, 10*time.Millisecond, "periodic flush should trigger PutSnapshot")
+	}, time.Second, 10*time.Millisecond, "periodic flush should write an observation snapshot")
 }
