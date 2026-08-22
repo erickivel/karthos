@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -139,16 +140,8 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 		return nil, err
 	}
 
-	healthMetric := metrics.IsHealthStatusMetric(q.MetricName)
 	for i := range samples {
 		samples[i].MetricName = q.MetricName
-		if healthMetric {
-			// Populate the public string label so consumers never have to
-			// re-implement the integer→label mapping. Storage and PromQL
-			// composition keep the integer; this is the API-boundary
-			// translation point.
-			samples[i].ValueLabel = metrics.HealthLabel(q.MetricName, samples[i].Value)
-		}
 	}
 
 	return samples, nil
@@ -412,38 +405,7 @@ func buildPromQL(q query.MetricQuery) string {
 			return activeCounterRate(q)
 		}
 	}
-	switch q.MetricName {
-	case "oksg.container.health.status":
-		// Per-container composite. Priority order: restarting > not_ready > healthy.
-		// Each clause uses the `(predicate) * 0 + N` idiom so a clause emits
-		// a sample with value N only when its predicate matches, and emits
-		// no sample otherwise. PromQL `or` then keeps the first matching
-		// clause per series (clause ordering = priority). The `bool`
-		// modifier would have collapsed false predicates to 0-valued samples
-		// instead of dropping them, breaking the priority cascade.
-		// Samples are keyed by the same entity_id (container ID), so no
-		// cross-entity join is needed.
-		ready := metricSelector(withMetricName(q, "k8s.container.ready"))
-		restarts := metricSelector(withMetricName(q, "k8s.container.restarts"))
-		return fmt.Sprintf(
-			"(rate(%s[5m]) > 0) * 0 + 3 or (%s == 0) * 0 + 2 or (%s == 1) * 0 + 1",
-			restarts, ready, ready,
-		)
-	case "oksg.pod.health.status":
-		// Per-pod composite, derived from k8s.pod.phase only (1=Pending,
-		// 2=Running, 3=Succeeded, 4=Failed, 5=Unknown). Public enum:
-		// 1=healthy, 4=pending, 5=succeeded, 6=failed, 7=unknown. The
-		// running_not_ready (2) and restarting (3) states are observable at
-		// container scope; rolling them up to pod scope requires a pod_id
-		// label on container metrics — see plan.
-		phase := metricSelector(withMetricName(q, "k8s.pod.phase"))
-		return fmt.Sprintf(
-			"(%s == 2) * 0 + 1 or (%s == 1) * 0 + 4 or (%s == 3) * 0 + 5 or (%s == 4) * 0 + 6 or (%s == 5) * 0 + 7",
-			phase, phase, phase, phase, phase,
-		)
-	default:
-		return selector
-	}
+	return selector
 }
 
 func metricSelector(q query.MetricQuery) string {
@@ -455,15 +417,15 @@ func metricSelectorWithMatchers(q query.MetricQuery, extraMatchers ...string) st
 	if len(q.EntityIDs) > 0 {
 		ids := make([]string, 0, len(q.EntityIDs))
 		for _, id := range q.EntityIDs {
-			ids = append(ids, string(id))
+			ids = append(ids, regexp.QuoteMeta(string(id)))
 		}
-		matchers = append(matchers, fmt.Sprintf(`entity_id=~"%s"`, strings.Join(ids, "|")))
+		matchers = append(matchers, fmt.Sprintf(`entity_id=~"^(?:%s)$"`, strings.Join(ids, "|")))
 	}
 	if q.EdgeSourceID != "" {
-		matchers = append(matchers, fmt.Sprintf(`edge_client_id="%s"`, q.EdgeSourceID))
+		matchers = append(matchers, fmt.Sprintf(`edge_client_id="%s"`, escapeLabelValue(string(q.EdgeSourceID))))
 	}
 	if q.EdgeTargetID != "" {
-		matchers = append(matchers, fmt.Sprintf(`edge_server_id="%s"`, q.EdgeTargetID))
+		matchers = append(matchers, fmt.Sprintf(`edge_server_id="%s"`, escapeLabelValue(string(q.EdgeTargetID))))
 	}
 	matchers = append(matchers, extraMatchers...)
 	if len(matchers) == 0 {

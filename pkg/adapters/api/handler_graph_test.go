@@ -44,7 +44,7 @@ func seedGraph(t *testing.T) *persistence.InMemoryGraphStore {
 			},
 		},
 	}
-	require.NoError(t, gs.PutSnapshot(context.Background(), snap))
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), snap))
 	return gs
 }
 
@@ -121,7 +121,7 @@ func TestGetGraphHealthQueriesStayConstantSize(t *testing.T) {
 			topology.Node{ID: entities.EntityID("container-" + strconv.Itoa(i)), Kind: entities.KindContainer},
 		)
 	}
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 		CreatedAt: now,
 		Graph:     topology.Graph{Timestamp: now, Nodes: nodes},
 	}))
@@ -132,7 +132,7 @@ func TestGetGraphHealthQueriesStayConstantSize(t *testing.T) {
 	resp := doGet(t, srv, "/api/v1/graph")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Len(t, store.queries, 2)
+	require.Len(t, store.queries, 3)
 	for _, q := range store.queries {
 		require.Empty(t, q.EntityIDs, "snapshot-wide health query must not grow with graph size")
 	}
@@ -141,7 +141,7 @@ func TestGetGraphHealthQueriesStayConstantSize(t *testing.T) {
 func TestGetGraphReportsPartialHealthEnrichment(t *testing.T) {
 	gs := persistence.NewInMemoryGraphStore()
 	now := time.Now().UTC()
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 		CreatedAt: now,
 		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
 			{ID: "pod-1", Kind: entities.KindPod},
@@ -150,7 +150,7 @@ func TestGetGraphReportsPartialHealthEnrichment(t *testing.T) {
 	}))
 	store := &recordingMetricStore{
 		samples: map[string][]metrics.MetricSample{},
-		errors:  map[string]error{"oksg.pod.health.status": errors.New("pod query failed")},
+		errors:  map[string]error{"k8s.pod.phase": errors.New("pod query failed")},
 	}
 	srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
 	defer srv.cancel()
@@ -309,8 +309,8 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 				return nodes[0].(map[string]any)["status"].(string)
 			},
 			samples: []metrics.MetricSample{
-				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthPending, Timestamp: now.Add(-time.Minute)},
-				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthHealthy, Timestamp: now},
+				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
+				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 2, Timestamp: now},
 			},
 		},
 		{
@@ -322,8 +322,8 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 				return nodes[0].(map[string]any)["status"].(string)
 			},
 			samples: []metrics.MetricSample{
-				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthHealthy, Timestamp: now},
-				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthPending, Timestamp: now.Add(-time.Minute)},
+				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 2, Timestamp: now},
+				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
 			},
 		},
 		{
@@ -334,9 +334,9 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 				return data["node"].(map[string]any)["status"].(string)
 			},
 			samples: []metrics.MetricSample{
-				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthPending, Timestamp: now.Add(-time.Minute)},
-				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthHealthy, Timestamp: now},
-				{MetricName: "oksg.pod.health.status", EntityID: podID, ValueLabel: metrics.HealthFailed, Timestamp: now.Add(-30 * time.Second)},
+				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
+				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 2, Timestamp: now},
+				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 4, Timestamp: now.Add(-30 * time.Second)},
 			},
 		},
 	}
@@ -344,11 +344,11 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 	for _, tt := range orders {
 		t.Run(tt.name, func(t *testing.T) {
 			gs := persistence.NewInMemoryGraphStore()
-			require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+			require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 				CreatedAt: now,
 				Graph:     topology.Graph{Timestamp: now, Nodes: []topology.Node{{ID: podID, Kind: entities.KindPod}}},
 			}))
-			store := &recordingMetricStore{samples: map[string][]metrics.MetricSample{"oksg.pod.health.status": tt.samples}}
+			store := &recordingMetricStore{samples: map[string][]metrics.MetricSample{"k8s.pod.phase": tt.samples}}
 			srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
 			defer srv.cancel()
 
@@ -478,9 +478,9 @@ func TestListEdgesReturnsRetiredUIDVersionedRunsOnAssignmentsForAudit(t *testing
 	newAssignment := topology.NewEdge(podID, nodeID, topology.RelRunsOn, now.Add(time.Minute))
 	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-new")
 	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new"}
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
 	require.NoError(t, gs.RetireRunsOn(context.Background(), podID, nodeID, "uid-old", now.Add(30*time.Second)))
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
 
 	srv := newTestServer(t, Config{GraphStore: gs})
 	defer srv.cancel()
@@ -512,7 +512,7 @@ func TestGetGraphIncludesStructuralKindsWhenGraphContainsThem(t *testing.T) {
 	pvcID := entities.ComputeEntityID(entities.KindPVC, "cluster", "default", "app-pvc")
 	ingressID := entities.ComputeEntityID(entities.KindIngress, "cluster", "default", "app-ingress", "app.default.local")
 
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 		From:      now,
 		To:        now,
 		CreatedAt: now,

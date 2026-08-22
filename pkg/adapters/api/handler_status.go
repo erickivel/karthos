@@ -18,6 +18,7 @@ type StatusHandler struct {
 	metadataStore    persistence.MetadataStore
 	graphStore       persistence.GraphStore
 	metricStore      persistence.MetricStore
+	healthResolver   *HealthResolver
 	startTime        time.Time
 	hasMetricStore   bool
 	hasGraphStore    bool
@@ -158,7 +159,7 @@ type nodeSummary struct {
 	Unknown   int           `json:"unknown"`
 }
 
-// podSummary buckets pods by their oksg.pod.health.status string label.
+// podSummary buckets pods by the direct pod-phase-derived string label.
 // Field names match the public string set documented at
 // pkg/core/metrics/health_status.go and in docs/api-reference.md.
 type podSummary struct {
@@ -191,7 +192,11 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context, graphNodes []t
 	}
 
 	nodeResult := queryHealthSamples(ctx, h.metricStore, "k8s.node.condition.ready", nodeIDs, false)
-	podResult := queryHealthSamples(ctx, h.metricStore, "oksg.pod.health.status", podIDs, false)
+	podResolution := h.healthResolver.Resolve(ctx, graphNodes, false)
+	podResult := healthSampleResult{quality: podResolution.Pods}
+	if len(podResolution.Errors) > 0 {
+		podResult.err = podResolution.Errors[0]
+	}
 	applicable := make([]healthQuality, 0, 2)
 	if len(nodeIDs) > 0 {
 		applicable = append(applicable, nodeResult.quality)
@@ -234,9 +239,8 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context, graphNodes []t
 	if podResult.quality == healthQualityUnavailable {
 		hs.Pods.Unknown = len(podIDs)
 	} else {
-		latestLabel := latestLabelPerEntity(podResult.samples)
 		for _, id := range podIDs {
-			switch latestLabel[id] {
+			switch podResolution.Statuses[id] {
 			case metrics.HealthHealthy:
 				hs.Pods.Healthy++
 			case metrics.HealthRunningNotReady:
@@ -256,20 +260,6 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context, graphNodes []t
 	}
 
 	return hs
-}
-
-// latestLabelPerEntity collapses a list of MetricSamples to one ValueLabel per
-// entity, keeping the most recent timestamp.
-func latestLabelPerEntity(samples []metrics.MetricSample) map[entities.EntityID]string {
-	latest := make(map[entities.EntityID]string, len(samples))
-	latestTS := make(map[entities.EntityID]time.Time, len(samples))
-	for _, sample := range samples {
-		if ts, ok := latestTS[sample.EntityID]; !ok || sample.Timestamp.After(ts) {
-			latest[sample.EntityID] = sample.ValueLabel
-			latestTS[sample.EntityID] = sample.Timestamp
-		}
-	}
-	return latest
 }
 
 func latestSamplePerEntity(samples []metrics.MetricSample) map[entities.EntityID]float64 {

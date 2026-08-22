@@ -75,11 +75,8 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 
 func TestDefaultCatalogMetricsHaveIngestOrQuerySupport(t *testing.T) {
 	for _, metric := range DefaultCatalog() {
-		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
-			continue
-		}
 		_, mapped := OTLPSemconvMetrics[metric.Name]
-		require.Truef(t, mapped, "catalog metric %s has no OTLP mapping or query-derived exception", metric.Name)
+		require.Truef(t, mapped, "catalog metric %s has no OTLP mapping", metric.Name)
 	}
 }
 
@@ -121,24 +118,8 @@ func TestDefaultCatalogApplicabilityTargetsExpectedKinds(t *testing.T) {
 	require.Empty(t, catalog["servicegraph.request.duration"].AppliesTo)
 }
 
-// Query-derived metrics — composed at query time from other catalog metrics
-// (see pkg/adapters/storage/victoriametrics/metric_store.go buildPromQL switch
-// arms, and the derivedHealthStatus helper for cross-entity composition).
-// They never arrive as OTLP samples, so they intentionally have no source.
-//
-// When adding a new derived metric here you MUST also add a buildPromQL case
-// (or extend derivedHealthStatus) before the metric is exposed via the
-// catalog test's `required` map — otherwise queries return empty silently.
-var catalogSourcelessExceptions = map[string]struct{}{
-	"oksg.pod.health.status":       {},
-	"oksg.container.health.status": {},
-}
-
 func TestDefaultCatalogEntriesDeclareSources(t *testing.T) {
 	for _, metric := range DefaultCatalog() {
-		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
-			continue
-		}
 		require.NotEmptyf(t, metric.Sources, "metric %s declares no Sources", metric.Name)
 	}
 }

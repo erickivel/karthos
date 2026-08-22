@@ -48,14 +48,7 @@ Important properties:
 - **Sources drive arbitration**, not detection. A metric with several entries
   in `Sources` declares more than one possible producer; the resolver picks
   exactly one per cluster.
-- **Query-derived metrics have no Sources.** `oksg.pod.health.status` and
-  `oksg.container.health.status` are composed at
-  query time from other catalog metrics — see the *Query-derived enum metrics*
-  section below and the `buildPromQL` switch arms in
-  `pkg/adapters/storage/victoriametrics/metric_store.go`. They are listed in
-  `catalogSourcelessExceptions` (`pkg/core/metrics/catalog_test.go`).
-- **Catalog ↔ ingest invariant.** Every cataloged metric (other than the
-  query-derived exceptions tracked in `catalogSourcelessExceptions`) must
+- **Catalog ↔ ingest invariant.** Every cataloged metric must
   appear in `OTLPSemconvMetrics` (`pkg/core/metrics/otel_mappings.go`); the
   test `TestDefaultCatalogMetricsHaveIngestOrQuerySupport` enforces this.
 - **Catalog inclusion requires a real path.** Add a metric only after its
@@ -317,23 +310,6 @@ labels and timestamps are idempotent at storage. See the
 Live metric API range queries set `nocache=1`; otherwise an aligned query result
 computed just before a burst can hide newly ingested counter samples until the
 VictoriaMetrics response cache expires.
-
-### 4c. Query-derived enum metrics
-
-A small number of catalog metrics are **composed at query time** from other
-catalog metrics rather than ingested directly. They are listed in
-`catalogSourcelessExceptions` (`pkg/core/metrics/catalog_test.go`) and have an
-empty `Sources` list. Today two such metrics exist:
-- `oksg.container.health.status` — integer-encoded enum derived per container
-  from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Public
-  values: `1=healthy`, `2=running_not_ready`, `3=restarting`. Priority order
-  enforced by PromQL `or` clause ordering: restarting > not_ready > healthy.
-- `oksg.pod.health.status` — integer-encoded enum derived per pod from
-  `k8s.pod.phase`. Public values: `1=healthy` (Running), `4=pending`,
-  `5=succeeded`, `6=failed`, `7=unknown`. Pod-scope rollups of
-  `running_not_ready` (2) and `restarting` (3) require a `pod_id` label on
-  container metrics — those states are observable today only at container
-  scope. Tracked as a follow-up plan.
 
 **Convention for status-shaped signals.** Receivers that emit lifecycle state
 (e.g. `k8s.pod.phase` from `k8s_cluster`) typically encode the enum as an

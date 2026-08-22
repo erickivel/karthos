@@ -56,6 +56,18 @@ func TestQueryMetricsRequiresMetricName(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+func TestQueryMetricsRejectsNonCanonicalPublicIDs(t *testing.T) {
+	store := seedMetrics(t)
+	for _, target := range []string{
+		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&entity_id=not-an-id",
+		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&edge_source_id=not-an-id",
+		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&edge_target_id=not-an-id",
+	} {
+		response := serveMetricsRequest(t, store, target)
+		require.Equal(t, http.StatusBadRequest, response.Code, target)
+	}
+}
+
 func TestQueryMetricsAggregationMetadataAndModeAwareUnits(t *testing.T) {
 	store := persistence.NewInMemoryMetricStore()
 	end := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)

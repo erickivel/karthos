@@ -121,7 +121,22 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 
 	var entityIDs []entities.EntityID
 	for _, id := range r.URL.Query()["entity_id"] {
-		entityIDs = append(entityIDs, entities.EntityID(id))
+		entityID := entities.EntityID(id)
+		if !entities.IsCanonicalID(entityID) {
+			writeError(w, http.StatusBadRequest, "entity_id must be a canonical entity ID")
+			return nil, effectiveMetricQuery{}, false
+		}
+		entityIDs = append(entityIDs, entityID)
+	}
+	edgeSourceID := entities.EntityID(r.URL.Query().Get("edge_source_id"))
+	if edgeSourceID != "" && !entities.IsCanonicalID(edgeSourceID) {
+		writeError(w, http.StatusBadRequest, "edge_source_id must be a canonical entity ID")
+		return nil, effectiveMetricQuery{}, false
+	}
+	edgeTargetID := entities.EntityID(r.URL.Query().Get("edge_target_id"))
+	if edgeTargetID != "" && !entities.IsCanonicalID(edgeTargetID) {
+		writeError(w, http.StatusBadRequest, "edge_target_id must be a canonical entity ID")
+		return nil, effectiveMetricQuery{}, false
 	}
 
 	q := query.MetricQuery{
@@ -129,8 +144,8 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 		MetricName:   metricName,
 		From:         from,
 		To:           to,
-		EdgeSourceID: entities.EntityID(r.URL.Query().Get("edge_source_id")),
-		EdgeTargetID: entities.EntityID(r.URL.Query().Get("edge_target_id")),
+		EdgeSourceID: edgeSourceID,
+		EdgeTargetID: edgeTargetID,
 		Aggregation:  resolved.Mode,
 		Window:       resolved.Window,
 		Unit:         resolved.Unit,

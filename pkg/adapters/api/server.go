@@ -62,6 +62,7 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 	if staleSeconds <= 0 {
 		staleSeconds = 300
 	}
+	healthResolver := NewHealthResolver(cfg.MetricStore)
 
 	statusHandler := &StatusHandler{
 		metadataStore:    cfg.MetadataStore,
@@ -74,6 +75,7 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 		hasEntityReg:     cfg.EntityRegistry != nil,
 		staleThreshold:   time.Duration(staleSeconds) * time.Second,
 		logger:           logger,
+		healthResolver:   healthResolver,
 	}
 	statusHandler.RegisterRoutes(mux)
 
@@ -81,6 +83,7 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 		graphStore:     cfg.GraphStore,
 		entityRegistry: cfg.EntityRegistry,
 		metricStore:    cfg.MetricStore,
+		healthResolver: healthResolver,
 		logger:         logger,
 	}
 	graphHandler.RegisterRoutes(mux)

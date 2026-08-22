@@ -170,7 +170,7 @@ func TestBuildPromQL(t *testing.T) {
 				MetricName: "k8s.pod.cpu.usage",
 				EntityIDs:  []entities.EntityID{"abc123"},
 			},
-			expected: `k8s_pod_cpu_usage{entity_id=~"abc123"}`,
+			expected: `k8s_pod_cpu_usage{entity_id=~"^(?:abc123)$"}`,
 		},
 		{
 			name: "metric name with multiple entity IDs",
@@ -178,23 +178,7 @@ func TestBuildPromQL(t *testing.T) {
 				MetricName: "k8s.pod.memory.working_set",
 				EntityIDs:  []entities.EntityID{"abc", "def"},
 			},
-			expected: `k8s_pod_memory_working_set{entity_id=~"abc|def"}`,
-		},
-		{
-			name: "container health status composes ready and restart-rate per container",
-			query: query.MetricQuery{
-				MetricName: "oksg.container.health.status",
-				EntityIDs:  []entities.EntityID{"container-1"},
-			},
-			expected: `(rate(k8s_container_restarts{entity_id=~"container-1"}[5m]) > 0) * 0 + 3 or (k8s_container_ready{entity_id=~"container-1"} == 0) * 0 + 2 or (k8s_container_ready{entity_id=~"container-1"} == 1) * 0 + 1`,
-		},
-		{
-			name: "pod health status maps phase enum to public health enum",
-			query: query.MetricQuery{
-				MetricName: "oksg.pod.health.status",
-				EntityIDs:  []entities.EntityID{"pod-1"},
-			},
-			expected: `(k8s_pod_phase{entity_id=~"pod-1"} == 2) * 0 + 1 or (k8s_pod_phase{entity_id=~"pod-1"} == 1) * 0 + 4 or (k8s_pod_phase{entity_id=~"pod-1"} == 3) * 0 + 5 or (k8s_pod_phase{entity_id=~"pod-1"} == 4) * 0 + 6 or (k8s_pod_phase{entity_id=~"pod-1"} == 5) * 0 + 7`,
+			expected: `k8s_pod_memory_working_set{entity_id=~"^(?:abc|def)$"}`,
 		},
 	}
 
@@ -222,7 +206,7 @@ func TestBuildPromQLDefaultCountersUseExactWindowAndPreserveFilters(t *testing.T
 				MetricName: "system.disk.operations",
 				EntityIDs:  []entities.EntityID{"node-1"},
 			},
-			selector: `system_disk_operations{entity_id=~"node-1",temporality!="delta"}`,
+			selector: `system_disk_operations{entity_id=~"^(?:node-1)$",temporality!="delta"}`,
 		},
 		{
 			name: "edge-filtered error count",

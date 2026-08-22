@@ -501,7 +501,7 @@ Constraints that have caused regressions if ignored:
   cards only when it includes `edge`.
 - **Health summary.** Cluster Overview's runtime health row reads
   `/api/v1/status.health_summary`: node health from
-  `k8s.node.condition.ready` and pod health from `oksg.pod.health.status`, both
+  `k8s.node.condition.ready` and pod health from `k8s.pod.phase`, both
   intersected with current graph entities and with an explicit `unknown` bucket.
   Consumers must also honor the aggregate and branch `complete` / `partial` /
   `unavailable` quality values. The UI does not infer phase from absence of telemetry.

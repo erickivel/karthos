@@ -66,15 +66,15 @@ Response:
 }
 ```
 
-`health_summary` is present whenever a graph snapshot exists. Node health uses the latest `k8s.node.condition.ready` samples from the last 5 minutes. Pod buckets are derived from the `oksg.pod.health.status` derived enum metric (the integer value is translated server-side via `pkg/core/metrics/health_status.go`); entities without a recent sample fall through to `unknown`.
+`health_summary` is present whenever a graph snapshot exists. Node health uses `k8s.node.condition.ready`; pod buckets derive directly from `k8s.pod.phase`; entities without a recent sample fall through to `unknown`.
 
 Each branch and the aggregate carry a quality value: `complete`, `partial`, or `unavailable`. A successful metric query remains `complete` even when samples are missing. A failed branch becomes `unavailable`, all applicable current entities in that branch become unknown, and `system_status` becomes `degraded` with a generic branch reason. If no MetricStore is configured, the snapshot still produces an `unavailable` summary populated with current graph entity counts. Detailed store errors are logged but not returned, and these enrichment failures keep HTTP 200.
 
 Snapshot-wide health lookups deliberately omit entity-ID filters, so query size stays constant as the graph grows; the API intersects recent results with current graph IDs in Go. The single-node endpoint retains an exact one-entity filter.
 
-The `unknown` bucket can include pod entities that no longer exist in the cluster but have not yet aged out of the entity registry. Structural ingestion only re-emits pods that the discovery refresh observes, while `oksg.pod.health.status` is derived from `k8s.pod.phase` and disappears as soon as the pod is gone — so during the window between deletion and TTL eviction (`OKSG_NODE_TTL`, default 24h), the topology still lists the pod with `status: "unknown"`.
+The `unknown` bucket can include pod entities that no longer exist in the cluster but have not yet aged out of the entity registry.
 
-Pod bucket keys match the public health-status string set used elsewhere in the API: `healthy`, `running_not_ready`, `restarting`, `pending`, `succeeded`, `failed`, `unknown`. The pod-scope composition currently only emits `healthy / pending / succeeded / failed / unknown`; `running_not_ready` and `restarting` are observable today at container scope (`oksg.container.health.status`) and roll up to pod scope only after a future `pod_id` labelling change to container metrics.
+Pod bucket keys are `healthy`, `pending`, `succeeded`, `failed`, and `unknown`. Container graph status derives from `k8s.container.ready` plus the five-minute `k8s.container.restarts` rate.
 
 Status values:
 
@@ -187,7 +187,7 @@ Response:
 }
 ```
 
-Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is one of the public health-status string set: `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. For Pod and Container nodes the value is the latest sample of `oksg.pod.health.status` / `oksg.container.health.status` translated to its string label by the API (see `pkg/core/metrics/health_status.go`); for kinds without a derived health metric (Service, Node, etc.) the field is `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality without adding quality fields to each node. The full graph and single-node responses expose the same metadata. Aggregate runtime health is exposed through `/api/v1/status.health_summary` (see above).
+Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
 
 ### GET /api/v1/graph/nodes/{id}
 
@@ -276,8 +276,6 @@ bounded `http_route` only when the application or collector supplied
 Without that route, the canonical application metric is service-level
 aggregation rather than per-path data.
 
-- `oksg.container.health.status` -> integer-encoded enum (1=healthy, 2=running_not_ready, 3=restarting) derived from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Priority order: restarting > not_ready > healthy. Empty result means no recent sample (treat as unknown).
-- `oksg.pod.health.status` -> integer-encoded enum (1=healthy, 4=pending, 5=succeeded, 6=failed, 7=unknown) derived from `k8s.pod.phase`. running_not_ready and restarting at pod scope are a follow-up — see `oksg.container.health.status` for those today.
 - `k8s.pod.status_reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
 - `http.server.request.duration` / `servicegraph.request.duration` -> temporality-aware `<metric>_sum` rate divided by the corresponding `<metric>_count` rate
 
@@ -322,19 +320,7 @@ Response:
 }
 ```
 
-For enum metrics (`oksg.pod.health.status`, `oksg.container.health.status`, and `k8s.pod.status_reason`), every sample additionally carries a `value_label` field with the public string label translated from the integer `value` by the backend. Frontends should render `value_label`; the integer encoding is internal to storage and PromQL composition only.
-
-```json
-{
-  "metric_name": "oksg.container.health.status",
-  "entity_id": "...",
-  "value": 3,
-  "value_label": "restarting",
-  "timestamp": "2026-05-08T10:00:00Z",
-  "unit": "count",
-  "labels": {"source": ""}
-}
-```
+For `k8s.pod.status_reason`, samples carry a `value_label` translated from the integer value. Derived graph/status health is not a queryable metric.
 
 Health composites use `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`; pod status reasons use `evicted | node_affinity | node_lost | shutdown | unexpected_admission_error | unknown`. Canonical mappings live in `pkg/core/metrics/health_status.go`. The `value_label` field is omitted on non-enum metrics.
 

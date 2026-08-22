@@ -8,6 +8,7 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
 type healthQuality string
@@ -25,6 +26,84 @@ type healthSampleResult struct {
 	err     error
 }
 
+// HealthResolver derives graph and status health from direct catalog metrics.
+// It is intentionally above MetricStore so in-memory and VictoriaMetrics
+// backends share exactly the same health semantics.
+type HealthResolver struct{ store persistence.MetricStore }
+
+type healthResolution struct {
+	Statuses   map[entities.EntityID]string
+	Pods       healthQuality
+	Containers healthQuality
+	Errors     []error
+}
+
+func NewHealthResolver(store persistence.MetricStore) *HealthResolver {
+	return &HealthResolver{store: store}
+}
+
+func (r *HealthResolver) Resolve(ctx context.Context, nodes []topology.Node, exact bool) healthResolution {
+	result := healthResolution{Statuses: make(map[entities.EntityID]string)}
+	var podIDs, containerIDs []entities.EntityID
+	for _, node := range nodes {
+		switch node.Kind {
+		case entities.KindPod:
+			podIDs = append(podIDs, node.ID)
+		case entities.KindContainer:
+			containerIDs = append(containerIDs, node.ID)
+		}
+	}
+	pods := queryHealthSamples(ctx, r.store, "k8s.pod.phase", podIDs, exact)
+	result.Pods = pods.quality
+	if pods.err != nil {
+		result.Errors = append(result.Errors, pods.err)
+	} else {
+		for id, value := range latestSamplePerEntity(pods.samples) {
+			result.Statuses[id] = podHealthFromPhase(value)
+		}
+	}
+	ready := queryHealthSamples(ctx, r.store, "k8s.container.ready", containerIDs, exact)
+	restarts := queryHealthSamplesWithAggregation(ctx, r.store, "k8s.container.restarts", containerIDs, exact, metrics.AggregationWindowRate, healthLookback)
+	result.Containers = combineHealthQuality(ready.quality, restarts.quality)
+	if ready.err != nil {
+		result.Errors = append(result.Errors, ready.err)
+	}
+	if restarts.err != nil {
+		result.Errors = append(result.Errors, restarts.err)
+	}
+	if result.Containers != healthQualityUnavailable {
+		readyValues, restartRates := latestSamplePerEntity(ready.samples), latestSamplePerEntity(restarts.samples)
+		for _, id := range containerIDs {
+			if restartRates[id] > 0 {
+				result.Statuses[id] = metrics.HealthRestarting
+				continue
+			}
+			switch readyValues[id] {
+			case 1:
+				result.Statuses[id] = metrics.HealthHealthy
+			case 0:
+				result.Statuses[id] = metrics.HealthRunningNotReady
+			}
+		}
+	}
+	return result
+}
+
+func podHealthFromPhase(value float64) string {
+	switch int(value) {
+	case 1:
+		return metrics.HealthPending
+	case 2:
+		return metrics.HealthHealthy
+	case 3:
+		return metrics.HealthSucceeded
+	case 4:
+		return metrics.HealthFailed
+	default:
+		return metrics.HealthUnknown
+	}
+}
+
 // queryHealthSamples keeps snapshot-wide PromQL text constant by omitting the
 // entity matcher and intersecting returned recent samples with current graph
 // IDs. Single-entity callers may request an exact store-side filter.
@@ -35,6 +114,10 @@ func queryHealthSamples(
 	ids []entities.EntityID,
 	exact bool,
 ) healthSampleResult {
+	return queryHealthSamplesWithAggregation(ctx, store, metricName, ids, exact, metrics.AggregationLatest, 0)
+}
+
+func queryHealthSamplesWithAggregation(ctx context.Context, store persistence.MetricStore, metricName string, ids []entities.EntityID, exact bool, aggregation metrics.AggregationMode, window time.Duration) healthSampleResult {
 	if len(ids) == 0 {
 		return healthSampleResult{quality: healthQualityComplete}
 	}
@@ -43,7 +126,7 @@ func queryHealthSamples(
 	}
 
 	now := time.Now().UTC()
-	q := query.MetricQuery{MetricName: metricName, From: now.Add(-healthLookback), To: now}
+	q := query.MetricQuery{MetricName: metricName, From: now.Add(-healthLookback), To: now, Aggregation: aggregation, Window: window}
 	if exact {
 		q.EntityIDs = ids
 	}

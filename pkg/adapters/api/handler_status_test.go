@@ -94,7 +94,7 @@ func TestLatestSamplePerEntity(t *testing.T) {
 func freshGraphStore(t *testing.T) persistence.GraphStore {
 	t.Helper()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 		Version:   schema.CurrentVersion,
 		CreatedAt: time.Now(),
 		Graph:     topology.Graph{Timestamp: time.Now()},
@@ -212,7 +212,7 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 	ms := persistence.NewInMemoryMetricStore()
 	now := time.Now().UTC()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 		Version:   schema.CurrentVersion,
 		CreatedAt: now,
 		Graph: topology.Graph{
@@ -231,15 +231,13 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 		},
 	}))
 
-	// Pod health buckets are derived from the oksg.pod.health.status enum
-	// metric. Public values: 1=healthy, 4=pending, 5=succeeded, 6=failed,
-	// 7=unknown (the pod-scope composition does not emit 2 or 3 today).
+	// Pod health buckets are derived from the direct Kubernetes pod phase.
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "oksg.pod.health.status", EntityID: "pod-1", Value: 1, Timestamp: now},
-		{MetricName: "oksg.pod.health.status", EntityID: "pod-2", Value: 1, Timestamp: now},
-		{MetricName: "oksg.pod.health.status", EntityID: "pod-3", Value: 4, Timestamp: now},
-		{MetricName: "oksg.pod.health.status", EntityID: "pod-4", Value: 6, Timestamp: now},
-		{MetricName: "oksg.pod.health.status", EntityID: "pod-5", Value: 7, Timestamp: now},
+		{MetricName: "k8s.pod.phase", EntityID: "pod-1", Value: 2, Timestamp: now},
+		{MetricName: "k8s.pod.phase", EntityID: "pod-2", Value: 2, Timestamp: now},
+		{MetricName: "k8s.pod.phase", EntityID: "pod-3", Value: 1, Timestamp: now},
+		{MetricName: "k8s.pod.phase", EntityID: "pod-4", Value: 4, Timestamp: now},
+		{MetricName: "k8s.pod.phase", EntityID: "pod-5", Value: 5, Timestamp: now},
 		// pod-6 has no sample → falls through to unknown.
 	}))
 
@@ -290,7 +288,7 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 func TestStatusHealthSummaryUnavailableWithoutMetricStore(t *testing.T) {
 	now := time.Now().UTC()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 		Version: schema.CurrentVersion, CreatedAt: now,
 		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
 			{ID: "node-1", Kind: entities.KindNode},
@@ -327,7 +325,7 @@ func TestStatusBulkHealthQueriesDoNotEmbedEntityIDs(t *testing.T) {
 		nodes = append(nodes, topology.Node{ID: entities.EntityID("pod-" + strconv.Itoa(i+1)), Kind: entities.KindPod})
 	}
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 		Version: schema.CurrentVersion, CreatedAt: now, Graph: topology.Graph{Timestamp: now, Nodes: nodes},
 	}))
 	ms := &recordingMetricStore{samples: map[string][]metrics.MetricSample{}}
@@ -346,7 +344,7 @@ func TestStatusBulkHealthQueriesDoNotEmbedEntityIDs(t *testing.T) {
 func TestStatusDegradesWhenPodHealthBranchFails(t *testing.T) {
 	now := time.Now().UTC()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutSnapshot(context.Background(), topology.Snapshot{
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
 		Version: schema.CurrentVersion, CreatedAt: now,
 		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
 			{ID: "node-1", Kind: entities.KindNode}, {ID: "pod-1", Kind: entities.KindPod},
@@ -356,7 +354,7 @@ func TestStatusDegradesWhenPodHealthBranchFails(t *testing.T) {
 		samples: map[string][]metrics.MetricSample{
 			"k8s.node.condition.ready": {{MetricName: "k8s.node.condition.ready", EntityID: "node-1", Value: 1, Timestamp: now}},
 		},
-		errors: map[string]error{"oksg.pod.health.status": errors.New("query too long")},
+		errors: map[string]error{"k8s.pod.phase": errors.New("query too long")},
 	}
 	srv := newTestServer(t, Config{MetricStore: ms, GraphStore: gs, MetadataStore: persistence.NewInMemoryMetadataStore(), EntityRegistry: persistence.NewInMemoryEntityRegistry()})
 	defer srv.cancel()

@@ -20,6 +20,7 @@ type GraphHandler struct {
 	graphStore     persistence.GraphStore
 	entityRegistry persistence.EntityRegistry
 	metricStore    persistence.MetricStore
+	healthResolver *HealthResolver
 	logger         *logging.Logger
 }
 
@@ -127,48 +128,31 @@ func (h *GraphHandler) batchEntities(ctx context.Context, ids []entities.EntityI
 // callers omit entity matchers and intersect in memory, keeping query text
 // bounded as the graph grows. Single-node callers retain exact filtering.
 func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node, exact bool) (map[entities.EntityID]string, healthEnrichmentQuality) {
-	var podIDs, containerIDs []entities.EntityID
-	for _, n := range nodes {
-		switch n.Kind {
-		case entities.KindPod:
-			podIDs = append(podIDs, n.ID)
-		case entities.KindContainer:
-			containerIDs = append(containerIDs, n.ID)
+	if h.healthResolver == nil {
+		return map[entities.EntityID]string{}, healthEnrichmentQuality{Status: healthQualityUnavailable, Pods: healthQualityUnavailable, Containers: healthQualityUnavailable}
+	}
+	resolution := h.healthResolver.Resolve(ctx, nodes, exact)
+	for _, err := range resolution.Errors {
+		h.logger.Warn("health query failed", logging.Error(err))
+	}
+	applicable := make([]healthQuality, 0, 2)
+	for _, node := range nodes {
+		if node.Kind == entities.KindPod {
+			applicable = append(applicable, resolution.Pods)
+			break
 		}
 	}
-	resolved := make(map[entities.EntityID]string)
-	podQuality := h.fillHealthStatus(ctx, "oksg.pod.health.status", podIDs, exact, resolved)
-	containerQuality := h.fillHealthStatus(ctx, "oksg.container.health.status", containerIDs, exact, resolved)
-
-	applicable := make([]healthQuality, 0, 2)
-	if len(podIDs) > 0 {
-		applicable = append(applicable, podQuality)
-	}
-	if len(containerIDs) > 0 {
-		applicable = append(applicable, containerQuality)
+	for _, node := range nodes {
+		if node.Kind == entities.KindContainer {
+			applicable = append(applicable, resolution.Containers)
+			break
+		}
 	}
 	status := healthQualityComplete
 	if len(applicable) > 0 {
 		status = combineHealthQuality(applicable...)
 	}
-	return resolved, healthEnrichmentQuality{Status: status, Pods: podQuality, Containers: containerQuality}
-}
-
-func (h *GraphHandler) fillHealthStatus(ctx context.Context, metricName string, ids []entities.EntityID, exact bool, into map[entities.EntityID]string) healthQuality {
-	result := queryHealthSamples(ctx, h.metricStore, metricName, ids, exact)
-	if result.err != nil {
-		h.logger.Warn("health-status query failed", logging.Error(result.err), logging.String("metric", metricName))
-		return result.quality
-	}
-	// Select by timestamp because MetricStore implementations do not guarantee
-	// result ordering.
-	for id, label := range latestLabelPerEntity(result.samples) {
-		if label == "" {
-			continue
-		}
-		into[id] = label
-	}
-	return result.quality
+	return resolution.Statuses, healthEnrichmentQuality{Status: status, Pods: resolution.Pods, Containers: resolution.Containers}
 }
 
 func summaryFrom(entity entities.Entity) *relatedEntitySummary {
