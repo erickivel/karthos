@@ -110,6 +110,19 @@ func TestBuildUsesV0156FeatureGates(t *testing.T) {
 	require.Empty(t, values.Gateway.FeatureGates)
 }
 
+func TestBuildIncludesDisabledCollectorLogDebugging(t *testing.T) {
+	values, err := NewGenerator().Build(otel.Deployment{
+		DebugExporter: otel.DebugExporter{
+			ID:     "debug/oksg",
+			Config: map[string]any{"verbosity": "detailed"},
+		},
+	}, profile.ClusterProfile{}, contract.ResolvedSourcePlan{})
+	require.NoError(t, err)
+	require.False(t, values.CollectorDebug.Enabled)
+	require.Equal(t, "debug/oksg", values.CollectorDebug.ExporterID)
+	require.Equal(t, map[string]any{"verbosity": "detailed"}, values.CollectorDebug.ExporterConfig)
+}
+
 func TestBuildEmbedsResolvedSourcePlanForHelmOwnedContract(t *testing.T) {
 	resolved := contract.ResolvedSourcePlan{
 		ProfileFingerprint: "profile-fingerprint",

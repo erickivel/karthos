@@ -35,12 +35,28 @@ app.kubernetes.io/component: {{ .component }}
 {{ printf "%s:%s" .Values.frontend.image.repository .Values.frontend.image.tag }}
 {{- end -}}
 
-{{- define "oksg-otel.agentChecksum" -}}
-{{- .Values.agent.collectorConfig | sha256sum -}}
+{{- define "oksg-otel.gatewayChecksum" -}}
+{{- printf "%s:%s" .Values.gateway.collectorConfig (.Values.collectorDebug | toJson) | sha256sum -}}
 {{- end -}}
 
-{{- define "oksg-otel.gatewayChecksum" -}}
-{{- .Values.gateway.collectorConfig | sha256sum -}}
+{{- define "oksg-otel.agentChecksum" -}}
+{{- printf "%s:%s" .Values.agent.collectorConfig (.Values.collectorDebug | toJson) | sha256sum -}}
+{{- end -}}
+
+{{/* Render generated collector config, optionally attaching the OTel adapter's
+debug exporter to each selected pipeline. */}}
+{{- define "oksg-otel.collectorConfig" -}}
+{{- $context := .context -}}
+{{- $config := mustDeepCopy (.config | fromYaml) -}}
+{{- if $context.Values.collectorDebug.enabled -}}
+{{- $exporters := get $config "exporters" -}}
+{{- $_ := set $exporters $context.Values.collectorDebug.exporterID $context.Values.collectorDebug.exporterConfig -}}
+{{- $service := get $config "service" -}}
+{{- range $_, $pipeline := get $service "pipelines" -}}
+{{- $_ := set $pipeline "exporters" (append (get $pipeline "exporters") $context.Values.collectorDebug.exporterID) -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $config -}}
 {{- end -}}
 
 {{/*

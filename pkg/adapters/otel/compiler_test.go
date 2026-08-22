@@ -25,6 +25,18 @@ func TestCompileUsesDerivedServiceGraphOnlyWhenRequested(t *testing.T) {
 	require.Equal(t, []string{otlpGRPCExporter, "service_graph"}, deployment.GatewayConfig.Service.Pipelines["traces"].Exporters)
 }
 
+func TestCompileProvidesDevelopmentDebugExporterSpecification(t *testing.T) {
+	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "debug/oksg", deployment.DebugExporter.ID)
+	require.Equal(t, "detailed", deployment.DebugExporter.Config["verbosity"])
+	require.Equal(t, false, deployment.DebugExporter.Config["use_internal_logger"])
+	require.Equal(t, []string{"stdout"}, deployment.DebugExporter.Config["output_paths"])
+}
+
 func TestCompileRetainsIstioProtocolCounters(t *testing.T) {
 	config := istioReceiver(&collectorspec.Istio{SourceID: metrics.SourceMeshIstio, Flavor: "istio", MetricsPort: 15020, MetricsPath: "/stats/prometheus"})
 	scrapes := config["config"].(map[string]any)["scrape_configs"].([]map[string]any)

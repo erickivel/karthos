@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["global", "namespace", "agent", "gateway", "backend", "rollout"],
+  "required": ["global", "namespace", "agent", "gateway", "backend", "collectorDebug", "storage", "rollout"],
   "properties": {
     "global": {
       "type": "object",
@@ -27,6 +27,49 @@
       "type": "array",
       "items": { "type": "string", "enum": ["metric", "trace"] },
       "minItems": 1
+    },
+    "collectorDebug": {
+      "type": "object",
+      "required": ["enabled", "exporterID", "exporterConfig"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "exporterID": { "type": "string", "minLength": 1 },
+        "exporterConfig": { "type": "object", "minProperties": 1 }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "required": ["backend", "postgresql", "victoriametrics"],
+      "additionalProperties": false,
+      "properties": {
+        "backend": { "type": "string", "enum": ["memory", "external"] },
+        "postgresql": {
+          "type": "object",
+          "required": ["enabled", "dsn"],
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" }, "dsn": { "type": "string" } }
+        },
+        "victoriametrics": {
+          "type": "object",
+          "required": ["enabled", "url"],
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" }, "url": { "type": "string" } }
+        }
+      },
+      "allOf": [{
+        "if": { "properties": { "backend": { "const": "external" } } },
+        "then": { "allOf": [
+          { "anyOf": [
+            { "properties": { "postgresql": { "properties": { "enabled": { "const": true } } } } },
+            { "properties": { "postgresql": { "properties": { "dsn": { "minLength": 1 } } } } }
+          ] },
+          { "anyOf": [
+            { "properties": { "victoriametrics": { "properties": { "enabled": { "const": true } } } } },
+            { "properties": { "victoriametrics": { "properties": { "url": { "minLength": 1 } } } } }
+          ] }
+        ] }
+      }]
     },
     "namespace": {
       "type": "object",

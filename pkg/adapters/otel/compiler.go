@@ -17,6 +17,7 @@ const (
 	DefaultBackendHTTPEndpoint = "0.0.0.0:4318"
 	DefaultHealthEndpoint      = "0.0.0.0:13133"
 	otlpGRPCExporter           = "otlp_grpc"
+	debugExporterID            = "debug/oksg"
 	oksgSourceTaggerProcessor  = "transform/oksg-source"
 )
 
@@ -24,6 +25,14 @@ type BackendConfig struct {
 	Enabled      bool
 	GRPCEndpoint string
 	HTTPEndpoint string
+}
+
+// DebugExporter is the OpenTelemetry-specific development diagnostic output.
+// Helm controls whether it is attached to generated pipelines; this adapter
+// owns its Collector component name and configuration shape.
+type DebugExporter struct {
+	ID     string
+	Config map[string]any
 }
 
 type CollectorConfig struct {
@@ -53,6 +62,7 @@ type Deployment struct {
 	Namespace      string
 	EnabledSignals []string
 	Backend        BackendConfig
+	DebugExporter  DebugExporter
 	AgentConfig    CollectorConfig
 	GatewayConfig  CollectorConfig
 }
@@ -74,8 +84,20 @@ func (c *Compiler) Compile(plan collectorspec.CollectionPlan) (Deployment, error
 		ClusterName: plan.ClusterName, Namespace: plan.Namespace,
 		EnabledSignals: append([]string(nil), plan.EnabledSignals...),
 		Backend:        BackendConfig{Enabled: true, GRPCEndpoint: DefaultBackendGRPCEndpoint, HTTPEndpoint: DefaultBackendHTTPEndpoint},
+		DebugExporter:  debugExporter(),
 		AgentConfig:    agentConfig, GatewayConfig: gatewayConfig,
 	}, nil
+}
+
+func debugExporter() DebugExporter {
+	return DebugExporter{
+		ID: debugExporterID,
+		Config: map[string]any{
+			"verbosity":           "detailed",
+			"use_internal_logger": false,
+			"output_paths":        []string{"stdout"},
+		},
+	}
 }
 
 func compileAgent(requirements collectorspec.AgentRequirements) CollectorConfig {

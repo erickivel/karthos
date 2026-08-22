@@ -245,6 +245,12 @@ subchart service names; explicit overrides go in `storage.postgresql.dsn`
 and `storage.victoriametrics.url`. After modifying `Chart.yaml`
 dependencies, run `helm dependency build deploy/helm/oksg-otel/`.
 
+For development-only telemetry inspection, `collectorDebug.enabled` adds the
+OTel adapter-owned `debug/oksg` exporter to generated enabled pipelines. It is
+disabled by default, writes only to Collector stdout, and is never a backend
+persistence path. The chart schema requires an explicit `storage.backend`
+(`memory` or `external`) and rejects unknown storage settings.
+
 ## Configuration Model
 
 - **Helm values** — generated deployment settings, collector configuration, and the compiled backend source contract

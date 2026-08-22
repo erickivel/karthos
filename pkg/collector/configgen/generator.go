@@ -38,14 +38,40 @@ type GeneratorOptions struct {
 }
 
 type Values struct {
-	Global         GlobalValues  `json:"global" yaml:"global"`
-	EnabledSignals []string      `json:"enabledSignals,omitempty" yaml:"enabledSignals,omitempty"`
-	Agent          AgentValues   `json:"agent" yaml:"agent"`
-	Gateway        GatewayValues `json:"gateway" yaml:"gateway"`
-	Backend        BackendValues `json:"backend" yaml:"backend"`
-	Secrets        SecretsValues `json:"secrets" yaml:"secrets"`
-	Rollout        RolloutValues `json:"rollout" yaml:"rollout"`
-	Namespace      NamespaceSpec `json:"namespace" yaml:"namespace"`
+	Global         GlobalValues         `json:"global" yaml:"global"`
+	EnabledSignals []string             `json:"enabledSignals,omitempty" yaml:"enabledSignals,omitempty"`
+	Agent          AgentValues          `json:"agent" yaml:"agent"`
+	Gateway        GatewayValues        `json:"gateway" yaml:"gateway"`
+	Backend        BackendValues        `json:"backend" yaml:"backend"`
+	CollectorDebug CollectorDebugValues `json:"collectorDebug" yaml:"collectorDebug"`
+	Storage        StorageValues        `json:"storage" yaml:"storage"`
+	Secrets        SecretsValues        `json:"secrets" yaml:"secrets"`
+	Rollout        RolloutValues        `json:"rollout" yaml:"rollout"`
+	Namespace      NamespaceSpec        `json:"namespace" yaml:"namespace"`
+}
+
+// CollectorDebugValues describes an OTel-owned debug exporter. Helm may attach
+// it to generated pipelines for transient development diagnostics only.
+type CollectorDebugValues struct {
+	Enabled        bool           `json:"enabled" yaml:"enabled"`
+	ExporterID     string         `json:"exporterID" yaml:"exporterID"`
+	ExporterConfig map[string]any `json:"exporterConfig" yaml:"exporterConfig"`
+}
+
+type StorageValues struct {
+	Backend         string                       `json:"backend" yaml:"backend"`
+	PostgreSQL      StoragePostgreSQLValues      `json:"postgresql" yaml:"postgresql"`
+	VictoriaMetrics StorageVictoriaMetricsValues `json:"victoriametrics" yaml:"victoriametrics"`
+}
+
+type StoragePostgreSQLValues struct {
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	DSN     string `json:"dsn" yaml:"dsn"`
+}
+
+type StorageVictoriaMetricsValues struct {
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	URL     string `json:"url" yaml:"url"`
 }
 
 type GlobalValues struct {
@@ -224,6 +250,16 @@ func (g *Generator) Build(deployment otel.Deployment, capabilityProfile profile.
 				CapabilityProfile: capabilityProfile,
 				SourcePlan:        sourcePlan,
 			},
+		},
+		CollectorDebug: CollectorDebugValues{
+			Enabled:        false,
+			ExporterID:     deployment.DebugExporter.ID,
+			ExporterConfig: deployment.DebugExporter.Config,
+		},
+		Storage: StorageValues{
+			Backend:         "memory",
+			PostgreSQL:      StoragePostgreSQLValues{},
+			VictoriaMetrics: StorageVictoriaMetricsValues{},
 		},
 		Secrets: SecretsValues{},
 		Rollout: RolloutValues{

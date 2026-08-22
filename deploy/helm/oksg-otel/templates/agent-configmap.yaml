@@ -8,5 +8,5 @@ metadata:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
 data:
   config.yaml: |
-{{ required "agent.collectorConfig must be supplied by generated collector-plan values" .Values.agent.collectorConfig | indent 4 }}
+{{ include "oksg-otel.collectorConfig" (dict "context" . "config" (required "agent.collectorConfig must be supplied by generated collector-plan values" .Values.agent.collectorConfig)) | indent 4 }}
 {{- end }}

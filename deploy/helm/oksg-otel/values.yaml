@@ -12,6 +12,14 @@ global:
     level: info
 
 enabledSignals: []
+collectorDebug:
+  enabled: false
+  exporterID: debug/oksg
+  exporterConfig:
+    verbosity: detailed
+    use_internal_logger: false
+    output_paths:
+      - stdout
 namespace:
   create: true
   name: oksg-system
@@ -71,7 +79,6 @@ backend:
 
 storage:
   backend: memory
-  rawStoreEnabled: false
   postgresql:
     enabled: false
     dsn: ""
