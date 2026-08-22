@@ -110,6 +110,9 @@ jobs:
       - name: Run tests
         run: task test:race
 
+      - name: Run PostgreSQL integration tests
+        run: task test:postgres
+
       - name: Upload coverage
         uses: actions/upload-artifact@v6
         with:
