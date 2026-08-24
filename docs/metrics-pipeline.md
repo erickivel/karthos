@@ -29,7 +29,6 @@ type CanonicalMetric struct {
     AppliesTo       []EntityKind    // entity kinds valid for entity-scope queries
     Description     string
     Sources         []SourceRef     // {ID, Priority} — which logical sources can produce it
-    SelectionPolicy SelectionPolicy // priority (default), disjoint, all
 }
 ```
 
@@ -186,10 +185,7 @@ func Resolve(catalog []CanonicalMetric, sourceIDs []string,
 
 - `Assignment` is `map[canonicalName]sourceID` — one winner per metric.
 - `SelectedSources` is the set of source IDs that won at least one metric.
-- Default `SelectionPolicy` is `PolicyPriority`: lowest `Priority` value wins
-  among sources whose capability is available. `PolicyDisjoint` and `PolicyAll` are
-  reserved for future per-scope or aggregate routing and currently return an
-  error so unimplemented behavior cannot ship silently.
+- The available source with the lowest `Priority` value wins.
 - A metric with no eligible source is dropped from the assignment (best-effort
   missing data, not an error).
 
@@ -385,8 +381,8 @@ Pipeline for a complete active sidecar Istio mesh:
 1. **Discovery** records a bounded `mesh.istio` capability only after the
    direct Kubernetes probes confirm a complete injected sidecar mesh.
 2. **Resolver** consumes the explicit `available` capability records for
-   `mesh.istio` and `traces.servicegraph`. PolicyPriority picks
-   `mesh.istio`. `SelectedSources` contains only sources that win at least one
+   `mesh.istio` and `traces.servicegraph`; the lower-priority `mesh.istio` source
+   wins. `SelectedSources` contains only sources that win at least one
    metric, so `traces.servicegraph` is absent if Istio wins all of its metrics;
    `Assignment["servicegraph.request.count"] = "mesh.istio"`.
 3. **Planner** does **not** wire the `service_graph` connector because
@@ -637,7 +633,7 @@ historical `graph?at=` reconstruction.
 
 | File | Role |
 |------|------|
-| `pkg/core/metrics/canonical.go` | `CanonicalMetric`, `MetricCategory`, `MetricScope`, `SourceRef`, `SelectionPolicy`, source ID constants |
+| `pkg/core/metrics/canonical.go` | `CanonicalMetric`, `MetricCategory`, `MetricScope`, `SourceRef`, source ID constants |
 | `pkg/core/metrics/catalog.go` | `defaultCatalog`, `DefaultCatalog()` |
 | `pkg/sources/registry.go` | Compiled source IDs, module inventory, and detector dispatch |
 | `pkg/sources/detection` | Typed Kubernetes discovery inventory shared by static detectors |

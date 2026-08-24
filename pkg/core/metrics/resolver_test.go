@@ -121,19 +121,6 @@ func TestResolveErrorsOnUnknownSource(t *testing.T) {
 	require.ErrorContains(t, err, "unknown source")
 }
 
-func TestResolveErrorsOnUnimplementedPolicy(t *testing.T) {
-	catalog := []CanonicalMetric{
-		{
-			Name:            "servicegraph.request.count",
-			Sources:         []SourceRef{{ID: SourceMeshIstio, Priority: 1}},
-			SelectionPolicy: PolicyDisjoint,
-		},
-	}
-
-	_, _, err := resolveWithProfile(catalog, profileWithIstioAndTraces())
-	require.ErrorContains(t, err, "unimplemented selection policy")
-}
-
 func TestResolveDefaultCatalogAgainstFullProfile(t *testing.T) {
 	prof := profileWithIstioAndTraces()
 	prof.Capabilities = append(prof.Capabilities, profile.SourceCapability{

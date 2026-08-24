@@ -24,10 +24,8 @@ func (s SelectedSources) Has(sourceID string) bool { return s[sourceID] }
 // metric. The resolver intentionally knows neither source modules nor profile
 // schema: it only performs generic arbitration.
 //
-// PolicyPriority (the default) picks the SourceRef with the smallest Priority
-// whose capability is available. PolicyDisjoint and PolicyAll
-// are reserved for future work and currently produce an error so unimplemented
-// behavior never silently ships.
+// Resolve picks the SourceRef with the smallest Priority whose capability is
+// available.
 func Resolve(catalog []CanonicalMetric, sourceIDs []string, available func(string) bool) (Assignment, SelectedSources, error) {
 	known := make(map[string]struct{}, len(sourceIDs))
 	for _, sourceID := range sourceIDs {
@@ -41,14 +39,6 @@ func Resolve(catalog []CanonicalMetric, sourceIDs []string, available func(strin
 		if len(metric.Sources) == 0 {
 			continue
 		}
-		policy := metric.SelectionPolicy
-		if policy == "" {
-			policy = PolicyPriority
-		}
-		if policy != PolicyPriority {
-			return nil, nil, fmt.Errorf("metric %q uses unimplemented selection policy %q", metric.Name, policy)
-		}
-
 		for _, ref := range metric.Sources {
 			if _, ok := known[ref.ID]; !ok {
 				return nil, nil, fmt.Errorf("metric %q references unknown source %q", metric.Name, ref.ID)

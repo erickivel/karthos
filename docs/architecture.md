@@ -87,8 +87,8 @@ component of every entity ID; default `default`.
 
 When more than one available source declares the same canonical metric (e.g.
 `servicegraph.request.count` from both Istio mesh and the OTel `service_graph`
-connector), `metrics.Resolve(catalog, registry, profile)` picks one winner
-per metric using `PolicyPriority` (lowest `Priority` value wins). Output:
+connector), `metrics.Resolve(catalog, registry, profile)` picks the available
+source with the lowest `Priority` value for each metric. Output:
 
 - `Assignment` (canonical metric → winning source ID) — seeds the shared
   source policy used by metric normalization and mesh-edge derivation
