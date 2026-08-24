@@ -452,8 +452,9 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 }
 
 // RetireRunsOn records the terminal lifecycle timestamp without changing the
-// edge's observations. Retired runs_on edges are excluded from GetLatest but
-// remain queryable through QueryEdges for audit use.
+// edge's observations. Retired runs_on edges are excluded from the current
+// composed graph while their lifecycle state remains available to storage
+// reconciliation.
 func (s *InMemoryGraphStore) RetireRunsOn(_ context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -618,17 +619,23 @@ func mergeRetiredEdgeProvenance(existing, incoming []string) []string {
 	return merged
 }
 
-// QueryEdges filters edges by Source and/or Target (zero value = no filter).
-func (s *InMemoryGraphStore) QueryEdges(_ context.Context, q query.EdgeQuery) ([]topology.Edge, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// QueryEdges filters the current composed graph by Source, Target, and/or
+// Relation (zero values mean no filter).
+func (s *InMemoryGraphStore) QueryEdges(ctx context.Context, q query.EdgeQuery) ([]topology.Edge, error) {
+	snapshot, err := s.GetLatest(ctx)
+	if err != nil || snapshot == nil {
+		return nil, err
+	}
 
-	var result []topology.Edge
-	for _, e := range s.edges {
+	result := make([]topology.Edge, 0, len(snapshot.Graph.Edges))
+	for _, e := range snapshot.Graph.Edges {
 		if q.Source != "" && e.Source != q.Source {
 			continue
 		}
 		if q.Target != "" && e.Target != q.Target {
+			continue
+		}
+		if q.Relation != "" && e.Relation != q.Relation {
 			continue
 		}
 		result = append(result, e)

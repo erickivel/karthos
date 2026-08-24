@@ -19,7 +19,7 @@ func TestApplySnapshotTimestampSetsGraphTimestampFromCreatedAt(t *testing.T) {
 	assert.Equal(t, createdAt, snap.Graph.Timestamp)
 }
 
-func TestRetiredRunsOnSQLKeepsAuditEdgeOutOfLatestAndBlocksStaleRefreshes(t *testing.T) {
+func TestRunsOnLifecycleSQLPreservesCurrentStateAndBlocksStaleRefreshes(t *testing.T) {
 	assert.Contains(t, latestActiveEdgeQuery, "relation <> 'runs_on' OR (")
 	assert.Contains(t, latestActiveEdgeQuery, "NOT (metadata ? 'retired_at')")
 	assert.Contains(t, latestActiveEdgeQuery, "terminal_deadline")

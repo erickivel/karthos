@@ -63,6 +63,7 @@ func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, r *http.Request) 
 	var snapshot *topology.Snapshot
 	var snapshotFreshness float64
 	dataStale := true
+	graphReadFailed := false
 
 	if h.graphStore != nil {
 		snap, err := h.graphStore.GetLatest(r.Context())
@@ -76,15 +77,24 @@ func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, r *http.Request) 
 			}
 		} else if err == nil && snap == nil {
 			reasons = append(reasons, "no snapshot available")
+		} else {
+			graphReadFailed = true
+			reasons = append(reasons, "failed to read latest graph")
+			h.logger.Warn("failed to read latest graph for status", logging.Error(err))
 		}
 	}
 
 	// Discovery timestamp.
 	var lastDiscoveryAt *time.Time
+	metadataReadFailed := false
 	if h.metadataStore != nil {
 		prof, err := h.metadataStore.GetDiscovery(r.Context())
 		if err == nil && prof != nil {
 			lastDiscoveryAt = &prof.DiscoveredAt
+		} else if err != nil {
+			metadataReadFailed = true
+			reasons = append(reasons, "failed to read capability profile")
+			h.logger.Warn("failed to read capability profile for status", logging.Error(err))
 		}
 	}
 
@@ -92,7 +102,7 @@ func (h *StatusHandler) handleGetStatus(w http.ResponseWriter, r *http.Request) 
 	systemStatus := "nominal"
 	if !h.hasGraphStore || !h.hasEntityReg {
 		systemStatus = "disconnected"
-	} else if !h.hasMetricStore || !h.hasMetadataStore || dataStale {
+	} else if !h.hasMetricStore || !h.hasMetadataStore || dataStale || graphReadFailed || metadataReadFailed {
 		systemStatus = "degraded"
 	}
 
@@ -159,28 +169,26 @@ type nodeSummary struct {
 	Unknown   int           `json:"unknown"`
 }
 
-// podSummary buckets pods by the direct pod-phase-derived string label.
-// Field names match the public string set documented at
-// pkg/core/metrics/health_status.go and in docs/api-reference.md.
+// podSummary buckets pods by their direct pod-phase-derived string label.
 type podSummary struct {
-	Status          healthQuality `json:"status"`
-	Healthy         int           `json:"healthy"`
-	RunningNotReady int           `json:"running_not_ready"`
-	Restarting      int           `json:"restarting"`
-	Pending         int           `json:"pending"`
-	Succeeded       int           `json:"succeeded"`
-	Failed          int           `json:"failed"`
-	Unknown         int           `json:"unknown"`
+	Status    healthQuality `json:"status"`
+	Healthy   int           `json:"healthy"`
+	Pending   int           `json:"pending"`
+	Succeeded int           `json:"succeeded"`
+	Failed    int           `json:"failed"`
+	Unknown   int           `json:"unknown"`
 }
 
 func (h *StatusHandler) computeHealthSummary(ctx context.Context, graphNodes []topology.Node) *healthSummary {
 	var nodeIDs, podIDs []entities.EntityID
+	podNodes := make([]topology.Node, 0)
 	for _, node := range graphNodes {
 		switch node.Kind {
 		case entities.KindNode:
 			nodeIDs = append(nodeIDs, node.ID)
 		case entities.KindPod:
 			podIDs = append(podIDs, node.ID)
+			podNodes = append(podNodes, node)
 		}
 	}
 	if h.metricStore == nil {
@@ -192,7 +200,7 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context, graphNodes []t
 	}
 
 	nodeResult := queryHealthSamples(ctx, h.metricStore, "k8s.node.condition.ready", nodeIDs, false)
-	podResolution := h.healthResolver.Resolve(ctx, graphNodes, false)
+	podResolution := h.healthResolver.Resolve(ctx, podNodes, false)
 	podResult := healthSampleResult{quality: podResolution.Pods}
 	if len(podResolution.Errors) > 0 {
 		podResult.err = podResolution.Errors[0]
@@ -243,10 +251,6 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context, graphNodes []t
 			switch podResolution.Statuses[id] {
 			case metrics.HealthHealthy:
 				hs.Pods.Healthy++
-			case metrics.HealthRunningNotReady:
-				hs.Pods.RunningNotReady++
-			case metrics.HealthRestarting:
-				hs.Pods.Restarting++
 			case metrics.HealthPending:
 				hs.Pods.Pending++
 			case metrics.HealthSucceeded:

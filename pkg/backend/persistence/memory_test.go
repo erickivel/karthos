@@ -308,21 +308,9 @@ func TestGraphStore_RetiredRunsOnIsHiddenFromLatestAndImmutable(t *testing.T) {
 	require.Len(t, latest.Graph.Edges, 1)
 	require.Equal(t, topology.RelContains, latest.Graph.Edges[0].Relation)
 
-	accumulated, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	require.Len(t, accumulated, 2)
-	for _, edge := range accumulated {
-		if edge.Relation != topology.RelRunsOn {
-			continue
-		}
-		require.Equal(t, firstSeen, edge.LastSeen)
-		require.Equal(t, retiredAt.Format(time.RFC3339Nano), edge.Metadata["retired_at"])
-		return
-	}
-	t.Fatal("expected retained audit runs_on edge")
 }
 
-func TestGraphStore_ReplacementUIDBecomesLatestWhileOldAssignmentRemainsAuditHistory(t *testing.T) {
+func TestGraphStore_ReplacementUIDBecomesCurrentAssignment(t *testing.T) {
 	store := NewInMemoryGraphStore()
 	ctx := context.Background()
 	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "job-0")
@@ -341,16 +329,6 @@ func TestGraphStore_ReplacementUIDBecomesLatestWhileOldAssignmentRemainsAuditHis
 	require.Len(t, latest.Graph.Edges, 1)
 	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
 
-	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	require.Len(t, audit, 2)
-	for _, edge := range audit {
-		if edge.ID == old.ID {
-			require.NotEmpty(t, edge.Metadata["retired_at"])
-			return
-		}
-	}
-	t.Fatal("expected retired old runs_on assignment in audit query")
 }
 
 func TestGraphStore_RetirementBeforeFirstSnapshotKeepsLaterBufferedEdgeRetired(t *testing.T) {
@@ -368,11 +346,6 @@ func TestGraphStore_RetirementBeforeFirstSnapshotKeepsLaterBufferedEdgeRetired(t
 	require.NoError(t, err)
 	require.Empty(t, latest.Graph.Edges)
 
-	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	require.Len(t, audit, 1)
-	require.Equal(t, retiredAt, audit[0].LastSeen)
-	require.Equal(t, retiredAt.Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
 }
 
 func TestGraphStore_TerminalGraceSurvivesReconciliationUntilItsDeadline(t *testing.T) {
@@ -418,10 +391,6 @@ func TestGraphStore_TerminalGraceSurvivesReconciliationUntilItsDeadline(t *testi
 	latest, err = store.GetLatest(ctx)
 	require.NoError(t, err)
 	require.Empty(t, latest.Graph.Edges)
-	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	require.Len(t, audit, 1)
-	require.Equal(t, deadline.Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
 }
 
 func TestGraphStore_RetirementWinsOverDelayedTerminalMarker(t *testing.T) {
@@ -444,10 +413,6 @@ func TestGraphStore_RetirementWinsOverDelayedTerminalMarker(t *testing.T) {
 	latest, err := store.GetLatest(ctx)
 	require.NoError(t, err)
 	require.Empty(t, latest.Graph.Edges)
-	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	require.Equal(t, observedAt.Add(time.Second).Format(time.RFC3339Nano), audit[0].Metadata["retired_at"])
-	require.Empty(t, audit[0].Metadata["terminal_deadline"])
 }
 
 func TestGraphStore_ReconcileUnconfirmedTerminalMarkerWithReplacementRetiresImmediately(t *testing.T) {
@@ -474,15 +439,6 @@ func TestGraphStore_ReconcileUnconfirmedTerminalMarkerWithReplacementRetiresImme
 	require.NoError(t, err)
 	require.Len(t, latest.Graph.Edges, 1)
 	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
-	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	for _, edge := range audit {
-		if edge.ID == old.ID {
-			require.NotEmpty(t, edge.Metadata["retired_at"])
-			return
-		}
-	}
-	t.Fatal("expected unconfirmed old UID retirement")
 }
 
 func TestGraphStore_ReconcileRunsOnDoesNotCrossClusterBoundary(t *testing.T) {
@@ -511,10 +467,6 @@ func TestGraphStore_ReconcileRunsOnDoesNotCrossClusterBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, latest.Graph.Edges, 1)
 	require.Equal(t, clusterB.ID, latest.Graph.Edges[0].ID)
-	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: clusterA.Source})
-	require.NoError(t, err)
-	require.Len(t, audit, 1)
-	require.NotEmpty(t, audit[0].Metadata["retired_at"])
 }
 
 func TestGraphStore_NonRunsOnRetiredAtMetadataRemainsLatestAndRefreshable(t *testing.T) {
@@ -543,7 +495,7 @@ func lifecycleRunsOnEdge(source, target entities.EntityID, podUID string, firstS
 	return edge
 }
 
-func TestGraphStore_QueryEdgesBySource(t *testing.T) {
+func TestGraphStore_QueryEdgesFiltersCurrentComposedGraph(t *testing.T) {
 	store := NewInMemoryGraphStore()
 	ctx := context.Background()
 
@@ -557,15 +509,20 @@ func TestGraphStore_QueryEdgesBySource(t *testing.T) {
 	eAB := topology.NewEdge(idA, idB, topology.RelCalls, now)
 	eAC := topology.NewEdge(idA, idC, topology.RelCalls, now)
 	eDE := topology.NewEdge(idD, idE, topology.RelCalls, now)
+	eStructural := topology.NewEdge(idA, idE, topology.RelRoutesTo, now)
 
 	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(eAB, eAC, eDE)))
+	require.NoError(t, store.PutStructuralSnapshot(ctx, newSnapshot(eStructural)))
 
 	got, err := store.QueryEdges(ctx, query.EdgeQuery{Source: idA})
 	require.NoError(t, err)
-	assert.Len(t, got, 2)
+	assert.Len(t, got, 3)
 	for _, e := range got {
 		assert.Equal(t, idA, e.Source)
 	}
+	routes, err := store.QueryEdges(ctx, query.EdgeQuery{Relation: topology.RelRoutesTo})
+	require.NoError(t, err)
+	require.Equal(t, []topology.Edge{eStructural}, routes)
 }
 
 func TestGraphStore_NilOnEmpty(t *testing.T) {

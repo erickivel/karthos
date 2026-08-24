@@ -60,7 +60,7 @@ Response:
     "health_summary": {
       "status": "complete",
       "nodes": {"status": "complete", "healthy": 3, "unhealthy": 0, "unknown": 0},
-      "pods": {"status": "complete", "healthy": 12, "running_not_ready": 0, "restarting": 0, "pending": 0, "succeeded": 0, "failed": 0, "unknown": 2}
+      "pods": {"status": "complete", "healthy": 12, "pending": 0, "succeeded": 0, "failed": 0, "unknown": 2}
     }
   }
 }
@@ -68,7 +68,7 @@ Response:
 
 `health_summary` is present whenever a graph snapshot exists. Node health uses `k8s.node.condition.ready`; pod buckets derive directly from `k8s.pod.phase`; entities without a recent sample fall through to `unknown`.
 
-Each branch and the aggregate carry a quality value: `complete`, `partial`, or `unavailable`. A successful metric query remains `complete` even when samples are missing. A failed branch becomes `unavailable`, all applicable current entities in that branch become unknown, and `system_status` becomes `degraded` with a generic branch reason. If no MetricStore is configured, the snapshot still produces an `unavailable` summary populated with current graph entity counts. Detailed store errors are logged but not returned, and these enrichment failures keep HTTP 200.
+Each branch and the aggregate carry a quality value: `complete`, `partial`, or `unavailable`. A successful metric query remains `complete` even when samples are missing. A failed branch becomes `unavailable`, all applicable current entities in that branch become unknown, and `system_status` becomes `degraded` with a generic branch reason. If no MetricStore is configured, the snapshot still produces an `unavailable` summary populated with current graph entity counts. Graph and capability-profile read failures likewise produce a degraded status with a safe reason while component availability remains unchanged. Detailed store errors are logged but not returned, and these enrichment failures keep HTTP 200.
 
 Snapshot-wide health lookups deliberately omit entity-ID filters, so query size stays constant as the graph grows; the API intersects recent results with current graph IDs in Go. The single-node endpoint retains an exact one-entity filter.
 
@@ -81,7 +81,7 @@ Status values:
 | Value | Meaning |
 |-------|---------|
 | `nominal` | All stores available AND snapshot fresh |
-| `degraded` | Stores available but snapshot stale (> `--status-stale-seconds`), non-critical stores unavailable, unhealthy nodes detected, or a health-summary branch query failed |
+| `degraded` | Stores available but snapshot stale (> `--status-stale-seconds`), a graph or capability-profile read failed, non-critical stores are unavailable, unhealthy nodes are detected, or a health-summary branch query failed |
 | `disconnected` | GraphStore or EntityRegistry unavailable |
 
 Configuration:
@@ -106,14 +106,19 @@ Response:
     "cluster_id": "...",
     "cluster_name": "oksg-test",
     "discovered_at": "2026-03-30T10:00:00Z",
-    "node_count": 3,
-    "namespace_count": 5,
-    "workload_count": 12,
-    "service_count": 8,
-    "ingress_count": 2,
-    "sources": [...],
-    "collection_paths": [...],
-    "recommended_receivers": [...]
+    "capabilities": [
+      {
+        "source_id": "kubernetes.structure",
+        "kind": "direct",
+        "status": "available",
+        "signals": ["structure"]
+      },
+      {
+        "source_id": "prometheus.app",
+        "kind": "direct",
+        "status": "unavailable"
+      }
+    ]
   }
 }
 ```
@@ -222,15 +227,14 @@ Returns 404 if node not found.
 
 ### GET /api/v1/graph/edges
 
-List accumulated topology edges with optional filtering and pagination. This is
-an audit-capable surface: retired Pod `runs_on` assignments remain listed with
-their UID-versioned edge ID and RFC3339 `metadata.retired_at`, even though they
-are excluded from the latest `/api/v1/graph` snapshot.
+List edges from the current composed graph with optional filtering and
+pagination. The result uses the newest structural snapshot plus active
+telemetry and lifecycle observations, matching `/api/v1/graph`.
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `source` | string | Filter by source entity ID |
-| `target` | string | Filter by target entity ID |
+| `source` | canonical entity ID | Filter by source entity ID |
+| `target` | canonical entity ID | Filter by target entity ID |
 | `relation` | string | Filter by relation type (`calls`, `runs_on`, `contains`, `exposes`, `routes_to`, `uses`, `mounts`) |
 | `page_size` | int | Items per page (default 100) |
 | `next_token` | string | Pagination cursor |
@@ -353,7 +357,7 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 
 Samples preserve the public normalized `labels` map. Kubelet network samples expose `direction` and `network_interface_name`; volume samples expose `volume_name`, `volume_type`, and `persistentvolumeclaim_name` when PVC-backed. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so consumers can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Bounded source provenance also includes boolean `failed` as the strings `"true"` / `"false"`, `connection_type` (absent, `messaging_system`, or `database`), separate `virtual_node` (`client` or `server`), and distinct client/server HTTP methods when the collector emits them; these labels define separate raw series. True incremental samples carry `temporality=delta`; collector v0.156 servicegraph series are cumulative and therefore do not carry that label. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
 
-Returns 400 for invalid time/duration syntax, windows outside `1m..1h`, unknown modes, or controls unsupported by the selected metric. Histogram means accept `window` only; gauges and enum metrics reject both controls.
+Returned sample timestamps preserve producer precision as RFC3339Nano. Results are ordered by timestamp descending, then stable public sample fields before pagination. Returns 400 for invalid time/duration syntax, windows outside `1m..1h`, unknown modes, or controls unsupported by the selected metric. Histogram means accept `window` only; gauges and enum metrics reject both controls.
 
 ### GET /api/v1/metrics/series
 
@@ -406,8 +410,6 @@ Response:
 
 Different entities, edges, dimension labels, or units produce separate series.
 
-The removed names `k8s.container.storage.request` and `k8s.container.storage.limit` are not catalog metrics and return HTTP 400. The focused catalog retains `k8s.volume.*` for mounted-volume capacity and usage.
-
 ### GET /api/v1/metrics/catalog
 
 List semconv-native metric definitions.
@@ -421,8 +423,6 @@ Response entries include a `scopes` array describing whether each semconv metric
 The `sources` array drives runtime arbitration: the generic resolver picks the highest-priority (smallest `priority` value) source whose compiled capability is available. The source plan records that result; the generic collector composer includes selected semantic requirements and the OTel adapter renders them, while the ingester drops samples whose `oksg_source` attribute disagrees with the mounted assignment. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
 
 The array is exposed in priority order (lower number = higher priority); UIs that need a single "primary source" label should render `sources[0].id`. The full array is informational — lower-priority entries are fallbacks the resolver did not pick. The currently-active source per metric is not exposed on the catalog endpoint today; consumers that need it should read the `source` label on actual sample responses from `/api/v1/metrics/series`.
-
-`selection_policy` defaults to `"priority"` (omitted from the response when default). The values `"disjoint"` and `"all"` are reserved for future per-scope routing and multi-source aggregation; the resolver returns an error if it encounters them.
 
 Example:
 
@@ -543,6 +543,7 @@ When modifying or adding API endpoints, update these files:
 | `pkg/adapters/api/server.go` | Server struct, config, mux wiring, lifecycle |
 | `pkg/adapters/api/response.go` | JSON response envelope, pagination, and shared helpers |
 | `pkg/adapters/api/handler_status.go` | Status and discovery handlers |
+| `pkg/adapters/api/health_resolver.go` | Shared graph and status health derivation |
 | `pkg/adapters/api/handler_graph.go` | Graph query handlers with entity enrichment |
 | `pkg/adapters/api/handler_metrics.go` | Metrics query, catalog, and series handlers |
 | `pkg/adapters/api/handler_entities.go` | Entity query handlers |

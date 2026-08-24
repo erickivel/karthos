@@ -19,7 +19,6 @@ import (
 type GraphHandler struct {
 	graphStore     persistence.GraphStore
 	entityRegistry persistence.EntityRegistry
-	metricStore    persistence.MetricStore
 	healthResolver *HealthResolver
 	logger         *logging.Logger
 }
@@ -124,7 +123,7 @@ func (h *GraphHandler) batchEntities(ctx context.Context, ids []entities.EntityI
 	return resolved
 }
 
-// resolveHealthStatus issues at most two metric-store queries. Snapshot-wide
+// resolveHealthStatus issues at most three metric-store queries. Snapshot-wide
 // callers omit entity matchers and intersect in memory, keeping query text
 // bounded as the graph grows. Single-node callers retain exact filtering.
 func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node, exact bool) (map[entities.EntityID]string, healthEnrichmentQuality) {
@@ -451,28 +450,25 @@ func (h *GraphHandler) handleListEdges(w http.ResponseWriter, r *http.Request) {
 	sourceFilter := entities.EntityID(r.URL.Query().Get("source"))
 	targetFilter := entities.EntityID(r.URL.Query().Get("target"))
 	relationFilter := topology.RelationType(r.URL.Query().Get("relation"))
+	if sourceFilter != "" && !entities.IsCanonicalID(sourceFilter) {
+		writeError(w, http.StatusBadRequest, "source must be a canonical entity ID")
+		return
+	}
+	if targetFilter != "" && !entities.IsCanonicalID(targetFilter) {
+		writeError(w, http.StatusBadRequest, "target must be a canonical entity ID")
+		return
+	}
 
-	edges, err := h.graphStore.QueryEdges(r.Context(), query.EdgeQuery{})
+	edges, err := h.graphStore.QueryEdges(r.Context(), query.EdgeQuery{
+		Source:   sourceFilter,
+		Target:   targetFilter,
+		Relation: relationFilter,
+	})
 	if err != nil {
 		h.logger.Warn("failed to query edges", logging.Error(err))
 		writeError(w, http.StatusInternalServerError, "failed to query edges")
 		return
 	}
-
-	var filtered []topology.Edge
-	for _, e := range edges {
-		if sourceFilter != "" && e.Source != sourceFilter {
-			continue
-		}
-		if targetFilter != "" && e.Target != targetFilter {
-			continue
-		}
-		if relationFilter != "" && e.Relation != relationFilter {
-			continue
-		}
-		filtered = append(filtered, e)
-	}
-	edges = filtered
 
 	if edges == nil {
 		edges = []topology.Edge{}
@@ -482,7 +478,13 @@ func (h *GraphHandler) handleListEdges(w http.ResponseWriter, r *http.Request) {
 		if c := cmp.Compare(string(a.Relation), string(b.Relation)); c != 0 {
 			return c
 		}
-		return cmp.Compare(string(a.Source), string(b.Source))
+		if c := cmp.Compare(string(a.Source), string(b.Source)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(string(a.Target), string(b.Target)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	total := len(edges)

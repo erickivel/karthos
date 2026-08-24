@@ -321,8 +321,8 @@ func (s *PostgresGraphStore) loadEdges(ctx context.Context, query string, args [
 }
 
 // RetireRunsOn records terminal Pod lifecycle state in edge metadata without
-// changing first_seen or last_seen. QueryEdges keeps the retired audit edge;
-// GetLatest filters it through latestActiveEdgeQuery.
+// changing first_seen or last_seen. Current graph reads filter retired edges
+// through latestActiveEdgeQuery while lifecycle reconciliation retains them.
 func (s *PostgresGraphStore) RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error {
 	edgeID := topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, podUID)
 	_, err := s.conn.pool.Exec(ctx, retireRunsOnSQL,
@@ -457,52 +457,26 @@ func applySnapshotTimestamp(snap *topology.Snapshot) {
 	snap.Graph.Timestamp = snap.CreatedAt
 }
 
-// QueryEdges filters current telemetry/lifecycle edges by Source and/or Target.
-// Zero-value EntityID means no filter on that field.
+// QueryEdges filters the current composed graph by Source, Target, and/or
+// Relation. Zero-value filters are ignored.
 func (s *PostgresGraphStore) QueryEdges(ctx context.Context, q query.EdgeQuery) ([]topology.Edge, error) {
-	sql := `SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
-	        FROM topology_edges WHERE 1=1`
-	args := []interface{}{}
-	argIdx := 1
-
-	if q.Source != "" {
-		sql += fmt.Sprintf(" AND source = $%d", argIdx)
-		args = append(args, string(q.Source))
-		argIdx++
-	}
-	if q.Target != "" {
-		sql += fmt.Sprintf(" AND target = $%d", argIdx)
-		args = append(args, string(q.Target))
+	snapshot, err := s.GetLatest(ctx)
+	if err != nil || snapshot == nil {
+		return nil, err
 	}
 
-	rows, err := s.conn.pool.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, fmt.Errorf("pg graph query edges: %w", err)
-	}
-	defer rows.Close()
-
-	var edges []topology.Edge
-	for rows.Next() {
-		var e topology.Edge
-		var source, target, relation string
-		var metadataJSON []byte
-		if err := rows.Scan(
-			&e.ID, &source, &target, &relation, &e.Confidence,
-			&e.Provenance, &e.FirstSeen, &e.LastSeen, &metadataJSON,
-		); err != nil {
-			return nil, fmt.Errorf("pg graph scan edge: %w", err)
+	edges := make([]topology.Edge, 0, len(snapshot.Graph.Edges))
+	for _, edge := range snapshot.Graph.Edges {
+		if q.Source != "" && edge.Source != q.Source {
+			continue
 		}
-		e.Source = entities.EntityID(source)
-		e.Target = entities.EntityID(target)
-		e.Relation = topology.RelationType(relation)
-		if err := json.Unmarshal(metadataJSON, &e.Metadata); err != nil {
-			return nil, fmt.Errorf("pg graph unmarshal edge metadata: %w", err)
+		if q.Target != "" && edge.Target != q.Target {
+			continue
 		}
-		edges = append(edges, e)
+		if q.Relation != "" && edge.Relation != q.Relation {
+			continue
+		}
+		edges = append(edges, edge)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("pg graph query edges iteration: %w", err)
-	}
-
 	return edges, nil
 }

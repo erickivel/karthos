@@ -23,7 +23,7 @@ type Config struct {
 	StatusStaleSeconds int // default 300 if zero
 }
 
-// Server is the REST API server for query and control endpoints.
+// Server is the REST API server for query endpoints.
 type Server struct {
 	config     Config
 	logger     *logging.Logger
@@ -82,7 +82,6 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 	graphHandler := &GraphHandler{
 		graphStore:     cfg.GraphStore,
 		entityRegistry: cfg.EntityRegistry,
-		metricStore:    cfg.MetricStore,
 		healthResolver: healthResolver,
 		logger:         logger,
 	}

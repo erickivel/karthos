@@ -246,10 +246,6 @@ func TestPodLifecycleTrackerInitialReconciliationRetiresPreseededReplacement(t *
 	latest, err := store.GetLatest(ctx)
 	require.NoError(t, err)
 	require.Empty(t, latest.Graph.Edges)
-	audit, err := store.QueryEdges(ctx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	require.Len(t, audit, 1)
-	require.NotEmpty(t, audit[0].Metadata["retired_at"])
 }
 
 func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *testing.T) {
@@ -336,21 +332,9 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 	require.NoError(t, err)
 	require.Len(t, latest.Graph.Edges, 2, "old terminal UID remains active during its persisted grace")
 	require.Eventually(t, func() bool {
-		edges, err := store.QueryEdges(context.Background(), query.EdgeQuery{Source: podID})
-		if err != nil || len(edges) != 2 {
-			return false
-		}
-		for _, edge := range edges {
-			if edge.ID == old.ID {
-				return edge.Metadata["retired_at"] != ""
-			}
-		}
-		return false
+		current, err := store.GetLatest(context.Background())
+		return err == nil && len(current.Graph.Edges) == 1 && current.Graph.Edges[0].ID == newAssignment.ID
 	}, time.Second, 5*time.Millisecond)
-	latest, err = store.GetLatest(secondCtx)
-	require.NoError(t, err)
-	require.Len(t, latest.Graph.Edges, 1)
-	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
 }
 
 func TestPodLifecycleTrackerDeniesTerminalRefreshUntilDeadlineMarkerPersists(t *testing.T) {
@@ -574,16 +558,6 @@ func TestPodLifecycleTrackerRetirementWinsWhenDelayedMarkerRetriesAcrossRestart(
 	require.NoError(t, err)
 	require.Len(t, latest.Graph.Edges, 1)
 	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
-	audit, err := store.QueryEdges(restartCtx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	require.Len(t, audit, 2)
-	for _, edge := range audit {
-		if edge.ID == old.ID {
-			require.NotEmpty(t, edge.Metadata["retired_at"])
-			return
-		}
-	}
-	t.Fatal("expected old UID retirement audit edge")
 }
 
 func TestPodLifecycleTrackerRestartRetiresUnconfirmedRetryMarkerAfterReplacement(t *testing.T) {
@@ -682,15 +656,6 @@ func TestPodLifecycleTrackerRestartRetiresUnconfirmedRetryMarkerAfterReplacement
 	require.NoError(t, err)
 	require.Len(t, latest.Graph.Edges, 1)
 	require.Equal(t, newAssignment.ID, latest.Graph.Edges[0].ID)
-	audit, err := store.QueryEdges(restartCtx, query.EdgeQuery{Source: podID})
-	require.NoError(t, err)
-	for _, edge := range audit {
-		if edge.ID == old.ID {
-			require.NotEmpty(t, edge.Metadata["retired_at"])
-			return
-		}
-	}
-	t.Fatal("expected old retry-only UID retirement audit edge")
 }
 
 func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T) {

@@ -133,6 +133,38 @@ func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 	require.NotEmpty(t, sample["unit"])
 }
 
+func TestQueryMetricsPreservesNanosecondTimestampAndStableOrder(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	base := time.Date(2026, 8, 23, 12, 0, 0, 123456789, time.UTC)
+	entityA := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "a")
+	entityB := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "b")
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "k8s.pod.cpu.usage", EntityID: entityB, Value: 2, Timestamp: base},
+		{MetricName: "k8s.pod.cpu.usage", EntityID: entityA, Value: 1, Timestamp: base},
+		{MetricName: "k8s.pod.cpu.usage", EntityID: entityA, Value: 3, Timestamp: base.Add(time.Nanosecond)},
+	}))
+
+	response := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage")
+	require.Equal(t, http.StatusOK, response.Code)
+	var body PaginatedResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	encoded, err := json.Marshal(body.Data)
+	require.NoError(t, err)
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &data))
+	samples := data["samples"].([]any)
+	require.Len(t, samples, 3)
+
+	newest := samples[0].(map[string]any)
+	require.Equal(t, base.Add(time.Nanosecond).Format(time.RFC3339Nano), newest["timestamp"])
+	require.Equal(t, string(entityA), newest["entity_id"])
+	firstTie := samples[1].(map[string]any)
+	secondTie := samples[2].(map[string]any)
+	require.Equal(t, base.Format(time.RFC3339Nano), firstTie["timestamp"])
+	require.Equal(t, base.Format(time.RFC3339Nano), secondTie["timestamp"])
+	require.Less(t, firstTie["entity_id"].(string), secondTie["entity_id"].(string))
+}
+
 func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
 	store := persistence.NewInMemoryMetricStore()
 	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{

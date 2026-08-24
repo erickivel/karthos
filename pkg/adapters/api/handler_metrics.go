@@ -56,6 +56,7 @@ type enrichedSample struct {
 	Labels     map[string]string `json:"labels,omitempty"`
 	Unit       metrics.Unit      `json:"unit,omitempty"`
 	Edge       *edgeRef          `json:"edge,omitempty"`
+	observedAt time.Time
 }
 
 type metricSeries struct {
@@ -173,15 +174,34 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 			EntityID:   s.EntityID,
 			Value:      s.Value,
 			ValueLabel: s.ValueLabel,
-			Timestamp:  s.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
+			Timestamp:  s.Timestamp.UTC().Format(time.RFC3339Nano),
 			Labels:     s.Labels,
 			Unit:       unit,
 			Edge:       edgeRefFromLabels(s.Labels),
+			observedAt: s.Timestamp,
 		})
 	}
 
 	slices.SortFunc(enriched, func(a, b enrichedSample) int {
-		return cmp.Compare(b.Timestamp, a.Timestamp) // descending
+		if c := b.observedAt.Compare(a.observedAt); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.MetricName, b.MetricName); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(string(a.EntityID), string(b.EntityID)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(string(a.Unit), string(b.Unit)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(seriesGroupKey(a), seriesGroupKey(b)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.Value, b.Value); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ValueLabel, b.ValueLabel)
 	})
 	return enriched, effective, true
 }

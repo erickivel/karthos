@@ -452,6 +452,45 @@ func TestListEdgesFilterByRelation(t *testing.T) {
 	require.EqualValues(t, 1, data["total"])
 }
 
+func TestListEdgesIncludesCurrentStructuralEdges(t *testing.T) {
+	gs := persistence.NewInMemoryGraphStore()
+	now := time.Now().UTC()
+	ingressID := entities.ComputeEntityID(entities.KindIngress, "cluster", "default", "public", "example.test")
+	serviceID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "catalog")
+	databaseID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "database")
+	route := topology.NewEdge(ingressID, serviceID, topology.RelRoutesTo, now)
+	calls := topology.NewEdge(serviceID, databaseID, topology.RelCalls, now)
+	require.NoError(t, gs.PutStructuralSnapshot(context.Background(), topology.Snapshot{CreatedAt: now, Graph: topology.Graph{
+		Edges: []topology.Edge{route},
+	}}))
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{CreatedAt: now, Graph: topology.Graph{
+		Edges: []topology.Edge{calls},
+	}}))
+
+	srv := newTestServer(t, Config{GraphStore: gs})
+	defer srv.cancel()
+	resp := doGet(t, srv, "/api/v1/graph/edges?source="+string(ingressID)+"&relation=routes_to")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parsePaginatedData(t, resp)
+	require.EqualValues(t, 1, data["total"])
+	edge := data["edges"].([]any)[0].(map[string]any)
+	require.Equal(t, route.ID, edge["id"])
+}
+
+func TestListEdgesRejectsInvalidEntityIDFilters(t *testing.T) {
+	for _, filter := range []string{"source", "target"} {
+		t.Run(filter, func(t *testing.T) {
+			srv := newTestServer(t, Config{GraphStore: seedGraph(t)})
+			defer srv.cancel()
+			resp := doGet(t, srv, "/api/v1/graph/edges?"+filter+"=not-an-id")
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		})
+	}
+}
+
 func TestListEdgesPagination(t *testing.T) {
 	gs := seedGraph(t)
 	srv := newTestServer(t, Config{GraphStore: gs})
@@ -465,40 +504,6 @@ func TestListEdgesPagination(t *testing.T) {
 	edges := data["edges"].([]any)
 	require.Len(t, edges, 1)
 	require.NotEmpty(t, nextToken)
-}
-
-func TestListEdgesReturnsRetiredUIDVersionedRunsOnAssignmentsForAudit(t *testing.T) {
-	gs := persistence.NewInMemoryGraphStore()
-	now := time.Now().UTC()
-	podID := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "job-0")
-	nodeID := entities.ComputeEntityID(entities.KindNode, "cluster", "node-a")
-	old := topology.NewEdge(podID, nodeID, topology.RelRunsOn, now)
-	old.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-old")
-	old.Metadata = map[string]string{"k8s.pod.uid": "uid-old"}
-	newAssignment := topology.NewEdge(podID, nodeID, topology.RelRunsOn, now.Add(time.Minute))
-	newAssignment.ID = topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, "uid-new")
-	newAssignment.Metadata = map[string]string{"k8s.pod.uid": "uid-new"}
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{old}}}))
-	require.NoError(t, gs.RetireRunsOn(context.Background(), podID, nodeID, "uid-old", now.Add(30*time.Second)))
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newAssignment}}}))
-
-	srv := newTestServer(t, Config{GraphStore: gs})
-	defer srv.cancel()
-	resp := doGet(t, srv, "/api/v1/graph/edges?relation=runs_on")
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data := parsePaginatedData(t, resp)
-	require.EqualValues(t, 2, data["total"])
-	edges := data["edges"].([]any)
-	seen := map[string]map[string]any{}
-	for _, item := range edges {
-		edge := item.(map[string]any)
-		seen[edge["id"].(string)] = edge
-	}
-	require.Contains(t, seen, old.ID)
-	require.Contains(t, seen, newAssignment.ID)
-	require.NotEmpty(t, seen[old.ID]["metadata"].(map[string]any)["retired_at"])
 }
 
 func TestGetGraphIncludesStructuralKindsWhenGraphContainsThem(t *testing.T) {

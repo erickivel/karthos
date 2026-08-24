@@ -28,6 +28,24 @@ type recordingMetricStore struct {
 	queries []query.MetricQuery
 }
 
+type failingGraphStore struct {
+	persistence.GraphStore
+	err error
+}
+
+func (s failingGraphStore) GetLatest(context.Context) (*topology.Snapshot, error) {
+	return nil, s.err
+}
+
+type failingMetadataStore struct {
+	persistence.MetadataStore
+	err error
+}
+
+func (s failingMetadataStore) GetDiscovery(context.Context) (*profile.ClusterProfile, error) {
+	return nil, s.err
+}
+
 func (s *recordingMetricStore) Write(_ context.Context, samples []metrics.MetricSample) error {
 	if s.samples == nil {
 		s.samples = map[string][]metrics.MetricSample{}
@@ -185,6 +203,38 @@ func TestStatusDegradedWhenMetricStoreNil(t *testing.T) {
 	require.Contains(t, reasons, "metric_store unavailable")
 }
 
+func TestStatusDegradesWithSafeReasonsWhenReadsFail(t *testing.T) {
+	graphFailure := errors.New("database connection refused")
+	metadataFailure := errors.New("profile decode details")
+	srv := newTestServer(t, Config{
+		MetricStore: persistence.NewInMemoryMetricStore(),
+		GraphStore: failingGraphStore{
+			GraphStore: persistence.NewInMemoryGraphStore(),
+			err:        graphFailure,
+		},
+		MetadataStore: failingMetadataStore{
+			MetadataStore: persistence.NewInMemoryMetadataStore(),
+			err:           metadataFailure,
+		},
+		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
+	})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/status")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	data := parseResponseData(t, resp)
+	require.Equal(t, "degraded", data["system_status"])
+	require.Equal(t, true, data["data_stale"])
+	reasons := data["reasons"].([]any)
+	require.Contains(t, reasons, "failed to read latest graph")
+	require.Contains(t, reasons, "failed to read capability profile")
+	require.NotContains(t, reasons, graphFailure.Error())
+	require.NotContains(t, reasons, metadataFailure.Error())
+	components := data["components"].(map[string]any)
+	require.Equal(t, "available", components["graph_store"])
+	require.Equal(t, "available", components["metadata_store"])
+}
+
 func TestStatusIncludesDiscoveryTimestamp(t *testing.T) {
 	ms := persistence.NewInMemoryMetadataStore()
 	discoveredAt := time.Date(2026, 3, 31, 1, 35, 36, 0, time.UTC)
@@ -277,8 +327,6 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 	require.EqualValues(t, 1, pods["pending"])
 	require.EqualValues(t, 1, pods["failed"])
 	require.EqualValues(t, 2, pods["unknown"]) // pod-5 (explicit) + pod-6 (no sample)
-	require.EqualValues(t, 0, pods["running_not_ready"])
-	require.EqualValues(t, 0, pods["restarting"])
 	require.EqualValues(t, 0, pods["succeeded"])
 
 	// Unhealthy node should cause degraded status.
@@ -341,6 +389,29 @@ func TestStatusBulkHealthQueriesDoNotEmbedEntityIDs(t *testing.T) {
 	}
 }
 
+func TestStatusHealthSummaryDoesNotQueryContainerHealth(t *testing.T) {
+	now := time.Now().UTC()
+	gs := persistence.NewInMemoryGraphStore()
+	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+		Version: schema.CurrentVersion, CreatedAt: now,
+		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
+			{ID: "node-1", Kind: entities.KindNode},
+			{ID: "pod-1", Kind: entities.KindPod},
+			{ID: "container-1", Kind: entities.KindContainer},
+		}},
+	}))
+	ms := &recordingMetricStore{samples: map[string][]metrics.MetricSample{}}
+	srv := newTestServer(t, Config{MetricStore: ms, GraphStore: gs, MetadataStore: persistence.NewInMemoryMetadataStore(), EntityRegistry: persistence.NewInMemoryEntityRegistry()})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/status")
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, ms.queries, 2)
+	queriedMetrics := []string{ms.queries[0].MetricName, ms.queries[1].MetricName}
+	require.ElementsMatch(t, []string{"k8s.node.condition.ready", "k8s.pod.phase"}, queriedMetrics)
+}
+
 func TestStatusDegradesWhenPodHealthBranchFails(t *testing.T) {
 	now := time.Now().UTC()
 	gs := persistence.NewInMemoryGraphStore()
@@ -394,7 +465,6 @@ func TestDiscoveryReturnsCapabilityProfile(t *testing.T) {
 	require.Equal(t, "test-cluster", data["cluster_name"])
 	capabilities := data["capabilities"].([]any)
 	require.Len(t, capabilities, 2)
-	require.NotContains(t, data, "node_count")
 }
 
 func TestDiscoveryReturns404WhenEmpty(t *testing.T) {

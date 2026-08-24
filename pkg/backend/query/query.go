@@ -22,8 +22,9 @@ type MetricQuery struct {
 }
 
 type EdgeQuery struct {
-	Source entities.EntityID
-	Target entities.EntityID
+	Source   entities.EntityID
+	Target   entities.EntityID
+	Relation topology.RelationType
 }
 
 type GraphQuerier interface {

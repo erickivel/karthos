@@ -56,7 +56,8 @@ type GraphStore interface {
 
 // RunsOnRetirer is the narrow lifecycle-to-storage boundary for retiring a
 // terminal Pod assignment without inferring retirement from missing telemetry.
-// Retired edges remain available through QueryEdges as audit history.
+// Retirement state is internal to lifecycle reconciliation; GraphStore queries
+// expose only the current composed graph.
 type RunsOnRetirer interface {
 	RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error
 }

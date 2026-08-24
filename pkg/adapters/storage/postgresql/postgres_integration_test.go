@@ -16,6 +16,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
@@ -65,6 +66,19 @@ func TestPostgresStructuralSnapshotsRetainHistoryAndComposeObservations(t *testi
 		Nodes: []topology.Node{{ID: ingress, Kind: entities.KindIngress}, {ID: service, Kind: entities.KindService}}, Edges: []topology.Edge{route},
 	}}))
 	require.NoError(t, store.PutObservedSnapshot(ctx, topology.Snapshot{CreatedAt: now, Graph: topology.Graph{Edges: []topology.Edge{calls}}}))
+	currentRoutes, err := store.QueryEdges(ctx, query.EdgeQuery{Relation: topology.RelRoutesTo})
+	require.NoError(t, err)
+	require.Len(t, currentRoutes, 1)
+	currentRoute := currentRoutes[0]
+	require.Equal(t, route.ID, currentRoute.ID)
+	require.Equal(t, route.Source, currentRoute.Source)
+	require.Equal(t, route.Target, currentRoute.Target)
+	require.Equal(t, route.Relation, currentRoute.Relation)
+	require.Equal(t, route.Confidence, currentRoute.Confidence)
+	require.True(t, route.FirstSeen.Equal(currentRoute.FirstSeen))
+	require.True(t, route.LastSeen.Equal(currentRoute.LastSeen))
+	require.Empty(t, currentRoute.Provenance)
+	require.Empty(t, currentRoute.Metadata)
 	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: now.Add(time.Minute), Graph: topology.Graph{
 		Nodes: []topology.Node{{ID: service, Kind: entities.KindService}},
 	}}))
