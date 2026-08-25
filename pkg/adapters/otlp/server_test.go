@@ -1,7 +1,6 @@
 package otlp
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -15,9 +14,10 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding/gzip"
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/grpc/status"
 
 	"github.com/stretchr/testify/require"
 
@@ -36,7 +36,6 @@ func TestServerAcceptsMetricsOverGRPC(t *testing.T) {
 
 	server, err := NewServer(Config{
 		GRPCListenAddress:   "127.0.0.1:0",
-		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"metric"},
 	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(metricsSink, nil), logger)
@@ -84,7 +83,6 @@ func TestServerAcceptsGzipCompressedMetricsOverGRPC(t *testing.T) {
 
 	server, err := NewServer(Config{
 		GRPCListenAddress:   "127.0.0.1:0",
-		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"metric"},
 	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(metricsSink, nil), logger)
@@ -126,7 +124,7 @@ func TestServerAcceptsGzipCompressedMetricsOverGRPC(t *testing.T) {
 	require.Equal(t, schema.SignalMetric, metricsSink.envelopes[0].SignalType)
 }
 
-func TestServerAcceptsTracesOverHTTP(t *testing.T) {
+func TestServerAcceptsTracesOverGRPC(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -136,7 +134,6 @@ func TestServerAcceptsTracesOverHTTP(t *testing.T) {
 
 	server, err := NewServer(Config{
 		GRPCListenAddress:   "127.0.0.1:0",
-		HTTPListenAddress:   "127.0.0.1:0",
 		HealthListenAddress: "127.0.0.1:0",
 		EnabledSignals:      []string{"trace"},
 	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(nil, tracesSink), logger)
@@ -151,7 +148,14 @@ func TestServerAcceptsTracesOverHTTP(t *testing.T) {
 		require.NoError(t, <-errCh)
 	}()
 
-	payload, err := proto.Marshal(&coltracepb.ExportTraceServiceRequest{
+	conn, err := grpc.NewClient(server.GRPCAddress(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
+
+	client := coltracepb.NewTraceServiceClient(conn)
+	_, err = client.Export(context.Background(), &coltracepb.ExportTraceServiceRequest{
 		ResourceSpans: []*tracepb.ResourceSpans{
 			{
 				Resource: &resourcepb.Resource{
@@ -163,16 +167,86 @@ func TestServerAcceptsTracesOverHTTP(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-
-	response, err := http.Post("http://"+server.HTTPAddress()+"/v1/traces", "application/x-protobuf", bytes.NewReader(payload))
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, response.Body.Close())
-	}()
-
-	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Eventually(t, func() bool { return len(tracesSink.envelopes) == 1 }, 2*time.Second, 50*time.Millisecond)
 	require.Equal(t, schema.SignalTrace, tracesSink.envelopes[0].SignalType)
+}
+
+func TestServerRejectsDisabledSignalsOverGRPC(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	require.NoError(t, err)
+	server, err := NewServer(Config{
+		GRPCListenAddress:   "127.0.0.1:0",
+		HealthListenAddress: "127.0.0.1:0",
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(nil, nil), logger)
+	require.NoError(t, err)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Run(ctx) }()
+	defer func() {
+		cancel()
+		require.NoError(t, <-errCh)
+	}()
+
+	conn, err := grpc.NewClient(server.GRPCAddress(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, conn.Close()) }()
+
+	_, err = colmetricpb.NewMetricsServiceClient(conn).Export(context.Background(), &colmetricpb.ExportMetricsServiceRequest{})
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+	_, err = coltracepb.NewTraceServiceClient(conn).Export(context.Background(), &coltracepb.ExportTraceServiceRequest{})
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+}
+
+func TestServerHealthEndpoint(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	require.NoError(t, err)
+	server, err := NewServer(Config{
+		GRPCListenAddress:   "127.0.0.1:0",
+		HealthListenAddress: "127.0.0.1:0",
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(nil, nil), logger)
+	require.NoError(t, err)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Run(ctx) }()
+	defer func() {
+		cancel()
+		require.NoError(t, <-errCh)
+	}()
+
+	response, err := http.Get("http://" + server.HealthAddress() + "/healthz")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, response.Body.Close()) }()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, "ok", string(body))
+}
+
+func TestServerStopsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	require.NoError(t, err)
+	server, err := NewServer(Config{
+		GRPCListenAddress:   "127.0.0.1:0",
+		HealthListenAddress: "127.0.0.1:0",
+	}, backendingest.NewEnvelopeBuilder(fixedClock(time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC))), backendingest.NewSignalRouter(nil, nil), logger)
+	require.NoError(t, err)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Run(ctx) }()
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop after context cancellation")
+	}
 }
 
 type recordingIngestor struct {

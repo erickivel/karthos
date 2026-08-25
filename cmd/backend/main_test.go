@@ -20,7 +20,6 @@ func TestParseConfigAppliesDefaults(t *testing.T) {
 	cfg, err := parseConfig([]string{})
 	require.NoError(t, err)
 	require.Equal(t, defaultBackendGRPCListenAddr, cfg.GRPCListenAddress)
-	require.Equal(t, defaultBackendHTTPListenAddr, cfg.HTTPListenAddress)
 	require.Equal(t, defaultBackendHealthListenAddr, cfg.HealthListenAddress)
 	require.Equal(t, defaultBackendLogLevel, cfg.LogLevel)
 	require.Equal(t, []string{"metric", "trace"}, cfg.EnabledSignals)

@@ -30,7 +30,6 @@ import (
 
 const (
 	defaultBackendGRPCListenAddr   = "0.0.0.0:4317"
-	defaultBackendHTTPListenAddr   = "0.0.0.0:4318"
 	defaultBackendHealthListenAddr = "0.0.0.0:13133"
 	defaultBackendAPIListenAddr    = "0.0.0.0:8080"
 	defaultBackendLogLevel         = "info"
@@ -46,7 +45,6 @@ const (
 
 type config struct {
 	GRPCListenAddress     string
-	HTTPListenAddress     string
 	HealthListenAddress   string
 	APIListenAddress      string
 	LogLevel              string
@@ -183,7 +181,6 @@ func run(ctx context.Context, args []string) error {
 
 	server, err := otlp.NewServer(otlp.Config{
 		GRPCListenAddress:   cfg.GRPCListenAddress,
-		HTTPListenAddress:   cfg.HTTPListenAddress,
 		HealthListenAddress: cfg.HealthListenAddress,
 		EnabledSignals:      cfg.EnabledSignals,
 	}, ingest.NewEnvelopeBuilder(contextNow), router, logger)
@@ -193,7 +190,6 @@ func run(ctx context.Context, args []string) error {
 
 	logger.Info("backend server configured",
 		logging.String("grpc_listen_address", server.GRPCAddress()),
-		logging.String("http_listen_address", server.HTTPAddress()),
 		logging.String("health_listen_address", server.HealthAddress()),
 		logging.String("api_listen_address", apiServer.Address()),
 		logging.Any("enabled_signals", cfg.EnabledSignals),
@@ -217,7 +213,6 @@ func run(ctx context.Context, args []string) error {
 func parseConfig(args []string) (config, error) {
 	fs := flag.NewFlagSet("backend", flag.ContinueOnError)
 	grpcListenAddress := fs.String("grpc-listen-address", envOrDefault("OKSG_BACKEND_GRPC_LISTEN_ADDRESS", defaultBackendGRPCListenAddr), "OTLP gRPC listen address")
-	httpListenAddress := fs.String("http-listen-address", envOrDefault("OKSG_BACKEND_HTTP_LISTEN_ADDRESS", defaultBackendHTTPListenAddr), "OTLP HTTP listen address")
 	healthListenAddress := fs.String("health-listen-address", envOrDefault("OKSG_BACKEND_HEALTH_LISTEN_ADDRESS", defaultBackendHealthListenAddr), "health listen address")
 	apiListenAddress := fs.String("api-listen-address", envOrDefault("OKSG_BACKEND_API_LISTEN_ADDRESS", defaultBackendAPIListenAddr), "REST API listen address")
 	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultBackendLogLevel), "structured log level")
@@ -268,7 +263,6 @@ func parseConfig(args []string) (config, error) {
 
 	return config{
 		GRPCListenAddress:        *grpcListenAddress,
-		HTTPListenAddress:        *httpListenAddress,
 		HealthListenAddress:      *healthListenAddress,
 		APIListenAddress:         *apiListenAddress,
 		LogLevel:                 *logLevel,
