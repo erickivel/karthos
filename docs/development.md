@@ -38,7 +38,7 @@ pkg/
   adapters/api/          REST API server (handlers + response envelope + pagination)
   adapters/kubernetes/   Kubernetes inventory adapter plus live Pod lifecycle validation
   adapters/otel/         OpenTelemetry adapter: renders OTel configuration and source-stamp processor syntax
-  adapters/otlp/         OTLP gRPC and HTTP server adapter
+  adapters/otlp/         OTLP gRPC ingress server adapter
   adapters/storage/      storage factory and config (memory or external backends)
   adapters/storage/postgresql/     PostgreSQL implementations (pgx/v5)
   adapters/storage/victoriametrics/ VictoriaMetrics MetricStore (HTTP API)
@@ -172,6 +172,11 @@ The chart owns one release-scoped `*-source-contract` ConfigMap. Generated
 two mounted JSON files, and the backend Deployment hashes that rendered
 ConfigMap. Changing either compiled artifact therefore rolls the backend
 without an imperative restart.
+
+`backend.grpcPort` is the sole backend OTLP transport setting. It defaults to
+`4317`; the chart uses it for the backend listener and Service, then generates
+the gateway's reserved `OKSG_BACKEND_GRPC_ENDPOINT` environment variable.
+Do not set that reserved name through `gateway.runtimeEnv`.
 
 Do not reintroduce ad hoc manifest rendering in Go.
 
@@ -321,7 +326,7 @@ For local e2e work, keep the local port split explicit to avoid colliding with `
 
 - `18080` -> `gateway-go`
 - `18081` -> backend REST API
-- `13133` -> backend debug/health
+- `13133` -> backend health checks
 
 ```bash
 # Query system status (nominal/degraded/disconnected)

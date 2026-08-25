@@ -93,7 +93,7 @@ sequenceDiagram
     Main->>Builder: ingest.NewEnvelopeBuilder(clock)
     Main->>Server: otlp.NewServer(config, builder, router, logger)
     Main->>Server: server.Run(ctx)
-    Note over Server: Listening on :4317 (gRPC), :4318 (HTTP), :13133 (health)
+    Note over Server: Listening on :4317 (gRPC) and :13133 (health)
 
     Note over Gateway,Server: Runtime: OTLP Export Request
     Gateway->>Server: OTLP gRPC Export (metrics)
@@ -132,7 +132,7 @@ sequenceDiagram
 | File | Type | Role |
 |------|------|------|
 | `cmd/backend/main.go` | Binary entrypoint | Loads and strictly validates the mounted source contract, refreshes structure in-cluster, wires generic ingestion, and starts OTLP plus `/api/v1` servers |
-| `pkg/adapters/otlp/server.go` | `Server` | OTLP gRPC/HTTP listener, delegates to builder + router |
+| `pkg/adapters/otlp/server.go` | `Server` | OTLP gRPC listener, delegates to builder + router |
 | `pkg/backend/ingest/otlp.go` | `EnvelopeBuilder` | Converts OTLP protos → `[]schema.RawEnvelope` |
 | `pkg/backend/ingest/otlp.go` | `SignalRouter` | Routes envelopes by signal type to the right `Ingestor` |
 | `pkg/backend/ingest/entity_resolver.go` | `OTLPEntityResolver` | Maps OTLP resource attributes to canonical `EntityID` (deterministic SHA-256) |
@@ -160,11 +160,11 @@ sequenceDiagram
 ```
 Gateway
    │
-   │ OTLP gRPC/HTTP
+   │ OTLP gRPC
    ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  pkg/adapters/otlp/server.go                                 │
-│  (metricsService.Export / handleMetricsHTTP)                 │
+│  (metricsService.Export / traceService.Export)               │
 │                                                              │
 │  1. Check signal enabled                                     │
 │  2. builder.BuildMetricEnvelopes("otlp/grpc", request)       │
@@ -241,7 +241,7 @@ The gateway collector is the shared in-cluster fan-in point.
 
 What it does today:
 
-- receives OTLP over gRPC and HTTP
+- receives OTLP over gRPC
 - accepts exports from the agent
 - can also accept OTLP-native application telemetry
 - scrapes annotated application metrics once through static Service-DNS targets
@@ -263,12 +263,15 @@ The OKSG backend is the OKSG-owned runtime that accepts forwarded telemetry and 
 What it does today:
 
 - listens for OTLP gRPC on port `4317`
-- listens for OTLP HTTP on port `4318`
 - serves health checks on port `13133`
 - serves the REST API on port `8080`
 - accepts enabled signal classes from the deployed plan
 - parses incoming OTLP metrics and traces
 - hands accepted payloads to the normalization pipeline
+
+`backend.grpcPort` is the single Helm value for this path. It defaults to
+`4317`, configures the backend listener and Service, and is propagated to the
+gateway as `OKSG_BACKEND_GRPC_ENDPOINT` for Collector configuration expansion.
 
 The `--cluster-name` flag (or `OKSG_CLUSTER_NAME` env var) controls the cluster name used for entity ID computation. It defaults to `default`.
 
@@ -377,7 +380,7 @@ Gateway Collector
         |
         v
 OKSG Backend
-  - OTLP gRPC/HTTP ingest
+  - OTLP gRPC ingest
   - Raw envelope build
   - Signal routing
     ├── metric → MultiIngestor

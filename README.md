@@ -22,7 +22,7 @@ relations between them, with metrics attached to nodes and edges.
 | `cmd/schema-gen` | JSON Schema generation helper |
 | `pkg/adapters/kubernetes` | Kubernetes API inventory adapter plus live Pod UID/node lifecycle validation |
 | `pkg/adapters/otel` | OpenTelemetry adapter: translates generic collection plans into collector configuration |
-| `pkg/adapters/otlp` | OTLP gRPC/HTTP server adapter |
+| `pkg/adapters/otlp` | OTLP gRPC ingress server adapter |
 | `pkg/adapters/api` | REST API server, handlers, response envelope, pagination |
 | `pkg/adapters/storage` | Storage factory; `postgresql/` and `victoriametrics/` external backends |
 | `pkg/backend/ingest` | Envelope builder, signal router, normalizer, topology builders, ingestors |
@@ -89,7 +89,7 @@ Local port convention:
 
 - `18080` → `gateway-go` traffic generation
 - `18081` → backend REST API
-- `13133` → backend debug/health
+- `13133` → backend health checks
 
 ### Frontend topology QA (Playwright)
 

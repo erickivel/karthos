@@ -19,7 +19,7 @@ Key coverage areas:
 - source-plan resolution, generic collection composition, and OTel adapter rendering (including Prometheus plus trace intake)
 - Helm values generation
 - backend OTLP envelope conversion and routing
-- OTLP gRPC and HTTP ingest integration
+- OTLP gRPC ingest integration
 - `MetricTopologyBuilder`: structural edge and node extraction from resource attributes
 - Pod lifecycle validation: UID/node matching, synchronous immutable `terminal_deadline` persistence before grace activation, fail-closed terminal refreshes on an initial marker-write failure with retry of the original deadline, confirmed-initial versus retry-only marker provenance (an absent/replaced retry-only UID retires immediately at restart), atomic active→pending→retired storage transitions that prevent delayed marker resurrection across delete/replace/crash/restart interleavings, cluster-scoped startup reconciliation and re-arming across same-UID/deleted/replaced restart states, deadline exclusion from current graph reads, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
@@ -225,7 +225,7 @@ Recommended local port convention during e2e work:
 
 - `18080` -> `gateway-go` traffic generation
 - `18081` -> backend REST API
-- `13133` -> backend debug/health
+- `13133` -> backend health checks
 
 ## Frontend Topology QA
 

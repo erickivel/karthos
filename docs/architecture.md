@@ -24,7 +24,7 @@ Kubernetes API -> ClusterProfile -> Source Plan -> Generic Collection Plan -> OT
 |------|------|
 | `pkg/adapters/kubernetes` | Kubernetes API inventory adapter plus live Pod lifecycle validation — lists discovery observations once and maintains UID/node List/Watch state |
 | `pkg/adapters/otel` | OpenTelemetry adapter: renders receiver, connector, processor, pipeline, exporter, and source-stamp syntax from the generic collection plan |
-| `pkg/adapters/otlp` | OTLP gRPC + HTTP ingest server |
+| `pkg/adapters/otlp` | OTLP gRPC ingress server |
 | `pkg/adapters/api` | Versioned REST API server (handlers, response envelope, pagination) |
 | `pkg/adapters/storage` | Storage factory; `postgresql/` and `victoriametrics/` external implementations |
 | `pkg/collector/{spec,configgen,deployer}` | Provider-neutral collection requirements and composition → Helm values → `helm lint/template/upgrade-install` |
@@ -179,7 +179,7 @@ Backend storage flags:
 ## REST API
 
 Versioned under `/api/v1`, served on a dedicated port (default `8080`),
-separate from OTLP (`4317`/`4318`) and health (`13133`). The API package
+separate from backend OTLP gRPC (`4317`) and health (`13133`). The API package
 depends only on persistence interfaces — never on concrete storage
 implementations.
 
@@ -256,7 +256,9 @@ persistence path. The chart schema requires an explicit `storage.backend`
 - **Helm values** — generated deployment settings, collector configuration, and the compiled backend source contract
 - **ConfigMaps** — structured collector configuration for agent and gateway plus the chart-owned backend source contract
 - **Secrets** — credentials and sensitive settings
-- **Env vars** — runtime toggles and pod/node metadata only
+- **Env vars** — runtime toggles, pod/node metadata, and Helm-propagated
+  Collector endpoint values; `OKSG_BACKEND_GRPC_ENDPOINT` is generated from
+  the single `backend.grpcPort` Helm value and is reserved from user overrides
 
 ## Logging Policy
 
