@@ -103,21 +103,23 @@
     },
     "backend": {
       "type": "object",
-      "required": ["enabled", "grpcEndpoint", "httpEndpoint", "image", "service", "sourceContract"],
+      "required": ["enabled", "grpcPort", "image", "service", "statusStaleSeconds", "topologyFlushInterval", "runtimeEnv", "sourceContract", "resources"],
+      "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
-        "grpcEndpoint": { "type": "string", "minLength": 1 },
-        "httpEndpoint": { "type": "string", "minLength": 1 },
+        "grpcPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "image": { "$ref": "#/definitions/image" },
         "service": {
           "type": "object",
-          "required": ["grpcPort", "httpPort", "healthPort"],
+          "required": ["healthPort", "apiPort"],
+          "additionalProperties": false,
           "properties": {
-            "grpcPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
-            "httpPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
-            "healthPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            "healthPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "apiPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
           }
         },
+        "statusStaleSeconds": { "type": "integer", "minimum": 1 },
+        "topologyFlushInterval": { "type": "string", "minLength": 1 },
         "runtimeEnv": {
           "type": "object",
           "additionalProperties": { "type": "string" }

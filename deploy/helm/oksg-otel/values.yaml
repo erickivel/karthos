@@ -58,15 +58,12 @@ gateway:
 
 backend:
   enabled: true
-  grpcEndpoint: oksg-backend:4317
-  httpEndpoint: 0.0.0.0:4318
+  grpcPort: 4317
   image:
     repository: oksg-backend
     tag: latest
     pullPolicy: IfNotPresent
   service:
-    grpcPort: 4317
-    httpPort: 4318
     healthPort: 13133
     apiPort: 8080
   statusStaleSeconds: 300

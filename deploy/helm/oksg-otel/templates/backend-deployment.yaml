@@ -26,8 +26,7 @@ spec:
           image: {{ include "oksg-otel.backendImage" . }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           args:
-            - --grpc-listen-address=0.0.0.0:{{ .Values.backend.service.grpcPort }}
-            - --http-listen-address=0.0.0.0:{{ .Values.backend.service.httpPort }}
+            - --grpc-listen-address=0.0.0.0:{{ .Values.backend.grpcPort }}
             - --health-listen-address=0.0.0.0:{{ .Values.backend.service.healthPort }}
             - --api-listen-address=0.0.0.0:{{ .Values.backend.service.apiPort }}
             - --status-stale-seconds={{ .Values.backend.statusStaleSeconds | default 300 }}
@@ -57,10 +56,8 @@ spec:
               value: {{ $value | quote }}
           {{- end }}
           ports:
-            - containerPort: {{ .Values.backend.service.grpcPort }}
+            - containerPort: {{ .Values.backend.grpcPort }}
               name: otlp-grpc
-            - containerPort: {{ .Values.backend.service.httpPort }}
-              name: otlp-http
             - containerPort: {{ .Values.backend.service.healthPort }}
               name: health
             - containerPort: {{ .Values.backend.service.apiPort }}

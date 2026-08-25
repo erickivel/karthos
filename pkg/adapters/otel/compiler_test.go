@@ -37,6 +37,17 @@ func TestCompileProvidesDevelopmentDebugExporterSpecification(t *testing.T) {
 	require.Equal(t, []string{"stdout"}, deployment.DebugExporter.Config["output_paths"])
 }
 
+func TestCompileGatewayUsesReservedBackendEndpointEnvironment(t *testing.T) {
+	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
+	})
+	require.NoError(t, err)
+
+	exporter := deployment.GatewayConfig.Exporters[otlpGRPCExporter].(map[string]any)
+	require.Equal(t, "${env:OKSG_BACKEND_GRPC_ENDPOINT}", exporter["endpoint"])
+}
+
 func TestCompileRetainsIstioProtocolCounters(t *testing.T) {
 	config := istioReceiver(&collectorspec.Istio{SourceID: metrics.SourceMeshIstio, Flavor: "istio", MetricsPort: 15020, MetricsPath: "/stats/prometheus"})
 	scrapes := config["config"].(map[string]any)["scrape_configs"].([]map[string]any)

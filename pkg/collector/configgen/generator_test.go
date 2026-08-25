@@ -31,9 +31,7 @@ func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric", "trace"},
 		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
+			Enabled: true,
 		},
 		AgentConfig: otel.CollectorConfig{
 			Extensions: map[string]any{
@@ -67,7 +65,7 @@ func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 			},
 			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
 			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "${env:OKSG_BACKEND_GRPC_ENDPOINT}"}},
 			Service: otel.ServiceConfig{
 				Extensions: []string{"health_check"},
 				Pipelines: map[string]otel.PipelineConfig{
@@ -93,7 +91,7 @@ func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
 	require.Contains(t, string(values), "format: json")
 	require.Contains(t, string(values), "releaseName: oksg-otel")
 	require.Contains(t, string(values), "backend:")
-	require.Contains(t, string(values), "grpcEndpoint: oksg-backend:4317")
+	require.Contains(t, string(values), "grpcPort: 4317")
 	require.NotContains(t, string(values), "enableCPUUsageMetrics")
 	require.Contains(t, string(values), "enabledSignals:")
 	require.Contains(t, string(values), "- trace")
@@ -157,9 +155,7 @@ func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
 		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
+			Enabled: true,
 		},
 		AgentConfig: otel.CollectorConfig{
 			Receivers: map[string]any{
@@ -188,7 +184,7 @@ func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
 		GatewayConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
 			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "${env:OKSG_BACKEND_GRPC_ENDPOINT}"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
@@ -210,9 +206,7 @@ func TestGenerateIncludesK8sclusterInGatewayConfig(t *testing.T) {
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
 		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
+			Enabled: true,
 		},
 		AgentConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"kubelet_stats": map[string]any{"collection_interval": "30s"}},
@@ -233,7 +227,7 @@ func TestGenerateIncludesK8sclusterInGatewayConfig(t *testing.T) {
 				},
 			},
 			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "${env:OKSG_BACKEND_GRPC_ENDPOINT}"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {Receivers: []string{"otlp", "k8s_cluster"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
@@ -254,9 +248,7 @@ func TestGenerateIncludesServicegraphConnectorWhenPresent(t *testing.T) {
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric", "trace"},
 		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
+			Enabled: true,
 		},
 		AgentConfig: otel.CollectorConfig{
 			Receivers: map[string]any{
@@ -288,7 +280,7 @@ func TestGenerateIncludesServicegraphConnectorWhenPresent(t *testing.T) {
 		GatewayConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
 			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "${env:OKSG_BACKEND_GRPC_ENDPOINT}"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
@@ -311,9 +303,7 @@ func TestGenerateBaselinePlanHasNoConnectorsSection(t *testing.T) {
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
 		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
+			Enabled: true,
 		},
 		AgentConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"kubelet_stats": map[string]any{"collection_interval": "30s"}},
@@ -328,7 +318,7 @@ func TestGenerateBaselinePlanHasNoConnectorsSection(t *testing.T) {
 		GatewayConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
 			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "${env:OKSG_BACKEND_GRPC_ENDPOINT}"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
@@ -354,9 +344,7 @@ func TestGenerateUsesConfiguredBackendImageOverrides(t *testing.T) {
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
 		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
+			Enabled: true,
 		},
 		AgentConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"kubelet_stats": map[string]any{}},
@@ -371,7 +359,7 @@ func TestGenerateUsesConfiguredBackendImageOverrides(t *testing.T) {
 		GatewayConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
 			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "${env:OKSG_BACKEND_GRPC_ENDPOINT}"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
@@ -395,9 +383,7 @@ func TestGenerateUsesConfiguredReleaseMetadataOverrides(t *testing.T) {
 		Namespace:      "oksg-system",
 		EnabledSignals: []string{"metric"},
 		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
+			Enabled: true,
 		},
 		AgentConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"kubelet_stats": map[string]any{}},
@@ -412,7 +398,7 @@ func TestGenerateUsesConfiguredReleaseMetadataOverrides(t *testing.T) {
 		GatewayConfig: otel.CollectorConfig{
 			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
 			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
+			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "${env:OKSG_BACKEND_GRPC_ENDPOINT}"}},
 			Service: otel.ServiceConfig{
 				Pipelines: map[string]otel.PipelineConfig{
 					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},

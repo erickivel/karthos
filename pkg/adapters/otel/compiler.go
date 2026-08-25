@@ -13,18 +13,15 @@ import (
 const (
 	DefaultGatewayGRPCEndpoint = "otel-collector-gateway:4317"
 	DefaultGatewayHTTPEndpoint = "0.0.0.0:4318"
-	DefaultBackendGRPCEndpoint = "oksg-backend:4317"
-	DefaultBackendHTTPEndpoint = "0.0.0.0:4318"
 	DefaultHealthEndpoint      = "0.0.0.0:13133"
+	backendGRPCEndpointEnv     = "${env:OKSG_BACKEND_GRPC_ENDPOINT}"
 	otlpGRPCExporter           = "otlp_grpc"
 	debugExporterID            = "debug/oksg"
 	oksgSourceTaggerProcessor  = "transform/oksg-source"
 )
 
 type BackendConfig struct {
-	Enabled      bool
-	GRPCEndpoint string
-	HTTPEndpoint string
+	Enabled bool
 }
 
 // DebugExporter is the OpenTelemetry-specific development diagnostic output.
@@ -83,7 +80,7 @@ func (c *Compiler) Compile(plan collectorspec.CollectionPlan) (Deployment, error
 	return Deployment{
 		ClusterName: plan.ClusterName, Namespace: plan.Namespace,
 		EnabledSignals: append([]string(nil), plan.EnabledSignals...),
-		Backend:        BackendConfig{Enabled: true, GRPCEndpoint: DefaultBackendGRPCEndpoint, HTTPEndpoint: DefaultBackendHTTPEndpoint},
+		Backend:        BackendConfig{Enabled: true},
 		DebugExporter:  debugExporter(),
 		AgentConfig:    agentConfig, GatewayConfig: gatewayConfig,
 	}, nil
@@ -202,7 +199,7 @@ func agentExporter() map[string]any {
 	return map[string]any{"endpoint": DefaultGatewayGRPCEndpoint, "tls": map[string]any{"insecure": true}}
 }
 func gatewayExporter() map[string]any {
-	return map[string]any{"endpoint": DefaultBackendGRPCEndpoint, "tls": map[string]any{"insecure": true}, "sending_queue": map[string]any{"enabled": true}, "retry_on_failure": map[string]any{"enabled": true}}
+	return map[string]any{"endpoint": backendGRPCEndpointEnv, "tls": map[string]any{"insecure": true}, "sending_queue": map[string]any{"enabled": true}, "retry_on_failure": map[string]any{"enabled": true}}
 }
 
 func prometheusReceiver(requirement *collectorspec.Prometheus) map[string]any {

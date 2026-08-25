@@ -2,8 +2,6 @@ package configgen
 
 import (
 	"fmt"
-	"net"
-	"strconv"
 
 	"sigs.k8s.io/yaml"
 
@@ -23,7 +21,9 @@ const (
 	DefaultBackendRepository   = "oksg-backend"
 	DefaultBackendTag          = "latest"
 	DefaultBackendPullPolicy   = "IfNotPresent"
+	DefaultBackendGRPCPort     = 4317
 	DefaultBackendHealthPort   = 13133
+	DefaultBackendAPIPort      = 8080
 )
 
 type Generator struct {
@@ -130,8 +130,7 @@ type ServiceValues struct {
 
 type BackendValues struct {
 	Enabled        bool                 `json:"enabled" yaml:"enabled"`
-	GRPCEndpoint   string               `json:"grpcEndpoint,omitempty" yaml:"grpcEndpoint,omitempty"`
-	HTTPEndpoint   string               `json:"httpEndpoint,omitempty" yaml:"httpEndpoint,omitempty"`
+	GRPCPort       int                  `json:"grpcPort" yaml:"grpcPort"`
 	Image          ImageValues          `json:"image" yaml:"image"`
 	Service        BackendService       `json:"service" yaml:"service"`
 	RuntimeEnv     map[string]string    `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
@@ -145,9 +144,8 @@ type SourceContractValues struct {
 }
 
 type BackendService struct {
-	GRPCPort   int `json:"grpcPort" yaml:"grpcPort"`
-	HTTPPort   int `json:"httpPort" yaml:"httpPort"`
 	HealthPort int `json:"healthPort" yaml:"healthPort"`
+	APIPort    int `json:"apiPort" yaml:"apiPort"`
 }
 
 type SecretsValues struct {
@@ -237,14 +235,12 @@ func (g *Generator) Build(deployment otel.Deployment, capabilityProfile profile.
 			},
 		},
 		Backend: BackendValues{
-			Enabled:      deployment.Backend.Enabled,
-			GRPCEndpoint: deployment.Backend.GRPCEndpoint,
-			HTTPEndpoint: deployment.Backend.HTTPEndpoint,
-			Image:        g.options.BackendImage,
+			Enabled:  deployment.Backend.Enabled,
+			GRPCPort: DefaultBackendGRPCPort,
+			Image:    g.options.BackendImage,
 			Service: BackendService{
-				GRPCPort:   endpointPort(deployment.Backend.GRPCEndpoint, 4317),
-				HTTPPort:   endpointPort(deployment.Backend.HTTPEndpoint, 4318),
 				HealthPort: DefaultBackendHealthPort,
+				APIPort:    DefaultBackendAPIPort,
 			},
 			SourceContract: SourceContractValues{
 				CapabilityProfile: capabilityProfile,
@@ -312,16 +308,4 @@ func withDefaultGeneratorOptions(options GeneratorOptions) GeneratorOptions {
 		options.ChartPath = defaults.ChartPath
 	}
 	return options
-}
-
-func endpointPort(endpoint string, fallback int) int {
-	_, port, err := net.SplitHostPort(endpoint)
-	if err != nil {
-		return fallback
-	}
-	value, err := strconv.Atoi(port)
-	if err != nil {
-		return fallback
-	}
-	return value
 }

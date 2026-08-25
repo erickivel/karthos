@@ -1,4 +1,7 @@
 {{- if .Values.gateway.enabled }}
+{{- if hasKey .Values.gateway.runtimeEnv "OKSG_BACKEND_GRPC_ENDPOINT" }}
+{{- fail "gateway.runtimeEnv must not override OKSG_BACKEND_GRPC_ENDPOINT; use backend.grpcPort" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -35,6 +38,8 @@ spec:
           env:
             - name: OTEL_LOG_LEVEL
               value: {{ .Values.gateway.logging.level | quote }}
+            - name: OKSG_BACKEND_GRPC_ENDPOINT
+              value: {{ printf "oksg-backend:%d" (int .Values.backend.grpcPort) | quote }}
           {{- range $key, $value := .Values.gateway.runtimeEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}
