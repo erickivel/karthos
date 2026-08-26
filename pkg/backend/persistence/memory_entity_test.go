@@ -154,6 +154,31 @@ func TestEntityRegistry_UpsertOTLPLabelsDerivesFields(t *testing.T) {
 	assert.Equal(t, "default", stored.Namespace)
 }
 
+func TestMaterializeEntityClonesLabelsAndUsesCanonicalFallbacks(t *testing.T) {
+	labels := map[string]string{
+		"k8s.cluster.name":   "cluster-a",
+		"k8s.namespace.name": "payments",
+		"service.name":       "checkout",
+	}
+
+	got := MaterializeEntity(entities.NewService("", "", "", nil, labels))
+	labels["service.name"] = "mutated"
+
+	assert.Equal(t, "cluster-a", got.Cluster)
+	assert.Equal(t, "payments", got.Namespace)
+	assert.Equal(t, "checkout", got.Name)
+	assert.Equal(t, "checkout", got.Metadata["service.name"])
+}
+
+func TestStoredEntityLabelsReturnsCopy(t *testing.T) {
+	entity := StoredEntity{Metadata: map[string]string{"name": "api"}}
+
+	labels := entity.Labels()
+	labels["name"] = "mutated"
+
+	assert.Equal(t, "api", entity.Metadata["name"])
+}
+
 func TestEntityRegistry_ListAll(t *testing.T) {
 	reg := NewInMemoryEntityRegistry()
 	ctx := context.Background()

@@ -31,7 +31,7 @@ func NewInMemoryMetricStore() *InMemoryMetricStore {
 func (s *InMemoryMetricStore) Write(_ context.Context, samples []metrics.MetricSample) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.samples = append(s.samples, samples...)
+	s.samples = append(s.samples, cloneMetricSamples(samples)...)
 	return nil
 }
 
@@ -41,6 +41,12 @@ func (s *InMemoryMetricStore) Write(_ context.Context, samples []metrics.MetricS
 func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]metrics.MetricSample, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if q.Step > 0 {
+		if q.Aggregation == "" || q.Aggregation == metrics.AggregationLatest {
+			return evaluateMemoryLatestTrend(s.filteredSamples(q, false), q), nil
+		}
+		return s.evaluateAggregatedTrend(q), nil
+	}
 
 	if q.Aggregation != "" && q.Aggregation != metrics.AggregationLatest {
 		if q.Aggregation == metrics.AggregationWindowMean {
@@ -49,17 +55,54 @@ func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]m
 		return aggregateMemorySamples(s.filteredSamples(q, false), q), nil
 	}
 
-	result := s.filteredSamples(q, true)
-	// Mirror VMMetricStore: populate the public string label for health-status
-	// enum metrics so consumers (incl. tests) see the same shape regardless of
-	// backing store. Storage writes hold integer values only; the label is an
-	// API/store-boundary derivation.
-	if metrics.IsHealthStatusMetric(q.MetricName) {
-		for i := range result {
-			result[i].ValueLabel = metrics.HealthLabel(q.MetricName, result[i].Value)
+	return cloneMetricSamples(s.filteredSamples(q, true)), nil
+}
+
+func (s *InMemoryMetricStore) evaluateAggregatedTrend(q query.MetricQuery) []metrics.MetricSample {
+	result := make([]metrics.MetricSample, 0)
+	for _, point := range (query.ResolvedMetricQuery{MetricQuery: q}).EvaluationPoints() {
+		at := q
+		at.From = time.Time{}
+		at.To = point
+		at.Step = 0
+		var samples []metrics.MetricSample
+		if at.Aggregation == metrics.AggregationWindowMean {
+			samples = s.queryWindowMean(at)
+		} else {
+			samples = aggregateMemorySamples(s.filteredSamples(at, false), at)
+		}
+		result = append(result, samples...)
+	}
+	return result
+}
+
+// evaluateMemoryLatestTrend projects irregular raw observations onto the
+// resolved query grid without treating held values as new source samples.
+func evaluateMemoryLatestTrend(samples []metrics.MetricSample, q query.MetricQuery) []metrics.MetricSample {
+	groups := map[string][]metrics.MetricSample{}
+	for _, sample := range samples {
+		groups[memorySeriesKey(sample)] = append(groups[memorySeriesKey(sample)], sample)
+	}
+	result := make([]metrics.MetricSample, 0, len(samples))
+	for _, series := range groups {
+		sort.Slice(series, func(i, j int) bool { return series[i].Timestamp.Before(series[j].Timestamp) })
+		latest := -1
+		for _, point := range (query.ResolvedMetricQuery{MetricQuery: q}).EvaluationPoints() {
+			for latest+1 < len(series) && !series[latest+1].Timestamp.After(point) {
+				latest++
+			}
+			if latest < 0 {
+				continue
+			}
+			if q.MaxSampleAge > 0 && point.Sub(series[latest].Timestamp) > q.MaxSampleAge {
+				continue
+			}
+			sample := cloneMetricSample(series[latest])
+			sample.Timestamp = point
+			result = append(result, sample)
 		}
 	}
-	return result, nil
+	return result
 }
 
 func (s *InMemoryMetricStore) filteredSamples(q query.MetricQuery, applyFrom bool) []metrics.MetricSample {
@@ -101,7 +144,7 @@ func (s *InMemoryMetricStore) filteredSamples(q query.MetricQuery, applyFrom boo
 func aggregateMemorySamples(samples []metrics.MetricSample, q query.MetricQuery) []metrics.MetricSample {
 	groups := map[string][]metrics.MetricSample{}
 	for _, sample := range samples {
-		groups[memorySeriesKey(sample, false)] = append(groups[memorySeriesKey(sample, false)], sample)
+		groups[memorySeriesKey(sample)] = append(groups[memorySeriesKey(sample)], sample)
 	}
 	var result []metrics.MetricSample
 	for _, series := range groups {
@@ -127,6 +170,9 @@ func aggregateMemorySeries(series []metrics.MetricSample, q query.MetricQuery) (
 		}
 	}
 	if len(current) == 0 || (delta && q.Aggregation == metrics.AggregationActiveRate) {
+		return metrics.MetricSample{}, false
+	}
+	if q.MaxSampleAge > 0 && end.Sub(current[len(current)-1].Timestamp) > q.MaxSampleAge {
 		return metrics.MetricSample{}, false
 	}
 	out := current[len(current)-1]
@@ -199,21 +245,22 @@ func (s *InMemoryMetricStore) queryWindowMean(q query.MetricQuery) []metrics.Met
 		branchQuery.Aggregation = metrics.AggregationIncrease
 		grouped := map[string][]metrics.MetricSample{}
 		for _, sample := range s.filteredSamples(branchQuery, false) {
-			grouped[memorySeriesKey(sample, false)] = append(grouped[memorySeriesKey(sample, false)], sample)
+			grouped[memorySeriesKey(sample)] = append(grouped[memorySeriesKey(sample)], sample)
 		}
 		result := make(map[string]metrics.MetricSample, len(grouped))
 		for _, series := range grouped {
 			sample, ok := aggregateMemorySeries(series, query.MetricQuery{
-				Aggregation: metrics.AggregationIncrease,
-				Window:      q.Window,
-				To:          q.To,
-				Unit:        q.Unit,
+				Aggregation:  metrics.AggregationIncrease,
+				Window:       q.Window,
+				To:           q.To,
+				Unit:         q.Unit,
+				MaxSampleAge: q.MaxSampleAge,
 			})
 			if !ok {
 				continue
 			}
 			sample.MetricName = q.MetricName
-			result[memorySeriesKey(sample, false)] = sample
+			result[memorySeriesKey(sample)] = sample
 		}
 		return result
 	}
@@ -234,12 +281,9 @@ func (s *InMemoryMetricStore) queryWindowMean(q query.MetricQuery) []metrics.Met
 	return result
 }
 
-func memorySeriesKey(sample metrics.MetricSample, excludeFailed bool) string {
+func memorySeriesKey(sample metrics.MetricSample) string {
 	labels := make(map[string]string, len(sample.Labels))
 	for key, value := range sample.Labels {
-		if excludeFailed && key == "failed" {
-			continue
-		}
 		labels[key] = value
 	}
 	encoded, _ := json.Marshal(labels)
@@ -307,15 +351,16 @@ type InMemoryGraphStore struct {
 	edges               map[string]topology.Edge // observed edges keyed by edge ID
 	nodes               map[string]topology.Node // observed nodes keyed by entity ID string
 	lastSeen            map[string]time.Time     // observed node entity ID -> most recent observation time
-	nodeTTL             time.Duration            // 0 = no TTL
+	nodeTTL             time.Duration            // 0 = no current-projection TTL
 	nowFn               func() time.Time
 }
 
 // InMemoryGraphStoreOption configures an InMemoryGraphStore.
 type InMemoryGraphStoreOption func(*InMemoryGraphStore)
 
-// WithInMemoryNodeTTL drops nodes whose most recent sighting is older than ttl
-// when reading via GetLatest. 0 disables the TTL.
+// WithInMemoryNodeTTL excludes an expired structural projection and stale
+// observed nodes from GetLatest. Historical structural snapshots are retained.
+// A zero ttl disables current-projection expiry.
 func WithInMemoryNodeTTL(ttl time.Duration) InMemoryGraphStoreOption {
 	return func(s *InMemoryGraphStore) { s.nodeTTL = ttl }
 }
@@ -340,7 +385,7 @@ func (s *InMemoryGraphStore) PutStructuralSnapshot(_ context.Context, snapshot t
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.structuralSnapshots = append(s.structuralSnapshots, snapshot)
+	s.structuralSnapshots = append(s.structuralSnapshots, cloneSnapshot(snapshot))
 	return nil
 }
 
@@ -350,12 +395,13 @@ func (s *InMemoryGraphStore) PutObservedSnapshot(_ context.Context, snapshot top
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	snapshot = cloneSnapshot(snapshot)
 	s.observedSnapshot = &snapshot
 
 	for _, e := range snapshot.Graph.Edges {
 		existing, ok := s.edges[e.ID]
 		if !ok {
-			s.edges[e.ID] = e
+			s.edges[e.ID] = cloneEdge(e)
 			continue
 		}
 		if edgeRetired(existing) || edgeTerminalDeadline(existing) != nil {
@@ -374,15 +420,12 @@ func (s *InMemoryGraphStore) PutObservedSnapshot(_ context.Context, snapshot top
 			s.edges[e.ID] = existing
 			continue
 		}
-		if e.LastSeen.After(existing.LastSeen) {
-			existing.LastSeen = e.LastSeen
-			s.edges[e.ID] = existing
-		}
+		s.edges[e.ID] = MergeObservedEdge(existing, e)
 	}
 
 	now := s.nowFn()
 	for _, n := range snapshot.Graph.Nodes {
-		s.nodes[string(n.ID)] = n
+		s.nodes[string(n.ID)] = cloneNode(n)
 		s.lastSeen[string(n.ID)] = now
 	}
 
@@ -399,11 +442,24 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 		return nil, nil
 	}
 
-	var result topology.Snapshot
+	var structural *topology.Snapshot
 	if len(s.structuralSnapshots) > 0 {
-		result = s.structuralSnapshots[len(s.structuralSnapshots)-1]
+		latest := s.structuralSnapshots[len(s.structuralSnapshots)-1]
+		if s.nodeTTL == 0 || latest.CreatedAt.IsZero() || !latest.CreatedAt.Before(s.nowFn().Add(-s.nodeTTL)) {
+			cloned := cloneSnapshot(latest)
+			structural = &cloned
+		}
+	}
+
+	var result topology.Snapshot
+	if structural != nil {
+		result = *structural
+	} else if s.observedSnapshot != nil {
+		result = cloneSnapshot(*s.observedSnapshot)
 	} else {
-		result = *s.observedSnapshot
+		// Retained stale structural history keeps GetLatest non-nil, but it is
+		// intentionally excluded from the current projection.
+		result = cloneSnapshot(s.structuralSnapshots[len(s.structuralSnapshots)-1])
 	}
 
 	edgesByID := make(map[string]topology.Edge, len(result.Graph.Edges)+len(s.edges))
@@ -411,11 +467,11 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 		if edgeRetired(e) || edgeTerminalDeadlineExpired(e, s.nowFn()) {
 			continue
 		}
-		edgesByID[e.ID] = e
+		edgesByID[e.ID] = cloneEdge(e)
 	}
-	if len(s.structuralSnapshots) > 0 {
+	if structural != nil {
 		for _, edge := range result.Graph.Edges {
-			edgesByID[edge.ID] = edge
+			edgesByID[edge.ID] = cloneEdge(edge)
 		}
 	}
 	edges := make([]topology.Edge, 0, len(edgesByID))
@@ -434,11 +490,11 @@ func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, e
 				continue
 			}
 		}
-		nodesByID[id] = n
+		nodesByID[id] = cloneNode(n)
 	}
-	if len(s.structuralSnapshots) > 0 {
+	if structural != nil {
 		for _, node := range result.Graph.Nodes {
-			nodesByID[string(node.ID)] = node
+			nodesByID[string(node.ID)] = cloneNode(node)
 		}
 	}
 	nodes := make([]topology.Node, 0, len(nodesByID))
@@ -627,18 +683,5 @@ func (s *InMemoryGraphStore) QueryEdges(ctx context.Context, q query.EdgeQuery) 
 		return nil, err
 	}
 
-	result := make([]topology.Edge, 0, len(snapshot.Graph.Edges))
-	for _, e := range snapshot.Graph.Edges {
-		if q.Source != "" && e.Source != q.Source {
-			continue
-		}
-		if q.Target != "" && e.Target != q.Target {
-			continue
-		}
-		if q.Relation != "" && e.Relation != q.Relation {
-			continue
-		}
-		result = append(result, e)
-	}
-	return result, nil
+	return query.FilterEdges(snapshot.Graph.Edges, q), nil
 }

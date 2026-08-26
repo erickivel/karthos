@@ -19,9 +19,13 @@ const edgeUpsertSQL = `INSERT INTO topology_edges (id, source, target, relation,
 	 ON CONFLICT (id) DO UPDATE SET
 	   first_seen = LEAST(topology_edges.first_seen, EXCLUDED.first_seen),
 	   last_seen = CASE WHEN topology_edges.relation = 'runs_on' AND topology_edges.metadata ? 'retired_at' THEN LEAST(topology_edges.last_seen, EXCLUDED.last_seen) ELSE GREATEST(topology_edges.last_seen, EXCLUDED.last_seen) END,
-	   confidence = EXCLUDED.confidence,
-	   provenance = EXCLUDED.provenance,
-	   metadata = CASE WHEN topology_edges.relation = 'runs_on' AND (topology_edges.metadata ? 'retired_at' OR topology_edges.metadata ? 'terminal_deadline') THEN topology_edges.metadata || EXCLUDED.metadata ELSE EXCLUDED.metadata END`
+	   confidence = CASE WHEN EXCLUDED.last_seen >= topology_edges.last_seen THEN EXCLUDED.confidence ELSE topology_edges.confidence END,
+	   provenance = ARRAY(SELECT DISTINCT source FROM unnest(topology_edges.provenance || EXCLUDED.provenance) AS source ORDER BY source),
+	   metadata = CASE
+	     WHEN topology_edges.relation = 'runs_on' AND (topology_edges.metadata ? 'retired_at' OR topology_edges.metadata ? 'terminal_deadline') THEN topology_edges.metadata || EXCLUDED.metadata
+	     WHEN EXCLUDED.last_seen >= topology_edges.last_seen THEN EXCLUDED.metadata
+	     ELSE topology_edges.metadata
+	   END`
 
 const latestActiveEdgeQuery = `SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
 	 FROM topology_edges
@@ -58,14 +62,15 @@ const reconcileActiveRunsOnSQL = `SELECT id, source, target, metadata
 // PostgresGraphStore implements persistence.GraphStore using PostgreSQL.
 type PostgresGraphStore struct {
 	conn    *Conn
-	nodeTTL time.Duration // 0 = no TTL filter
+	nodeTTL time.Duration // 0 = no current-projection TTL
 }
 
 // PostgresGraphStoreOption configures a PostgresGraphStore.
 type PostgresGraphStoreOption func(*PostgresGraphStore)
 
-// WithPostgresNodeTTL filters GetLatest to nodes whose containing snapshot was
-// created within ttl. 0 disables the TTL.
+// WithPostgresNodeTTL excludes an expired structural projection and stale
+// observed nodes from GetLatest. Historical structural snapshots remain stored.
+// A zero ttl disables current-projection expiry.
 func WithPostgresNodeTTL(ttl time.Duration) PostgresGraphStoreOption {
 	return func(s *PostgresGraphStore) { s.nodeTTL = ttl }
 }
@@ -178,7 +183,17 @@ func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot,
 	if err != nil {
 		return nil, err
 	}
+	staleStructural := hasStructural && s.nodeTTL > 0 && structural.CreatedAt.Before(time.Now().UTC().Add(-s.nodeTTL))
+	if staleStructural {
+		hasStructural = false
+	}
 	if !hasStructural && !hasObservation {
+		if staleStructural {
+			structural.Graph.Nodes = nil
+			structural.Graph.Edges = nil
+			applySnapshotTimestamp(&structural)
+			return &structural, nil
+		}
 		return nil, nil
 	}
 
@@ -465,18 +480,5 @@ func (s *PostgresGraphStore) QueryEdges(ctx context.Context, q query.EdgeQuery) 
 		return nil, err
 	}
 
-	edges := make([]topology.Edge, 0, len(snapshot.Graph.Edges))
-	for _, edge := range snapshot.Graph.Edges {
-		if q.Source != "" && edge.Source != q.Source {
-			continue
-		}
-		if q.Target != "" && edge.Target != q.Target {
-			continue
-		}
-		if q.Relation != "" && edge.Relation != q.Relation {
-			continue
-		}
-		edges = append(edges, edge)
-	}
-	return edges, nil
+	return query.FilterEdges(snapshot.Graph.Edges, q), nil
 }

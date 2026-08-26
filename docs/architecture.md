@@ -136,11 +136,12 @@ after the TTL window.
 appends complete, immutable structural snapshots. Telemetry and Pod lifecycle
 ingestion update only the current observation state, preserving active
 `runs_on` and `calls` behavior. Reads compose the newest structural snapshot
-with those current observations; an object omitted by the next Kubernetes
-refresh disappears from the current graph but remains in the earlier
-structural snapshot. PostgreSQL retains the structural snapshots and their
-edges separately; the in-memory implementation follows the same composition
-rules.
+with those current observations only while that structural projection is
+younger than `node_ttl`. An object omitted by the next Kubernetes refresh
+disappears from the current graph; an expired structural projection contributes
+neither nodes nor edges, while all earlier snapshots remain retained history.
+PostgreSQL retains the structural snapshots and their edges separately; the
+in-memory implementation follows the same composition rules.
 
 ## Persistence
 
@@ -148,7 +149,7 @@ Store interfaces (`pkg/backend/persistence/`):
 
 | Interface | Responsibility |
 |-----------|----------------|
-| `MetricStore` | Write and query canonical metric samples |
+| `MetricStore` | Write and query canonical metric samples; provider-neutral output decoration adds public enum labels |
 | `GraphStore` | Append-only structural snapshots plus current telemetry/lifecycle observations |
 | `MetadataStore` | Cluster capability profiles |
 | `EntityRegistry` | Canonical entity records |

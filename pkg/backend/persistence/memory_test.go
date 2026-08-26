@@ -50,6 +50,25 @@ func TestMetricStore_WriteQueryRoundTrip(t *testing.T) {
 	assert.Len(t, got, 3)
 }
 
+func TestMetricStoreOwnsWrittenAndReturnedSampleLabels(t *testing.T) {
+	store := NewInMemoryMetricStore()
+	labels := map[string]string{"source": "kubelet"}
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
+		MetricName: "cpu", EntityID: svc("copied-sample"), Value: 1, Timestamp: time.Now(), Labels: labels,
+	}}))
+	labels["source"] = "mutated"
+
+	first, err := store.Query(context.Background(), query.MetricQuery{MetricName: "cpu"})
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	assert.Equal(t, "kubelet", first[0].Labels["source"])
+	first[0].Labels["source"] = "returned-mutation"
+
+	second, err := store.Query(context.Background(), query.MetricQuery{MetricName: "cpu"})
+	require.NoError(t, err)
+	assert.Equal(t, "kubelet", second[0].Labels["source"])
+}
+
 func TestMetricStore_FilterByMetricName(t *testing.T) {
 	store := NewInMemoryMetricStore()
 	ctx := context.Background()
@@ -111,6 +130,76 @@ func TestMetricStore_TimeRangeFilter(t *testing.T) {
 	for _, s := range got {
 		assert.True(t, !s.Timestamp.Before(base.Add(30*time.Second)))
 	}
+}
+
+func TestMetricStore_ResolvedTrendGridUsesLatestFreshObservation(t *testing.T) {
+	store := NewInMemoryMetricStore()
+	ctx := context.Background()
+	base := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	id := svc("grid")
+	require.NoError(t, store.Write(ctx, []metrics.MetricSample{
+		{MetricName: "k8s.pod.cpu.usage", EntityID: id, Value: 42, Timestamp: base.Add(3 * time.Second)},
+		{MetricName: "k8s.pod.cpu.usage", EntityID: id, Value: 68, Timestamp: base.Add(33 * time.Second)},
+	}))
+	resolved, err := query.ResolveMetricQuery(query.MetricQuery{
+		MetricName: "k8s.pod.cpu.usage",
+		From:       base,
+		To:         base.Add(45 * time.Second),
+	}, base)
+	require.NoError(t, err)
+
+	got, err := store.Query(ctx, resolved.MetricQuery)
+
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, []time.Time{base.Add(15 * time.Second), base.Add(30 * time.Second), base.Add(45 * time.Second)}, []time.Time{got[0].Timestamp, got[1].Timestamp, got[2].Timestamp})
+	assert.Equal(t, []float64{42, 42, 68}, []float64{got[0].Value, got[1].Value, got[2].Value})
+}
+
+func TestMetricStore_ResolvedTrendGridOmitsExpiredObservation(t *testing.T) {
+	store := NewInMemoryMetricStore()
+	ctx := context.Background()
+	base := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	require.NoError(t, store.Write(ctx, []metrics.MetricSample{{
+		MetricName: "k8s.pod.cpu.usage", EntityID: svc("stale"), Value: 42, Timestamp: base,
+	}}))
+	resolved, err := query.ResolveMetricQuery(query.MetricQuery{
+		MetricName: "k8s.pod.cpu.usage",
+		From:       base.Add(5*time.Minute + 15*time.Second),
+		To:         base.Add(5*time.Minute + 30*time.Second),
+	}, base)
+	require.NoError(t, err)
+
+	got, err := store.Query(ctx, resolved.MetricQuery)
+
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestMetricStore_ResolvedTrendGridEvaluatesCounterIncreaseFromRawObservations(t *testing.T) {
+	store := NewInMemoryMetricStore()
+	ctx := context.Background()
+	base := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	require.NoError(t, store.Write(ctx, []metrics.MetricSample{
+		{MetricName: "servicegraph.request.count", EntityID: svc("counter-grid"), Value: 5, Timestamp: base.Add(3 * time.Second), Labels: map[string]string{"temporality": "delta"}},
+		{MetricName: "servicegraph.request.count", EntityID: svc("counter-grid"), Value: 7, Timestamp: base.Add(33 * time.Second), Labels: map[string]string{"temporality": "delta"}},
+	}))
+	resolved, err := query.ResolveMetricQuery(query.MetricQuery{
+		MetricName:  "servicegraph.request.count",
+		From:        base,
+		To:          base.Add(45 * time.Second),
+		Aggregation: metrics.AggregationIncrease,
+		Window:      time.Minute,
+		Unit:        metrics.UnitCount,
+	}, base)
+	require.NoError(t, err)
+
+	got, err := store.Query(ctx, resolved.MetricQuery)
+
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, []time.Time{base.Add(15 * time.Second), base.Add(30 * time.Second), base.Add(45 * time.Second)}, []time.Time{got[0].Timestamp, got[1].Timestamp, got[2].Timestamp})
+	assert.Equal(t, []float64{5, 5, 12}, []float64{got[0].Value, got[1].Value, got[2].Value})
 }
 
 func TestMetricStore_FilterByEdgeIDs(t *testing.T) {
@@ -251,6 +340,27 @@ func TestGraphStore_UsesLatestStructuralSnapshotAndRetainsCurrentObservations(t 
 	assert.Equal(t, topology.RelCalls, got.Graph.Edges[0].Relation)
 }
 
+func TestGraphStoreOwnsWrittenAndReturnedStructuralValues(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	labels := map[string]string{"name": "api"}
+	snapshot := topology.Snapshot{CreatedAt: time.Now().UTC(), Graph: topology.Graph{Nodes: []topology.Node{{
+		ID: svc("copied-graph"), Kind: entities.KindService, Labels: labels,
+	}}}}
+	require.NoError(t, store.PutStructuralSnapshot(ctx, snapshot))
+	labels["name"] = "mutated"
+
+	first, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.Len(t, first.Graph.Nodes, 1)
+	assert.Equal(t, "api", first.Graph.Nodes[0].Labels["name"])
+	first.Graph.Nodes[0].Labels["name"] = "returned-mutation"
+
+	second, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "api", second.Graph.Nodes[0].Labels["name"])
+}
+
 func nodeIDs(nodes []topology.Node) []entities.EntityID {
 	ids := make([]entities.EntityID, 0, len(nodes))
 	for _, node := range nodes {
@@ -283,6 +393,35 @@ func TestGraphStore_EdgeDeduplication(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, snap.Graph.Edges, 1)
 	assert.Equal(t, t2, snap.Graph.Edges[0].LastSeen)
+}
+
+func TestGraphStore_ObservedEdgeMergeUsesNewestPayloadAndRetainsHistory(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	base := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	first := topology.NewEdge(svc("edge-a"), svc("edge-b"), topology.RelCalls, base)
+	first.LastSeen = base.Add(time.Minute)
+	first.Confidence = 0.4
+	first.Metadata = map[string]string{"protocol": "http"}
+	first.Provenance = []string{"traces.servicegraph"}
+	second := topology.NewEdge(first.Source, first.Target, first.Relation, base.Add(30*time.Second))
+	second.LastSeen = base.Add(2 * time.Minute)
+	second.Confidence = 0.9
+	second.Metadata = map[string]string{"protocol": "grpc"}
+	second.Provenance = []string{"mesh.istio"}
+
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(first)))
+	require.NoError(t, store.PutObservedSnapshot(ctx, newSnapshot(second)))
+	got, err := store.GetLatest(ctx)
+
+	require.NoError(t, err)
+	require.Len(t, got.Graph.Edges, 1)
+	merged := got.Graph.Edges[0]
+	assert.Equal(t, first.FirstSeen, merged.FirstSeen)
+	assert.Equal(t, second.LastSeen, merged.LastSeen)
+	assert.Equal(t, second.Confidence, merged.Confidence)
+	assert.Equal(t, second.Metadata, merged.Metadata)
+	assert.ElementsMatch(t, []string{"traces.servicegraph", "mesh.istio"}, merged.Provenance)
 }
 
 func TestGraphStore_RetiredRunsOnIsHiddenFromLatestAndImmutable(t *testing.T) {
@@ -659,6 +798,30 @@ func TestGraphStore_NodeTTLAgesOutStaleNodes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.Graph.Nodes, 1)
 	assert.Equal(t, freshID, got.Graph.Nodes[0].ID)
+}
+
+func TestGraphStore_NodeTTLExpiresEntireCurrentStructuralProjection(t *testing.T) {
+	store := NewInMemoryGraphStore(WithInMemoryNodeTTL(time.Hour))
+	ctx := context.Background()
+	base := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	current := base
+	store.nowFn = func() time.Time { return current }
+	service := svc("stale-structure")
+	workload := entities.ComputeEntityID(entities.KindWorkload, "cluster", "default", "api")
+	edge := topology.NewEdge(workload, service, topology.RelContains, base)
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: base, Graph: topology.Graph{
+		Nodes: []topology.Node{{ID: workload, Kind: entities.KindWorkload}, {ID: service, Kind: entities.KindService}},
+		Edges: []topology.Edge{edge},
+	}}))
+
+	current = base.Add(2 * time.Hour)
+	got, err := store.GetLatest(ctx)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Empty(t, got.Graph.Nodes)
+	assert.Empty(t, got.Graph.Edges)
+	assert.Len(t, store.structuralSnapshots, 1, "TTL affects only the current projection, not retained history")
 }
 
 func TestMetricStoreExplicitCounterAggregations(t *testing.T) {
