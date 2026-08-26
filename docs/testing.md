@@ -23,7 +23,10 @@ Key coverage areas:
 - `MetricTopologyBuilder`: structural edge and node extraction from resource attributes
 - Pod lifecycle validation: UID/node matching, synchronous immutable `terminal_deadline` persistence before grace activation, fail-closed terminal refreshes on an initial marker-write failure with retry of the original deadline, confirmed-initial versus retry-only marker provenance (an absent/replaced retry-only UID retires immediately at restart), atomic active→pending→retired storage transitions that prevent delayed marker resurrection across delete/replace/crash/restart interleavings, cluster-scoped startup reconciliation and re-arming across same-UID/deleted/replaced restart states, deadline exclusion from current graph reads, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
-- `InMemoryGraphStore`: node accumulation and deduplication across snapshots
+- storage/query parity: append-only structural history with TTL-gated current
+  projection, current observation merge rules, defensive memory-store copies,
+  and 15-second evaluated metric ranges, including exact non-aligned final
+  evaluations and explicit five-minute freshness behavior in VictoriaMetrics
 - `/api/v1/graph` public graph-contract correctness
 - Helm deploy command assembly
 - structured JSON logger behavior

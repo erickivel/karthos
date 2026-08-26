@@ -90,8 +90,9 @@ func (s *VMMetricStore) Write(ctx context.Context, samples []metrics.MetricSampl
 	return nil
 }
 
-// Query builds a PromQL query from MetricQuery and calls VictoriaMetrics'
-// /api/v1/query_range endpoint. Returns parsed MetricSamples.
+// Query evaluates a provider-neutral MetricQuery through VictoriaMetrics. Public
+// resolved queries use a precise range request plus, when needed, one instant
+// request at a non-grid final evaluation point.
 func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metrics.MetricSample, error) {
 	promql := buildPromQL(q)
 	if promql == "" {
@@ -106,38 +107,23 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 	if to.IsZero() {
 		to = time.Now()
 	}
-
-	params := url.Values{
-		"query": {promql},
-		"start": {strconv.FormatInt(from.Unix(), 10)},
-		"end":   {strconv.FormatInt(to.Unix(), 10)},
-		"step":  {"15s"},
-		// API reads describe live observability state. Reusing a cached range
-		// can hide a counter increase that arrived after the same aligned query
-		// was evaluated, so always ask VictoriaMetrics for current storage truth.
-		"nocache": {"1"},
+	step := queryStep(q)
+	rangeEnd := to
+	needsFinalEvaluation := q.Step > 0 && !to.Equal(from.Add(to.Sub(from)/step*step))
+	if needsFinalEvaluation {
+		rangeEnd = from.Add(to.Sub(from) / step * step)
 	}
 
-	reqURL := s.baseURL + "/api/v1/query_range?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("vm query: %w", err)
-	}
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("vm query: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("vm query: unexpected status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	samples, err := parseQueryRangeResponse(resp.Body)
+	samples, err := s.queryRange(ctx, promql, from, rangeEnd, step)
 	if err != nil {
 		return nil, err
+	}
+	if needsFinalEvaluation {
+		final, err := s.queryInstant(ctx, promql, to, step)
+		if err != nil {
+			return nil, err
+		}
+		samples = mergeSamples(samples, final)
 	}
 
 	for i := range samples {
@@ -145,6 +131,84 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 	}
 
 	return samples, nil
+}
+
+func queryStep(q query.MetricQuery) time.Duration {
+	if q.Step > 0 {
+		return q.Step
+	}
+	return query.DefaultMetricStep
+}
+
+func (s *VMMetricStore) queryRange(ctx context.Context, promql string, from, to time.Time, step time.Duration) ([]metrics.MetricSample, error) {
+	params := url.Values{
+		"query":   {promql},
+		"start":   {formatQueryTimestamp(from)},
+		"end":     {formatQueryTimestamp(to)},
+		"step":    {step.String()},
+		"nocache": {"1"},
+	}
+	resp, err := s.doQuery(ctx, "/api/v1/query_range", params)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	return parseQueryRangeResponse(resp.Body)
+}
+
+func (s *VMMetricStore) queryInstant(ctx context.Context, promql string, at time.Time, step time.Duration) ([]metrics.MetricSample, error) {
+	params := url.Values{
+		"query":   {promql},
+		"time":    {formatQueryTimestamp(at)},
+		"step":    {step.String()},
+		"nocache": {"1"},
+	}
+	resp, err := s.doQuery(ctx, "/api/v1/query", params)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	return parseInstantQueryResponse(resp.Body)
+}
+
+func (s *VMMetricStore) doQuery(ctx context.Context, path string, params url.Values) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+path+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("vm query: %w", err)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("vm query: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close() //nolint:errcheck
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("vm query: unexpected status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return resp, nil
+}
+
+func formatQueryTimestamp(timestamp time.Time) string {
+	return timestamp.UTC().Format(time.RFC3339Nano)
+}
+
+func mergeSamples(primary, additional []metrics.MetricSample) []metrics.MetricSample {
+	merged := make([]metrics.MetricSample, 0, len(primary)+len(additional))
+	seen := make(map[string]struct{}, len(primary)+len(additional))
+	for _, sample := range append(primary, additional...) {
+		key := metricSampleKey(sample)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, sample)
+	}
+	return merged
+}
+
+func metricSampleKey(sample metrics.MetricSample) string {
+	labels, _ := json.Marshal(sample.Labels)
+	return sample.MetricName + "|" + string(sample.EntityID) + "|" + string(sample.Unit) + "|" + sample.Timestamp.UTC().Format(time.RFC3339Nano) + "|" + string(labels)
 }
 
 // QueryCatalogStats issues two instant PromQL queries against VictoriaMetrics
@@ -389,23 +453,41 @@ func buildPromQL(q query.MetricQuery) string {
 	if metrics.IsWindowedMeanMetric(q.MetricName) {
 		sumIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_sum"))
 		countIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_count"))
-		return fmt.Sprintf("%s / ignoring(%s) (%s > 0)", sumIncrease, storedUnitLabel, countIncrease)
+		return withFreshness(q, fmt.Sprintf("%s / ignoring(%s) (%s > 0)", sumIncrease, storedUnitLabel, countIncrease))
 	}
 
 	selector := metricSelector(q)
 	if mapping, ok := metrics.OTLPSemconvMetrics[q.MetricName]; ok && mapping.Kind == metrics.MetricKindCounter {
 		switch q.Aggregation {
 		case metrics.AggregationLatest:
-			return selector
+			return withFreshness(q, selector)
 		case metrics.AggregationIncrease:
-			return exactWindowIncrease(q)
+			return withFreshness(q, exactWindowIncrease(q))
 		case metrics.AggregationWindowRate:
-			return fmt.Sprintf("(%s / %d)", exactWindowIncrease(q), int64(q.Window.Seconds()))
+			return withFreshness(q, fmt.Sprintf("(%s / %d)", exactWindowIncrease(q), int64(q.Window.Seconds())))
 		case metrics.AggregationActiveRate:
-			return activeCounterRate(q)
+			return withFreshness(q, activeCounterRate(q))
 		}
 	}
-	return selector
+	return withFreshness(q, selector)
+}
+
+func withFreshness(q query.MetricQuery, expression string) string {
+	if q.MaxSampleAge <= 0 {
+		return expression
+	}
+	matching := ""
+	if metrics.IsWindowedMeanMetric(q.MetricName) {
+		matching = fmt.Sprintf(" ignoring(%s)", storedUnitLabel)
+	}
+	return fmt.Sprintf("(%s) and%s last_over_time(%s[%s])", expression, matching, freshnessSelector(q), durationExpr(q.MaxSampleAge))
+}
+
+func freshnessSelector(q query.MetricQuery) string {
+	if metrics.IsWindowedMeanMetric(q.MetricName) {
+		return metricSelector(withMetricName(q, q.MetricName+"_count"))
+	}
+	return metricSelector(q)
 }
 
 func metricSelector(q query.MetricQuery) string {
@@ -482,13 +564,26 @@ func semconvMetricName(metricName string) string {
 }
 
 // queryRangeResponse represents the Prometheus query_range API response.
+type querySeries struct {
+	Metric map[string]string `json:"metric"`
+	Values [][]interface{}   `json:"values"`
+}
+
 type queryRangeResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string        `json:"resultType"`
+		Result     []querySeries `json:"result"`
+	} `json:"data"`
+}
+
+type instantQueryResponse struct {
 	Status string `json:"status"`
 	Data   struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
 			Metric map[string]string `json:"metric"`
-			Values [][]interface{}   `json:"values"`
+			Value  []interface{}     `json:"value"`
 		} `json:"result"`
 	} `json:"data"`
 }
@@ -505,8 +600,29 @@ func parseQueryRangeResponse(body io.Reader) ([]metrics.MetricSample, error) {
 		return nil, fmt.Errorf("vm query: response status %q", resp.Status)
 	}
 
+	return parseQuerySeries(resp.Data.Result), nil
+}
+
+// parseInstantQueryResponse parses a Prometheus /api/v1/query vector response
+// into MetricSamples.
+func parseInstantQueryResponse(body io.Reader) ([]metrics.MetricSample, error) {
+	var resp instantQueryResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("vm parse response: %w", err)
+	}
+	if resp.Status != "success" {
+		return nil, fmt.Errorf("vm query: response status %q", resp.Status)
+	}
+	series := make([]querySeries, 0, len(resp.Data.Result))
+	for _, result := range resp.Data.Result {
+		series = append(series, querySeries{Metric: result.Metric, Values: [][]interface{}{result.Value}})
+	}
+	return parseQuerySeries(series), nil
+}
+
+func parseQuerySeries(seriesList []querySeries) []metrics.MetricSample {
 	var samples []metrics.MetricSample
-	for _, series := range resp.Data.Result {
+	for _, series := range seriesList {
 		metricName := semconvMetricName(series.Metric["__name__"])
 		entityID := entities.EntityID(series.Metric["entity_id"])
 		unit := metrics.Unit(series.Metric[storedUnitLabel])
@@ -547,12 +663,22 @@ func parseQueryRangeResponse(body io.Reader) ([]metrics.MetricSample, error) {
 				MetricName: metricName,
 				EntityID:   entityID,
 				Value:      val,
-				Timestamp:  time.Unix(int64(ts), 0),
+				Timestamp:  timestampFromUnixSeconds(ts),
 				Labels:     labels,
 				Unit:       unit,
 			})
 		}
 	}
 
-	return samples, nil
+	return samples
+}
+
+func timestampFromUnixSeconds(seconds float64) time.Time {
+	whole, fraction := math.Modf(seconds)
+	nanos := int64(math.Round(fraction * float64(time.Second)))
+	if nanos == int64(time.Second) {
+		whole++
+		nanos = 0
+	}
+	return time.Unix(int64(whole), nanos).UTC()
 }

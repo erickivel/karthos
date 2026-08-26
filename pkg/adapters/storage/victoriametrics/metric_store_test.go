@@ -409,10 +409,7 @@ func TestVMMetricStore_Query(t *testing.T) {
 
 		resp := queryRangeResponse{Status: "success"}
 		resp.Data.ResultType = "matrix"
-		resp.Data.Result = []struct {
-			Metric map[string]string `json:"metric"`
-			Values [][]interface{}   `json:"values"`
-		}{
+		resp.Data.Result = []querySeries{
 			{
 				Metric: map[string]string{
 					"__name__":  "cpu_usage",
@@ -438,6 +435,104 @@ func TestVMMetricStore_Query(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
 	assert.Equal(t, 42.5, samples[0].Value)
+}
+
+func TestVMMetricStore_QueryPreservesResolvedBoundsAndAddsExactFinalEvaluation(t *testing.T) {
+	from := time.Date(2026, 8, 26, 12, 0, 3, 500000000, time.UTC)
+	to := time.Date(2026, 8, 26, 12, 0, 32, 250000000, time.UTC)
+	var requests []*http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Clone(r.Context()))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/query_range":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"resultType": "matrix",
+					"result": []any{map[string]any{
+						"metric": map[string]string{"__name__": "k8s_pod_cpu_usage", "entity_id": "pod-a"},
+						"values": [][]any{
+							{float64(from.Unix()) + 0.5, "60"},
+							{float64(from.Add(15*time.Second).Unix()) + 0.5, "60"},
+						},
+					}},
+				},
+			})
+		case "/api/v1/query":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "success",
+				"data": map[string]any{
+					"resultType": "vector",
+					"result": []any{map[string]any{
+						"metric": map[string]string{"__name__": "k8s_pod_cpu_usage", "entity_id": "pod-a"},
+						"value":  []any{float64(to.Unix()) + 0.25, "80"},
+					}},
+				},
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	store := NewVMMetricStore(srv.URL)
+	samples, err := store.Query(context.Background(), query.MetricQuery{
+		MetricName:   "k8s.pod.cpu.usage",
+		From:         from,
+		To:           to,
+		Step:         15 * time.Second,
+		MaxSampleAge: 5 * time.Minute,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, requests, 2)
+	assert.Equal(t, "/api/v1/query_range", requests[0].URL.Path)
+	assert.Equal(t, from.Format(time.RFC3339Nano), requests[0].URL.Query().Get("start"))
+	assert.Equal(t, from.Add(15*time.Second).Format(time.RFC3339Nano), requests[0].URL.Query().Get("end"))
+	assert.Equal(t, "15s", requests[0].URL.Query().Get("step"))
+	assert.Equal(t, "/api/v1/query", requests[1].URL.Path)
+	assert.Equal(t, to.Format(time.RFC3339Nano), requests[1].URL.Query().Get("time"))
+	assert.Equal(t, "15s", requests[1].URL.Query().Get("step"))
+	require.Len(t, samples, 3)
+	assert.True(t, samples[0].Timestamp.Equal(from))
+	assert.True(t, samples[1].Timestamp.Equal(from.Add(15*time.Second)))
+	assert.True(t, samples[2].Timestamp.Equal(to))
+}
+
+func TestBuildPromQLUsesExplicitFreshnessWindowForResolvedLatestQueries(t *testing.T) {
+	got := buildPromQL(query.MetricQuery{
+		MetricName:   "k8s.pod.cpu.usage",
+		Aggregation:  metrics.AggregationLatest,
+		MaxSampleAge: 5 * time.Minute,
+	})
+
+	assert.Contains(t, got, "last_over_time")
+	assert.Contains(t, got, "[300s]")
+}
+
+func TestBuildPromQLUsesExplicitFreshnessWindowForResolvedCounterQueries(t *testing.T) {
+	got := buildPromQL(query.MetricQuery{
+		MetricName:   "servicegraph.request.count",
+		Aggregation:  metrics.AggregationIncrease,
+		Window:       time.Minute,
+		MaxSampleAge: 5 * time.Minute,
+	})
+
+	assert.Contains(t, got, "increase(")
+	assert.Contains(t, got, "last_over_time")
+	assert.Contains(t, got, "[300s]")
+}
+
+func TestBuildPromQLFreshnessForWindowedMeanIgnoresStoredUnit(t *testing.T) {
+	got := buildPromQL(query.MetricQuery{
+		MetricName:   "servicegraph.request.duration",
+		Aggregation:  metrics.AggregationWindowMean,
+		Window:       time.Minute,
+		MaxSampleAge: 5 * time.Minute,
+	})
+
+	assert.Contains(t, got, "and ignoring(oksg_unit) last_over_time")
 }
 
 func TestVMMetricStore_QueryEmptyMetricName(t *testing.T) {

@@ -289,10 +289,20 @@ are cumulative Histograms. The normalizer therefore preserves the source
 temporality rather than inferring it from a metric name or from an
 unspecified/gauge payload. See the
 versioned [servicegraph connector documentation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
-Query construction is catalog-driven. `latest` evaluates the raw selector at
-the API's fixed 15-second VictoriaMetrics range-query step without deriving a
-rate, returning those range-evaluation points rather than every source sample;
-each point retains its cumulative-total or delta-increment temporality.
+Query construction is catalog-driven. Public metric reads resolve a
+provider-neutral fixed 15-second evaluation grid. `latest` carries the newest
+raw observation forward to each evaluation point for at most five minutes,
+rather than returning every source sample; each point retains its
+cumulative-total or delta-increment temporality. Cumulative `increase`,
+`window_rate`, `active_rate`, and histogram means are derived from raw
+observations before being placed on that same grid. The final requested `to`
+is an evaluation point even when it is not step-aligned. The VictoriaMetrics
+adapter preserves precise query bounds, uses a range evaluation for regular
+grid points, and adds one exact instant evaluation only for that non-aligned
+final point. Its PromQL translation uses an explicit five-minute
+`last_over_time` freshness gate, rather than relying on a storage-server
+lookbehind default. The adapter owns this translation; it does not define the
+public range contract.
 Cumulative `increase` and `window_rate` use reset-aware `increase()` only after a
 two-sample/history-span maturity gate; delta series use `sum_over_time()`.
 `increase` returns the base unit and `window_rate` divides that exact increase
@@ -319,9 +329,10 @@ integers and never strings. The translation to public plain-text labels
 (`healthy`, `running_not_ready`, `restarting`, etc.) lives **only** in
 `pkg/core/metrics/health_status.go` and is applied by:
 
-- The metric store at `Query` time, which sets `MetricSample.ValueLabel` for
-  any health-status metric (see `IsHealthStatusMetric` and the in-memory and
-  VictoriaMetrics adapters). Other metrics never carry `ValueLabel`.
+- The provider-neutral metric-store output decorator at `Query` time, which
+  sets `MetricSample.ValueLabel` for any health-status metric (see
+  `IsHealthStatusMetric`). Storage implementations retain only numeric
+  canonical samples; other metrics never carry `ValueLabel`.
 - The graph and status handlers, which call the translator to populate
   `enrichedNode.Status` and bucket `health_summary.pods.*` by string key.
 
@@ -403,7 +414,8 @@ Pipeline for a complete active sidecar Istio mesh:
    metadata to the validated source module; the generic builder emits the
    resulting `topology.Edge{Relation:"calls", ...}` and deduplicates it.
 7. **API** serves the metric using its catalog default (`window_rate`, 1 minute)
-   and returns the effective mode/window metadata; callers can explicitly select
+   and returns the effective mode/window plus evaluated `from`, `to`, and `step`
+   metadata; callers can explicitly select
    `latest`, `increase`, or cumulative `active_rate`. It serves
    the edge as part of `/api/v1/graph`.
 
@@ -587,8 +599,8 @@ Pods and, after a fixed 60-second grace, retires only the exact UID/node
 `runs_on` edge identity includes the Pod UID; a replacement can therefore be
 active while the old assignment remains auditable. The graph store records the
 RFC3339 `retired_at` value in edge metadata without changing `first_seen` or
-final `last_seen`. Latest-graph queries exclude that `runs_on` edge; accumulated
-edge queries retain it for audit. `AllowsRunsOn` denies refresh synchronously at
+final `last_seen`. Latest-graph and edge queries exclude that `runs_on` edge;
+retirement state remains internal lifecycle-reconciliation data. `AllowsRunsOn` denies refresh synchronously at
 the recorded deadline even if the asynchronous persistence callback is delayed.
 At backend startup, persisted active UID-versioned assignments are reconciled
 against the first authoritative Pod List/Watch state before metric refreshes
