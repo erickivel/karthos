@@ -30,7 +30,7 @@ type MetricsHandler struct {
 // newMetricsHandler creates a MetricsHandler backed by the canonical catalog.
 func newMetricsHandler(store persistence.MetricStore, logger *logging.Logger) *MetricsHandler {
 	return &MetricsHandler{
-		metricStore: store,
+		metricStore: persistence.DecorateMetricStore(store),
 		catalog:     metrics.CatalogByName(),
 		logger:      logger,
 	}
@@ -74,9 +74,13 @@ type edgeRef struct {
 }
 
 type effectiveMetricQuery struct {
-	Aggregation metrics.AggregationMode `json:"aggregation"`
-	Window      string                  `json:"window,omitempty"`
-	Unit        metrics.Unit            `json:"-"`
+	Aggregation        metrics.AggregationMode `json:"aggregation"`
+	Window             string                  `json:"window,omitempty"`
+	From               string                  `json:"from"`
+	To                 string                  `json:"to"`
+	Step               string                  `json:"step"`
+	TimestampSemantics string                  `json:"timestamp_semantics"`
+	Unit               metrics.Unit            `json:"-"`
 }
 
 // queryEnrichedSamples parses the common metrics query parameters, issues the
@@ -151,6 +155,16 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 		Window:       resolved.Window,
 		Unit:         resolved.Unit,
 	}
+	resolvedRange, err := query.ResolveMetricQuery(q, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, effectiveMetricQuery{}, false
+	}
+	q = resolvedRange.MetricQuery
+	effective.From = q.From.Format(time.RFC3339Nano)
+	effective.To = q.To.Format(time.RFC3339Nano)
+	effective.Step = q.Step.String()
+	effective.TimestampSemantics = "evaluation"
 
 	samples, err := h.metricStore.Query(r.Context(), q)
 	if err != nil {

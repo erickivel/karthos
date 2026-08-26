@@ -47,7 +47,7 @@ pkg/
                          metric / mesh / trace topology builders
   backend/persistence/   store interfaces (MetricStore, GraphStore, MetadataStore,
                          EntityRegistry) and in-memory implementations
-  backend/query/         graph and metrics query contracts
+  backend/query/         provider-neutral metric-range resolution and graph/metric query values
   collector/spec/        provider-neutral typed collection requirements and compiled CollectionPlan
   collector/             generic composition of selected source requirements
   collector/configgen/   Helm values builder

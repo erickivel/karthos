@@ -144,6 +144,15 @@ def api_payload(metric, aggregation=None):
     return get_json(API_URL + "?" + urllib.parse.urlencode(params)).get("data", {})
 
 
+def assert_evaluated_query(payload, aggregation):
+    query = payload["query"]
+    assert query["aggregation"] == aggregation, query
+    assert query["window"] == "1m", query
+    assert query["step"] == "15s", query
+    assert query["timestamp_semantics"] == "evaluation", query
+    assert query["from"] <= query["to"], query
+
+
 def service_label_matches(value, service):
     return value == service or value.startswith(service + ".")
 
@@ -237,7 +246,7 @@ def verify():
             spec["base_unit"],
             lambda value: math.isclose(value, spec["increase"], abs_tol=0.01),
         )
-        assert increase_payload["query"] == {"aggregation": "increase", "window": "1m"}
+        assert_evaluated_query(increase_payload, "increase")
         assert math.isclose(increase, spec["increase"], abs_tol=0.01), (key, increase)
 
         default_payload, default_rate = poll_api_edge_total(
@@ -246,7 +255,7 @@ def verify():
             spec["rate_unit"],
             lambda value: math.isclose(value, spec["rate"], abs_tol=max(0.02, spec["rate"] * 0.02)),
         )
-        assert default_payload["query"] == {"aggregation": "window_rate", "window": "1m"}
+        assert_evaluated_query(default_payload, "window_rate")
         assert math.isclose(default_rate, spec["rate"], abs_tol=max(0.02, spec["rate"] * 0.02)), (key, default_rate)
 
         _, active_rate = poll_api_edge_total(

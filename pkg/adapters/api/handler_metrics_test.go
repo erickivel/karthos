@@ -35,8 +35,8 @@ func seedMetrics(t *testing.T) *persistence.InMemoryMetricStore {
 
 	entityA := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "pod-a")
 	entityB := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "pod-b")
-	ts1 := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
-	ts2 := time.Date(2026, 3, 30, 11, 0, 0, 0, time.UTC)
+	ts1 := seedMetricStart.Add(3 * time.Second)
+	ts2 := seedMetricStart.Add(4 * time.Second)
 
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
 		{MetricName: "k8s.pod.cpu.usage", EntityID: entityA, Value: 250, Timestamp: ts1},
@@ -44,6 +44,15 @@ func seedMetrics(t *testing.T) *persistence.InMemoryMetricStore {
 		{MetricName: "k8s.pod.cpu.usage", EntityID: entityB, Value: 500, Timestamp: ts2},
 	}))
 	return ms
+}
+
+var (
+	seedMetricStart = time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+	seedMetricEnd   = seedMetricStart.Add(15 * time.Second)
+)
+
+func seedMetricRange() string {
+	return "&from=" + seedMetricStart.Format(time.RFC3339) + "&to=" + seedMetricEnd.Format(time.RFC3339)
 }
 
 func TestQueryMetricsRequiresMetricName(t *testing.T) {
@@ -79,7 +88,7 @@ func TestQueryMetricsAggregationMetadataAndModeAwareUnits(t *testing.T) {
 		{MetricName: "servicegraph.request.count", EntityID: entities.ComputeEntityID(entities.KindService, "cluster", "default", "api"), Value: 140, Timestamp: end, Labels: labels, Unit: metrics.UnitPerSecond},
 	}))
 
-	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=increase&window=90s&to="+end.Format(time.RFC3339))
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=increase&window=90s&from="+end.Format(time.RFC3339)+"&to="+end.Format(time.RFC3339))
 	require.Equal(t, http.StatusOK, resp.Code)
 	var body PaginatedResponse
 	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
@@ -94,10 +103,37 @@ func TestQueryMetricsAggregationMetadataAndModeAwareUnits(t *testing.T) {
 	require.Len(t, samples, 1)
 	assert.Equal(t, "count", samples[0].(map[string]any)["unit"])
 
-	seriesResp := serveMetricsRequest(t, store, "/api/v1/metrics/series?metric_name=servicegraph.request.count&window=1m&to="+end.Format(time.RFC3339))
+	seriesResp := serveMetricsRequest(t, store, "/api/v1/metrics/series?metric_name=servicegraph.request.count&window=1m&from="+end.Format(time.RFC3339)+"&to="+end.Format(time.RFC3339))
 	require.Equal(t, http.StatusOK, seriesResp.Code)
 	assert.Contains(t, seriesResp.Body.String(), `"aggregation":"window_rate"`)
 	assert.Contains(t, seriesResp.Body.String(), `"unit":"per_second"`)
+}
+
+func TestQueryMetricsReportsResolvedEvaluationRange(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	start := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	end := start.Add(30 * time.Second)
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
+		MetricName: "k8s.pod.cpu.usage",
+		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
+		Value:      42,
+		Timestamp:  start.Add(3 * time.Second),
+	}}))
+
+	response := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&from="+start.Format(time.RFC3339)+"&to="+end.Format(time.RFC3339))
+
+	require.Equal(t, http.StatusOK, response.Code)
+	var body PaginatedResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	encoded, err := json.Marshal(body.Data)
+	require.NoError(t, err)
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &data))
+	queryMeta := data["query"].(map[string]any)
+	assert.Equal(t, start.Format(time.RFC3339Nano), queryMeta["from"])
+	assert.Equal(t, end.Format(time.RFC3339Nano), queryMeta["to"])
+	assert.Equal(t, "15s", queryMeta["step"])
+	assert.Equal(t, "evaluation", queryMeta["timestamp_semantics"])
 }
 
 func TestQueryMetricsRejectsInvalidAggregationControls(t *testing.T) {
@@ -121,7 +157,7 @@ func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -131,38 +167,6 @@ func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 	samples := data["samples"].([]any)
 	sample := samples[0].(map[string]any)
 	require.NotEmpty(t, sample["unit"])
-}
-
-func TestQueryMetricsPreservesNanosecondTimestampAndStableOrder(t *testing.T) {
-	store := persistence.NewInMemoryMetricStore()
-	base := time.Date(2026, 8, 23, 12, 0, 0, 123456789, time.UTC)
-	entityA := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "a")
-	entityB := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "b")
-	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "k8s.pod.cpu.usage", EntityID: entityB, Value: 2, Timestamp: base},
-		{MetricName: "k8s.pod.cpu.usage", EntityID: entityA, Value: 1, Timestamp: base},
-		{MetricName: "k8s.pod.cpu.usage", EntityID: entityA, Value: 3, Timestamp: base.Add(time.Nanosecond)},
-	}))
-
-	response := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage")
-	require.Equal(t, http.StatusOK, response.Code)
-	var body PaginatedResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
-	encoded, err := json.Marshal(body.Data)
-	require.NoError(t, err)
-	var data map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &data))
-	samples := data["samples"].([]any)
-	require.Len(t, samples, 3)
-
-	newest := samples[0].(map[string]any)
-	require.Equal(t, base.Add(time.Nanosecond).Format(time.RFC3339Nano), newest["timestamp"])
-	require.Equal(t, string(entityA), newest["entity_id"])
-	firstTie := samples[1].(map[string]any)
-	secondTie := samples[2].(map[string]any)
-	require.Equal(t, base.Format(time.RFC3339Nano), firstTie["timestamp"])
-	require.Equal(t, base.Format(time.RFC3339Nano), secondTie["timestamp"])
-	require.Less(t, firstTie["entity_id"].(string), secondTie["entity_id"].(string))
 }
 
 func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
@@ -186,7 +190,7 @@ func TestQueryMetricsFilterByEntityID(t *testing.T) {
 	defer srv.cancel()
 
 	entityA := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "pod-a")
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&entity_id="+string(entityA))
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&entity_id="+string(entityA)+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -245,7 +249,7 @@ func TestQueryMetricsFilterByEdgeIDs(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID)+"&edge_target_id="+string(targetID))
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID)+"&edge_target_id="+string(targetID)+"&from="+now.Format(time.RFC3339)+"&to="+now.Format(time.RFC3339))
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -262,7 +266,7 @@ func TestQueryMetricsFilterByMetricName(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -275,7 +279,7 @@ func TestQueryMetricsFilterByTimeRange(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&from=2026-03-30T10:30:00Z&to=2026-03-30T11:30:00Z")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.memory.working_set"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -298,7 +302,7 @@ func TestQueryMetricsPagination(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=1")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=1"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data, nextToken := parsePaginatedDataWithToken(t, resp)
@@ -373,7 +377,7 @@ func TestMetricSeriesGrouped(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage")
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -396,7 +400,7 @@ func TestMetricSeriesFilterByMetricName(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.memory.working_set")
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.memory.working_set"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data := parsePaginatedData(t, resp)
@@ -473,7 +477,7 @@ func TestMetricSeriesGroupsEdgeMetricsPerEdge(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID))
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID)+"&from="+now.Format(time.RFC3339)+"&to="+now.Format(time.RFC3339))
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 

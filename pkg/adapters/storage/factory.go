@@ -49,7 +49,7 @@ func newMemoryStores(cfg StorageConfig) *Stores {
 		graphOpts = append(graphOpts, persistence.WithInMemoryNodeTTL(cfg.NodeTTL))
 	}
 	s := &Stores{
-		MetricStore:    persistence.NewInMemoryMetricStore(),
+		MetricStore:    persistence.DecorateMetricStore(persistence.NewInMemoryMetricStore()),
 		GraphStore:     persistence.NewInMemoryGraphStore(graphOpts...),
 		MetadataStore:  persistence.NewInMemoryMetadataStore(),
 		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
@@ -91,7 +91,7 @@ func newExternalStores(ctx context.Context, cfg StorageConfig) (*Stores, error) 
 		pgGraphOpts = append(pgGraphOpts, postgresql.WithPostgresNodeTTL(cfg.NodeTTL))
 	}
 	s := &Stores{
-		MetricStore:    vmStore,
+		MetricStore:    persistence.DecorateMetricStore(vmStore),
 		GraphStore:     postgresql.NewPostgresGraphStore(pgConn, pgGraphOpts...),
 		MetadataStore:  postgresql.NewPostgresMetadataStore(pgConn),
 		EntityRegistry: postgresql.NewPostgresEntityRegistry(pgConn),

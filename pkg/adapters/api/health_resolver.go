@@ -130,7 +130,11 @@ func queryHealthSamplesWithAggregation(ctx context.Context, store persistence.Me
 	if exact {
 		q.EntityIDs = ids
 	}
-	samples, err := store.Query(ctx, q)
+	resolved, err := query.ResolveMetricQuery(q, now)
+	if err != nil {
+		return healthSampleResult{quality: healthQualityUnavailable, err: err}
+	}
+	samples, err := store.Query(ctx, resolved.MetricQuery)
 	if err != nil {
 		return healthSampleResult{quality: healthQualityUnavailable, err: err}
 	}

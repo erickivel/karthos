@@ -228,8 +228,8 @@ Returns 404 if node not found.
 ### GET /api/v1/graph/edges
 
 List edges from the current composed graph with optional filtering and
-pagination. The result uses the newest structural snapshot plus active
-telemetry and lifecycle observations, matching `/api/v1/graph`.
+pagination. The result uses the newest non-expired structural projection plus
+active telemetry and lifecycle observations, matching `/api/v1/graph`.
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -263,9 +263,9 @@ units (`count`, `bytes`, or `nanoseconds`), while rate units are created only by
 query aggregation. Cumulative samples retain their running base total and delta
 samples retain their reported interval increment. Every catalog counter declares
 its supported/default aggregation and base/rate units. `latest` is the raw-value
-aggregation mode: it evaluates the raw selector at the API's fixed 15-second
-VictoriaMetrics range-query step, returning those range-evaluation points rather
-than every source sample. Each point retains its cumulative-total or
+aggregation mode: it evaluates the raw selector on the API's fixed 15-second
+provider-neutral trend grid, returning evaluation points rather than every
+producer sample. Each point retains its cumulative-total or
 delta-increment temporality. `increase` is the query-time event/resource change
 in its base unit; `window_rate` divides that exact change by the full window
 duration; and `active_rate` is available only for cumulative series. Cumulative
@@ -291,8 +291,8 @@ The integer→label mapping for any enum metric is documented in the catalog row
 | `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
 | `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
 | `metric_name` | string | **Required.** Semconv metric name |
-| `from` | string (RFC3339) | Start of time range |
-| `to` | string (RFC3339) | End of time range |
+| `from` | string (RFC3339) | Start of time range; omitted uses one hour before the resolved end |
+| `to` | string (RFC3339) | End of time range; omitted uses the current time |
 | `aggregation` | `latest \| window_rate \| active_rate \| increase` | Counter aggregation; omitted uses the metric's catalog default |
 | `window` | Go duration, `1m` through `1h` | Required lookbehind for windowed modes; omitted uses the catalog default |
 | `page_size` | int | Items per page (default 100) |
@@ -307,7 +307,7 @@ Response:
 ```json
 {
   "data": {
-    "query": {"aggregation": "window_rate", "window": "1m"},
+    "query": {"aggregation": "window_rate", "window": "1m", "from": "2026-03-30T09:00:00Z", "to": "2026-03-30T10:00:00Z", "step": "15s", "timestamp_semantics": "evaluation"},
     "samples": [
       {
         "metric_name": "servicegraph.request.count",
@@ -357,7 +357,7 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 
 Samples preserve the public normalized `labels` map. Kubelet network samples expose `direction` and `network_interface_name`; volume samples expose `volume_name`, `volume_type`, and `persistentvolumeclaim_name` when PVC-backed. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so consumers can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Bounded source provenance also includes boolean `failed` as the strings `"true"` / `"false"`, `connection_type` (absent, `messaging_system`, or `database`), separate `virtual_node` (`client` or `server`), and distinct client/server HTTP methods when the collector emits them; these labels define separate raw series. True incremental samples carry `temporality=delta`; collector v0.156 servicegraph series are cumulative and therefore do not carry that label. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
 
-Returned sample timestamps preserve producer precision as RFC3339Nano. Results are ordered by timestamp descending, then stable public sample fields before pagination. Returns 400 for invalid time/duration syntax, windows outside `1m..1h`, unknown modes, or controls unsupported by the selected metric. Histogram means accept `window` only; gauges and enum metrics reject both controls.
+Range-result timestamps are fixed-grid evaluation times, not claims about the producer's original observation instant. The precise `from` and `to` bounds are preserved; `to` is included as an evaluation point even when it is not aligned to the 15-second grid. A value is omitted when its newest raw observation is over five minutes old. Rates, increases, and histogram means are computed from raw observations before their results are placed on the grid. Results are ordered by timestamp descending, then stable public sample fields before pagination. Returns 400 for invalid/inverted time ranges, invalid duration syntax, windows outside `1m..1h`, unknown modes, or controls unsupported by the selected metric. Histogram means accept `window` only; gauges and enum metrics reject both controls.
 
 ### GET /api/v1/metrics/series
 
@@ -369,8 +369,8 @@ Metric samples grouped by metric, entity, edge, complete public label set, and r
 | `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
 | `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
 | `metric_name` | string | **Required.** Semconv metric name |
-| `from` | string (RFC3339) | Start of time range |
-| `to` | string (RFC3339) | End of time range |
+| `from` | string (RFC3339) | Start of evaluated range; omitted uses one hour before the resolved end |
+| `to` | string (RFC3339) | End of evaluated range; omitted uses the current time |
 | `aggregation` | `latest \| window_rate \| active_rate \| increase` | Counter aggregation; omitted uses the metric's catalog default |
 | `window` | Go duration, `1m` through `1h` | Lookbehind for windowed modes |
 | `page_size` | int | Series per page (default 100) |
@@ -408,7 +408,7 @@ Response:
 }
 ```
 
-Different entities, edges, dimension labels, or units produce separate series.
+Different entities, edges, dimension labels, or units produce separate series. The response `query` object exposes the effective range, `15s` step, and `timestamp_semantics: "evaluation"` for both metric endpoints.
 
 ### GET /api/v1/metrics/catalog
 

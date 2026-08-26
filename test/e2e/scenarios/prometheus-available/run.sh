@@ -248,6 +248,14 @@ def api_payload(metric, aggregation=None, window="1m"):
 def api_samples(metric, aggregation=None, window="1m"):
     return api_payload(metric, aggregation, window).get("samples", [])
 
+def assert_evaluated_query(payload, aggregation, window):
+    query = payload["query"]
+    assert query["aggregation"] == aggregation, query
+    assert query["window"] == window, query
+    assert query["step"] == "15s", query
+    assert query["timestamp_semantics"] == "evaluation", query
+    assert query["from"] <= query["to"], query
+
 def latest_by_edge(samples):
     latest = {}
     for sample in samples:
@@ -295,9 +303,11 @@ while time.time() < api_deadline:
 assert all(request_increases.get(edge) == 40 for edge in expected_edges), request_increases
 assert all(error_increases.get(edge) == 10 for edge in expected_edges), error_increases
 assert all(sample["unit"] == "count" for sample in request_increase_payload["samples"])
+assert_evaluated_query(request_increase_payload, "increase", "1m")
+assert_evaluated_query(error_increase_payload, "increase", "1m")
 
 default_requests_payload = api_payload("servicegraph.request.count")
-assert default_requests_payload["query"] == {"aggregation": "window_rate", "window": "1m"}
+assert_evaluated_query(default_requests_payload, "window_rate", "1m")
 request_rates = latest_aggregate_by_edge(default_requests_payload["samples"])
 error_rates = latest_aggregate_by_edge(api_samples("servicegraph.request.error.count", "window_rate"))
 assert set(request_rates) == expected_edges, f"request rate missing internal edges: {request_rates.keys()}"
