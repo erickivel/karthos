@@ -30,7 +30,7 @@ Kubernetes API -> ClusterProfile -> Source Plan -> Generic Collection Plan -> OT
 | `pkg/collector/{spec,configgen,deployer}` | Provider-neutral collection requirements and composition → Helm values → `helm lint/template/upgrade-install` |
 | `pkg/backend/ingest` | Envelope build, signal routing, normalization, topology builders, ingestors |
 | `pkg/backend/persistence` | Store interfaces and in-memory implementations |
-| `pkg/core/metrics` | Catalog, generic dialect and resolver contracts — see [metrics-pipeline.md](metrics-pipeline.md) |
+| `pkg/core/metrics` | Canonical catalog, provider-neutral instrument semantics, and resolver contracts — see [metrics-pipeline.md](metrics-pipeline.md) |
 | `pkg/core/semconv` | Shared OTLP semantic-convention attribute key constants |
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
 | `pkg/discovery/profile` | Capability-only `ClusterProfile` and bounded source evidence |
@@ -70,8 +70,8 @@ The backend ingest pipeline:
 | Component | File | Role |
 |-----------|------|------|
 | `OTLPEntityResolver` | `pkg/backend/ingest/entity_resolver.go` | Maps OTLP resource attributes to deterministic `EntityID` (SHA-256 of kind + cluster + attributes) and persists canonical entity metadata. Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > job > cronjob > replicationcontroller > HPA > resourcequota > namespace > service. Volume metrics with a PVC label resolve to the PVC entity before the generic fallback. |
-| `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Performs generic OTLP scalar/histogram traversal, canonical mapping, source-assignment enforcement, conversion application, and sample emission. Datapoints without a producer timestamp are dropped; histograms are stored as `_sum`/`_count`; delta-valued series are preserved raw with `temporality=delta`. |
-| Source normalization modules | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}` | Each module owns its wire-name dialect, bounded source-specific labels, calls-edge classification/metadata, entity/edge attachment, conversions, and derived metrics through the shared `pkg/sources/contract` boundary. OTLP temporality handling remains generic. |
+| `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Performs generic OTLP scalar/histogram traversal after a stamped source parser returns a canonical candidate; validates catalog membership and assignment, applies conversion, and emits samples. Datapoints without a producer timestamp are dropped; histograms are stored as `_sum`/`_count`; delta-valued series are preserved raw with `temporality=delta`. |
+| Source modules | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}` | Each module owns stamped raw-name parsing, bounded source-specific labels, calls-edge classification/metadata, entity/edge attachment, conversions, and derived metrics through the shared `pkg/sources/contract` boundary. OTLP temporality handling remains generic. |
 | `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | `runs_on` (pod→node), `contains` (namespace→pod, pod→container) plus topology nodes for those entity kinds. In Helm deployments, `runs_on` additionally requires a live matching Pod UID and node from Kubernetes lifecycle state. |
 | `MetricCallsTopologyBuilder` | `pkg/backend/ingest/metric_calls_topology_builder.go` | Generic `calls` edge assembly from source-classified metrics. The source module owns recognition and bounded metadata; the builder validates provenance, uses datapoint timestamps for `FirstSeen`/`LastSeen`, and deduplicates edges. |
 | `TraceTopologyBuilder` | `pkg/backend/ingest/topology_builder.go` | `calls` edges from OTLP spans where `peer.service` is set; deduplicated within a batch by edge ID. |

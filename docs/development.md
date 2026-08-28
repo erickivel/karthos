@@ -54,15 +54,15 @@ pkg/
   collector/deployer/    Helm runner
   core/entities/         canonical graph-facing entities and stable IDs
   core/logging/          shared JSON stdout logger
-  core/metrics/          canonical catalog, generic dialect and resolver contracts,
-                         OTLP semconv mappings, samples, aggregation, and units
+  core/metrics/          canonical catalog, provider-neutral instrument semantics,
+                         resolver contracts, samples, aggregation, and units
   core/schema/           raw telemetry envelopes, validation, schema versions
   core/semconv/          OTLP semantic-convention attribute key constants
   core/topology/         graph nodes, edges, relations, and snapshots
   discovery/profile/     capability-only ClusterProfile and bounded evidence types
   sources/               static module inventory and source-owned detection,
-                         semantic collection requirements, source-plan contract,
-                         and normalization; structure/
+                         raw metric parsing/conversion, semantic collection requirements,
+                         source-plan contract, and normalization; structure/
                          owns live Kubernetes topology
 
 web/
@@ -184,7 +184,8 @@ Do not reintroduce ad hoc manifest rendering in Go.
 
 OKSG-owned components log structured JSON to stdout only.
 
-- configure level through `--log-level` or environment defaults
+- configure application level through `--log-level` or environment defaults
+  (`info`, `warn`, or `error`); Collector `OTEL_LOG_LEVEL` remains independent
 - inspect runtime behavior with `kubectl logs`
 - keep operational logging in docs, not buried in ad hoc comments
 
@@ -289,7 +290,7 @@ curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.
 Notes:
 
 - Counter presentation is catalog-driven. Rate-presented counters default to `aggregation=window_rate&window=1m`, while callers may explicitly request `latest`, `increase`, `window_rate`, or `active_rate` when that metric declares the mode. Cumulative counters such as container restarts retain their catalog-declared `latest` default.
-- Istio metrics enter through the Istio source module's dialect, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
+- Istio metrics enter through the Istio source parser, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
 - The Metrics Explorer entity search and breadcrumb filter are driven by the latest graph snapshot (`useGraphSnapshot`), not the historical `/api/v1/entities` registry. Edge mode lists `calls` edges from the same snapshot.
 
 Expected graph edge relations after telemetry flows:
@@ -316,7 +317,7 @@ The chart's accuracy-first default is `agent.hostNetwork=true`, which renders
 hostmetrics network scraper observe node interfaces. Set it to `false` only when
 the security/isolation tradeoff requires it; generated collector configuration
 then omits the network scraper so pod-network traffic is never mislabeled as node
-traffic. CPU, disk, paging, filesystem, and connection scrapers remain enabled.
+traffic. CPU, memory, disk, and filesystem scrapers remain enabled.
 
 ## REST API (Layer 6)
 

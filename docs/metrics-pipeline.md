@@ -1,15 +1,16 @@
 # Metrics Pipeline
 
 This document explains how metric signals travel from heterogeneous producers
-to a single canonical, semconv-named series. Four pieces work together:
+to a single canonical, semconv-named series. Four boundaries work together:
 
 1. **Catalog** — every canonical metric the system knows how to render
 2. **Source registry** — the logical producers that can emit a canonical metric
-3. **Dialect registry** — name translation from raw producer wire format to canonical
+3. **Source parsers** — source-owned translation from producer wire format to canonical
 4. **Resolver** — picks one winning source per metric for a given cluster
 
-All four live in `pkg/core/metrics/` and are pure data plus pure functions, so
-they are exercised end-to-end in unit tests without a running cluster.
+The catalog and resolver live in `pkg/core/metrics`; the static source registry
+and parsers live in `pkg/sources`. Their contracts are pure and unit-tested
+without a running cluster.
 
 ## 1. Canonical Catalog
 
@@ -23,7 +24,9 @@ Each entry is a `CanonicalMetric` (`pkg/core/metrics/canonical.go`):
 type CanonicalMetric struct {
     Name            string          // semconv-style name, e.g. "k8s.pod.cpu.usage"
     DisplayName     string          // operator-facing label
-    Unit            Unit            // canonical unit (millicores, bytes, ns, ratio, ...)
+    Unit            Unit            // API-facing unit (millicores, bytes, ns, ...)
+    Instrument      MetricInstrument // internal gauge, counter, or histogram semantics
+    StoredUnit      Unit            // provider-neutral base unit retained by storage
     Category        MetricCategory  // resource | traffic | latency | error | capacity | health
     Scopes          []MetricScope   // entity, edge, or both
     AppliesTo       []EntityKind    // entity kinds valid for entity-scope queries
@@ -35,8 +38,8 @@ type CanonicalMetric struct {
 Important properties:
 
 - **Names are semconv-first.** Producer-specific names (`istio_requests_total`,
-  `traces_service_graph_request_total`) never reach storage or the API; they are
-  translated by a dialect before normalization.
+  `traces_service_graph_request_total`) never reach storage or the API; their
+  stamped source parser translates them before normalization.
 - **Scopes are authoritative for the API and UI.** A metric in `scopes:["edge"]`
   must only be requested with `edge_source_id` / `edge_target_id` filters; the
   Metrics Explorer enforces this at query time.
@@ -47,11 +50,11 @@ Important properties:
 - **Sources drive arbitration**, not detection. A metric with several entries
   in `Sources` declares more than one possible producer; the resolver picks
   exactly one per cluster.
-- **Catalog ↔ ingest invariant.** Every cataloged metric must
-  appear in `OTLPSemconvMetrics` (`pkg/core/metrics/otel_mappings.go`); the
-  test `TestDefaultCatalogMetricsHaveIngestOrQuerySupport` enforces this.
+- **Catalog ↔ ingest invariant.** Every cataloged metric declares its
+  provider-neutral instrument and stored base unit. A source parser may emit
+  it only when its stamped source owns a supported raw-name path.
 - **Catalog inclusion requires a real path.** Add a metric only after its
-  receiver, source module, OTLP mapping, catalog row, and supported behavior
+  receiver, source parser, catalog row, and supported behavior
   test exist. Do not use absence tests to preserve deferred scope.
 
 The current categories are `resource`, `traffic`, `latency`, `error`,
@@ -63,22 +66,22 @@ The current categories are `resource`, `traffic`, `latency`, `error`,
 profile records deterministic availability for all seven modules, while the
 catalog only declares which source IDs can produce each canonical metric.
 
-| ID | Availability evidence | Dialect |
-|----|-----------------------|---------|
+| ID | Availability evidence | Parser |
+|----|-----------------------|--------|
 | `kubernetes.structure` | successfully listed Kubernetes discovery inventory | non-metric structural assembly |
-| `kubelet`, `host-os`, `kube-cluster` | successfully listed Kubernetes discovery inventory | source-owned mapping |
-| `prometheus.app` | bounded annotated Service targets | source-module dialect |
-| `mesh.istio` | complete injected sidecar mesh evidence | source-module dialect |
-| `traces.servicegraph` | derived trace-capable OTLP evidence | source-module dialect |
+| `kubelet`, `host-os`, `kube-cluster` | successfully listed Kubernetes discovery inventory | source-owned parser |
+| `prometheus.app` | bounded annotated Service targets | source-owned parser |
+| `mesh.istio` | complete injected sidecar mesh evidence | source-owned parser |
+| `traces.servicegraph` | derived trace-capable OTLP evidence | source-owned parser |
 
 Each static module owns its source-specific capability detector, collector
-contribution, stamps, and dialect. The Kubernetes adapter lists the typed
+contribution, stamps, and parser. The Kubernetes adapter lists the typed
 inventory once; no module performs a parallel API probe. The generic resolver
 receives only module IDs and capability availability, then writes the selected
-IDs and metric assignments to the mounted source plan. A module without a
-dialect already emits canonical-shaped names. The
+IDs and metric assignments to the mounted source plan. Every telemetry-capable
+module owns a parser; the structural module intentionally has none. The
 kubeletstats receiver emits a mix of `k8s.*` and upstream `container.*` names,
-so its source dialect maps container usage metrics onto the public
+so its source parser maps container usage metrics onto the public
 `k8s.container.*` catalog names.
 
 The `kube-cluster` source is the metric-native Kubernetes API path for the
@@ -104,7 +107,7 @@ already materialized by structural discovery. The broader structural catalog
 remains available for topology queries even when it has no metric family in
 the focused catalog.
 
-Source IDs are exported as constants so the catalog, dialect, and planner
+Source IDs are exported as constants so the catalog, parser registry, and planner
 share a single contract:
 
 ```go
@@ -113,55 +116,41 @@ SourcePrometheusApp, SourceMeshIstio,
 SourceTracesServicegraph
 ```
 
-## 3. Dialect Translation
+## 3. Source Parsing
 
-`pkg/core/metrics/dialect.go` defines the generic interface:
+Each telemetry-capable static module exposes one parser:
 
 ```go
-type Dialect interface {
-    Translate(metricName string) (string, bool)
-}
+Parse(rawMetricName string, attributes map[string]string) (contract.ParsedMetric, bool)
 ```
 
-A dialect is a `map[rawName]canonicalName`. Concrete maps live with the source
-that emits the wire names:
+The parser is selected only by the datapoint's `oksg_source` / `oksg.source`
+stamp. It recognizes its own raw names, expands source facts such as host
+disk/network direction and Kubernetes node conditions, and returns the final
+canonical name plus any raw-unit conversion. It rejects names outside that
+source; there is no cross-source fallback or centralized raw-name registry.
 
-| Dialect | Example translation |
-|---------|---------------------|
-| `prometheusapp.Dialect` | `http_requests_total` → `http.server.request.count`, `http_request_duration_seconds` → `http.server.request.duration` |
-| `kubelet.Dialect` | `container.cpu.usage` → `k8s.container.cpu.usage`, `container.memory.usage` → `k8s.container.memory.usage` |
-| `kubecluster.Dialect` | `k8s.container.cpu_request` → `k8s.container.cpu.request`, `k8s.container.memory_limit` → `k8s.container.memory.limit`, plus the cpu_limit and memory_request equivalents |
-| `servicegraph.Dialect` | `traces_service_graph_request_total` → `servicegraph.request.count`, `traces_service_graph_request_server` → `servicegraph.request.duration`, `traces_service_graph_request_failed_total` → `servicegraph.request.error.count` |
-| `istio.Dialect` | `istio_requests_total` → `servicegraph.request.count`, `istio_request_duration_milliseconds` → `servicegraph.request.duration`, `istio_{request,response}_messages_total` → gRPC message counters, and `istio_tcp_{connections_{opened,closed}_total,{sent,received}_bytes_total}` → TCP edge counters |
+| Source parser | Example result |
+|---------------|----------------|
+| `prometheusapp.Parse` | `http_requests_total` → `http.server.request.count` |
+| `kubelet.Parse` | `container.cpu.usage` → `k8s.container.cpu.usage` |
+| `kubecluster.Parse` | `k8s.container.cpu_request` → `k8s.container.cpu.request` |
+| `hostos.Parse` | `system.disk.io` + `direction=write` → `system.disk.io.write` |
+| `servicegraph.Parse`, `istio.Parse` | source wire names → `servicegraph.*` |
 
-`DialectRegistry` looks up a source module's dialect after reading the stamped
-source ID. At startup, `cmd/backend` builds it from
-`sources.DefaultRegistry().Dialects()`, so the static module inventory remains
-the only dialect owner. Unknown names pass through unchanged so
-canonical-shaped metrics are not corrupted.
+Generic ingest and metric-derived calls topology share that parser result,
+then validate catalog membership and the mounted source assignment. Source
+normalizers may retain bounded labels, resolve entities, and add supported
+derived output; they cannot rename the accepted canonical metric.
 
-A core metrics dialect only renames the metric — it does **not** touch units,
-datapoint attributes, entity attachment, or histogram shape. After translation,
-the compiled source registry selects a
-small source dialect by the registered `oksg_source` or `oksg.source` datapoint
-stamp accepted by the source policy. There is no envelope-source fallback for
-recognized canonical metrics. Each collector-specific implementation owns its bounded
-labels, attachment overrides, directional variants, and conversions in a
-separate package under `pkg/sources`. `OTLPNormalizer` retains only generic OTLP
-iteration, assignment enforcement, conversion application, and sample emission.
+`hostos.Parse` preserves the dimensions needed to keep the focused host series
+truthful: CPU `state`, disk `device`/`direction`, network
+`network_interface_name`/`direction`, and filesystem device/mount/type/mode/state.
+Disk I/O and network I/O are cumulative counters and use shared explicit
+aggregation modes. Paging, load, and connection metrics are outside the focused
+host catalog and are neither collected nor parsed.
 
-`HostOSDialect` preserves the dimensions needed to keep host series truthful:
-`cpu`/`state`, `device`/`direction` for disk, `network_interface_name`/`direction`
-for network, filesystem device/mount/type/mode/state, paging device/type/direction/state,
-and connection protocol/state. The old network `device` alias is not published.
-Disk I/O, network I/O, and paging operations are cumulative counters and therefore
-use the shared explicit aggregation modes. Collector v0.156/gopsutil reports paging
-faults and operations in 4 KiB page units for the contract consumed here, so those
-two values are divided by 4096; paging usage is already bytes and is not scaled. A
-collector-tag contract test intentionally fails when `0.156.0` changes until this
-conversion is revalidated.
-
-The Istio dialect treats all six protocol metrics as genuine cumulative sums:
+The Istio parser treats all six protocol metrics as genuine cumulative sums:
 gRPC request/response messages, TCP opened/closed connections, and TCP sent/received
 bytes. It preserves edge identity, protocol/source dimensions, and base/rate units;
 the dedicated mesh job scrapes every 15 seconds so a one-minute aggregation window
@@ -359,19 +348,13 @@ series in priority order. When a clause matches no series the metric returns
 empty, which the API serves as "no recent sample" — equivalent to
 `unknown`.
 
-## 5. Ingest-Side Mappings
+## 5. Canonical Storage Semantics
 
-`pkg/core/metrics/otel_mappings.go` is the OTLP-side companion to the
-catalog. `OTLPSemconvMetrics` maps each canonical metric name to:
-
-- `ConversionFactor` — from the producer's unit to the canonical unit
-- `Unit` — canonical unit code, used by the API response.
-- `Kind` — gauge, sum, or histogram
-
-The normalizer reads this map after dialect translation to apply unit
-conversion and to choose the right datapoint extraction path (scalar values
-for gauges/sums, `_sum`/`_count` decomposition for histograms, average
-extraction for non-quantile latency reads, etc.).
+The central catalog declares each metric's provider-neutral `Instrument`
+(`gauge`, `counter`, or `histogram`) and `StoredUnit`. Source parsers own
+raw-unit conversion. Generic ingest uses the catalog semantics to select
+scalar or histogram handling, while memory and VictoriaMetrics use them for
+counter rate/increase behavior. API-facing output remains unchanged.
 
 `pkg/core/semconv/keys.go` centralizes the OTLP attribute keys used across
 ingest and topology builders (`k8s.pod.name`, `peer.service`,
@@ -404,7 +387,7 @@ Pipeline for a complete active sidecar Istio mesh:
    Pod is on that agent's `K8S_NODE_NAME`. The relabel rule stamps
    `oksg_source=mesh.istio`. The agent forwards OTLP to the gateway, the
    gateway to the backend.
-5. **Backend OTLPNormalizer** runs. The Istio dialect rewrites
+5. **Backend OTLPNormalizer** runs. The Istio parser rewrites
    `istio_requests_total` to `servicegraph.request.count`. The assignment
    filter accepts the sample because `oksg_source` matches the assigned
    source. The unit map applies the duration ms→ns conversion when the
@@ -430,7 +413,7 @@ sources for the same POC service-graph metric.
 
 A new canonical metric must pass through six independent contract steps
 before a UI tile lights up. **Every one of them is silently failable** —
-the unit-test suite catches catalog/mapping/dialect drift but cannot catch
+the unit-test suite catches catalog/parser drift but cannot catch
 receiver-config or OTTL-tag mistakes. Both classes of bug have shipped
 to production before. Treat this as a sequence, not a punch list, and
 finish with live-cluster verification on every PR.
@@ -455,29 +438,28 @@ prometheus, servicegraph connector, istio scrape):
   (no `k8s.` prefix); k8s_cluster emits `k8s.container.cpu_request`
   (underscore segment, not dotted).
 
-### Step 2 — Dialect: translate wire name → catalog canonical
+### Step 2 — Source parser: translate wire name → catalog canonical
 
 If the wire name and the catalog canonical differ:
 
-- Add a `DialectMap` entry and bind it in the matching static module in
-  `pkg/sources`. A `nil` module dialect means the source emits
-  canonical-shaped names directly.
-- Add a translation assertion in `pkg/core/metrics/dialect_test.go` and
-  a round-trip normalizer test in
-  `pkg/backend/ingest/normalizer_test.go` that feeds the raw OTLP wire
-  name and asserts the dotted canonical comes out (mirror the
-  `RawKubelet*` and `RawKubeCluster*` test patterns).
+- Add or update the matching module's private raw-name map and `Parse`
+  behavior in `pkg/sources/<source>/parser.go`. The parser may also use
+  attributes to expand one wire metric into a canonical directional or
+  condition-specific name.
+- Add a positive parser behavior test in that source package and a
+  round-trip normalizer test that feeds the stamped raw OTLP name and asserts
+  the canonical sample.
 
 ### Step 3 — OTTL source tagger: stamp `oksg_source` correctly
 
 `sourceTagger` in `pkg/adapters/otel/compiler.go` renders the generic source
 stamp selectors on
-collector-owned agent and gateway pipelines **before** the dialect (which lives
-in the backend). It never runs on `metrics/otlp`. OTTL rules therefore see
+collector-owned agent and gateway pipelines **before** source parsing (which
+lives in the backend). It never runs on `metrics/otlp`. OTTL rules therefore see
 **wire-format names**, not canonical names.
 Two consequences:
 
-- Rules that match against canonical names that only exist post-dialect
+- Rules that match against canonical names that only exist post-parse
   are dead code. `^k8s\.container\.` at the gateway only matches
   k8s_cluster output (kubeletstats container metrics arrive as raw
   `container.*`, not `k8s.container.*`).
@@ -495,27 +477,14 @@ For each metric:
   datapoint whose tag disagrees with the catalog assignment.
 - Add an OTel adapter test asserting the rendered tagger statement is present.
 
-### Step 4 — OTLP mapping: declare unit/kind/conversion
-
-In `pkg/core/metrics/otel_mappings.go`, add an entry to
-`OTLPSemconvMetrics` keyed by the **post-dialect canonical** name:
-
-```go
-"k8s.container.cpu.request": {ConversionFactor: 1000.0, Unit: UnitMillicores, Kind: MetricKindGauge},
-```
-
-Set `ConversionFactor` to convert from the producer's unit to the
-canonical unit (cores → millicores: 1000.0; seconds → nanoseconds: 1e9;
-otherwise 1.0). Set `Kind` to gauge / sum / counter / histogram based on
-the upstream `metadata.yaml`. Without this entry the normalizer silently
-drops every datapoint at the type-check (`normalizer.go` ingest loop).
-
-### Step 5 — Catalog: advertise the metric
+### Step 4 — Catalog: advertise the metric
 
 Add a `defaultCatalog` row in `pkg/core/metrics/catalog.go`:
 
-- `Name`: post-dialect canonical, exactly matching `OTLPSemconvMetrics`.
-- `Unit`: the canonical unit (matches `OTLPSemconvMetrics`).
+- `Name`: post-parser canonical name.
+- `Unit`, `Instrument`, and `StoredUnit`: API unit and provider-neutral
+  storage behavior. Counters use the accumulated base `StoredUnit`; source
+  parser conversion turns raw producer values into that unit.
 - `Category`: `resource` / `traffic` / `latency` / `error` / `capacity`
   / `health`.
 - `Scopes`: `entity`, `edge`, or both.
@@ -525,19 +494,6 @@ Add a `defaultCatalog` row in `pkg/core/metrics/catalog.go`:
 Update `TestDefaultCatalogIncludesRequiredMetrics` to enforce presence plus
 unit/category/sources, then add the source-module and normalizer behavior
 coverage for the supported path.
-
-If the metric is purely query-derived (e.g. ratios computed in PromQL,
-status enums composed from other metrics), the contract is different:
-- Omit `Sources` from the catalog row.
-- Add the name to `catalogSourcelessExceptions` (`pkg/core/metrics/catalog_test.go`).
-- Add a `buildPromQL` switch arm in
-  `pkg/adapters/storage/victoriametrics/metric_store.go` **before** adding
-  the metric to `required` in `TestDefaultCatalogIncludesRequiredMetrics`,
-  otherwise queries return empty silently with green tests.
-- Document the composition rule and (for enum-shaped metrics) the
-  integer→label mapping in the catalog row's `Description`. The frontend
-  reads this via `/api/v1/metrics/catalog` — do not hard-code the mapping
-  in UI code.
 
 For status/lifecycle signals: keep the integer encoding all the way through
 the pipeline. `MetricSample.Value` is `float64`; do not invent string-valued
@@ -579,9 +535,9 @@ four points. Bisect with these reads:
    gateway. Equal means everything left.
 3. **Dropped at normalizer?** Inspect the source stamp and mounted source plan;
    supported tests assert accepted and dropped canonical samples directly.
-4. **Dialect translation hit?** Add a normalizer test that feeds the
-   wire name and asserts the canonical output. If it fails, the dialect
-   is wrong (or the module dialect is still `nil`).
+4. **Source parser hit?** Add a normalizer test that feeds the
+   wire name and asserts the canonical output. If it fails, the source parser
+   or source stamp is wrong.
 
 ### Misc follow-ups when the metric introduces new query shape
 
@@ -632,7 +588,7 @@ historical `graph?at=` reconstruction.
 ## 8. Adding a New Source
 
 1. Add one static module in `pkg/sources` with a pure detector over the typed
-   Kubernetes inventory, semantic collection requirement, source stamps, and any dialect.
+   Kubernetes inventory, semantic collection requirement, source stamps, and parser.
 2. Register its deterministic capability record in the static source registry;
    do not add a runtime override, fallback, or central discovery switch.
 3. Cite the source ID in catalog entries that can come from it, with a
@@ -649,10 +605,8 @@ historical `graph?at=` reconstruction.
 | `pkg/core/metrics/catalog.go` | `defaultCatalog`, `DefaultCatalog()` |
 | `pkg/sources/registry.go` | Compiled source IDs, module inventory, and detector dispatch |
 | `pkg/sources/detection` | Typed Kubernetes discovery inventory shared by static detectors |
-| `pkg/core/metrics/dialect.go` | Generic `Dialect`, `DialectMap`, and `DialectRegistry` contracts |
-| `pkg/sources/{kubelet,kubecluster,prometheusapp,istio,servicegraph}/dialect.go` | Source-owned wire-name to canonical metric maps |
+| `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,istio,servicegraph}/parser.go` | Source-owned stamped raw-name parsing and conversion |
 | `pkg/core/metrics/resolver.go` | `Resolve`, `Assignment`, `SelectedSources` |
-| `pkg/core/metrics/otel_mappings.go` | `OTLPSemconvMetrics`, ingest-side units and kinds |
 | `pkg/core/metrics/unit.go` | Unit constants, conversion factors |
 | `pkg/core/semconv/keys.go` | OTLP attribute key constants |
 | `pkg/backend/ingest/normalizer.go` | Generic OTLP iteration, `OTLPNormalizer`, shared source-policy enforcement, conversion application, and raw sample emission |

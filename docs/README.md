@@ -11,7 +11,7 @@ update them in the same change.
 | [Architecture](architecture.md) | Layers, component boundaries, Helm deployment model, logging policy |
 | [Discovery Flow](discovery-flow.md) | Discovery → release-values → Helm install sequence |
 | [Runtime Flow](runtime-flow.md) | Post-deploy telemetry path through agent, gateway, backend ingest |
-| [Metrics Pipeline](metrics-pipeline.md) | Catalog, source-module dialect translation, resolver |
+| [Metrics Pipeline](metrics-pipeline.md) | Catalog, source-module parsing, resolver |
 | [API Reference](api-reference.md) | REST API endpoints, query params, response shapes |
 | [Frontend Design Spec](frontend-design-spec.md) | Frontend stack, design system, projection modes |
 | [Testing](testing.md) | Unit tests, kind-based e2e tasks, scenario validation |

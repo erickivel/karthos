@@ -27,9 +27,9 @@ relations between them, with metrics attached to nodes and edges.
 | `pkg/adapters/storage` | Storage factory; `postgresql/` and `victoriametrics/` external backends |
 | `pkg/backend/ingest` | Envelope builder, signal router, normalizer, topology builders, ingestors |
 | `pkg/backend/persistence` | Store interfaces (`MetricStore`, `GraphStore`, `MetadataStore`, `EntityRegistry`) and in-memory implementations |
-| `pkg/core/metrics` | Canonical catalog, generic dialect and resolver contracts, OTLP mappings |
+| `pkg/core/metrics` | Canonical catalog, provider-neutral instrument semantics, resolver contracts, samples, aggregation, and units |
 | `pkg/collector` | Generic collection-plan composition, provider-neutral requirements, Helm values compilation, and deployment |
-| `pkg/sources` | Static source-module inventory with source-owned detection, semantic collection requirements, and normalization |
+| `pkg/sources` | Static source-module inventory with source-owned detection, raw metric parsing/conversion, semantic collection requirements, and normalization |
 | `pkg/core/semconv` | OTLP semantic-convention attribute key constants |
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
 | `pkg/discovery/profile` | Capability-only ClusterProfile contract and bounded evidence types |
@@ -120,7 +120,7 @@ task test:e2e:teardown        # destroy cluster and registry
 | [Architecture](docs/architecture.md) | Layers, components, deployment model, logging policy |
 | [Discovery Flow](docs/discovery-flow.md) | Discovery to release-values flow with sequence diagrams |
 | [Runtime Flow](docs/runtime-flow.md) | Post-deploy telemetry path through agent, gateway, backend |
-| [Metrics Pipeline](docs/metrics-pipeline.md) | Catalog, dialects, source registry, resolver |
+| [Metrics Pipeline](docs/metrics-pipeline.md) | Catalog, source parsers, source registry, resolver |
 | [API Reference](docs/api-reference.md) | REST API routes, query params, response shapes |
 | [Frontend Design Spec](docs/frontend-design-spec.md) | Frontend stack, design system, projection modes |
 | [Testing](docs/testing.md) | Unit tests, e2e scenarios, traffic generation |
