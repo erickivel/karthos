@@ -18,4 +18,21 @@ if [[ "${raw_count_selectors}" -ne 2 ]]; then
   exit 1
 fi
 
-echo "Prometheus raw counter selector units: PASS"
+if ! grep -Fq 'def supported_api_results_ready(' "${RUNNER}"; then
+  echo "expected runner to define a complete supported API result readiness check" >&2
+  exit 1
+fi
+
+for result in request_increases error_increases request_rates error_rates durations; do
+  if ! grep -Fq "${result}" "${RUNNER}"; then
+    echo "expected readiness check to include ${result}" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'if supported_api_results_ready(' "${RUNNER}"; then
+  echo "expected runner to poll until all supported API results are ready" >&2
+  exit 1
+fi
+
+echo "Prometheus scenario contract checks: PASS"

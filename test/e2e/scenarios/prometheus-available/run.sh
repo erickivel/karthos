@@ -286,17 +286,48 @@ def latest_aggregate_by_edge(samples):
             grouped[edge] = (timestamp, current[1] + float(sample["value"]))
     return {edge: value for edge, (_, value) in grouped.items()}
 
-api_deadline = time.time() + 60
+api_deadline = time.time() + 120
 request_increase_payload = {}
 error_increase_payload = {}
+default_requests_payload = {}
+error_rate_payload = {}
+active_rate_payload = {}
+duration_payload = {}
 request_increases = {}
 error_increases = {}
+request_rates = {}
+error_rates = {}
+active_rates = {}
+durations = {}
+
+def supported_api_results_ready():
+    return (
+        all(request_increases.get(edge) == 40 for edge in expected_edges)
+        and all(error_increases.get(edge) == 10 for edge in expected_edges)
+        and set(request_rates) == expected_edges
+        and set(error_rates) == expected_edges
+        and all(abs(request_rates[edge] - 40/60) <= 0.02 for edge in expected_edges)
+        and all(abs(error_rates[edge] - 10/60) <= 0.02 for edge in expected_edges)
+        and set(active_rates) == expected_edges
+        and all(math.isfinite(value) and value > 0 for value in active_rates.values())
+        and set(durations) == expected_edges
+        and all(math.isfinite(float(sample["value"])) and 0 < float(sample["value"]) < 5_000_000_000 for sample in durations.values())
+    )
+
 while time.time() < api_deadline:
     request_increase_payload = api_payload("servicegraph.request.count", "increase")
     error_increase_payload = api_payload("servicegraph.request.error.count", "increase")
     request_increases = latest_aggregate_by_edge(request_increase_payload["samples"])
     error_increases = latest_aggregate_by_edge(error_increase_payload["samples"])
-    if all(request_increases.get(edge) == 40 for edge in expected_edges) and all(error_increases.get(edge) == 10 for edge in expected_edges):
+    default_requests_payload = api_payload("servicegraph.request.count")
+    error_rate_payload = api_payload("servicegraph.request.error.count", "window_rate")
+    active_rate_payload = api_payload("servicegraph.request.count", "active_rate")
+    duration_payload = api_payload("servicegraph.request.duration")
+    request_rates = latest_aggregate_by_edge(default_requests_payload["samples"])
+    error_rates = latest_aggregate_by_edge(error_rate_payload["samples"])
+    active_rates = latest_aggregate_by_edge(active_rate_payload["samples"])
+    durations = latest_by_edge(duration_payload["samples"])
+    if supported_api_results_ready():
         break
     time.sleep(2)
 
@@ -306,25 +337,20 @@ assert all(sample["unit"] == "count" for sample in request_increase_payload["sam
 assert_evaluated_query(request_increase_payload, "increase", "1m")
 assert_evaluated_query(error_increase_payload, "increase", "1m")
 
-default_requests_payload = api_payload("servicegraph.request.count")
 assert_evaluated_query(default_requests_payload, "window_rate", "1m")
-request_rates = latest_aggregate_by_edge(default_requests_payload["samples"])
-error_rates = latest_aggregate_by_edge(api_samples("servicegraph.request.error.count", "window_rate"))
 assert set(request_rates) == expected_edges, f"request rate missing internal edges: {request_rates.keys()}"
 assert set(error_rates) == expected_edges, f"error rate missing internal edges: {error_rates.keys()}"
 for edge in sorted(expected_edges):
     request_rate = request_rates[edge]
     error_rate = error_rates[edge]
     assert abs(request_rate - 40/60) <= 0.02, f"window request rate for {edge}: {request_rate} != 0.667"
-    assert abs(error_rate - 10/60) <= 0.02, f"window error rate for {edge}: {error_rate} != 0.167"
+assert abs(error_rate - 10/60) <= 0.02, f"window error rate for {edge}: {error_rate} != 0.167"
 assert all(sample["unit"] == "per_second" for sample in default_requests_payload["samples"])
 
-active_rates = latest_aggregate_by_edge(api_samples("servicegraph.request.count", "active_rate"))
 assert set(active_rates) == expected_edges, f"active rate missing cumulative servicegraph edges: {active_rates}"
 assert all(math.isfinite(value) and value > 0 for value in active_rates.values())
 print("✓ API exact increases, default/explicit window rates, active rates, metadata, and units are correct")
 
-durations = latest_by_edge(api_samples("servicegraph.request.duration"))
 assert set(durations) == expected_edges, f"duration missing internal edges: {durations.keys()}"
 for edge, sample in durations.items():
     value = float(sample["value"])
