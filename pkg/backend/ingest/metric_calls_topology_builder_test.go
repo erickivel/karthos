@@ -20,7 +20,7 @@ import (
 )
 
 func TestMetricCallsTopologyBuilderBuildsCallsEdgeFromIstioMetric(t *testing.T) {
-	builder := NewMetricCallsTopologyBuilder(metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
+	builder := NewMetricCallsTopologyBuilder("kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	env := makeCallsMetricEnvelope(t, "istio_requests_total", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":                          "gateway-go",
 		"server":                          "service-a-python",
@@ -48,7 +48,7 @@ func TestMetricCallsTopologyBuilderBuildsCallsEdgeFromIstioMetric(t *testing.T) 
 }
 
 func TestMetricCallsTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing.T) {
-	builder := NewMetricCallsTopologyBuilder(metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
+	builder := NewMetricCallsTopologyBuilder("kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	envelopeTimestamp := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
 	dataPointTimestamp := envelopeTimestamp.Add(5 * time.Minute)
 	env := makeCallsMetricEnvelope(t, "istio_requests_total", envelopeTimestamp, dataPointTimestamp, map[string]string{
@@ -67,8 +67,24 @@ func TestMetricCallsTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing
 	assert.Equal(t, dataPointTimestamp, edges[0].LastSeen)
 }
 
+func TestMetricCallsTopologyBuilderDropsTimestamplessMetricEvidence(t *testing.T) {
+	builder := NewMetricCallsTopologyBuilder("kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
+	env := makeCallsMetricEnvelope(t, "istio_requests_total", time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC), time.Time{}, map[string]string{
+		"client":           "gateway-go",
+		"server":           "service-a-python",
+		"client_namespace": "oksg-demo",
+		"server_namespace": "oksg-demo",
+		"oksg.source":      "mesh.istio",
+	})
+
+	edges, err := builder.Build(context.Background(), env)
+	require.NoError(t, err)
+	assert.Empty(t, edges)
+	assert.Empty(t, builder.BuildNodes(context.Background(), env))
+}
+
 func TestMetricCallsTopologyBuilderIgnoresMetricsWithoutCallsSemantics(t *testing.T) {
-	builder := NewMetricCallsTopologyBuilder(metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()), "kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
+	builder := NewMetricCallsTopologyBuilder("kind-test", NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil))
 	env := makeCallsMetricEnvelope(t, "k8s.pod.cpu.usage", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":           "gateway-go",
 		"server":           "service-a-python",
@@ -85,7 +101,7 @@ func TestMetricCallsTopologyBuilderRejectsInvalidSourceWithoutCreatingNodesOrEdg
 	policy := NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
 		"servicegraph.request.count": metrics.SourceMeshIstio,
 	})
-	builder := NewMetricCallsTopologyBuilder(metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()), "kind-test", policy)
+	builder := NewMetricCallsTopologyBuilder("kind-test", policy)
 	tests := []struct {
 		name   string
 		source string
@@ -142,6 +158,10 @@ func TestBufferedTopologyIngestor_MergesProvenanceAndMetadata(t *testing.T) {
 
 func makeCallsMetricEnvelope(t *testing.T, metricName string, envelopeTimestamp, dataPointTimestamp time.Time, attrs map[string]string) schema.RawEnvelope {
 	t.Helper()
+	dataPointUnixNano := uint64(0)
+	if !dataPointTimestamp.IsZero() {
+		dataPointUnixNano = uint64(dataPointTimestamp.UnixNano())
+	}
 	var kvs []*commonpb.KeyValue
 	for k, v := range attrs {
 		kvs = append(kvs, &commonpb.KeyValue{
@@ -157,7 +177,7 @@ func makeCallsMetricEnvelope(t *testing.T, metricName string, envelopeTimestamp,
 					DataPoints: []*metricspb.NumberDataPoint{{
 						Attributes:   kvs,
 						Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: 1},
-						TimeUnixNano: uint64(dataPointTimestamp.UnixNano()),
+						TimeUnixNano: dataPointUnixNano,
 					}},
 				}},
 			}},

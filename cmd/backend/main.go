@@ -18,7 +18,6 @@ import (
 	"github.com/erickivel/oksg/pkg/backend/persistence"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources"
@@ -127,12 +126,11 @@ func run(ctx context.Context, args []string) error {
 
 	resolver := ingest.NewOTLPEntityResolverWithRegistry(cfg.ClusterName, stores.EntityRegistry)
 	modules := sources.DefaultRegistry()
-	dialect := metrics.NewSourceDialectRegistry(modules.Dialects())
 	assignment := sourcePlan.MetricAssignments
 	logger.Info("mounted source plan loaded", logging.Any("metric_count", len(assignment)))
 
 	sourcePolicy := ingest.NewMetricSourcePolicy(modules.MetricIDs(), assignment)
-	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithSourcePolicy(sourcePolicy))
+	normalizer := ingest.NewOTLPNormalizer(resolver, modules, ingest.WithSourcePolicy(sourcePolicy))
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
 	podLifecycle, err := startPodLifecycle(ctx, cfg, stores.GraphStore, logger, client)
 	if err != nil {
@@ -142,7 +140,7 @@ func run(ctx context.Context, args []string) error {
 	if podLifecycle != nil {
 		metricTopoBuilder = ingest.NewMetricTopologyBuilderWithLifecycle(cfg.ClusterName, podLifecycle)
 	}
-	metricCallsTopoBuilder := ingest.NewMetricCallsTopologyBuilder(dialect, cfg.ClusterName, sourcePolicy)
+	metricCallsTopoBuilder := ingest.NewMetricCallsTopologyBuilder(cfg.ClusterName, sourcePolicy)
 
 	bufferedTopo := ingest.NewBufferedTopologyIngestor(
 		map[schema.SignalType]ingest.TopologyBuilder{

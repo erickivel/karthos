@@ -210,8 +210,7 @@ func makeHistogramRMWithAttrs(
 
 func newNormalizer() *ingest.OTLPNormalizer {
 	resolver := ingest.NewOTLPEntityResolver(testCluster)
-	dialect := metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects())
-	return ingest.NewOTLPNormalizer(resolver, dialect)
+	return ingest.NewOTLPNormalizer(resolver, sources.DefaultRegistry())
 }
 
 func TestOTLPNormalizer_MemoryMetric(t *testing.T) {
@@ -258,7 +257,7 @@ func TestOTLPNormalizer_EntityResolutionError(t *testing.T) {
 func TestNormalizingIngestor_RejectsMetricWhenEntityPersistenceFails(t *testing.T) {
 	entityErr := errors.New("entity registry unavailable")
 	resolver := ingest.NewOTLPEntityResolverWithRegistry(testCluster, failingEntityRegistry{err: entityErr})
-	normalizer := ingest.NewOTLPNormalizer(resolver, metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()))
+	normalizer := ingest.NewOTLPNormalizer(resolver, sources.DefaultRegistry())
 	store := persistence.NewInMemoryMetricStore()
 	ingestor := ingest.NewNormalizingIngestor(normalizer, store, nil)
 	env := makeEnvelope(t, metrics.SourceKubelet, podResource(), makeGaugeRM("k8s.pod.cpu.usage", 0.5, uint64(time.Now().UnixNano())))
@@ -337,30 +336,29 @@ func TestOTLPNormalizer_DropsHistogramDataPointWithoutTimestamp(t *testing.T) {
 // retains only samples stamped by the assigned source.
 func TestOTLPNormalizer_SourceMismatchDropped(t *testing.T) {
 	resolver := ingest.NewOTLPEntityResolver(testCluster)
-	dialect := metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects())
 
 	assignment := metrics.Assignment{
-		"k8s.pod.cpu.usage": metrics.SourceMeshIstio,
+		"k8s.container.cpu.usage": metrics.SourceKubelet,
 	}
 	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), assignment)
-	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, ingest.WithSourcePolicy(policy))
+	normalizer := ingest.NewOTLPNormalizer(resolver, sources.DefaultRegistry(), ingest.WithSourcePolicy(policy))
 
 	tsNano := uint64(time.Now().UnixNano())
 
-	rmKubelet := makeGaugeRMWithAttr("k8s.pod.cpu.usage", 0.5, tsNano, "oksg_source", metrics.SourceKubelet)
-	envKubelet := makeEnvelope(t, metrics.SourceKubelet, podResource(), rmKubelet)
-	samples, err := normalizer.Normalize(context.Background(), envKubelet)
+	rmPrometheus := makeGaugeRMWithAttr("container_cpu_usage_seconds_total", 0.5, tsNano, "oksg_source", metrics.SourcePrometheusApp)
+	envPrometheus := makeEnvelope(t, metrics.SourcePrometheusApp, podResource(), rmPrometheus)
+	samples, err := normalizer.Normalize(context.Background(), envPrometheus)
 	require.NoError(t, err)
-	require.Empty(t, samples, "kubelet sample must be dropped when istio is the assigned source")
+	require.Empty(t, samples, "Prometheus sample must be dropped when kubelet is the assigned source")
 
-	rmIstio := makeGaugeRMWithAttr("k8s.pod.cpu.usage", 0.75, tsNano, "oksg_source", metrics.SourceMeshIstio)
-	envIstio := makeEnvelope(t, metrics.SourceMeshIstio, podResource(), rmIstio)
-	samples, err = normalizer.Normalize(context.Background(), envIstio)
+	rmKubelet := makeGaugeRMWithAttr("k8s.container.cpu.usage", 0.75, tsNano, "oksg_source", metrics.SourceKubelet)
+	envKubelet := makeEnvelope(t, metrics.SourceKubelet, podResource(), rmKubelet)
+	samples, err = normalizer.Normalize(context.Background(), envKubelet)
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
 	require.InDelta(t, 750.0, samples[0].Value, 1e-9)
 
-	rmUntagged := makeGaugeRM("k8s.pod.cpu.usage", 1.0, tsNano)
+	rmUntagged := makeGaugeRM("k8s.container.cpu.usage", 1.0, tsNano)
 	envUntagged := makeEnvelopeWithoutSourceStamp(t, podResource(), rmUntagged)
 	samples, err = normalizer.Normalize(context.Background(), envUntagged)
 	require.NoError(t, err)

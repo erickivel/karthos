@@ -1,9 +1,8 @@
 package servicegraph
 
-import "github.com/erickivel/oksg/pkg/core/metrics"
-
-// Dialect translates servicegraph connector output into catalog canonical names.
-var Dialect = metrics.DialectMap{
+// rawMetricNames translates servicegraph connector output into catalog
+// canonical names.
+var rawMetricNames = map[string]string{
 	"traces_service_graph_request_total":        "servicegraph.request.count",
 	"traces_service_graph_request_server":       "servicegraph.request.duration",
 	"traces_service_graph_request_failed_total": "servicegraph.request.error.count",

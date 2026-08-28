@@ -22,6 +22,20 @@ type ServiceResolver interface {
 }
 type ClusterResolver interface{ ClusterName() string }
 
+// ParsedMetric is the source-owned interpretation of one raw metric name.
+// Generic ingestion validates the returned canonical name against the catalog
+// and source plan before it persists any sample.
+type ParsedMetric struct {
+	CanonicalName    string
+	ConversionFactor float64
+	UnitOverride     metrics.Unit
+}
+
+// MetricParser translates one stamped source's raw metric into a canonical
+// candidate. Attributes are exposed as a simple string map because their
+// source-specific meaning belongs to the source module, not generic ingest.
+type MetricParser func(rawMetricName string, attributes map[string]string) (ParsedMetric, bool)
+
 type Plan struct {
 	RawMetricName    string
 	MetricName       string
@@ -38,7 +52,6 @@ type Plan struct {
 type DerivedMetric struct {
 	MetricName       string
 	ConversionFactor float64
-	Unit             metrics.Unit
 }
 type Normalizer func(context.Context, EntityResolver, *Plan) error
 
@@ -47,8 +60,8 @@ type Normalizer func(context.Context, EntityResolver, *Plan) error
 // Generic ingestion owns provenance validation and edge assembly.
 type CallsEdgeClassifier func(rawMetricName, canonicalMetricName string, attrs []*commonpb.KeyValue) (map[string]string, bool)
 
-func NewPlan(raw, canonical, source string, resource map[string]string, attrs []*commonpb.KeyValue, mapping metrics.OTLPMetricMapping) Plan {
-	return Plan{RawMetricName: raw, MetricName: canonical, Source: source, Resource: resource, Attrs: attrs, Labels: map[string]string{semconv.LabelSource: source}, ConversionFactor: mapping.ConversionFactor, Unit: mapping.Unit}
+func NewPlan(raw, canonical, source string, resource map[string]string, attrs []*commonpb.KeyValue, parsed ParsedMetric) Plan {
+	return Plan{RawMetricName: raw, MetricName: canonical, Source: source, Resource: resource, Attrs: attrs, Labels: map[string]string{semconv.LabelSource: source}, ConversionFactor: parsed.ConversionFactor, Unit: parsed.UnitOverride}
 }
 func PreserveLabels(attrs []*commonpb.KeyValue, labels map[string]string, aliases ...string) {
 	for _, alias := range aliases {
@@ -101,6 +114,21 @@ func FirstLabelValue(attrs []*commonpb.KeyValue, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// AttributeStrings exposes raw telemetry attributes to a source parser without
+// making generic ingestion understand source-specific attribute semantics.
+func AttributeStrings(attrs []*commonpb.KeyValue) map[string]string {
+	out := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		if attr == nil || attr.Key == "" {
+			continue
+		}
+		if value := LabelValue(attrs, attr.Key); value != "" {
+			out[attr.Key] = value
+		}
+	}
+	return out
 }
 
 func ApplyServiceGraphEdgeLabels(ctx context.Context, resolver EntityResolver, plan *Plan) bool {

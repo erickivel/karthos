@@ -52,7 +52,7 @@ func TestOTLPNormalizerSourceAssignmentAndMixedBatch(t *testing.T) {
 	})
 	normalizer := ingest.NewOTLPNormalizer(
 		ingest.NewOTLPEntityResolver(testCluster),
-		metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()),
+		sources.DefaultRegistry(),
 		ingest.WithSourcePolicy(policy),
 	)
 
@@ -118,7 +118,7 @@ func TestOTLPNormalizerRejectsWrongSourceForSpecializedCanonicalMetrics(t *testi
 			policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), tt.assignment)
 			normalizer := ingest.NewOTLPNormalizer(
 				ingest.NewOTLPEntityResolver(testCluster),
-				metrics.NewSourceDialectRegistry(sources.DefaultRegistry().Dialects()),
+				sources.DefaultRegistry(),
 				ingest.WithSourcePolicy(policy),
 			)
 			rm := makeGaugeRMWithAttrs(tt.metricName, 1, uint64(time.Now().UnixNano()), tt.attrs)

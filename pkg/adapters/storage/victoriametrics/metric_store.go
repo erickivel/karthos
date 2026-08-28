@@ -457,7 +457,7 @@ func buildPromQL(q query.MetricQuery) string {
 	}
 
 	selector := metricSelector(q)
-	if mapping, ok := metrics.OTLPSemconvMetrics[q.MetricName]; ok && mapping.Kind == metrics.MetricKindCounter {
+	if metric, ok := metrics.CatalogByName()[q.MetricName]; ok && metric.Instrument == metrics.InstrumentCounter {
 		switch q.Aggregation {
 		case metrics.AggregationLatest:
 			return withFreshness(q, selector)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/collector/spec"
 	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources/detection"
 )
@@ -68,6 +69,51 @@ func TestRegistryDelegatesCallsEdgeClassificationToSourceModule(t *testing.T) {
 
 	_, ok = registry.CallsEdgeMetadata(IDKubelet, "k8s.pod.cpu.usage", "k8s.pod.cpu.usage", nil)
 	require.False(t, ok)
+}
+
+func TestRegistryParsesStampedSourceMetricsBeforeGenericIngest(t *testing.T) {
+	registry := DefaultRegistry()
+
+	parsed, ok := registry.ParseMetric(IDHostOS, "system.disk.io", map[string]string{
+		semconv.AttrDirection: "write",
+	})
+	require.True(t, ok)
+	require.Equal(t, "system.disk.io.write", parsed.CanonicalName)
+	require.Equal(t, 1.0, parsed.ConversionFactor)
+
+	parsed, ok = registry.ParseMetric(IDKubeCluster, "k8s.node.condition", map[string]string{
+		semconv.AttrCondition: "Ready",
+	})
+	require.True(t, ok)
+	require.Equal(t, "k8s.node.condition.ready", parsed.CanonicalName)
+
+	_, ok = registry.ParseMetric(IDKubeCluster, "k8s.node.condition", map[string]string{
+		semconv.AttrCondition: "PIDPressure",
+	})
+	require.False(t, ok)
+}
+
+func TestRegistryParsesSupportedMetricsThroughEachStampedTelemetryModule(t *testing.T) {
+	registry := DefaultRegistry()
+	for _, tt := range []struct {
+		source     string
+		raw        string
+		attributes map[string]string
+		canonical  string
+	}{
+		{source: IDKubelet, raw: "container.cpu.usage", canonical: "k8s.container.cpu.usage"},
+		{source: IDHostOS, raw: "system.network.io", attributes: map[string]string{semconv.AttrDirection: "receive"}, canonical: "system.network.io.receive"},
+		{source: IDKubeCluster, raw: "k8s.container.cpu_request", canonical: "k8s.container.cpu.request"},
+		{source: IDPrometheusApp, raw: "http_requests_total", canonical: "http.server.request.count"},
+		{source: IDMeshIstio, raw: "istio_requests_total", canonical: "servicegraph.request.count"},
+		{source: IDTracesServicegraph, raw: "traces_service_graph_request_total", canonical: "servicegraph.request.count"},
+	} {
+		t.Run(tt.source, func(t *testing.T) {
+			parsed, ok := registry.ParseMetric(tt.source, tt.raw, tt.attributes)
+			require.True(t, ok)
+			require.Equal(t, tt.canonical, parsed.CanonicalName)
+		})
+	}
 }
 
 func TestDefaultRegistryDetectsEveryCompiledModuleFromOneInventory(t *testing.T) {

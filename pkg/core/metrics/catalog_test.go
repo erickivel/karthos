@@ -73,11 +73,32 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	require.Empty(t, required)
 }
 
-func TestDefaultCatalogMetricsHaveIngestOrQuerySupport(t *testing.T) {
+func TestDefaultCatalogMetricsDeclareStorageSemantics(t *testing.T) {
 	for _, metric := range DefaultCatalog() {
-		_, mapped := OTLPSemconvMetrics[metric.Name]
-		require.Truef(t, mapped, "catalog metric %s has no OTLP mapping", metric.Name)
+		require.NotEmptyf(t, metric.Instrument, "catalog metric %s has no storage instrument", metric.Name)
+		require.NotEmptyf(t, metric.StoredUnit, "catalog metric %s has no stored base unit", metric.Name)
 	}
+}
+
+func TestDefaultCatalogDeclaresProviderNeutralStorageSemantics(t *testing.T) {
+	catalog := catalogByName(DefaultCatalog())
+
+	require.Equal(t, InstrumentGauge, catalog["system.memory.usage"].Instrument)
+	require.Equal(t, UnitBytes, catalog["system.memory.usage"].StoredUnit)
+	require.Equal(t, InstrumentCounter, catalog["servicegraph.request.count"].Instrument)
+	require.Equal(t, UnitCount, catalog["servicegraph.request.count"].StoredUnit)
+	require.Equal(t, InstrumentHistogram, catalog["servicegraph.request.duration"].Instrument)
+	require.Equal(t, UnitNanoseconds, catalog["servicegraph.request.duration"].StoredUnit)
+}
+
+func TestDefaultCatalogDeepCopiesEveryMutableField(t *testing.T) {
+	first := CatalogByName()["servicegraph.request.count"]
+	first.Scopes[0] = ScopeEdge
+	first.Sources[0].Priority = 99
+
+	second := CatalogByName()["servicegraph.request.count"]
+	require.Equal(t, ScopeEntity, second.Scopes[0])
+	require.Equal(t, 1, second.Sources[0].Priority)
 }
 
 func TestDefaultCatalogMetricNamesAreUnique(t *testing.T) {

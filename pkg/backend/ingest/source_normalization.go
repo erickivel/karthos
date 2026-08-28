@@ -4,13 +4,12 @@ import (
 	"context"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/sources"
 	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
-func applySourceNormalization(ctx context.Context, resolver EntityResolver, plan *contract.Plan) error {
-	if err := sources.DefaultRegistry().Normalize(ctx, resolver, plan); err != nil {
+func applySourceNormalization(ctx context.Context, modules sources.Registry, resolver EntityResolver, plan *contract.Plan) error {
+	if err := modules.Normalize(ctx, resolver, plan); err != nil {
 		return err
 	}
 	if plan.Skip || plan.EntityID != "" {
@@ -23,8 +22,8 @@ func applySourceNormalization(ctx context.Context, resolver EntityResolver, plan
 	plan.EntityID = entityID
 	return nil
 }
-func newNormalizationPlan(raw, canonical, source string, resource map[string]string, attrs []*commonpb.KeyValue, mapping metrics.OTLPMetricMapping) contract.Plan {
-	return contract.NewPlan(raw, canonical, source, resource, attrs, mapping)
+func newNormalizationPlan(raw, canonical, source string, resource map[string]string, attrs []*commonpb.KeyValue, parsed contract.ParsedMetric) contract.Plan {
+	return contract.NewPlan(raw, canonical, source, resource, attrs, parsed)
 }
 func firstKVString(attrs []*commonpb.KeyValue, keys ...string) string {
 	return contract.FirstLabelValue(attrs, keys...)

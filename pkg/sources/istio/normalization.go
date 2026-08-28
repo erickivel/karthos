@@ -2,7 +2,6 @@ package istio
 
 import (
 	"context"
-	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/sources/contract"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -20,12 +19,8 @@ func Normalize(ctx context.Context, resolver contract.EntityResolver, plan *cont
 	if plan.Skip {
 		return nil
 	}
-	if plan.RawMetricName == "istio_request_duration_milliseconds" {
-		plan.ConversionFactor = 1e6
-	}
 	if strings.HasPrefix(contract.FirstLabelValue(plan.Attrs, semconv.AttrHTTPStatusCode, semconv.AttrHTTPStatusCodeProm), "5") && plan.RawMetricName == "istio_requests_total" {
-		mapping := metrics.OTLPSemconvMetrics["servicegraph.request.error.count"]
-		plan.Derived = append(plan.Derived, contract.DerivedMetric{MetricName: "servicegraph.request.error.count", ConversionFactor: mapping.ConversionFactor, Unit: mapping.Unit})
+		plan.Derived = append(plan.Derived, contract.DerivedMetric{MetricName: "servicegraph.request.error.count", ConversionFactor: 1})
 	}
 	return nil
 }

@@ -3,17 +3,14 @@ package metrics
 type Unit string
 
 const (
-	UnitMillicores           Unit = "millicores"
-	UnitBytes                Unit = "bytes"
-	UnitBytesPerSecond       Unit = "bytes_per_second"
-	UnitRatio                Unit = "ratio"
-	UnitPercent              Unit = "percent"
-	UnitPerSecond            Unit = "per_second"
-	UnitNanoseconds          Unit = "nanoseconds"
-	UnitNanosecondsPerSecond Unit = "nanoseconds_per_second"
-	UnitHertz                Unit = "hertz"
-	UnitCount                Unit = "count"
-	UnitResource             Unit = "resource"
+	UnitMillicores     Unit = "millicores"
+	UnitBytes          Unit = "bytes"
+	UnitBytesPerSecond Unit = "bytes_per_second"
+	UnitPercent        Unit = "percent"
+	UnitPerSecond      Unit = "per_second"
+	UnitNanoseconds    Unit = "nanoseconds"
+	UnitCount          Unit = "count"
+	UnitResource       Unit = "resource"
 )
 
 // IsValidUnit reports whether unit is part of the canonical public unit
@@ -24,12 +21,9 @@ func IsValidUnit(unit Unit) bool {
 	case UnitMillicores,
 		UnitBytes,
 		UnitBytesPerSecond,
-		UnitRatio,
 		UnitPercent,
 		UnitPerSecond,
 		UnitNanoseconds,
-		UnitNanosecondsPerSecond,
-		UnitHertz,
 		UnitCount,
 		UnitResource:
 		return true

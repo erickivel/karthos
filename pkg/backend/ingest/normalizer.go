@@ -11,15 +11,16 @@ import (
 
 	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
 // OTLPNormalizer normalizes OTLP metric envelopes into semconv MetricSamples.
 type OTLPNormalizer struct {
 	resolver     EntityResolver
-	dialect      *metrics.DialectRegistry
 	sourcePolicy *MetricSourcePolicy
+	modules      sources.Registry
+	catalog      map[string]metrics.CanonicalMetric
 }
 
 // NormalizerOption configures optional behavior on the OTLPNormalizer.
@@ -35,17 +36,18 @@ func WithSourcePolicy(policy *MetricSourcePolicy) NormalizerOption {
 }
 
 // NewOTLPNormalizer creates a new OTLPNormalizer backed by the given EntityResolver.
-func NewOTLPNormalizer(resolver EntityResolver, dialect *metrics.DialectRegistry, opts ...NormalizerOption) *OTLPNormalizer {
+func NewOTLPNormalizer(resolver EntityResolver, modules sources.Registry, opts ...NormalizerOption) *OTLPNormalizer {
 	if resolver == nil {
 		panic("ingest.NewOTLPNormalizer: resolver is required")
 	}
-	if dialect == nil {
-		panic("ingest.NewOTLPNormalizer: dialect registry is required")
+	if len(modules.MetricIDs()) == 0 {
+		panic("ingest.NewOTLPNormalizer: source registry is required")
 	}
 	n := &OTLPNormalizer{
 		resolver:     resolver,
-		dialect:      dialect,
-		sourcePolicy: NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), nil),
+		modules:      modules,
+		catalog:      metrics.CatalogByName(),
+		sourcePolicy: NewMetricSourcePolicy(modules.MetricIDs(), nil),
 	}
 	for _, opt := range opts {
 		opt(n)
@@ -76,24 +78,28 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					if dp.TimeUnixNano == 0 {
 						continue
 					}
-					translatedName := n.dialect.TranslateForSource(firstKVString(dp.Attributes, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm), metric.Name)
-					mapping, ok := metrics.OTLPSemconvMetrics[translatedName]
+					parsed, definition, validation, ok := n.parseAndValidate(metric.Name, dp.Attributes)
 					if !ok {
 						continue
 					}
-					validation := n.sourcePolicy.Validate(translatedName, dp.Attributes)
-					if !validation.Accepted() {
+					if definition.Instrument != metrics.InstrumentHistogram {
 						continue
 					}
 					if dp.Count == 0 || dp.Sum == nil {
 						continue
 					}
-					plan := newNormalizationPlan(metric.Name, translatedName, validation.Source, envelope.Resource, dp.Attributes, mapping)
-					if err := applySourceNormalization(ctx, n.resolver, &plan); err != nil {
+					plan := newNormalizationPlan(metric.Name, parsed.CanonicalName, validation.Source, envelope.Resource, dp.Attributes, parsed)
+					if plan.Unit == "" {
+						plan.Unit = definition.StoredUnit
+					}
+					if err := applySourceNormalization(ctx, n.modules, n.resolver, &plan); err != nil {
 						return nil, fmt.Errorf("apply %s source module: %w", plan.Source, err)
 					}
 					if plan.Skip || plan.MetricName == "" {
 						continue
+					}
+					if plan.MetricName != parsed.CanonicalName {
+						return nil, fmt.Errorf("source module %q changed parsed metric name %q", plan.Source, parsed.CanonicalName)
 					}
 
 					ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
@@ -130,25 +136,29 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 				if dp.TimeUnixNano == 0 {
 					continue
 				}
-				translatedName := n.dialect.TranslateForSource(firstKVString(dp.Attributes, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm), metric.Name)
-				mapping, ok := metrics.OTLPSemconvMetrics[translatedName]
+				parsed, definition, validation, ok := n.parseAndValidate(metric.Name, dp.Attributes)
 				if !ok {
 					continue
 				}
-				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
-				validation := n.sourcePolicy.Validate(translatedName, dp.Attributes)
-				if !validation.Accepted() {
+				if definition.Instrument == metrics.InstrumentHistogram {
 					continue
 				}
-				plan := newNormalizationPlan(metric.Name, translatedName, validation.Source, envelope.Resource, dp.Attributes, mapping)
-				if err := applySourceNormalization(ctx, n.resolver, &plan); err != nil {
+				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
+				plan := newNormalizationPlan(metric.Name, parsed.CanonicalName, validation.Source, envelope.Resource, dp.Attributes, parsed)
+				if plan.Unit == "" {
+					plan.Unit = definition.StoredUnit
+				}
+				if err := applySourceNormalization(ctx, n.modules, n.resolver, &plan); err != nil {
 					return nil, fmt.Errorf("apply %s source module: %w", plan.Source, err)
 				}
 				if plan.Skip || plan.MetricName == "" {
 					continue
 				}
+				if plan.MetricName != parsed.CanonicalName {
+					return nil, fmt.Errorf("source module %q changed parsed metric name %q", plan.Source, parsed.CanonicalName)
+				}
 				value := dp.Value * plan.ConversionFactor
-				if usesDeltaCounterSemantics(mapping, dp.AggregationTemporality) {
+				if usesDeltaCounterSemantics(definition.Instrument, dp.AggregationTemporality) {
 					plan.Labels["temporality"] = "delta"
 				}
 
@@ -161,13 +171,17 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					Unit:       plan.Unit,
 				})
 				for _, derived := range plan.Derived {
+					derivedDefinition, accepted := n.catalog[derived.MetricName]
+					if !accepted || !n.sourcePolicy.Validate(derived.MetricName, dp.Attributes).Accepted() {
+						continue
+					}
 					samples = append(samples, metrics.MetricSample{
 						MetricName: derived.MetricName,
 						EntityID:   plan.EntityID,
 						Value:      dp.Value * derived.ConversionFactor,
 						Timestamp:  ts,
 						Labels:     cloneLabels(plan.Labels),
-						Unit:       derived.Unit,
+						Unit:       derivedDefinition.StoredUnit,
 					})
 				}
 			}
@@ -237,13 +251,29 @@ func numberDataPointsToScalar(
 }
 
 func usesDeltaCounterSemantics(
-	mapping metrics.OTLPMetricMapping,
+	instrument metrics.MetricInstrument,
 	temporality metricspb.AggregationTemporality,
 ) bool {
-	if mapping.Kind != metrics.MetricKindCounter {
+	if instrument != metrics.InstrumentCounter {
 		return false
 	}
 	return temporality == metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
+}
+
+func (n *OTLPNormalizer) parseAndValidate(rawMetricName string, attrs []*commonpb.KeyValue) (contract.ParsedMetric, metrics.CanonicalMetric, SourceValidation, bool) {
+	parsed, ok := n.modules.ParseMetric(sourceFromAttrs(attrs), rawMetricName, contract.AttributeStrings(attrs))
+	if !ok {
+		return contract.ParsedMetric{}, metrics.CanonicalMetric{}, SourceValidation{}, false
+	}
+	definition, ok := n.catalog[parsed.CanonicalName]
+	if !ok {
+		return contract.ParsedMetric{}, metrics.CanonicalMetric{}, SourceValidation{}, false
+	}
+	validation := n.sourcePolicy.Validate(parsed.CanonicalName, attrs)
+	if !validation.Accepted() {
+		return contract.ParsedMetric{}, metrics.CanonicalMetric{}, SourceValidation{}, false
+	}
+	return parsed, definition, validation, true
 }
 
 func usesDeltaHistogramSemantics(temporality metricspb.AggregationTemporality) bool {

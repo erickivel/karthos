@@ -74,9 +74,9 @@ type sourceExpectation struct {
 	ambiguous bool
 }
 
-// expectedSource first uses an exact catalog assignment. Some OTLP metrics are
-// specialized by a source dialect after provenance validation (for example,
-// system.disk.io becomes .read/.write). For those base names, enforce the
+// expectedSource first uses an exact catalog assignment. Source parsing can
+// specialize raw names before this validation (for example, system.disk.io
+// becomes .read/.write). For those base names, enforce the
 // winner when every assigned specialization agrees on one source and mark
 // conflicting descendant assignments ambiguous so validation fails closed.
 func (p *MetricSourcePolicy) expectedSource(canonicalName string) sourceExpectation {

@@ -2,7 +2,7 @@ package metrics
 
 import "github.com/erickivel/oksg/pkg/core/entities"
 
-var defaultCatalog = []CanonicalMetric{
+var defaultCatalog = withStorageSemantics([]CanonicalMetric{
 	{Name: "k8s.pod.cpu.usage", DisplayName: "Pod CPU Usage", Unit: UnitMillicores, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod CPU usage.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 	{Name: "k8s.pod.memory.working_set", DisplayName: "Pod Memory Working Set", Unit: UnitBytes, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod memory working set.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 	{Name: "k8s.node.cpu.usage", DisplayName: "Node CPU Usage", Unit: UnitMillicores, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Observed node CPU usage from kubeletstats.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
@@ -46,6 +46,27 @@ var defaultCatalog = []CanonicalMetric{
 	{Name: "servicegraph.tcp.connection.close.count", DisplayName: "Service Graph TCP Close Connection Rate", Unit: UnitPerSecond, Aggregation: windowRateCounterAggregation(UnitCount, UnitPerSecond), Category: CategoryTraffic, Scopes: []MetricScope{ScopeEdge}, Description: "TCP connections closed between services in the Istio mesh.", Sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
 	{Name: "servicegraph.tcp.bytes.sent", DisplayName: "Service Graph TCP Sent Throughput", Unit: UnitBytesPerSecond, Aggregation: windowRateCounterAggregation(UnitBytes, UnitBytesPerSecond), Category: CategoryTraffic, Scopes: []MetricScope{ScopeEdge}, Description: "TCP bytes sent between services in the Istio mesh.", Sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
 	{Name: "servicegraph.tcp.bytes.received", DisplayName: "Service Graph TCP Received Throughput", Unit: UnitBytesPerSecond, Aggregation: windowRateCounterAggregation(UnitBytes, UnitBytesPerSecond), Category: CategoryTraffic, Scopes: []MetricScope{ScopeEdge}, Description: "TCP bytes received between services in the Istio mesh.", Sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
+})
+
+func withStorageSemantics(catalog []CanonicalMetric) []CanonicalMetric {
+	histograms := map[string]struct{}{
+		"http.server.request.duration":  {},
+		"servicegraph.request.duration": {},
+	}
+	for i := range catalog {
+		metric := &catalog[i]
+		metric.Instrument = InstrumentGauge
+		metric.StoredUnit = metric.Unit
+		if _, ok := histograms[metric.Name]; ok {
+			metric.Instrument = InstrumentHistogram
+			continue
+		}
+		if metric.Aggregation != nil {
+			metric.Instrument = InstrumentCounter
+			metric.StoredUnit = metric.Aggregation.BaseUnit
+		}
+	}
+	return catalog
 }
 
 func DefaultCatalog() []CanonicalMetric {
@@ -53,6 +74,9 @@ func DefaultCatalog() []CanonicalMetric {
 	copy(catalog, defaultCatalog)
 	for i := range catalog {
 		catalog[i].AppliesTo = cloneEntityKinds(defaultAppliesTo[catalog[i].Name])
+		catalog[i].Scopes = append([]MetricScope(nil), catalog[i].Scopes...)
+		catalog[i].Dimensions = append([]string(nil), catalog[i].Dimensions...)
+		catalog[i].Sources = append([]SourceRef(nil), catalog[i].Sources...)
 		catalog[i].Aggregation = cloneAggregationSpec(catalog[i].Aggregation)
 	}
 	return catalog

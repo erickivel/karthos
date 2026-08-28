@@ -4,6 +4,7 @@ import "github.com/erickivel/oksg/pkg/core/entities"
 
 type MetricCategory string
 type MetricScope string
+type MetricInstrument string
 
 const (
 	CategoryResource MetricCategory = "resource"
@@ -15,6 +16,10 @@ const (
 
 	ScopeEntity MetricScope = "entity"
 	ScopeEdge   MetricScope = "edge"
+
+	InstrumentGauge     MetricInstrument = "gauge"
+	InstrumentCounter   MetricInstrument = "counter"
+	InstrumentHistogram MetricInstrument = "histogram"
 )
 
 type CanonicalMetric struct {
@@ -28,6 +33,8 @@ type CanonicalMetric struct {
 	Description string                `json:"description"`
 	Sources     []SourceRef           `json:"sources,omitempty"`
 	Aggregation *AggregationSpec      `json:"aggregation,omitempty"`
+	Instrument  MetricInstrument      `json:"-"`
+	StoredUnit  Unit                  `json:"-"`
 }
 
 // SourceRef binds a canonical metric to a logical source that can produce it.
@@ -38,8 +45,8 @@ type SourceRef struct {
 }
 
 // Logical source IDs. Each ID is the contract between the catalog (which metrics
-// declare a producer), the source registry (which knows how to detect availability
-// and which dialect to apply), and the planner (which tags wire output with the
+// declare a producer), the source registry (which detects availability and owns
+// source parsing), and the planner (which tags wire output with the
 // matching oksg.source attribute).
 const (
 	// SourceKubernetesStructure identifies the non-metric Kubernetes API module.

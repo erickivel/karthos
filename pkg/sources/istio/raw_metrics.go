@@ -1,9 +1,8 @@
 package istio
 
-import "github.com/erickivel/oksg/pkg/core/metrics"
-
-// Dialect translates Istio mesh telemetry names into catalog canonical names.
-var Dialect = metrics.DialectMap{
+// rawMetricNames translates Istio mesh telemetry names into catalog canonical
+// names.
+var rawMetricNames = map[string]string{
 	"istio_requests_total":                "servicegraph.request.count",
 	"istio_request_duration_milliseconds": "servicegraph.request.duration",
 	"istio_request_messages_total":        "servicegraph.grpc.request.message.count",

@@ -9,8 +9,7 @@ import (
 
 func TestCounterAggregationSpecsCoverEveryCatalogCounter(t *testing.T) {
 	for _, metric := range defaultCatalog {
-		mapping, ok := OTLPSemconvMetrics[metric.Name]
-		if !ok || mapping.Kind != MetricKindCounter {
+		if metric.Instrument != InstrumentCounter {
 			continue
 		}
 
@@ -26,8 +25,7 @@ func TestCounterAggregationSpecsCoverEveryCatalogCounter(t *testing.T) {
 
 func TestGaugesAndEnumsDoNotDeclareAggregation(t *testing.T) {
 	for _, metric := range defaultCatalog {
-		mapping, ok := OTLPSemconvMetrics[metric.Name]
-		if !ok || mapping.Kind != MetricKindGauge {
+		if metric.Instrument != InstrumentGauge {
 			continue
 		}
 		require.Nilf(t, metric.Aggregation, "gauge %s must not expose aggregation controls", metric.Name)

@@ -15,24 +15,24 @@ import (
 	"github.com/erickivel/oksg/pkg/core/semconv"
 	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
 // MetricCallsTopologyBuilder derives calls edges from metrics classified by
 // their source module. It owns generic provenance validation, edge assembly,
 // and deduplication; source modules own metric recognition and metadata.
 type MetricCallsTopologyBuilder struct {
-	dialect      *metrics.DialectRegistry
 	clusterName  string
 	sourcePolicy *MetricSourcePolicy
 	modules      sources.Registry
 }
 
-func NewMetricCallsTopologyBuilder(dialect *metrics.DialectRegistry, clusterName string, policy *MetricSourcePolicy) *MetricCallsTopologyBuilder {
+func NewMetricCallsTopologyBuilder(clusterName string, policy *MetricSourcePolicy) *MetricCallsTopologyBuilder {
 	modules := sources.DefaultRegistry()
 	if policy == nil {
 		policy = NewMetricSourcePolicy(modules.MetricIDs(), nil)
 	}
-	return &MetricCallsTopologyBuilder{dialect: dialect, clusterName: clusterName, sourcePolicy: policy, modules: modules}
+	return &MetricCallsTopologyBuilder{clusterName: clusterName, sourcePolicy: policy, modules: modules}
 }
 
 func (b *MetricCallsTopologyBuilder) Build(_ context.Context, envelope schema.RawEnvelope) ([]topology.Edge, error) {
@@ -45,15 +45,18 @@ func (b *MetricCallsTopologyBuilder) Build(_ context.Context, envelope schema.Ra
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
 			for _, dp := range metricAttributeSets(metric) {
-				translated := b.dialect.TranslateForSource(sourceFromAttrs(dp.Attributes), metric.Name)
-				if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
+				if dp.TimeUnixNano == 0 {
 					continue
 				}
-				metadata, ok := b.callsEdgeMetadata(metric.Name, translated, dp.Attributes)
+				parsed, validation, ok := b.parseAndValidate(metric.Name, dp.Attributes)
 				if !ok {
 					continue
 				}
-				edge, ok := b.edgeFromAttributes(metricTimestamp(envelope.Timestamp, dp.TimeUnixNano), dp.Attributes, metadata)
+				metadata, ok := b.modules.CallsEdgeMetadata(validation.Source, metric.Name, parsed.CanonicalName, dp.Attributes)
+				if !ok {
+					continue
+				}
+				edge, ok := b.edgeFromAttributes(time.Unix(0, int64(dp.TimeUnixNano)).UTC(), dp.Attributes, metadata) // #nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 				if !ok {
 					continue
 				}
@@ -88,11 +91,14 @@ func (b *MetricCallsTopologyBuilder) BuildNodes(_ context.Context, envelope sche
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
 			for _, dp := range metricAttributeSets(metric) {
-				translated := b.dialect.TranslateForSource(sourceFromAttrs(dp.Attributes), metric.Name)
-				if _, recognized := metrics.OTLPSemconvMetrics[translated]; !recognized {
+				if dp.TimeUnixNano == 0 {
 					continue
 				}
-				if _, ok := b.callsEdgeMetadata(metric.Name, translated, dp.Attributes); !ok {
+				parsed, validation, ok := b.parseAndValidate(metric.Name, dp.Attributes)
+				if !ok {
+					continue
+				}
+				if _, ok := b.modules.CallsEdgeMetadata(validation.Source, metric.Name, parsed.CanonicalName, dp.Attributes); !ok {
 					continue
 				}
 				client := kvString(dp.Attributes, semconv.AttrClient)
@@ -117,12 +123,19 @@ func (b *MetricCallsTopologyBuilder) BuildNodes(_ context.Context, envelope sche
 	return nodes
 }
 
-func (b *MetricCallsTopologyBuilder) callsEdgeMetadata(rawMetricName, canonicalMetricName string, attrs []*commonpb.KeyValue) (map[string]string, bool) {
-	validation := b.sourcePolicy.Validate(canonicalMetricName, attrs)
-	if !validation.Accepted() {
-		return nil, false
+func (b *MetricCallsTopologyBuilder) parseAndValidate(rawMetricName string, attrs []*commonpb.KeyValue) (contract.ParsedMetric, SourceValidation, bool) {
+	parsed, ok := b.modules.ParseMetric(sourceFromAttrs(attrs), rawMetricName, contract.AttributeStrings(attrs))
+	if !ok {
+		return contract.ParsedMetric{}, SourceValidation{}, false
 	}
-	return b.modules.CallsEdgeMetadata(validation.Source, rawMetricName, canonicalMetricName, attrs)
+	if _, recognized := metrics.CatalogByName()[parsed.CanonicalName]; !recognized {
+		return contract.ParsedMetric{}, SourceValidation{}, false
+	}
+	validation := b.sourcePolicy.Validate(parsed.CanonicalName, attrs)
+	if !validation.Accepted() {
+		return contract.ParsedMetric{}, SourceValidation{}, false
+	}
+	return parsed, validation, true
 }
 
 func (b *MetricCallsTopologyBuilder) edgeFromAttributes(timestamp time.Time, attrs []*commonpb.KeyValue, metadata map[string]string) (topology.Edge, bool) {
@@ -134,9 +147,6 @@ func (b *MetricCallsTopologyBuilder) edgeFromAttributes(timestamp time.Time, att
 		return topology.Edge{}, false
 	}
 
-	if timestamp.IsZero() {
-		timestamp = time.Now().UTC()
-	}
 	sourceID := entities.ComputeEntityID(entities.KindService, b.clusterName, clientNamespace, client)
 	targetID := entities.ComputeEntityID(entities.KindService, b.clusterName, serverNamespace, server)
 	edge := topology.NewEdge(sourceID, targetID, topology.RelCalls, timestamp)
@@ -170,13 +180,6 @@ func metricAttributeSets(metric *metricspb.Metric) []metricAttributeSet {
 		})
 	}
 	return sets
-}
-
-func metricTimestamp(fallback time.Time, timeUnixNano uint64) time.Time {
-	if timeUnixNano == 0 {
-		return fallback
-	}
-	return time.Unix(0, int64(timeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 }
 
 func sourceFromAttrs(attrs []*commonpb.KeyValue) string {

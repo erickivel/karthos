@@ -6,13 +6,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDialectTranslatesKubeletContainerMetrics(t *testing.T) {
+func TestParseTranslatesKubeletContainerMetrics(t *testing.T) {
 	for raw, canonical := range map[string]string{
 		"container.cpu.usage":    "k8s.container.cpu.usage",
 		"container.memory.usage": "k8s.container.memory.usage",
 	} {
-		got, ok := Dialect.Translate(raw)
+		parsed, ok := Parse(raw, nil)
 		require.True(t, ok)
-		require.Equal(t, canonical, got)
+		require.Equal(t, canonical, parsed.CanonicalName)
 	}
 }

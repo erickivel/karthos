@@ -34,14 +34,14 @@ const (
 	IDTracesServicegraph  = metrics.SourceTracesServicegraph
 )
 
-// Module owns one source's capability identity, wire-name dialect, semantic
+// Module owns one source's capability identity, raw-name parser, semantic
 // collection requirements, and source-specific normalization. Structural
-// modules intentionally have no metric dialect or collection requirements.
+// modules intentionally have no metric parser or collection requirements.
 type Module struct {
 	ID           string
 	Kind         profile.SourceKind
 	MetricSource bool
-	Dialect      metrics.Dialect
+	Parse        contract.MetricParser
 	Detect       func(detection.Inventory) profile.SourceCapability
 	Contribute   func(*collectorspec.CollectionPlan, profile.SourceCapability, bool)
 	Normalize    contract.Normalizer
@@ -54,13 +54,23 @@ type Registry struct{ modules []Module }
 func DefaultRegistry() Registry {
 	return Registry{modules: []Module{
 		{ID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Detect: structure.Detect},
-		{ID: IDKubelet, Kind: profile.SourceKindDirect, Dialect: kubelet.Dialect, MetricSource: true, Detect: kubelet.Detect, Contribute: kubelet.Contribute, Normalize: kubelet.Normalize},
-		{ID: IDHostOS, Kind: profile.SourceKindDirect, MetricSource: true, Detect: hostos.Detect, Contribute: hostos.Contribute, Normalize: hostos.Normalize},
-		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Dialect: kubecluster.Dialect, MetricSource: true, Detect: kubecluster.Detect, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
-		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Dialect: prometheusapp.Dialect, MetricSource: true, Detect: prometheusapp.Detect, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
-		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Dialect: istio.Dialect, MetricSource: true, Detect: istio.Detect, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata},
-		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Dialect: servicegraph.Dialect, MetricSource: true, Detect: servicegraph.Detect, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata},
+		{ID: IDKubelet, Kind: profile.SourceKindDirect, Parse: kubelet.Parse, MetricSource: true, Detect: kubelet.Detect, Contribute: kubelet.Contribute, Normalize: kubelet.Normalize},
+		{ID: IDHostOS, Kind: profile.SourceKindDirect, Parse: hostos.Parse, MetricSource: true, Detect: hostos.Detect, Contribute: hostos.Contribute, Normalize: hostos.Normalize},
+		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Parse: kubecluster.Parse, MetricSource: true, Detect: kubecluster.Detect, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
+		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Parse: prometheusapp.Parse, MetricSource: true, Detect: prometheusapp.Detect, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
+		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Parse: istio.Parse, MetricSource: true, Detect: istio.Detect, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata},
+		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Parse: servicegraph.Parse, MetricSource: true, Detect: servicegraph.Detect, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata},
 	}}
+}
+
+// ParseMetric dispatches raw metric interpretation through exactly the source
+// named by the datapoint stamp. No cross-source fallback is allowed.
+func (r Registry) ParseMetric(sourceID, rawMetricName string, attributes map[string]string) (contract.ParsedMetric, bool) {
+	module, ok := r.Lookup(sourceID)
+	if !ok || !module.MetricSource || module.Parse == nil {
+		return contract.ParsedMetric{}, false
+	}
+	return module.Parse(rawMetricName, attributes)
 }
 
 func (r Registry) Detect(inventory detection.Inventory) ([]profile.SourceCapability, error) {
@@ -129,16 +139,6 @@ func (r Registry) Lookup(id string) (Module, bool) {
 		}
 	}
 	return Module{}, false
-}
-
-func (r Registry) Dialects() map[string]metrics.Dialect {
-	dialects := make(map[string]metrics.Dialect, len(r.modules))
-	for _, module := range r.modules {
-		if module.Dialect != nil {
-			dialects[module.ID] = module.Dialect
-		}
-	}
-	return dialects
 }
 
 // ResolveSourcePlan performs source arbitration once, producing the mounted

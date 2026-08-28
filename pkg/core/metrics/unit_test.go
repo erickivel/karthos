@@ -9,12 +9,9 @@ func TestIsValidUnit(t *testing.T) {
 		UnitMillicores,
 		UnitBytes,
 		UnitBytesPerSecond,
-		UnitRatio,
 		UnitPercent,
 		UnitPerSecond,
 		UnitNanoseconds,
-		UnitNanosecondsPerSecond,
-		UnitHertz,
 		UnitCount,
 		UnitResource,
 	} {
