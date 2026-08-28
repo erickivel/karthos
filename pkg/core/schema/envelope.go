@@ -12,19 +12,16 @@ type SignalType string
 const (
 	SignalMetric SignalType = "metric"
 	SignalTrace  SignalType = "trace"
-	SignalLog    SignalType = "log"
-	SignalEvent  SignalType = "event"
 )
 
 type RawEnvelope struct {
 	ID         string            `json:"id"`
 	Version    SchemaVersion     `json:"version"`
 	Source     string            `json:"source"`
-	SignalType SignalType        `json:"signal_type" jsonschema:"enum=metric,enum=trace,enum=log,enum=event"`
+	SignalType SignalType        `json:"signal_type" jsonschema:"enum=metric,enum=trace"`
 	Timestamp  time.Time         `json:"timestamp"`
 	Resource   map[string]string `json:"resource,omitempty"`
 	Payload    json.RawMessage   `json:"payload"`
-	ReceivedAt time.Time         `json:"received_at"`
 }
 
 func NewRawEnvelope(source string, signalType SignalType, resource map[string]string, payload json.RawMessage, timestamp time.Time) (RawEnvelope, error) {
@@ -36,7 +33,6 @@ func NewRawEnvelope(source string, signalType SignalType, resource map[string]st
 		Timestamp:  timestamp,
 		Resource:   cloneStringMap(resource),
 		Payload:    payload,
-		ReceivedAt: time.Now().UTC(),
 	}
 
 	if err := ValidateEnvelope(envelope); err != nil {

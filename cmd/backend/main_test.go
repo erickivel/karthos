@@ -148,7 +148,7 @@ func TestLoadSourceContractRejectsAssignmentToUnselectedSource(t *testing.T) {
 func completeSourceContract(t *testing.T) (profile.ClusterProfile, contract.ResolvedSourcePlan) {
 	t.Helper()
 	capabilityProfile := profile.ClusterProfile{
-		ClusterID:   entities.NewCluster("test", nil).ID(),
+		ClusterID:   entities.ComputeEntityID(entities.KindCluster, "test"),
 		ClusterName: "test",
 		Capabilities: []profile.SourceCapability{
 			{SourceID: metrics.SourceKubernetesStructure, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"structure"}},

@@ -33,7 +33,7 @@ func ValidateEnvelope(envelope RawEnvelope) error {
 
 func isValidSignalType(signalType SignalType) bool {
 	switch signalType {
-	case SignalMetric, SignalTrace, SignalLog, SignalEvent:
+	case SignalMetric, SignalTrace:
 		return true
 	default:
 		return false

@@ -51,7 +51,7 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 		return nil, fmt.Errorf("detect compiled source modules: %w", err)
 	}
 	result := &profile.ClusterProfile{
-		ClusterID:    entities.NewCluster(d.clusterName, nil).ID(),
+		ClusterID:    entities.ComputeEntityID(entities.KindCluster, d.clusterName),
 		ClusterName:  d.clusterName,
 		DiscoveredAt: d.now().UTC(),
 		Capabilities: capabilities,

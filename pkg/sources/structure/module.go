@@ -76,12 +76,35 @@ func (m *Module) Refresh(ctx context.Context) error {
 type inventory struct {
 	nodes      []entities.Node
 	namespaces []entities.Namespace
-	workloads  []entities.Workload
+	workloads  []workloadRecord
 	hpas       []entities.HPA
 	quotas     []entities.ResourceQuota
-	pods       []entities.Pod
-	services   []entities.Service
-	ingresses  []entities.Ingress
+	pods       []podRecord
+	services   []serviceRecord
+	ingresses  []ingressRecord
+}
+
+type workloadRecord struct {
+	entity            entities.Workload
+	podTemplateLabels map[string]string
+	configMapRefs     []string
+	secretRefs        []string
+	pvcRefs           []string
+}
+
+type podRecord struct {
+	entity     entities.Pod
+	workloadID entities.EntityID
+}
+
+type serviceRecord struct {
+	entity   entities.Service
+	selector map[string]string
+}
+
+type ingressRecord struct {
+	entity          entities.Ingress
+	backendServices []string
 }
 
 func (m *Module) collect(ctx context.Context) (inventory, error) {
@@ -172,7 +195,7 @@ func (m *Module) collect(ctx context.Context) (inventory, error) {
 	for _, item := range rcs.Items {
 		result.workloads = append(result.workloads, workloadFromRC(m.cluster, item))
 	}
-	sort.Slice(result.workloads, func(i, j int) bool { return result.workloads[i].ID() < result.workloads[j].ID() })
+	sort.Slice(result.workloads, func(i, j int) bool { return result.workloads[i].entity.ID() < result.workloads[j].entity.ID() })
 	for _, item := range hpas.Items {
 		result.hpas = append(result.hpas, entities.NewHPA(m.cluster, item.Namespace, item.Name, item.Labels))
 	}
@@ -184,75 +207,78 @@ func (m *Module) collect(ctx context.Context) (inventory, error) {
 			continue
 		}
 		pod := entities.NewPod(m.cluster, item.Namespace, item.Name, item.Labels)
-		pod.WorkloadID = matchingWorkload(pod, result.workloads)
-		result.pods = append(result.pods, pod)
+		result.pods = append(result.pods, podRecord{entity: pod, workloadID: matchingWorkload(pod, result.workloads)})
 	}
 	for _, item := range services.Items {
-		result.services = append(result.services, entities.NewService(m.cluster, item.Namespace, item.Name, item.Spec.Selector, item.Labels))
+		result.services = append(result.services, serviceRecord{entity: entities.NewService(m.cluster, item.Namespace, item.Name, item.Labels), selector: clone(item.Spec.Selector)})
 	}
 	for _, item := range ingresses.Items {
-		ingress := entities.NewIngress(m.cluster, item.Namespace, item.Name, "", item.Labels)
-		ingress.BackendServices = ingressBackends(item)
-		result.ingresses = append(result.ingresses, ingress)
+		result.ingresses = append(result.ingresses, ingressRecord{entity: entities.NewIngress(m.cluster, item.Namespace, item.Name, item.Labels), backendServices: ingressBackends(item)})
 	}
 	return result, nil
 }
 
-func workloadFromDeployment(cluster string, item appsv1.Deployment) entities.Workload {
+func workloadFromDeployment(cluster string, item appsv1.Deployment) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadDeployment, item.Labels)
 	if item.Spec.Replicas != nil {
 		w.Replicas = *item.Spec.Replicas
 	}
-	setTemplate(&w, item.Spec.Template)
-	return w
+	return newWorkloadRecord(w, item.Spec.Template)
 }
-func workloadFromStatefulSet(cluster string, item appsv1.StatefulSet) entities.Workload {
+func workloadFromStatefulSet(cluster string, item appsv1.StatefulSet) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadStatefulSet, item.Labels)
 	if item.Spec.Replicas != nil {
 		w.Replicas = *item.Spec.Replicas
 	}
-	setTemplate(&w, item.Spec.Template)
-	return w
+	return newWorkloadRecord(w, item.Spec.Template)
 }
-func workloadFromDaemonSet(cluster string, item appsv1.DaemonSet) entities.Workload {
+func workloadFromDaemonSet(cluster string, item appsv1.DaemonSet) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadDaemonSet, item.Labels)
-	setTemplate(&w, item.Spec.Template)
-	return w
+	return newWorkloadRecord(w, item.Spec.Template)
 }
-func workloadFromReplicaSet(cluster string, item appsv1.ReplicaSet) entities.Workload {
+func workloadFromReplicaSet(cluster string, item appsv1.ReplicaSet) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadReplicaSet, item.Labels)
 	if item.Spec.Replicas != nil {
 		w.Replicas = *item.Spec.Replicas
 	}
-	setTemplate(&w, item.Spec.Template)
-	return w
+	return newWorkloadRecord(w, item.Spec.Template)
 }
-func workloadFromJob(cluster string, item batchv1.Job) entities.Workload {
+func workloadFromJob(cluster string, item batchv1.Job) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadJob, item.Labels)
 	if item.Spec.Completions != nil {
 		w.Replicas = *item.Spec.Completions
 	}
-	setTemplate(&w, item.Spec.Template)
-	return w
+	return newWorkloadRecord(w, item.Spec.Template)
 }
-func workloadFromCronJob(cluster string, item batchv1.CronJob) entities.Workload {
+func workloadFromCronJob(cluster string, item batchv1.CronJob) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadCronJob, item.Labels)
-	setTemplate(&w, item.Spec.JobTemplate.Spec.Template)
-	return w
+	return newWorkloadRecord(w, item.Spec.JobTemplate.Spec.Template)
 }
-func workloadFromRC(cluster string, item corev1.ReplicationController) entities.Workload {
+func workloadFromRC(cluster string, item corev1.ReplicationController) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadReplicationController, item.Labels)
 	if item.Spec.Replicas != nil {
 		w.Replicas = *item.Spec.Replicas
 	}
-	if item.Spec.Template != nil {
-		setTemplate(&w, *item.Spec.Template)
+	if item.Spec.Template == nil {
+		return workloadRecord{entity: w}
 	}
-	return w
+	template := *item.Spec.Template
+	refs := templateRefs(template)
+	return workloadRecord{entity: w, podTemplateLabels: clone(template.Labels), configMapRefs: refs.configMaps, secretRefs: refs.secrets, pvcRefs: refs.pvcs}
 }
 
-func setTemplate(workload *entities.Workload, template corev1.PodTemplateSpec) {
-	workload.PodTemplateLabels = clone(template.Labels)
+func newWorkloadRecord(entity entities.Workload, template corev1.PodTemplateSpec) workloadRecord {
+	references := templateRefs(template)
+	return workloadRecord{entity: entity, podTemplateLabels: clone(template.Labels), configMapRefs: references.configMaps, secretRefs: references.secrets, pvcRefs: references.pvcs}
+}
+
+type refs struct {
+	configMaps []string
+	secrets    []string
+	pvcs       []string
+}
+
+func templateRefs(template corev1.PodTemplateSpec) refs {
 	configMaps, secrets, pvcs := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
 	for _, volume := range template.Spec.Volumes {
 		if volume.ConfigMap != nil {
@@ -286,7 +312,7 @@ func setTemplate(workload *entities.Workload, template corev1.PodTemplateSpec) {
 			}
 		}
 	}
-	workload.ConfigMapRefs, workload.SecretRefs, workload.PVCRefs = sorted(configMaps), sorted(secrets), sorted(pvcs)
+	return refs{configMaps: sorted(configMaps), secrets: sorted(secrets), pvcs: sorted(pvcs)}
 }
 
 func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node, []persistence.StoredEntity) {
@@ -316,29 +342,30 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 		put(entities.KindNamespace, item.ID(), item.Name, item.Name, item.Labels())
 	}
 	for _, workload := range inventory.workloads {
-		labels := workloadLabels(workload)
-		add(node(workload.ID(), entities.KindWorkload, m.cluster, workload.Namespace, workload.Name, labels))
-		put(entities.KindWorkload, workload.ID(), workload.Namespace, workload.Name, labels)
-		namespaceID := entities.ComputeEntityID(entities.KindNamespace, m.cluster, workload.Namespace)
-		add(node(namespaceID, entities.KindNamespace, m.cluster, workload.Namespace, workload.Namespace, nil))
-		link(namespaceID, workload.ID(), topology.RelContains)
-		for _, name := range workload.ConfigMapRefs {
-			id := entities.ComputeEntityID(entities.KindConfigMap, m.cluster, workload.Namespace, name)
-			add(node(id, entities.KindConfigMap, m.cluster, workload.Namespace, name, nil))
-			put(entities.KindConfigMap, id, workload.Namespace, name, nil)
-			link(workload.ID(), id, topology.RelUses)
+		entity := workload.entity
+		labels := workloadLabels(entity)
+		add(node(entity.ID(), entities.KindWorkload, m.cluster, entity.Namespace, entity.Name, labels))
+		put(entities.KindWorkload, entity.ID(), entity.Namespace, entity.Name, labels)
+		namespaceID := entities.ComputeEntityID(entities.KindNamespace, m.cluster, entity.Namespace)
+		add(node(namespaceID, entities.KindNamespace, m.cluster, entity.Namespace, entity.Namespace, nil))
+		link(namespaceID, entity.ID(), topology.RelContains)
+		for _, name := range workload.configMapRefs {
+			id := entities.ComputeEntityID(entities.KindConfigMap, m.cluster, entity.Namespace, name)
+			add(node(id, entities.KindConfigMap, m.cluster, entity.Namespace, name, nil))
+			put(entities.KindConfigMap, id, entity.Namespace, name, nil)
+			link(entity.ID(), id, topology.RelUses)
 		}
-		for _, name := range workload.SecretRefs {
-			id := entities.ComputeEntityID(entities.KindSecret, m.cluster, workload.Namespace, name)
-			add(node(id, entities.KindSecret, m.cluster, workload.Namespace, name, nil))
-			put(entities.KindSecret, id, workload.Namespace, name, nil)
-			link(workload.ID(), id, topology.RelUses)
+		for _, name := range workload.secretRefs {
+			id := entities.ComputeEntityID(entities.KindSecret, m.cluster, entity.Namespace, name)
+			add(node(id, entities.KindSecret, m.cluster, entity.Namespace, name, nil))
+			put(entities.KindSecret, id, entity.Namespace, name, nil)
+			link(entity.ID(), id, topology.RelUses)
 		}
-		for _, name := range workload.PVCRefs {
-			id := entities.ComputeEntityID(entities.KindPVC, m.cluster, workload.Namespace, name)
-			add(node(id, entities.KindPVC, m.cluster, workload.Namespace, name, nil))
-			put(entities.KindPVC, id, workload.Namespace, name, nil)
-			link(workload.ID(), id, topology.RelMounts)
+		for _, name := range workload.pvcRefs {
+			id := entities.ComputeEntityID(entities.KindPVC, m.cluster, entity.Namespace, name)
+			add(node(id, entities.KindPVC, m.cluster, entity.Namespace, name, nil))
+			put(entities.KindPVC, id, entity.Namespace, name, nil)
+			link(entity.ID(), id, topology.RelMounts)
 		}
 	}
 	for _, hpa := range inventory.hpas {
@@ -355,45 +382,61 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 		add(node(namespaceID, entities.KindNamespace, m.cluster, quota.Namespace, quota.Namespace, nil))
 		link(namespaceID, quota.ID(), topology.RelContains)
 	}
-	workloadByID := map[entities.EntityID]entities.Workload{}
+	workloadByID := map[entities.EntityID]workloadRecord{}
 	for _, workload := range inventory.workloads {
-		workloadByID[workload.ID()] = workload
+		workloadByID[workload.entity.ID()] = workload
 	}
 	for _, pod := range inventory.pods {
-		if pod.WorkloadID == "" {
+		entity := pod.entity
+		add(node(entity.ID(), entities.KindPod, m.cluster, entity.Namespace, entity.Name, entity.Labels()))
+		put(entities.KindPod, entity.ID(), entity.Namespace, entity.Name, entity.Labels())
+		if workload, ok := workloadByID[pod.workloadID]; ok {
+			add(node(workload.entity.ID(), entities.KindWorkload, m.cluster, workload.entity.Namespace, workload.entity.Name, workloadLabels(workload.entity)))
+			link(workload.entity.ID(), entity.ID(), topology.RelContains)
 			continue
 		}
-		workload, ok := workloadByID[pod.WorkloadID]
-		if !ok {
-			continue
-		}
-		add(node(pod.ID(), entities.KindPod, m.cluster, pod.Namespace, pod.Name, pod.Labels()))
-		put(entities.KindPod, pod.ID(), pod.Namespace, pod.Name, pod.Labels())
-		add(node(workload.ID(), entities.KindWorkload, m.cluster, workload.Namespace, workload.Name, workloadLabels(workload)))
-		link(workload.ID(), pod.ID(), topology.RelContains)
+		namespaceID := entities.ComputeEntityID(entities.KindNamespace, m.cluster, entity.Namespace)
+		add(node(namespaceID, entities.KindNamespace, m.cluster, entity.Namespace, entity.Namespace, nil))
+		link(namespaceID, entity.ID(), topology.RelContains)
 	}
 	services := map[string]entities.Service{}
 	for _, service := range inventory.services {
-		services[service.Namespace+"/"+service.Name] = service
-		put(entities.KindService, service.ID(), service.Namespace, service.Name, service.Labels())
+		entity := service.entity
+		services[entity.Namespace+"/"+entity.Name] = entity
+		add(node(entity.ID(), entities.KindService, m.cluster, entity.Namespace, entity.Name, entity.Labels()))
+		put(entities.KindService, entity.ID(), entity.Namespace, entity.Name, entity.Labels())
+		matched := false
 		for _, workload := range inventory.workloads {
-			if service.Namespace == workload.Namespace && matches(service.Selector, workload.PodTemplateLabels) {
-				add(node(service.ID(), entities.KindService, m.cluster, service.Namespace, service.Name, service.Labels()))
-				add(node(workload.ID(), entities.KindWorkload, m.cluster, workload.Namespace, workload.Name, workloadLabels(workload)))
-				link(service.ID(), workload.ID(), topology.RelExposes)
+			if entity.Namespace == workload.entity.Namespace && matches(service.selector, workload.podTemplateLabels) {
+				matched = true
+				add(node(workload.entity.ID(), entities.KindWorkload, m.cluster, workload.entity.Namespace, workload.entity.Name, workloadLabels(workload.entity)))
+				link(entity.ID(), workload.entity.ID(), topology.RelExposes)
 			}
+		}
+		if !matched {
+			namespaceID := entities.ComputeEntityID(entities.KindNamespace, m.cluster, entity.Namespace)
+			add(node(namespaceID, entities.KindNamespace, m.cluster, entity.Namespace, entity.Namespace, nil))
+			link(namespaceID, entity.ID(), topology.RelContains)
 		}
 	}
 	for _, ingress := range inventory.ingresses {
-		put(entities.KindIngress, ingress.ID(), ingress.Namespace, ingress.Name, ingress.Labels())
-		for _, backend := range ingress.BackendServices {
-			service, ok := services[ingress.Namespace+"/"+backend.ServiceName]
+		entity := ingress.entity
+		add(node(entity.ID(), entities.KindIngress, m.cluster, entity.Namespace, entity.Name, entity.Labels()))
+		put(entities.KindIngress, entity.ID(), entity.Namespace, entity.Name, entity.Labels())
+		routed := false
+		for _, backend := range ingress.backendServices {
+			service, ok := services[entity.Namespace+"/"+backend]
 			if !ok {
 				continue
 			}
-			add(node(ingress.ID(), entities.KindIngress, m.cluster, ingress.Namespace, ingress.Name, ingress.Labels()))
 			add(node(service.ID(), entities.KindService, m.cluster, service.Namespace, service.Name, service.Labels()))
-			link(ingress.ID(), service.ID(), topology.RelRoutesTo)
+			link(entity.ID(), service.ID(), topology.RelRoutesTo)
+			routed = true
+		}
+		if !routed {
+			namespaceID := entities.ComputeEntityID(entities.KindNamespace, m.cluster, entity.Namespace)
+			add(node(namespaceID, entities.KindNamespace, m.cluster, entity.Namespace, entity.Namespace, nil))
+			link(namespaceID, entity.ID(), topology.RelContains)
 		}
 	}
 	return sortedEdges(edges), sortedNodes(nodes), sortedEntities(stored)
@@ -402,10 +445,10 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 func terminating(pod corev1.Pod) bool {
 	return pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
-func matchingWorkload(pod entities.Pod, workloads []entities.Workload) entities.EntityID {
+func matchingWorkload(pod entities.Pod, workloads []workloadRecord) entities.EntityID {
 	for _, workload := range workloads {
-		if pod.Namespace == workload.Namespace && matches(workload.PodTemplateLabels, pod.Labels()) {
-			return workload.ID()
+		if pod.Namespace == workload.entity.Namespace && matches(workload.podTemplateLabels, pod.Labels()) {
+			return workload.entity.ID()
 		}
 	}
 	return ""
@@ -495,18 +538,17 @@ func sortedEntities(values map[entities.EntityID]persistence.StoredEntity) []per
 	return out
 }
 
-func ingressBackends(ingress networkingv1.Ingress) []entities.IngressBackend {
-	seen, out := map[string]struct{}{}, []entities.IngressBackend{}
+func ingressBackends(ingress networkingv1.Ingress) []string {
+	seen, out := map[string]struct{}{}, []string{}
 	add := func(service *networkingv1.IngressServiceBackend) {
 		if service == nil {
 			return
 		}
-		key := service.Name + ":" + strconv.FormatInt(int64(service.Port.Number), 10)
-		if _, ok := seen[key]; ok {
+		if _, ok := seen[service.Name]; ok {
 			return
 		}
-		seen[key] = struct{}{}
-		out = append(out, entities.IngressBackend{ServiceName: service.Name, ServicePort: service.Port.Number})
+		seen[service.Name] = struct{}{}
+		out = append(out, service.Name)
 	}
 	if ingress.Spec.DefaultBackend != nil {
 		add(ingress.Spec.DefaultBackend.Service)

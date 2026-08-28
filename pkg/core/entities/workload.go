@@ -14,17 +14,13 @@ const (
 )
 
 type Workload struct {
-	EntityID          EntityID          `json:"id"`
-	ClusterName       string            `json:"cluster_name"`
-	Namespace         string            `json:"namespace"`
-	Name              string            `json:"name"`
-	Type              WorkloadType      `json:"type"`
-	Replicas          int32             `json:"replicas,omitempty"`
-	Metadata          map[string]string `json:"labels,omitempty"`
-	PodTemplateLabels map[string]string `json:"pod_template_labels,omitempty"`
-	ConfigMapRefs     []string          `json:"configmap_refs,omitempty"`
-	SecretRefs        []string          `json:"secret_refs,omitempty"`
-	PVCRefs           []string          `json:"pvc_refs,omitempty"`
+	EntityID    EntityID          `json:"id"`
+	ClusterName string            `json:"cluster_name"`
+	Namespace   string            `json:"namespace"`
+	Name        string            `json:"name"`
+	Type        WorkloadType      `json:"type"`
+	Replicas    int32             `json:"replicas,omitempty"`
+	Metadata    map[string]string `json:"labels,omitempty"`
 }
 
 func NewWorkload(clusterName, namespace, name string, workloadType WorkloadType, labels map[string]string) Workload {

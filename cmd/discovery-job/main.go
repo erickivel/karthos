@@ -101,7 +101,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	chartPath := fs.String("chart-path", configgen.DefaultChartPath, "path to the Helm chart")
 	helmTimeout := fs.Duration("helm-timeout", deployer.DefaultTimeout, "timeout for helm operations")
 	helmDryRun := fs.Bool("helm-dry-run", false, "run helm upgrade with --dry-run")
-	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultLogLevel), "structured log level: debug, info, warn, error")
+	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultLogLevel), "structured log level: info, warn, error")
 	targetNamespace := fs.String("target-namespace", "", "filter Prometheus discovery to this namespace (empty = all namespaces)")
 	collectorImageRepository := fs.String("collector-image-repository", envOrDefault("OKSG_COLLECTOR_IMAGE_REPOSITORY", configgen.DefaultCollectorRepository), "collector image repository")
 	collectorImageTag := fs.String("collector-image-tag", envOrDefault("OKSG_COLLECTOR_IMAGE_TAG", configgen.DefaultCollectorTag), "collector image tag")

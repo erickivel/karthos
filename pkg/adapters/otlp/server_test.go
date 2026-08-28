@@ -31,7 +31,7 @@ func TestServerAcceptsMetricsOverGRPC(t *testing.T) {
 	defer cancel()
 
 	metricsSink := &recordingIngestor{}
-	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	logger, err := logging.NewWithWriter("otlp-server-test", "info", io.Discard)
 	require.NoError(t, err)
 
 	server, err := NewServer(Config{
@@ -78,7 +78,7 @@ func TestServerAcceptsGzipCompressedMetricsOverGRPC(t *testing.T) {
 	defer cancel()
 
 	metricsSink := &recordingIngestor{}
-	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	logger, err := logging.NewWithWriter("otlp-server-test", "info", io.Discard)
 	require.NoError(t, err)
 
 	server, err := NewServer(Config{
@@ -129,7 +129,7 @@ func TestServerAcceptsTracesOverGRPC(t *testing.T) {
 	defer cancel()
 
 	tracesSink := &recordingIngestor{}
-	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	logger, err := logging.NewWithWriter("otlp-server-test", "info", io.Discard)
 	require.NoError(t, err)
 
 	server, err := NewServer(Config{
@@ -175,7 +175,7 @@ func TestServerRejectsDisabledSignalsOverGRPC(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	logger, err := logging.NewWithWriter("otlp-server-test", "info", io.Discard)
 	require.NoError(t, err)
 	server, err := NewServer(Config{
 		GRPCListenAddress:   "127.0.0.1:0",
@@ -204,7 +204,7 @@ func TestServerHealthEndpoint(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	logger, err := logging.NewWithWriter("otlp-server-test", "info", io.Discard)
 	require.NoError(t, err)
 	server, err := NewServer(Config{
 		GRPCListenAddress:   "127.0.0.1:0",
@@ -230,7 +230,7 @@ func TestServerHealthEndpoint(t *testing.T) {
 
 func TestServerStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	logger, err := logging.NewWithWriter("otlp-server-test", "debug", io.Discard)
+	logger, err := logging.NewWithWriter("otlp-server-test", "info", io.Discard)
 	require.NoError(t, err)
 	server, err := NewServer(Config{
 		GRPCListenAddress:   "127.0.0.1:0",

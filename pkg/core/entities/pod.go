@@ -5,8 +5,6 @@ type Pod struct {
 	ClusterName string            `json:"cluster_name"`
 	Namespace   string            `json:"namespace"`
 	Name        string            `json:"name"`
-	WorkloadID  EntityID          `json:"workload_id,omitempty"`
-	NodeID      EntityID          `json:"node_id,omitempty"`
 	Metadata    map[string]string `json:"labels,omitempty"`
 }
 

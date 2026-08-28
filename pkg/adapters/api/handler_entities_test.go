@@ -24,7 +24,7 @@ func seedEntities(t *testing.T) *persistence.InMemoryEntityRegistry {
 	require.NoError(t, reg.UpsertEntity(ctx, entities.NewPod("cluster", "kube-system", "pod-b", map[string]string{
 		"cluster": "cluster", "namespace": "kube-system", "name": "pod-b",
 	})))
-	require.NoError(t, reg.UpsertEntity(ctx, entities.NewService("cluster", "default", "svc-a", nil, map[string]string{
+	require.NoError(t, reg.UpsertEntity(ctx, entities.NewService("cluster", "default", "svc-a", map[string]string{
 		"cluster": "cluster", "namespace": "default", "name": "svc-a",
 	})))
 	return reg

@@ -40,12 +40,12 @@ func TestEntityRegistry_UpsertOverwrites(t *testing.T) {
 	reg := NewInMemoryEntityRegistry()
 	ctx := context.Background()
 
-	svc1 := entities.NewService("cluster", "default", "api", nil, map[string]string{
+	svc1 := entities.NewService("cluster", "default", "api", map[string]string{
 		"version": "v1",
 	})
 	require.NoError(t, reg.UpsertEntity(ctx, svc1))
 
-	svc2 := entities.NewService("cluster", "default", "api", nil, map[string]string{
+	svc2 := entities.NewService("cluster", "default", "api", map[string]string{
 		"version": "v2",
 	})
 	require.NoError(t, reg.UpsertEntity(ctx, svc2))
@@ -64,7 +64,7 @@ func TestEntityRegistry_ListByKind(t *testing.T) {
 		"namespace": "default",
 		"name":      "pod-1",
 	})
-	svc := entities.NewService("cluster", "default", "svc-1", nil, map[string]string{
+	svc := entities.NewService("cluster", "default", "svc-1", map[string]string{
 		"cluster":   "cluster",
 		"namespace": "default",
 		"name":      "svc-1",
@@ -161,7 +161,7 @@ func TestMaterializeEntityClonesLabelsAndUsesCanonicalFallbacks(t *testing.T) {
 		"service.name":       "checkout",
 	}
 
-	got := MaterializeEntity(entities.NewService("", "", "", nil, labels))
+	got := MaterializeEntity(entities.NewService("", "", "", labels))
 	labels["service.name"] = "mutated"
 
 	assert.Equal(t, "cluster-a", got.Cluster)
@@ -184,7 +184,7 @@ func TestEntityRegistry_ListAll(t *testing.T) {
 	ctx := context.Background()
 
 	pod := entities.NewPod("cluster", "default", "pod-1", nil)
-	svc := entities.NewService("cluster", "default", "svc-1", nil, nil)
+	svc := entities.NewService("cluster", "default", "svc-1", nil)
 
 	require.NoError(t, reg.UpsertEntity(ctx, pod))
 	require.NoError(t, reg.UpsertEntity(ctx, svc))

@@ -20,7 +20,7 @@
             "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
           }
         },
-        "logging": { "$ref": "#/definitions/logging" }
+        "logging": { "$ref": "#/definitions/applicationLogging" }
       }
     },
     "enabledSignals": {
@@ -174,7 +174,15 @@
         "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
       }
     },
-    "logging": {
+    "applicationLogging": {
+      "type": "object",
+      "required": ["format", "level"],
+      "properties": {
+        "format": { "type": "string", "enum": ["json"] },
+        "level": { "type": "string", "enum": ["info", "warn", "error"] }
+      }
+    },
+    "collectorLogging": {
       "type": "object",
       "required": ["format", "level"],
       "properties": {
@@ -187,7 +195,7 @@
       "required": ["enabled", "logging", "collectorConfig"],
       "properties": {
         "enabled": { "type": "boolean" },
-        "logging": { "$ref": "#/definitions/logging" },
+        "logging": { "$ref": "#/definitions/collectorLogging" },
         "featureGates": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 }

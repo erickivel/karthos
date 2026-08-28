@@ -61,6 +61,56 @@ func TestModuleRefreshesLiveKubernetesTopology(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestModuleIncludesDirectlyListedObjectsWithoutResolvedSemanticTargets(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "standalone", Namespace: "demo"}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "external-db", Namespace: "demo"}},
+		&networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{Name: "public", Namespace: "demo"},
+			Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{
+				IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
+					Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: "missing-service"}},
+				}}}},
+			}}},
+		},
+	)
+	graphStore := persistence.NewInMemoryGraphStore()
+	module := New(client, "test", graphStore, persistence.NewInMemoryEntityRegistry())
+	require.NoError(t, module.Refresh(context.Background()))
+
+	snapshot, err := graphStore.GetLatest(context.Background())
+	require.NoError(t, err)
+	nodes := map[entities.EntityID]topology.Node{}
+	for _, node := range snapshot.Graph.Nodes {
+		nodes[node.ID] = node
+	}
+	for _, expected := range []entities.EntityID{
+		entities.ComputeEntityID(entities.KindPod, "test", "demo", "standalone"),
+		entities.ComputeEntityID(entities.KindService, "test", "demo", "external-db"),
+		entities.ComputeEntityID(entities.KindIngress, "test", "demo", "public"),
+	} {
+		_, ok := nodes[expected]
+		require.Truef(t, ok, "missing directly listed object %s", expected)
+	}
+
+	namespaceID := entities.ComputeEntityID(entities.KindNamespace, "test", "demo")
+	contains := edgesByRelation(snapshot.Graph.Edges, topology.RelContains)
+	targets := map[entities.EntityID]bool{}
+	for _, edge := range contains {
+		if edge.Source == namespaceID {
+			targets[edge.Target] = true
+		}
+	}
+	for _, expected := range []entities.EntityID{
+		entities.ComputeEntityID(entities.KindPod, "test", "demo", "standalone"),
+		entities.ComputeEntityID(entities.KindService, "test", "demo", "external-db"),
+		entities.ComputeEntityID(entities.KindIngress, "test", "demo", "public"),
+	} {
+		require.Truef(t, targets[expected], "missing Namespace containment for %s", expected)
+	}
+}
+
 func edgesByRelation(edges []topology.Edge, relation topology.RelationType) []topology.Edge {
 	matched := make([]topology.Edge, 0)
 	for _, edge := range edges {

@@ -486,7 +486,7 @@ type testServer struct {
 func newTestServer(t *testing.T, cfg Config) testServer {
 	t.Helper()
 	cfg.ListenAddress = "127.0.0.1:0"
-	logger, err := logging.NewWithWriter("api-test", "debug", io.Discard)
+	logger, err := logging.NewWithWriter("api-test", "info", io.Discard)
 	require.NoError(t, err)
 
 	srv, err := NewServer(cfg, logger)

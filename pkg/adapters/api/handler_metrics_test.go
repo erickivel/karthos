@@ -20,7 +20,7 @@ import (
 
 func serveMetricsRequest(t *testing.T, store persistence.MetricStore, target string) *httptest.ResponseRecorder {
 	t.Helper()
-	logger, err := logging.NewWithWriter("metrics-test", "debug", io.Discard)
+	logger, err := logging.NewWithWriter("metrics-test", "info", io.Discard)
 	require.NoError(t, err)
 	mux := http.NewServeMux()
 	newMetricsHandler(store, logger).RegisterRoutes(mux)
