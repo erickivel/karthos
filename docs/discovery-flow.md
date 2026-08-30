@@ -85,6 +85,12 @@ Helm renders both into one release-scoped `*-source-contract` ConfigMap and
 mounts it in the backend. Normal deployment has no imperative ConfigMap apply
 or rollout-restart step.
 
+Each compiled source module validates its own capability record before planning
+or composition: identity, kind, status, signals, and its bounded evidence. The
+resolved plan is valid only for the fingerprint of that normalized profile.
+Helm validates the contract document shape; it deliberately does not duplicate
+the static module semantics.
+
 ## Runtime contract
 
 Backend startup requires both mounted files. It recomputes the profile

@@ -49,7 +49,7 @@ packages that output with the mounted source contract. Receivers and connectors:
 
 - kubeletstats as component ID `kubelet_stats` (always; pod, container, volume metrics)
 - hostmetrics as component ID `host_metrics` (always; per-node CPU, memory, disk, filesystem, and network data). Agent pods use the host network so interface counters describe the node.
-- `k8s_cluster` (always on the gateway; container requests/limits/status, pod phase/reason, and selected node conditions)
+- `k8s_cluster` (always on the gateway; an explicit Collector v0.156 allowlist retains only container requests/limits/status, pod phase/reason, and selected node conditions)
 - `prometheus` on the singleton gateway for application Service-DNS targets (scrape jobs stamp `oksg_source=prometheus.app`)
 - `mesh-istio` Prometheus job (only when discovery finds a complete sidecar mesh; each DaemonSet agent scrapes only `istio-proxy:15020/stats/prometheus` Pods on its own node, rewrites Istio labels into servicegraph `client`/`server` edge attributes, and stamps `oksg_source=mesh.istio`)
 - `otlp` receivers (when discovery finds workloads with `oksg.io/otlp-traces: "true"` or ports `4317`/`4318`)
