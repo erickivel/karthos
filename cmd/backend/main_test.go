@@ -94,6 +94,42 @@ func TestLoadSourceContractAcceptsCompleteCompiledContract(t *testing.T) {
 	require.Equal(t, sourcePlan.MetricAssignments, loadedPlan.MetricAssignments)
 }
 
+func TestLoadSourceContractRejectsUnknownCapabilityProfileField(t *testing.T) {
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	profilePayload, err := json.Marshal(capabilityProfile)
+	require.NoError(t, err)
+
+	var profileDocument map[string]any
+	require.NoError(t, json.Unmarshal(profilePayload, &profileDocument))
+	profileDocument["unexpected"] = true
+	profilePayload, err = json.Marshal(profileDocument)
+	require.NoError(t, err)
+
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
+	require.NoError(t, os.WriteFile(profilePath, profilePayload, 0o600))
+
+	_, _, err = loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
+	require.ErrorContains(t, err, `json: unknown field "unexpected"`)
+}
+
+func TestLoadSourceContractRejectsUnknownSourcePlanField(t *testing.T) {
+	capabilityProfile, sourcePlan := completeSourceContract(t)
+	planPayload, err := json.Marshal(sourcePlan)
+	require.NoError(t, err)
+
+	var planDocument map[string]any
+	require.NoError(t, json.Unmarshal(planPayload, &planDocument))
+	planDocument["unexpected"] = true
+	planPayload, err = json.Marshal(planDocument)
+	require.NoError(t, err)
+
+	profilePath, planPath := writeSourceContract(t, capabilityProfile, sourcePlan)
+	require.NoError(t, os.WriteFile(planPath, planPayload, 0o600))
+
+	_, _, err = loadSourceContract(config{CapabilityProfile: profilePath, SourcePlan: planPath})
+	require.ErrorContains(t, err, `json: unknown field "unexpected"`)
+}
+
 func TestLoadSourceContractRejectsProfileWithoutEveryCompiledModule(t *testing.T) {
 	capabilityProfile, sourcePlan := completeSourceContract(t)
 	capabilityProfile.Capabilities = capabilityProfile.Capabilities[:len(capabilityProfile.Capabilities)-1]

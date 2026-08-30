@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -486,11 +488,11 @@ func loadSourceContract(cfg config) (*profile.ClusterProfile, contract.ResolvedS
 		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("read capability profile: %w", err)
 	}
 	var capabilityProfile profile.ClusterProfile
-	if err := json.Unmarshal(profileData, &capabilityProfile); err != nil {
+	if err := decodeStrictJSON(profileData, &capabilityProfile); err != nil {
 		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("decode capability profile: %w", err)
 	}
 	modules := sources.DefaultRegistry()
-	if err := capabilityProfile.Validate(modules.IDs()); err != nil {
+	if err := modules.ValidateCapabilityProfile(&capabilityProfile); err != nil {
 		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("validate mounted capability profile: %w", err)
 	}
 	planData, err := os.ReadFile(cfg.SourcePlan)
@@ -498,18 +500,26 @@ func loadSourceContract(cfg config) (*profile.ClusterProfile, contract.ResolvedS
 		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("read source plan: %w", err)
 	}
 	var sourcePlan contract.ResolvedSourcePlan
-	if err := json.Unmarshal(planData, &sourcePlan); err != nil {
+	if err := decodeStrictJSON(planData, &sourcePlan); err != nil {
 		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("decode source plan: %w", err)
-	}
-	fingerprint, err := capabilityProfile.Fingerprint()
-	if err != nil {
-		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("fingerprint capability profile: %w", err)
-	}
-	if sourcePlan.ProfileFingerprint == "" || sourcePlan.ProfileFingerprint != fingerprint {
-		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("source plan profile fingerprint does not match mounted capability profile")
 	}
 	if err := sourcePlan.Validate(&capabilityProfile, modules.ContractInventory()); err != nil {
 		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("validate mounted source plan: %w", err)
 	}
 	return &capabilityProfile, sourcePlan, nil
+}
+
+func decodeStrictJSON(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected additional JSON value")
+		}
+		return fmt.Errorf("decode trailing JSON value: %w", err)
+	}
+	return nil
 }

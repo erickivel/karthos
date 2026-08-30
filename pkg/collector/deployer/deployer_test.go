@@ -132,7 +132,31 @@ func TestRenderedChartValidatesAndRollsCompiledSourceContract(t *testing.T) {
 	require.NotEqual(t, renderedContractChecksum(t, initial), renderedContractChecksum(t, updated))
 }
 
+func TestRenderedChartRejectsUnknownSourceContractField(t *testing.T) {
+	helm, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm is required for chart-render integration coverage")
+	}
+
+	valuesPath := sourceContractValues(t, "contract-test")
+	chartPath := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel")
+	command := exec.CommandContext(t.Context(), helm, "template", "oksg-otel", chartPath, "--namespace", "oksg-system", "-f", valuesPath, "--set", "backend.sourceContract.unexpected=true")
+	rendered, err := command.CombinedOutput()
+	require.Errorf(t, err, "helm template unexpectedly accepted an unknown source-contract field: %s", rendered)
+	require.Contains(t, string(rendered), "additional properties 'unexpected' not allowed")
+}
+
 func renderedSourceContractChart(t *testing.T, helm, clusterName string) string {
+	t.Helper()
+	valuesPath := sourceContractValues(t, clusterName)
+	chartPath := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel")
+	command := exec.CommandContext(t.Context(), helm, "template", "oksg-otel", chartPath, "--namespace", "oksg-system", "-f", valuesPath)
+	rendered, err := command.CombinedOutput()
+	require.NoErrorf(t, err, "helm template failed: %s", rendered)
+	return string(rendered)
+}
+
+func sourceContractValues(t *testing.T, clusterName string) string {
 	t.Helper()
 	capabilityProfile := &profile.ClusterProfile{
 		ClusterName: clusterName,
@@ -158,11 +182,7 @@ func renderedSourceContractChart(t *testing.T, helm, clusterName string) string 
 
 	valuesPath := filepath.Join(t.TempDir(), "values.yaml")
 	require.NoError(t, os.WriteFile(valuesPath, values, 0o600))
-	chartPath := filepath.Join("..", "..", "..", "deploy", "helm", "oksg-otel")
-	command := exec.CommandContext(t.Context(), helm, "template", "oksg-otel", chartPath, "--namespace", "oksg-system", "-f", valuesPath)
-	rendered, err := command.CombinedOutput()
-	require.NoErrorf(t, err, "helm template failed: %s", rendered)
-	return string(rendered)
+	return valuesPath
 }
 
 func renderedContractChecksum(t *testing.T, rendered string) string {
