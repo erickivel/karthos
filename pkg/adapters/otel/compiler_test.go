@@ -57,3 +57,31 @@ func TestCompileRetainsIstioProtocolCounters(t *testing.T) {
 		require.Truef(t, matcher.MatchString(metricName), "mesh scrape must retain %s", metricName)
 	}
 }
+
+func TestCompileGatewayDisablesKubeClusterDefaultsOutsideThePoCAllowlist(t *testing.T) {
+	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
+		Gateway: collectorspec.GatewayRequirements{KubeCluster: &collectorspec.KubeCluster{
+			SourceID: metrics.SourceKubeCluster,
+			EnabledMetricNames: []string{
+				"k8s.container.cpu_limit", "k8s.container.cpu_request", "k8s.container.memory_limit", "k8s.container.memory_request",
+				"k8s.container.ready", "k8s.container.restarts", "k8s.node.condition", "k8s.pod.phase", "k8s.pod.status_reason",
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	receiver := deployment.GatewayConfig.Receivers["k8s_cluster"].(map[string]any)
+	configured := receiver["metrics"].(map[string]any)
+	for _, metricName := range []string{"k8s.container.cpu_limit", "k8s.container.cpu_request", "k8s.container.memory_limit", "k8s.container.memory_request", "k8s.container.ready", "k8s.container.restarts", "k8s.node.condition", "k8s.pod.phase", "k8s.pod.status_reason"} {
+		setting, ok := configured[metricName].(map[string]any)
+		require.Truef(t, ok, "expected %s to have an explicit receiver setting", metricName)
+		require.Equalf(t, true, setting["enabled"], "expected %s to be enabled", metricName)
+	}
+	for _, metricName := range []string{"k8s.container.ephemeralstorage_limit", "k8s.deployment.available", "k8s.resource_quota.used", "k8s.statefulset.ready_pods"} {
+		setting, ok := configured[metricName].(map[string]any)
+		require.Truef(t, ok, "expected %s to have an explicit receiver setting", metricName)
+		require.Equalf(t, false, setting["enabled"], "expected %s to be disabled", metricName)
+	}
+}

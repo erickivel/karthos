@@ -309,8 +309,8 @@ func TestParseQueryRangeResponse_HidesInvalidOrMissingStoredUnit(t *testing.T) {
 		"data": {
 			"resultType": "matrix",
 			"result": [
-				{"metric": {"__name__": "k8s_resource_quota_used", "entity_id": "quota", "resource": "cpu", "oksg_unit": "cores"}, "values": [[1742644800, "2"]]},
-				{"metric": {"__name__": "k8s_resource_quota_used", "entity_id": "quota", "resource": "pods"}, "values": [[1742644800, "3"]]}
+				{"metric": {"__name__": "unknown_metric", "entity_id": "entity-a", "dimension": "cpu", "oksg_unit": "cores"}, "values": [[1742644800, "2"]]},
+				{"metric": {"__name__": "unknown_metric", "entity_id": "entity-b", "dimension": "pods"}, "values": [[1742644800, "3"]]}
 			]
 		}
 	}`

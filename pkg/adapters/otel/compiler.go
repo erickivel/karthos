@@ -20,6 +20,23 @@ const (
 	oksgSourceTaggerProcessor  = "transform/oksg-source"
 )
 
+// kubeClusterV0156MetricDefaults is the complete metric inventory exposed by
+// the deployed k8s_cluster receiver version. Writing every entry explicitly
+// prevents receiver defaults from bypassing the source module's PoC scope.
+var kubeClusterV0156MetricDefaults = []string{
+	"k8s.container.cpu_limit", "k8s.container.cpu_request", "k8s.container.ephemeralstorage_limit", "k8s.container.ephemeralstorage_request",
+	"k8s.container.memory_limit", "k8s.container.memory_request", "k8s.container.ready", "k8s.container.restarts", "k8s.container.status.reason",
+	"k8s.container.status.state", "k8s.container.storage_limit", "k8s.container.storage_request", "k8s.cronjob.active_jobs",
+	"k8s.daemonset.current_scheduled_nodes", "k8s.daemonset.desired_scheduled_nodes", "k8s.daemonset.misscheduled_nodes", "k8s.daemonset.ready_nodes",
+	"k8s.deployment.available", "k8s.deployment.desired", "k8s.hpa.current_replicas", "k8s.hpa.desired_replicas", "k8s.hpa.max_replicas", "k8s.hpa.min_replicas",
+	"k8s.job.active_pods", "k8s.job.desired_successful_pods", "k8s.job.failed_pods", "k8s.job.max_parallel_pods", "k8s.job.successful_pods", "k8s.namespace.phase",
+	"k8s.node.condition", "k8s.persistentvolume.status.phase", "k8s.persistentvolume.storage.capacity", "k8s.persistentvolumeclaim.status.phase",
+	"k8s.persistentvolumeclaim.storage.capacity", "k8s.persistentvolumeclaim.storage.request", "k8s.pod.phase", "k8s.pod.status_reason", "k8s.replicaset.available",
+	"k8s.replicaset.desired", "k8s.replication_controller.available", "k8s.replication_controller.desired", "k8s.resource_quota.hard_limit", "k8s.resource_quota.used",
+	"k8s.service.endpoint.count", "k8s.service.load_balancer.ingress.count", "k8s.statefulset.current_pods", "k8s.statefulset.desired_pods", "k8s.statefulset.ready_pods",
+	"k8s.statefulset.updated_pods", "openshift.appliedclusterquota.limit", "openshift.appliedclusterquota.used", "openshift.clusterquota.limit", "openshift.clusterquota.used",
+}
+
 type BackendConfig struct {
 	Enabled bool
 }
@@ -154,6 +171,9 @@ func compileGateway(requirements collectorspec.GatewayRequirements) CollectorCon
 	metricReceivers := make([]string, 0, 3)
 	if requirements.KubeCluster != nil {
 		metricsEnabled := map[string]any{}
+		for _, name := range kubeClusterV0156MetricDefaults {
+			metricsEnabled[name] = map[string]any{"enabled": false}
+		}
 		for _, name := range requirements.KubeCluster.EnabledMetricNames {
 			metricsEnabled[name] = map[string]any{"enabled": true}
 		}
