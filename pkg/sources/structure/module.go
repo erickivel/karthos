@@ -86,6 +86,8 @@ type inventory struct {
 
 type workloadRecord struct {
 	entity            entities.Workload
+	uid               string
+	ownerUID          string
 	podTemplateLabels map[string]string
 	configMapRefs     []string
 	secretRefs        []string
@@ -93,8 +95,8 @@ type workloadRecord struct {
 }
 
 type podRecord struct {
-	entity     entities.Pod
-	workloadID entities.EntityID
+	entity   entities.Pod
+	ownerUID string
 }
 
 type serviceRecord struct {
@@ -207,7 +209,7 @@ func (m *Module) collect(ctx context.Context) (inventory, error) {
 			continue
 		}
 		pod := entities.NewPod(m.cluster, item.Namespace, item.Name, item.Labels)
-		result.pods = append(result.pods, podRecord{entity: pod, workloadID: matchingWorkload(pod, result.workloads)})
+		result.pods = append(result.pods, podRecord{entity: pod, ownerUID: controllerOwnerUID(item.OwnerReferences)})
 	}
 	for _, item := range services.Items {
 		result.services = append(result.services, serviceRecord{entity: entities.NewService(m.cluster, item.Namespace, item.Name, item.Labels), selector: clone(item.Spec.Selector)})
@@ -223,36 +225,36 @@ func workloadFromDeployment(cluster string, item appsv1.Deployment) workloadReco
 	if item.Spec.Replicas != nil {
 		w.Replicas = *item.Spec.Replicas
 	}
-	return newWorkloadRecord(w, item.Spec.Template)
+	return newWorkloadRecord(w, item.Spec.Template, string(item.UID), controllerOwnerUID(item.OwnerReferences))
 }
 func workloadFromStatefulSet(cluster string, item appsv1.StatefulSet) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadStatefulSet, item.Labels)
 	if item.Spec.Replicas != nil {
 		w.Replicas = *item.Spec.Replicas
 	}
-	return newWorkloadRecord(w, item.Spec.Template)
+	return newWorkloadRecord(w, item.Spec.Template, string(item.UID), controllerOwnerUID(item.OwnerReferences))
 }
 func workloadFromDaemonSet(cluster string, item appsv1.DaemonSet) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadDaemonSet, item.Labels)
-	return newWorkloadRecord(w, item.Spec.Template)
+	return newWorkloadRecord(w, item.Spec.Template, string(item.UID), controllerOwnerUID(item.OwnerReferences))
 }
 func workloadFromReplicaSet(cluster string, item appsv1.ReplicaSet) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadReplicaSet, item.Labels)
 	if item.Spec.Replicas != nil {
 		w.Replicas = *item.Spec.Replicas
 	}
-	return newWorkloadRecord(w, item.Spec.Template)
+	return newWorkloadRecord(w, item.Spec.Template, string(item.UID), controllerOwnerUID(item.OwnerReferences))
 }
 func workloadFromJob(cluster string, item batchv1.Job) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadJob, item.Labels)
 	if item.Spec.Completions != nil {
 		w.Replicas = *item.Spec.Completions
 	}
-	return newWorkloadRecord(w, item.Spec.Template)
+	return newWorkloadRecord(w, item.Spec.Template, string(item.UID), controllerOwnerUID(item.OwnerReferences))
 }
 func workloadFromCronJob(cluster string, item batchv1.CronJob) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadCronJob, item.Labels)
-	return newWorkloadRecord(w, item.Spec.JobTemplate.Spec.Template)
+	return newWorkloadRecord(w, item.Spec.JobTemplate.Spec.Template, string(item.UID), controllerOwnerUID(item.OwnerReferences))
 }
 func workloadFromRC(cluster string, item corev1.ReplicationController) workloadRecord {
 	w := entities.NewWorkload(cluster, item.Namespace, item.Name, entities.WorkloadReplicationController, item.Labels)
@@ -260,16 +262,16 @@ func workloadFromRC(cluster string, item corev1.ReplicationController) workloadR
 		w.Replicas = *item.Spec.Replicas
 	}
 	if item.Spec.Template == nil {
-		return workloadRecord{entity: w}
+		return workloadRecord{entity: w, uid: string(item.UID), ownerUID: controllerOwnerUID(item.OwnerReferences)}
 	}
 	template := *item.Spec.Template
 	refs := templateRefs(template)
-	return workloadRecord{entity: w, podTemplateLabels: clone(template.Labels), configMapRefs: refs.configMaps, secretRefs: refs.secrets, pvcRefs: refs.pvcs}
+	return workloadRecord{entity: w, uid: string(item.UID), ownerUID: controllerOwnerUID(item.OwnerReferences), podTemplateLabels: clone(template.Labels), configMapRefs: refs.configMaps, secretRefs: refs.secrets, pvcRefs: refs.pvcs}
 }
 
-func newWorkloadRecord(entity entities.Workload, template corev1.PodTemplateSpec) workloadRecord {
+func newWorkloadRecord(entity entities.Workload, template corev1.PodTemplateSpec, uid, ownerUID string) workloadRecord {
 	references := templateRefs(template)
-	return workloadRecord{entity: entity, podTemplateLabels: clone(template.Labels), configMapRefs: references.configMaps, secretRefs: references.secrets, pvcRefs: references.pvcs}
+	return workloadRecord{entity: entity, uid: uid, ownerUID: ownerUID, podTemplateLabels: clone(template.Labels), configMapRefs: references.configMaps, secretRefs: references.secrets, pvcRefs: references.pvcs}
 }
 
 type refs struct {
@@ -382,15 +384,22 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 		add(node(namespaceID, entities.KindNamespace, m.cluster, quota.Namespace, quota.Namespace, nil))
 		link(namespaceID, quota.ID(), topology.RelContains)
 	}
-	workloadByID := map[entities.EntityID]workloadRecord{}
+	workloadByOwnerUID := map[string]workloadRecord{}
 	for _, workload := range inventory.workloads {
-		workloadByID[workload.entity.ID()] = workload
+		if workload.uid != "" {
+			workloadByOwnerUID[workload.uid] = workload
+		}
+	}
+	for _, workload := range inventory.workloads {
+		if parent, ok := workloadByOwnerUID[workload.ownerUID]; ok {
+			link(parent.entity.ID(), workload.entity.ID(), topology.RelContains)
+		}
 	}
 	for _, pod := range inventory.pods {
 		entity := pod.entity
 		add(node(entity.ID(), entities.KindPod, m.cluster, entity.Namespace, entity.Name, entity.Labels()))
 		put(entities.KindPod, entity.ID(), entity.Namespace, entity.Name, entity.Labels())
-		if workload, ok := workloadByID[pod.workloadID]; ok {
+		if workload, ok := workloadByOwnerUID[pod.ownerUID]; ok {
 			add(node(workload.entity.ID(), entities.KindWorkload, m.cluster, workload.entity.Namespace, workload.entity.Name, workloadLabels(workload.entity)))
 			link(workload.entity.ID(), entity.ID(), topology.RelContains)
 			continue
@@ -445,10 +454,10 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 func terminating(pod corev1.Pod) bool {
 	return pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
-func matchingWorkload(pod entities.Pod, workloads []workloadRecord) entities.EntityID {
-	for _, workload := range workloads {
-		if pod.Namespace == workload.entity.Namespace && matches(workload.podTemplateLabels, pod.Labels()) {
-			return workload.entity.ID()
+func controllerOwnerUID(references []metav1.OwnerReference) string {
+	for _, reference := range references {
+		if reference.Controller != nil && *reference.Controller && reference.UID != "" {
+			return string(reference.UID)
 		}
 	}
 	return ""

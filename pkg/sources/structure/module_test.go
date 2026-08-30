@@ -111,6 +111,36 @@ func TestModuleIncludesDirectlyListedObjectsWithoutResolvedSemanticTargets(t *te
 	}
 }
 
+func TestModuleBuildsWorkloadChainsFromOwnerReferences(t *testing.T) {
+	controller := true
+	client := fake.NewClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo", UID: "deployment-uid"}},
+		&appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: "demo", UID: "replicaset-uid", OwnerReferences: []metav1.OwnerReference{{UID: "deployment-uid", Controller: &controller}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "demo", OwnerReferences: []metav1.OwnerReference{{UID: "replicaset-uid", Controller: &controller}}}},
+	)
+	graphs := persistence.NewInMemoryGraphStore()
+	module := New(client, "test", graphs, persistence.NewInMemoryEntityRegistry())
+	require.NoError(t, module.Refresh(context.Background()))
+
+	snapshot, err := graphs.GetLatest(context.Background())
+	require.NoError(t, err)
+	deploymentID := entities.NewWorkload("test", "demo", "api", entities.WorkloadDeployment, nil).ID()
+	replicaSetID := entities.NewWorkload("test", "demo", "api-rs", entities.WorkloadReplicaSet, nil).ID()
+	podID := entities.NewPod("test", "demo", "api-pod", nil).ID()
+	contains := edgesByRelation(snapshot.Graph.Edges, topology.RelContains)
+	require.True(t, hasEdge(contains, deploymentID, replicaSetID))
+	require.True(t, hasEdge(contains, replicaSetID, podID))
+}
+
+func hasEdge(edges []topology.Edge, source, target entities.EntityID) bool {
+	for _, edge := range edges {
+		if edge.Source == source && edge.Target == target {
+			return true
+		}
+	}
+	return false
+}
+
 func edgesByRelation(edges []topology.Edge, relation topology.RelationType) []topology.Edge {
 	matched := make([]topology.Edge, 0)
 	for _, edge := range edges {
