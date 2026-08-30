@@ -36,15 +36,7 @@ func TestDefaultRegistryContainsEveryCompiledModuleExactlyOnce(t *testing.T) {
 }
 
 func TestRegistryAppendsTypedRequirementsFromSelectedModules(t *testing.T) {
-	capabilityProfile := &profile.ClusterProfile{Capabilities: []profile.SourceCapability{
-		{SourceID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"structure"}},
-		{SourceID: IDKubelet, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
-		{SourceID: IDHostOS, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
-		{SourceID: IDKubeCluster, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
-		{SourceID: IDPrometheusApp, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{PrometheusTargets: []profile.PrometheusTarget{{ServiceName: "gateway", Namespace: "demo", Port: 8080, Path: "/metrics"}}}},
-		{SourceID: IDMeshIstio, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{Mesh: &profile.MeshEvidence{Flavor: "istio", InjectedNamespaces: []string{"demo"}}}},
-		{SourceID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{OTLP: &profile.OTLPEvidence{TracesEnabled: true}}},
-	}}
+	capabilityProfile := completeCapabilityProfile()
 	registry := DefaultRegistry()
 	sourcePlan, err := registry.ResolveSourcePlan(capabilityProfile)
 	require.NoError(t, err)
@@ -59,6 +51,33 @@ func TestRegistryAppendsTypedRequirementsFromSelectedModules(t *testing.T) {
 	require.True(t, plan.Agent.OTLP.Traces)
 	require.Nil(t, plan.Gateway.ServiceGraph)
 	require.Equal(t, metrics.SourceMeshIstio, sourcePlan.MetricAssignments["servicegraph.request.count"])
+}
+
+func TestRegistryRejectsInvalidModuleEvidenceBeforeSourceResolution(t *testing.T) {
+	capabilityProfile := completeCapabilityProfile()
+	prometheus, ok := capabilityProfile.Capability(IDPrometheusApp)
+	require.True(t, ok)
+	prometheus.Evidence.PrometheusTargets = nil
+	for index := range capabilityProfile.Capabilities {
+		if capabilityProfile.Capabilities[index].SourceID == IDPrometheusApp {
+			capabilityProfile.Capabilities[index] = prometheus
+		}
+	}
+
+	_, err := DefaultRegistry().ResolveSourcePlan(capabilityProfile)
+	require.ErrorContains(t, err, "prometheus.app available capability requires at least one target")
+}
+
+func TestRegistryRejectsSourcePlanBoundToAnotherProfile(t *testing.T) {
+	capabilityProfile := completeCapabilityProfile()
+	registry := DefaultRegistry()
+	sourcePlan, err := registry.ResolveSourcePlan(capabilityProfile)
+	require.NoError(t, err)
+
+	capabilityProfile.ClusterName = "other-cluster"
+	plan := spec.CollectionPlan{}
+	err = registry.AppendRequirements(&plan, capabilityProfile, sourcePlan)
+	require.ErrorContains(t, err, "source plan profile fingerprint does not match capability profile")
 }
 
 func TestRegistryDelegatesCallsEdgeClassificationToSourceModule(t *testing.T) {
@@ -191,4 +210,16 @@ func sourceIDs(capabilities []profile.SourceCapability) []string {
 		ids = append(ids, capability.SourceID)
 	}
 	return ids
+}
+
+func completeCapabilityProfile() *profile.ClusterProfile {
+	return &profile.ClusterProfile{ClusterName: "test", Capabilities: []profile.SourceCapability{
+		{SourceID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"structure"}},
+		{SourceID: IDKubelet, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+		{SourceID: IDHostOS, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+		{SourceID: IDKubeCluster, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
+		{SourceID: IDPrometheusApp, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{PrometheusTargets: []profile.PrometheusTarget{{ServiceName: "gateway", Namespace: "demo", Port: 8080, Path: "/metrics"}}}},
+		{SourceID: IDMeshIstio, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{Mesh: &profile.MeshEvidence{Flavor: "istio", Mode: "sidecar", InjectedNamespaces: []string{"demo"}, MetricsPort: 15020, MetricsPath: "/stats/prometheus"}}},
+		{SourceID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{OTLP: &profile.OTLPEvidence{TracesEnabled: true}}},
+	}}
 }

@@ -43,6 +43,7 @@ type Module struct {
 	MetricSource bool
 	Parse        contract.MetricParser
 	Detect       func(detection.Inventory) profile.SourceCapability
+	Validate     func(profile.SourceCapability) error
 	Contribute   func(*collectorspec.CollectionPlan, profile.SourceCapability, bool)
 	Normalize    contract.Normalizer
 	CallsEdge    contract.CallsEdgeClassifier
@@ -53,13 +54,13 @@ type Registry struct{ modules []Module }
 
 func DefaultRegistry() Registry {
 	return Registry{modules: []Module{
-		{ID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Detect: structure.Detect},
-		{ID: IDKubelet, Kind: profile.SourceKindDirect, Parse: kubelet.Parse, MetricSource: true, Detect: kubelet.Detect, Contribute: kubelet.Contribute, Normalize: kubelet.Normalize},
-		{ID: IDHostOS, Kind: profile.SourceKindDirect, Parse: hostos.Parse, MetricSource: true, Detect: hostos.Detect, Contribute: hostos.Contribute, Normalize: hostos.Normalize},
-		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Parse: kubecluster.Parse, MetricSource: true, Detect: kubecluster.Detect, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
-		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Parse: prometheusapp.Parse, MetricSource: true, Detect: prometheusapp.Detect, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
-		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Parse: istio.Parse, MetricSource: true, Detect: istio.Detect, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata},
-		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Parse: servicegraph.Parse, MetricSource: true, Detect: servicegraph.Detect, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata},
+		{ID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Detect: structure.Detect, Validate: structure.ValidateCapability},
+		{ID: IDKubelet, Kind: profile.SourceKindDirect, Parse: kubelet.Parse, MetricSource: true, Detect: kubelet.Detect, Validate: kubelet.ValidateCapability, Contribute: kubelet.Contribute, Normalize: kubelet.Normalize},
+		{ID: IDHostOS, Kind: profile.SourceKindDirect, Parse: hostos.Parse, MetricSource: true, Detect: hostos.Detect, Validate: hostos.ValidateCapability, Contribute: hostos.Contribute, Normalize: hostos.Normalize},
+		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Parse: kubecluster.Parse, MetricSource: true, Detect: kubecluster.Detect, Validate: kubecluster.ValidateCapability, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
+		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Parse: prometheusapp.Parse, MetricSource: true, Detect: prometheusapp.Detect, Validate: prometheusapp.ValidateCapability, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
+		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Parse: istio.Parse, MetricSource: true, Detect: istio.Detect, Validate: istio.ValidateCapability, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata},
+		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Parse: servicegraph.Parse, MetricSource: true, Detect: servicegraph.Detect, Validate: servicegraph.ValidateCapability, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata},
 	}}
 }
 
@@ -86,10 +87,34 @@ func (r Registry) Detect(inventory detection.Inventory) ([]profile.SourceCapabil
 		if capability.Kind != module.Kind {
 			return nil, fmt.Errorf("compiled source module %q returned kind %q, expected %q", module.ID, capability.Kind, module.Kind)
 		}
+		if module.Validate == nil {
+			return nil, fmt.Errorf("compiled source module %q has no capability validator", module.ID)
+		}
+		if err := module.Validate(capability); err != nil {
+			return nil, fmt.Errorf("validate capability from module %q: %w", module.ID, err)
+		}
 		capabilities = append(capabilities, capability)
 	}
 	sort.Slice(capabilities, func(i, j int) bool { return capabilities[i].SourceID < capabilities[j].SourceID })
 	return capabilities, nil
+}
+
+// ValidateCapabilityProfile validates one complete capability profile through
+// the static module that owns every source-specific rule.
+func (r Registry) ValidateCapabilityProfile(capabilityProfile *profile.ClusterProfile) error {
+	if err := capabilityProfile.Validate(r.IDs()); err != nil {
+		return err
+	}
+	for _, module := range r.modules {
+		capability, _ := capabilityProfile.Capability(module.ID)
+		if module.Validate == nil {
+			return fmt.Errorf("compiled source module %q has no capability validator", module.ID)
+		}
+		if err := module.Validate(capability); err != nil {
+			return fmt.Errorf("validate %s capability: %w", module.ID, err)
+		}
+	}
+	return nil
 }
 
 func (r Registry) Normalize(ctx context.Context, resolver contract.EntityResolver, plan *contract.Plan) error {
@@ -144,7 +169,7 @@ func (r Registry) Lookup(id string) (Module, bool) {
 // ResolveSourcePlan performs source arbitration once, producing the mounted
 // contract used later by generic collection composition and backend startup.
 func (r Registry) ResolveSourcePlan(capabilityProfile *profile.ClusterProfile) (contract.ResolvedSourcePlan, error) {
-	if err := capabilityProfile.Validate(r.IDs()); err != nil {
+	if err := r.ValidateCapabilityProfile(capabilityProfile); err != nil {
 		return contract.ResolvedSourcePlan{}, fmt.Errorf("validate capability profile: %w", err)
 	}
 	assignment, selected, err := metrics.Resolve(metrics.DefaultCatalog(), r.MetricIDs(), capabilityProfile.IsAvailable)
@@ -167,6 +192,9 @@ func (r Registry) ResolveSourcePlan(capabilityProfile *profile.ClusterProfile) (
 // requirements. Selection gates metric collection; servicegraph may still
 // request trace intake when it is available but loses metric arbitration.
 func (r Registry) AppendRequirements(out *collectorspec.CollectionPlan, capabilityProfile *profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) error {
+	if err := r.ValidateCapabilityProfile(capabilityProfile); err != nil {
+		return fmt.Errorf("validate capability profile: %w", err)
+	}
 	if err := sourcePlan.Validate(capabilityProfile, r.ContractInventory()); err != nil {
 		return err
 	}

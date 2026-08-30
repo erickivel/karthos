@@ -43,8 +43,6 @@ func TestClusterProfileIncludesDerivedServicegraphEvidence(t *testing.T) {
 				Signals:  []string{"metric"},
 				Evidence: CapabilityEvidence{OTLP: &OTLPEvidence{
 					TracesEnabled: true,
-					GRPCEndpoint:  "0.0.0.0:4317",
-					HTTPEndpoint:  "0.0.0.0:4318",
 				}},
 			},
 		},
@@ -54,8 +52,30 @@ func TestClusterProfileIncludesDerivedServicegraphEvidence(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Contains(t, string(payload), "traces.servicegraph")
-	require.Contains(t, string(payload), "grpc_endpoint")
-	require.Contains(t, string(payload), "http_endpoint")
+	require.Contains(t, string(payload), "traces_enabled")
+}
+
+func TestFingerprintIsStableAcrossEvidenceOrdering(t *testing.T) {
+	first := &ClusterProfile{ClusterName: "demo", Capabilities: []SourceCapability{
+		{SourceID: "prometheus.app", Kind: SourceKindDirect, Status: CapabilityAvailable, Signals: []string{"metric"}, Evidence: CapabilityEvidence{PrometheusTargets: []PrometheusTarget{
+			{ServiceName: "zeta", Namespace: "demo", Port: 8080, Path: "/metrics"},
+			{ServiceName: "alpha", Namespace: "demo", Port: 8080, Path: "/metrics"},
+		}}},
+		{SourceID: "mesh.istio", Kind: SourceKindDirect, Status: CapabilityAvailable, Signals: []string{"metric"}, Evidence: CapabilityEvidence{Mesh: &MeshEvidence{Flavor: "istio", Mode: "sidecar", InjectedNamespaces: []string{"team-b", "team-a"}, MetricsPort: 15020, MetricsPath: "/stats/prometheus"}}},
+	}}
+	second := &ClusterProfile{ClusterName: "demo", Capabilities: []SourceCapability{
+		{SourceID: "mesh.istio", Kind: SourceKindDirect, Status: CapabilityAvailable, Signals: []string{"metric"}, Evidence: CapabilityEvidence{Mesh: &MeshEvidence{Flavor: "istio", Mode: "sidecar", InjectedNamespaces: []string{"team-a", "team-b"}, MetricsPort: 15020, MetricsPath: "/stats/prometheus"}}},
+		{SourceID: "prometheus.app", Kind: SourceKindDirect, Status: CapabilityAvailable, Signals: []string{"metric"}, Evidence: CapabilityEvidence{PrometheusTargets: []PrometheusTarget{
+			{ServiceName: "alpha", Namespace: "demo", Port: 8080, Path: "/metrics"},
+			{ServiceName: "zeta", Namespace: "demo", Port: 8080, Path: "/metrics"},
+		}}},
+	}}
+
+	firstFingerprint, err := first.Fingerprint()
+	require.NoError(t, err)
+	secondFingerprint, err := second.Fingerprint()
+	require.NoError(t, err)
+	require.Equal(t, firstFingerprint, secondFingerprint)
 }
 
 func TestFingerprintIsStableAcrossCapabilityOrdering(t *testing.T) {

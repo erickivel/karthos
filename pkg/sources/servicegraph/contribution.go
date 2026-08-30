@@ -8,9 +8,7 @@ import (
 
 func Contribute(plan *collectorspec.CollectionPlan, capability profile.SourceCapability, selected bool) {
 	if capability.Evidence.OTLP != nil {
-		plan.Agent.OTLP.Metrics = plan.Agent.OTLP.Metrics || capability.Evidence.OTLP.MetricsEnabled
 		plan.Agent.OTLP.Traces = plan.Agent.OTLP.Traces || capability.Evidence.OTLP.TracesEnabled
-		plan.Gateway.OTLP.Metrics = plan.Gateway.OTLP.Metrics || capability.Evidence.OTLP.MetricsEnabled
 		plan.Gateway.OTLP.Traces = plan.Gateway.OTLP.Traces || capability.Evidence.OTLP.TracesEnabled
 	}
 	if !selected {

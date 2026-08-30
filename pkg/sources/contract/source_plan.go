@@ -26,6 +26,13 @@ func (p ResolvedSourcePlan) Validate(capabilityProfile *profile.ClusterProfile, 
 	if err := capabilityProfile.Validate(inventory.ModuleIDs); err != nil {
 		return fmt.Errorf("validate capability profile: %w", err)
 	}
+	fingerprint, err := capabilityProfile.Fingerprint()
+	if err != nil {
+		return fmt.Errorf("fingerprint capability profile: %w", err)
+	}
+	if p.ProfileFingerprint == "" || p.ProfileFingerprint != fingerprint {
+		return fmt.Errorf("source plan profile fingerprint does not match capability profile")
+	}
 
 	metricSources := make(map[string]struct{}, len(inventory.MetricSourceIDs))
 	for _, sourceID := range inventory.MetricSourceIDs {

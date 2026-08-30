@@ -27,6 +27,8 @@ func TestComposeKeepsTraceIntakeWhenIstioOwnsServiceGraphMetrics(t *testing.T) {
 func TestComposeAddsDerivedServiceGraphOnlyWhenSelected(t *testing.T) {
 	capabilityProfile := completeProfile()
 	capabilityProfile.Capabilities[5].Status = profile.CapabilityUnavailable
+	capabilityProfile.Capabilities[5].Signals = nil
+	capabilityProfile.Capabilities[5].Evidence = profile.CapabilityEvidence{}
 	registry := sources.DefaultRegistry()
 	sourcePlan, err := registry.ResolveSourcePlan(capabilityProfile)
 	require.NoError(t, err)
@@ -45,7 +47,7 @@ func completeProfile() *profile.ClusterProfile {
 		{SourceID: metrics.SourceHostOS, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
 		{SourceID: metrics.SourceKubeCluster, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}},
 		{SourceID: metrics.SourcePrometheusApp, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{PrometheusTargets: []profile.PrometheusTarget{{ServiceName: "gateway", Namespace: "demo", Port: 8080, Path: "/metrics"}}}},
-		{SourceID: metrics.SourceMeshIstio, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{Mesh: &profile.MeshEvidence{Flavor: "istio", InjectedNamespaces: []string{"demo"}}}},
+		{SourceID: metrics.SourceMeshIstio, Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{Mesh: &profile.MeshEvidence{Flavor: "istio", Mode: "sidecar", InjectedNamespaces: []string{"demo"}, MetricsPort: 15020, MetricsPath: "/stats/prometheus"}}},
 		{SourceID: metrics.SourceTracesServicegraph, Kind: profile.SourceKindDerived, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{OTLP: &profile.OTLPEvidence{TracesEnabled: true}}},
 	}}
 }

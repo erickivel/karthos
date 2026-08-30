@@ -49,6 +49,5 @@ func traceEvidence(service corev1.Service) (profile.OTLPEvidence, bool) {
 	if !annotated && !grpc && !http {
 		return profile.OTLPEvidence{}, false
 	}
-	endpoint := service.Name + "." + service.Namespace + ".svc.cluster.local"
-	return profile.OTLPEvidence{TracesEnabled: true, GRPCEndpoint: endpoint + ":4317", HTTPEndpoint: endpoint + ":4318"}, true
+	return profile.OTLPEvidence{TracesEnabled: true}, true
 }

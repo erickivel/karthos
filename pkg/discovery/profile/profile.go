@@ -60,10 +60,7 @@ type PrometheusTarget struct {
 }
 
 type OTLPEvidence struct {
-	MetricsEnabled bool   `json:"metrics_enabled"`
-	TracesEnabled  bool   `json:"traces_enabled"`
-	GRPCEndpoint   string `json:"grpc_endpoint,omitempty"`
-	HTTPEndpoint   string `json:"http_endpoint,omitempty"`
+	TracesEnabled bool `json:"traces_enabled"`
 }
 
 type MeshEvidence struct {
@@ -107,8 +104,14 @@ func (p *ClusterProfile) Sort() {
 			if left.ServiceName != right.ServiceName {
 				return left.ServiceName < right.ServiceName
 			}
-			return left.Port < right.Port
+			if left.Port != right.Port {
+				return left.Port < right.Port
+			}
+			return left.Path < right.Path
 		})
+		if mesh := p.Capabilities[i].Evidence.Mesh; mesh != nil {
+			sort.Strings(mesh.InjectedNamespaces)
+		}
 	}
 }
 
@@ -124,6 +127,11 @@ func (p *ClusterProfile) Fingerprint() (string, error) {
 	for i := range copy.Capabilities {
 		copy.Capabilities[i].Signals = append([]string(nil), copy.Capabilities[i].Signals...)
 		copy.Capabilities[i].Evidence.PrometheusTargets = append([]PrometheusTarget(nil), copy.Capabilities[i].Evidence.PrometheusTargets...)
+		if mesh := copy.Capabilities[i].Evidence.Mesh; mesh != nil {
+			meshCopy := *mesh
+			meshCopy.InjectedNamespaces = append([]string(nil), mesh.InjectedNamespaces...)
+			copy.Capabilities[i].Evidence.Mesh = &meshCopy
+		}
 	}
 	copy.Sort()
 	payload, err := json.Marshal(copy)

@@ -20,8 +20,7 @@ func TestDetectUsesDeterministicAnnotatedTraceProducer(t *testing.T) {
 
 	require.Equal(t, profile.CapabilityAvailable, capability.Status)
 	require.NotNil(t, capability.Evidence.OTLP)
-	require.Equal(t, "alpha.demo.svc.cluster.local:4317", capability.Evidence.OTLP.GRPCEndpoint)
-	require.Equal(t, "alpha.demo.svc.cluster.local:4318", capability.Evidence.OTLP.HTTPEndpoint)
+	require.True(t, capability.Evidence.OTLP.TracesEnabled)
 }
 
 func TestDetectReportsUnavailableWithoutTraceProducer(t *testing.T) {
