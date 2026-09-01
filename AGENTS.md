@@ -153,7 +153,7 @@ When you need to access cluster services locally, use these commands:
 
 | Service | Command |
 |---------|---------|
-| OKSG Backend API | `kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080` |
+| OKSG Backend API | `kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080` |
 
 The backend API is then available at `http://localhost:18081/api/v1/...`.
 

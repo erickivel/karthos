@@ -56,6 +56,7 @@ tasks:
       - bash test/e2e/scenarios/istio-available/run_test.sh
       - bash test/e2e/scenarios/prometheus-available/run_test.sh
       - bash test/e2e/scenarios/source-contract-rejection/run_test.sh
+      - bash test/e2e/scripts/deployment_identity_test.sh
       - go -C test/e2e/apps/instrumented/gateway-go test ./...
       - go -C test/e2e/apps/mesh-protocol-go test ./...
       - bash test/e2e/scripts/traffic_schedule_test.sh

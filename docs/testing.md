@@ -52,7 +52,6 @@ Key coverage areas:
 task test:e2e:setup
 VARIANT=with-prometheus task test:e2e:deploy
 task test:e2e:discover
-task test:e2e:plan
 task test:e2e:apply-otel
 task test:e2e:verify
 ```
@@ -76,18 +75,20 @@ What each stage does:
 
 - `test:e2e:discover`
   writes `bin/e2e/profile.json`
-- `test:e2e:plan`
-  writes `bin/e2e/otel-values.yaml` and optional rendered chart output under `bin/e2e/rendered`
 - `test:e2e:apply-otel`
-  runs `helm upgrade --install` for agent, gateway, backend, and frontend;
-  the same generated values render the chart-owned source-contract ConfigMap
+  runs `discovery-job --mode=deploy`, which self-contains planning, compiles dynamic values, and uses
+  Helm to deploy agent, gateway, backend, and frontend with the chart-owned
+  source-contract ConfigMap
 - `test:e2e:verify`
   checks Helm status, pod readiness including the frontend rollout, and recent agent/gateway/backend logs
-- generated values can also carry collector `featureGates`; v0.156 agent and gateway gates are empty for the focused core
 
 `test:e2e:deploy` waits for the demo app Deployments and pods before discovery
 runs. This keeps capability profiles from capturing terminating rollout pods
 that would later appear as duplicate topology cards.
+
+`test:e2e:plan` remains available only to inspect generated values or render
+output manually. Live scenarios intentionally use the single deploy path:
+fixture deployment → discovery → `e2e:apply-otel` → verification.
 
 ## Scenario Expectations
 
@@ -163,9 +164,9 @@ Expected:
 
 ### Host OS accuracy
 
-Render the agent chart both with the default `agent.hostNetwork=true` and with
-the opt-out. The default must use `dnsPolicy: ClusterFirstWithHostNet` and retain
-the network scraper; opt-out must omit that scraper. Live host verification is a
+The agent always uses `hostNetwork: true` with
+`dnsPolicy: ClusterFirstWithHostNet`, so the hostmetrics network scraper observes
+node interfaces rather than pod-network interfaces. Live host verification is a
 synchronized comparison of `/proc/stat`, `/proc/diskstats`, `/proc/net/dev`,
 `/proc/vmstat`, filesystem truth, raw OTLP, VictoriaMetrics, and API results. No
 privileged host fixture or historical-series deletion code belongs in the repo.
@@ -240,7 +241,7 @@ Prerequisites:
 - `task test:e2e:scenario:prometheus`
 - `task web:e2e:install`
 - `task web:dev`
-- `kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080`
+- `kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080`
 
 Run the suite:
 

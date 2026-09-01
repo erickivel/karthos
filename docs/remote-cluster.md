@@ -288,7 +288,7 @@ to inspect the remote registry from the laptop.
        │ kubectl apply                                  │
        │                                                │
  task test:e2e:apply-otel                              │
-       │ helm upgrade --install …                       │
+       │ discovery-job --mode=deploy → Helm             │
        │                                                │
  kubectl port-forward 18081:8080 &                      │
        │                                                │
@@ -307,7 +307,7 @@ task test:cluster:doctor      # confirms SSH, k3s, server registry, kubectl, TLS
 VARIANT=base task test:e2e:deploy
 task test:e2e:apply-otel
 task test:e2e:verify
-kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
+kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080 &
 task web:dev                  # frontend hits the remote cluster
 
 # Optional: expose the remote registry locally for manual inspection.

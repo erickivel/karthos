@@ -96,7 +96,7 @@ Local port convention:
 ```bash
 task web:e2e:install
 task web:dev
-kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
+kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080
 task web:e2e
 task web:e2e:update          # refresh committed screenshot baselines
 ```

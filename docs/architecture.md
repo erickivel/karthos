@@ -215,7 +215,8 @@ REST API flags:
 ## Frontend
 
 `web/` is a React + Vite + TypeScript SPA served by nginx with `/api/*`
-reverse-proxied to `oksg-backend:8080`. Three views:
+reverse-proxied in Helm deployments to the release-scoped backend Service
+(`oksg-otel-backend:8080` for the default release). Three views:
 
 - `/` Cluster Overview — KPI row, entity breakdown, relation types, runtime health summary, discovery sources
 - `/topology` Topology Graph — React Flow canvas with three projection modes (Ownership, Infrastructure, Traffic) and three granularity levels; per-mode layout strategies under `web/src/views/TopologyGraph/layouts/` are selected via `LAYOUT_REGISTRY` (custom tree for Ownership, `@dagrejs/dagre` for Infrastructure, `elkjs` layered orthogonal for Traffic)
@@ -230,13 +231,14 @@ Design system, projection-mode rules, and layout details:
 ## Deployment Model
 
 The Helm chart in `deploy/helm/oksg-otel/` owns Kubernetes resource shape
-(namespace, agent ConfigMap + ServiceAccount + RBAC + DaemonSet, gateway
+(agent ConfigMap + ServiceAccount + RBAC + DaemonSet, gateway
 ConfigMap + ServiceAccount + Service + Deployment, one backend source-contract
 ConfigMap + Service + Deployment, frontend Service + Deployment + ConfigMap,
 optional storage subcharts). The planner produces collector configuration plus
-the compiled capability-profile/source-plan contract embedded into release
-values; the chart renders final resources. Do not reintroduce ad hoc manifest
-rendering in Go.
+the compiled capability-profile/source-plan contract embedded into a dynamic
+values overlay; the chart supplies static policy and renders final resources.
+Helm release name and namespace are the only deployment identity. Do not
+reintroduce ad hoc manifest rendering in Go.
 
 PostgreSQL (Bitnami) and VictoriaMetrics (single-node) are subchart
 dependencies, gated by `storage.postgresql.enabled` /
@@ -246,20 +248,28 @@ subchart service names; explicit overrides go in `storage.postgresql.dsn`
 and `storage.victoriametrics.url`. After modifying `Chart.yaml`
 dependencies, run `helm dependency build deploy/helm/oksg-otel/`.
 
-For development-only telemetry inspection, `collectorDebug.enabled` adds the
-OTel adapter-owned `debug/oksg` exporter to generated enabled pipelines. It is
-disabled by default, writes only to Collector stdout, and is never a backend
-persistence path. The chart schema requires an explicit `storage.backend`
-(`memory` or `external`) and rejects unknown storage settings.
+For development-only telemetry inspection, `discovery-job --collector-debug`
+(or `OKSG_COLLECTOR_DEBUG=true`) asks the OTel adapter to compile its fixed
+`debug/oksg` exporter into every enabled agent and gateway pipeline. It is
+disabled by default, writes detailed batches directly to Collector stdout, and
+is never a backend persistence path. Both planes intentionally log the same
+forwarded telemetry while debugging, so output is temporary and duplicated.
+The debug exporter is alpha and its text output is not a stable contract; see
+the [Collector v0.156 debug exporter documentation](https://raw.githubusercontent.com/open-telemetry/opentelemetry-collector/v0.156.0/exporter/debugexporter/README.md).
+The chart schema requires an explicit `storage.backend` (`memory` or
+`external`) and rejects unknown storage settings.
 
 ## Configuration Model
 
-- **Helm values** — generated deployment settings, collector configuration, and the compiled backend source contract
+- **Helm values** — chart-owned static policy plus a generated dynamic overlay
+  for collector configuration, cluster/signal data, source contract, and
+  explicit image/storage overrides
 - **ConfigMaps** — structured collector configuration for agent and gateway plus the chart-owned backend source contract
 - **Secrets** — credentials and sensitive settings
-- **Env vars** — runtime toggles, pod/node metadata, and Helm-propagated
-  Collector endpoint values; `OKSG_BACKEND_GRPC_ENDPOINT` is generated from
-  the single `backend.grpcPort` Helm value and is reserved from user overrides
+- **Env vars** — pod/node metadata and chart-propagated Collector endpoint
+  values; `OKSG_BACKEND_GRPC_ENDPOINT` and `OKSG_GATEWAY_GRPC_ENDPOINT` are
+  generated from the chart's release-scoped Services and reserved from user
+  overrides
 
 ## Logging Policy
 

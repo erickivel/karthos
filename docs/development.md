@@ -136,11 +136,11 @@ task ci              # backend checks plus frontend Docker build verification
 
 ```bash
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
-./bin/discovery-job --mode=plan --capability-profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
-./bin/discovery-job --mode=deploy --capability-profile=profile.json --values-output=otel-values.yaml --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest
+./bin/discovery-job --mode=plan --capability-profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest --frontend-image-repository=localhost:5001/oksg-frontend --frontend-image-tag=latest --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled
+./bin/discovery-job --mode=deploy --capability-profile=profile.json --values-output=otel-values.yaml --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest --frontend-image-repository=localhost:5001/oksg-frontend --frontend-image-tag=latest --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled
 
 # Diagnose the Helm-deployed backend; it requires an in-cluster source contract.
-kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
+kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080
 curl http://localhost:18081/api/v1/status
 ```
 
@@ -150,8 +150,21 @@ Notes:
   write a values artifact only through `--values-output`.
 - `plan` emits Helm values, not raw manifests. It also writes the resolved-plan
   sidecar beside `--values-output` unless `--resolved-plan-output` is supplied.
-- `deploy` compiles, validates, and applies those values through Helm. It needs no
-  post-deployment ConfigMap or rollout step.
+- `deploy` is the only supported deployment executor: it compiles, validates,
+  writes the dynamic values overlay, and applies the release through Helm. It
+  needs no post-deployment ConfigMap or rollout step.
+- `--collector-debug` (or `OKSG_COLLECTOR_DEBUG=true`) adds the fixed,
+  development-only `debug/oksg` exporter to every enabled agent and gateway
+  pipeline. It writes detailed batches to Collector stdout only; both planes
+  intentionally produce duplicate diagnostic output. The exporter is alpha,
+  so treat its log format as transient rather than an API contract.
+- Without `--storage-backend`, the chart's `memory` storage default remains in
+  effect. `--storage-backend=external` requires both `--postgresql-mode` and
+  `--victoriametrics-mode` (`bundled` or `remote`). Remote endpoints come from
+  the corresponding flags or `OKSG_POSTGRES_DSN` and `OKSG_VICTORIAMETRICS_URL`.
+- Image flags are typed partial overrides. Omitted repository, tag, or
+  pull-policy fields retain the chart's static defaults; this includes the
+  optional frontend image override.
 - the backend is supported only as a Helm workload because it requires the mounted,
   chart-owned capability profile and resolved source plan.
 - collector runtime flags are generated from the collector plan; Collector Contrib is pinned to `0.156.0`
@@ -174,9 +187,10 @@ ConfigMap. Changing either compiled artifact therefore rolls the backend
 without an imperative restart.
 
 `backend.grpcPort` is the sole backend OTLP transport setting. It defaults to
-`4317`; the chart uses it for the backend listener and Service, then generates
-the gateway's reserved `OKSG_BACKEND_GRPC_ENDPOINT` environment variable.
-Do not set that reserved name through `gateway.runtimeEnv`.
+`4317`; the chart uses it for the backend listener and Service, then injects
+the gateway's reserved `OKSG_BACKEND_GRPC_ENDPOINT` environment variable. The
+chart likewise injects the agent's `OKSG_GATEWAY_GRPC_ENDPOINT` from the
+release-scoped gateway Service. These endpoints are not general user overrides.
 
 Do not reintroduce ad hoc manifest rendering in Go.
 
@@ -209,7 +223,7 @@ When you remove a feature or code path, sweep for phantom references in the same
 `task web:dev` starts the Vite container with HMR, but the frontend still needs the backend API. In a separate terminal, port-forward the in-cluster backend so the dev server's `/api` proxy can reach it:
 
 ```bash
-kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080
+kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080
 ```
 
 The dev server reads the API base URL at startup. After you change `.env`, Vite config, or anything the container reads only on boot, stop `task web:dev` and re-run it so the changes take effect. Source file edits continue to hot-reload without a restart.
@@ -274,7 +288,7 @@ task test:e2e:debug:logs
 Or run the steps manually:
 
 ```bash
-kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
+kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080 &
 curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq '.data.samples[0:10]'
 curl -s http://localhost:18081/api/v1/graph | jq '.data.edges[0:5]'
 kill %1
@@ -312,12 +326,11 @@ A skipped envelope (expected for raw host metrics without node context or unsupp
 
 Skips with `"resource":null` indicate hostmetrics scrapers whose node context was not injected (check the `resource` processor and `K8S_NODE_NAME` env var in the agent DaemonSet).
 
-The chart's accuracy-first default is `agent.hostNetwork=true`, which renders
-`hostNetwork: true` with `dnsPolicy: ClusterFirstWithHostNet`. This lets the
-hostmetrics network scraper observe node interfaces. Set it to `false` only when
-the security/isolation tradeoff requires it; generated collector configuration
-then omits the network scraper so pod-network traffic is never mislabeled as node
-traffic. CPU, memory, disk, and filesystem scrapers remain enabled.
+The chart unconditionally renders `hostNetwork: true` with
+`dnsPolicy: ClusterFirstWithHostNet`. This lets the hostmetrics network scraper
+observe node interfaces; it is a fixed collection-plane accuracy policy, not a
+generated-values override. CPU, memory, disk, filesystem, and network scrapers
+remain enabled.
 
 ## REST API (Layer 6)
 
@@ -355,7 +368,7 @@ curl -s "http://localhost:18081/api/v1/entities?kind=pod&page_size=10" | jq .
 In a cluster, port-forward to the backend API port:
 
 ```bash
-kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
+kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080 &
 curl -s http://localhost:18081/api/v1/status | jq '.data.system_status'
 kill %1
 ```

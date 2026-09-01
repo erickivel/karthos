@@ -315,7 +315,8 @@ Persistent bottom bar across all routes. Shows both cluster system status and OK
 **Layout:** Single horizontal bar, left-to-right:
 - **System status indicator**: green dot + `SYSTEM_NOMINAL` (or red + `DEGRADED` based on `/api/v1/status` components)
 - **OKSG tool status**: `[OKSG] BACKEND CONNECTED · LAST SNAPSHOT 12s AGO · 52 NODES · 56 EDGES`
-- **Network info** (right-aligned): `[NET] POLLING oksg-backend:8080`
+- **Network info** (right-aligned): `[NET] POLLING oksg-backend:8080` (a stable
+  UI label; Helm's nginx proxy targets the release-scoped backend Service)
 
 **Status logic:**
 - `SYSTEM_NOMINAL`: all components in `/api/v1/status` report healthy
@@ -412,12 +413,14 @@ TanStack Query hooks are the **only** data consumers. Components never fetch dir
 ### Production (Kubernetes)
 
 - **Build:** Multi-stage Dockerfile — stage 1 builds static files with Vite, stage 2 copies `dist/` into an nginx image
-- **Container:** nginx serving static files + reverse proxy for `/api/*` → `oksg-backend:8080`
+- **Container:** nginx serving static files + reverse proxy for `/api/*` → the
+  Helm release's backend Service (`oksg-otel-backend:8080` by default)
 - **Helm:** Deployed as additional templates under `deploy/helm/oksg-otel/`
   - Deployment: single replica, nginx image with built frontend baked in
   - Service: ClusterIP on port 80
-  - ConfigMap: nginx.conf with `/api/*` proxy pass to `oksg-backend:8080`
-- **Service name:** `oksg-frontend` in `oksg-system` namespace
+  - ConfigMap: nginx.conf with `/api/*` proxy pass to the release-scoped backend
+    Service
+- **Service name:** `<release>-frontend` in the Helm release namespace
 - **No direct backend access from the browser** — nginx handles the API proxy
 
 ---
