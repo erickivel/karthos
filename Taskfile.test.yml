@@ -111,24 +111,14 @@ tasks:
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
       - helm dependency build {{.HELM_CHART_PATH}}
-      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --capability-profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}}"
+      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --capability-profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}} --frontend-image-repository={{.FRONTEND_IMAGE_REPOSITORY}} --frontend-image-tag={{.FRONTEND_IMAGE_TAG}} --frontend-image-pull-policy={{.FRONTEND_IMAGE_PULL_POLICY}} --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled"
 
   e2e:apply-otel:
-    desc: Install or upgrade the OTel Helm release and its generated source contract
+    desc: Deploy the discovery-derived collection plane through discovery-job
+    deps: [e2e:ensure-build]
     cmds:
       - helm dependency build {{.HELM_CHART_PATH}}
-      - >-
-        helm upgrade --install {{.HELM_RELEASE_NAME}} {{.HELM_CHART_PATH}}
-        --namespace {{.KIND_NAMESPACE}} --create-namespace
-        --force-conflicts
-        -f {{.VALUES_PATH}}
-        --set storage.backend=external
-        --set storage.postgresql.enabled=true
-        --set storage.victoriametrics.enabled=true
-        --set postgresql.auth.password=oksg
-        --set frontend.image.repository={{.FRONTEND_IMAGE_REPOSITORY}}
-        --set frontend.image.tag={{.FRONTEND_IMAGE_TAG}}
-        --set frontend.image.pullPolicy={{.FRONTEND_IMAGE_PULL_POLICY}}
+      - "{{.DISCOVERY_JOB_BIN}} --mode=deploy --capability-profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}} --frontend-image-repository={{.FRONTEND_IMAGE_REPOSITORY}} --frontend-image-tag={{.FRONTEND_IMAGE_TAG}} --frontend-image-pull-policy={{.FRONTEND_IMAGE_PULL_POLICY}} --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled"
 
   e2e:verify:
     desc: Verify generated collectors and storage backends are deployed
@@ -139,13 +129,13 @@ tasks:
       - kubectl rollout status statefulset/{{.HELM_RELEASE_NAME}}-postgresql -n {{.KIND_NAMESPACE}} --timeout=180s
       - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=victoria-metrics-single -n {{.KIND_NAMESPACE}} --timeout=180s
       - echo "Waiting for collector rollouts..."
-      - kubectl rollout status deployment/oksg-backend -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl rollout status deployment/oksg-frontend -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl rollout status deployment/otel-collector-gateway -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl rollout status daemonset/otel-collector-agent -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl logs -n {{.KIND_NAMESPACE}} daemonset/otel-collector-agent --tail=30
-      - kubectl logs -n {{.KIND_NAMESPACE}} deployment/otel-collector-gateway --tail=30
-      - kubectl logs -n {{.KIND_NAMESPACE}} deployment/oksg-backend --tail=30
+      - kubectl rollout status deployment/{{.HELM_RELEASE_NAME}}-backend -n {{.KIND_NAMESPACE}} --timeout=120s
+      - kubectl rollout status deployment/{{.HELM_RELEASE_NAME}}-frontend -n {{.KIND_NAMESPACE}} --timeout=120s
+      - kubectl rollout status deployment/{{.HELM_RELEASE_NAME}}-gateway -n {{.KIND_NAMESPACE}} --timeout=120s
+      - kubectl rollout status daemonset/{{.HELM_RELEASE_NAME}}-agent -n {{.KIND_NAMESPACE}} --timeout=120s
+      - kubectl logs -n {{.KIND_NAMESPACE}} daemonset/{{.HELM_RELEASE_NAME}}-agent --tail=30
+      - kubectl logs -n {{.KIND_NAMESPACE}} deployment/{{.HELM_RELEASE_NAME}}-gateway --tail=30
+      - kubectl logs -n {{.KIND_NAMESPACE}} deployment/{{.HELM_RELEASE_NAME}}-backend --tail=30
 
   e2e:reset:
     desc: Remove deployed OTel Helm release
@@ -202,14 +192,13 @@ tasks:
     cmds:
       - ./test/e2e/apps/deploy.sh with-prometheus
       - task: e2e:discover
-      - task: e2e:plan
       - task: e2e:apply-otel
       - task: e2e:verify
 
   e2e:scenario:prometheus:
     desc: Run Prometheus discovery scenario with gateway traffic (full pipeline including servicegraph)
     cmds:
-      - ./test/e2e/scenarios/prometheus-available/run.sh
+      - HELM_RELEASE_NAME={{.HELM_RELEASE_NAME}} KIND_NAMESPACE={{.KIND_NAMESPACE}} ./test/e2e/scenarios/prometheus-available/run.sh
 
   e2e:scenario:istio:prepare:
     desc: Prepare the Istio mesh telemetry scenario and generate gateway traffic
@@ -218,7 +207,6 @@ tasks:
       - task: e2e:install-istio
       - ./test/e2e/apps/deploy.sh with-istio
       - task: e2e:discover
-      - task: e2e:plan
       - task: e2e:apply-otel
       - task: e2e:verify
       - task: e2e:traffic
@@ -230,7 +218,7 @@ tasks:
   e2e:scenario:istio:
     desc: Run the full Istio mesh accuracy scenario, including deterministic gRPC and TCP verification
     cmds:
-      - ./test/e2e/scenarios/istio-available/run.sh
+      - HELM_RELEASE_NAME={{.HELM_RELEASE_NAME}} KIND_NAMESPACE={{.KIND_NAMESPACE}} ./test/e2e/scenarios/istio-available/run.sh
 
   e2e:scenario:fallback:
     desc: Run no-telemetry fallback scenario (full pipeline)
@@ -238,7 +226,6 @@ tasks:
     cmds:
       - ./test/e2e/apps/deploy.sh base
       - task: e2e:discover
-      - task: e2e:plan
       - task: e2e:apply-otel
       - task: e2e:verify
 
@@ -251,14 +238,14 @@ tasks:
   e2e:scenario:source-contract-rejection:
     desc: Verify backend rejects a mismatched source plan and restores the valid contract
     cmds:
-      - ./test/e2e/scenarios/source-contract-rejection/run.sh
+      - HELM_RELEASE_NAME={{.HELM_RELEASE_NAME}} KIND_NAMESPACE={{.KIND_NAMESPACE}} ./test/e2e/scenarios/source-contract-rejection/run.sh
 
   e2e:debug:api:
     desc: Query the backend REST API status endpoint via a dedicated local port-forward
     cmds:
       - |
         lsof -ti :{{.BACKEND_API_LOCAL_PORT}} | xargs kill 2>/dev/null || true
-        kubectl port-forward -n {{.KIND_NAMESPACE}} deployment/oksg-backend {{.BACKEND_API_LOCAL_PORT}}:8080 &
+        kubectl port-forward -n {{.KIND_NAMESPACE}} deployment/{{.HELM_RELEASE_NAME}}-backend {{.BACKEND_API_LOCAL_PORT}}:8080 &
         PF_PID=$!
         sleep 2
         curl -sf http://localhost:{{.BACKEND_API_LOCAL_PORT}}/api/v1/status

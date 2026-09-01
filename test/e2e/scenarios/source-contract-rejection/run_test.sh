@@ -23,13 +23,16 @@ case "${1:-}" in
   get)
     if [[ "${2:-}" == "configmap" ]]; then
       printf '{"data":{"capability-profile.json":"{}","source-plan.json":"{\\"profile_fingerprint\\":\\"valid\\"}"}}'
-    elif [[ "${2:-}" == "deployment/oksg-backend" ]]; then
+    elif [[ "${2:-}" == "deployment/release-check-backend" ]]; then
       printf '42'
     elif [[ "${2:-}" == "pods" ]]; then
       printf 'failed-backend'
     fi
     ;;
-  replace|annotate|wait)
+  replace|annotate|patch|wait)
+    ;;
+  exec)
+    printf '{"profile_fingerprint":"intentionally-mismatched-fingerprint"}'
     ;;
   rollout)
     if [[ "${2:-}" == "restart" ]]; then
@@ -60,13 +63,18 @@ chmod +x "${TMPDIR_TEST}/kubectl" "${TMPDIR_TEST}/task"
 
 export PATH="${TMPDIR_TEST}:${PATH}"
 export SOURCE_CONTRACT_TEST_LOG="${TMPDIR_TEST}/calls.log"
+export HELM_RELEASE_NAME="release-check"
+export KIND_NAMESPACE="contract-check"
 
 bash "${REPO_ROOT}/test/e2e/scenarios/source-contract-rejection/run.sh"
 
-restart_line="$(grep -n 'kubectl rollout restart deployment/oksg-backend' "${SOURCE_CONTRACT_TEST_LOG}" | cut -d: -f1)"
+restart_line="$(grep -n 'kubectl rollout restart deployment/release-check-backend -n contract-check' "${SOURCE_CONTRACT_TEST_LOG}" | cut -d: -f1)"
+mounted_contract_line="$(grep -n 'kubectl exec deployment/release-check-backend -n contract-check -- cat /etc/oksg/source-plan.json' "${SOURCE_CONTRACT_TEST_LOG}" | head -n1 | cut -d: -f1)"
 wait_line="$(grep -n 'kubectl wait --for=jsonpath=' "${SOURCE_CONTRACT_TEST_LOG}" | head -n1 | cut -d: -f1)"
-status_line="$(grep -n 'kubectl rollout status deployment/oksg-backend' "${SOURCE_CONTRACT_TEST_LOG}" | head -n1 | cut -d: -f1)"
-[[ -n "${restart_line}" && -n "${wait_line}" && -n "${status_line}" ]]
-[[ "${restart_line}" -lt "${wait_line}" && "${wait_line}" -lt "${status_line}" ]]
+status_line="$(grep -n 'kubectl rollout status deployment/release-check-backend -n contract-check' "${SOURCE_CONTRACT_TEST_LOG}" | head -n1 | cut -d: -f1)"
+cleanup_patch_line="$(grep -n 'kubectl patch deployment/release-check-backend -n contract-check --type=json' "${SOURCE_CONTRACT_TEST_LOG}" | tail -n1 | cut -d: -f1)"
+[[ -n "${mounted_contract_line}" && -n "${restart_line}" && -n "${wait_line}" && -n "${status_line}" ]]
+[[ "${mounted_contract_line}" -lt "${restart_line}" && "${restart_line}" -lt "${wait_line}" && "${wait_line}" -lt "${status_line}" ]]
+[[ -n "${cleanup_patch_line}" && "${status_line}" -lt "${cleanup_patch_line}" ]]
 
 echo "source-contract rejection waits for the restarted generation: PASS"

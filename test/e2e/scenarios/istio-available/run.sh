@@ -7,6 +7,10 @@ set -euo pipefail
 # shellcheck disable=SC1091
 . "$(pwd)/test/e2e/cluster/profile.sh"
 
+NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
+BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"
+VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"
+
 task test:e2e:scenario:istio:prepare
 
 python3 - <<'PY'
@@ -65,11 +69,11 @@ lsof -ti :18081 | xargs kill 2>/dev/null || true
 lsof -ti :18428 | xargs kill 2>/dev/null || true
 lsof -ti :19020 | xargs kill 2>/dev/null || true
 MESH_SERVER_POD="$(kubectl get pods -n oksg-demo -l app=mesh-protocol-server -o jsonpath='{.items[0].metadata.name}')"
-kubectl port-forward -n oksg-system deployment/oksg-backend 13133:13133 &
+kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 13133:13133 &
 PF_HEALTH_PID=$!
-kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
+kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 18081:8080 &
 PF_API_PID=$!
-kubectl port-forward -n oksg-system svc/oksg-otel-victoria-metrics-single-server 18428:8428 &
+kubectl port-forward -n "${NAMESPACE}" svc/${VM_SERVICE} 18428:8428 &
 PF_VM_PID=$!
 kubectl port-forward -n oksg-demo "pod/${MESH_SERVER_POD}" 19020:15020 &
 PF_MESH_PID=$!

@@ -35,4 +35,16 @@ if ! grep -Fq 'if supported_api_results_ready(' "${RUNNER}"; then
   exit 1
 fi
 
+for route in \
+  'NAMESPACE="${KIND_NAMESPACE:-oksg-system}"' \
+  'BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"' \
+  'VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"' \
+  'kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT}' \
+  'kubectl port-forward -n "${NAMESPACE}" svc/${VM_SERVICE}'; do
+  if ! grep -Fq "${route}" "${RUNNER}"; then
+    echo "expected runner to derive collector-plane route: ${route}" >&2
+    exit 1
+  fi
+done
+
 echo "Prometheus scenario contract checks: PASS"

@@ -82,4 +82,16 @@ fi
 grep -Fq 'mesh["status"] == "available"' \
   "${REPO_ROOT}/test/e2e/scenarios/istio-available/run.sh"
 
+for route in \
+  'NAMESPACE="${KIND_NAMESPACE:-oksg-system}"' \
+  'BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"' \
+  'VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"' \
+  'kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT}' \
+  'kubectl port-forward -n "${NAMESPACE}" svc/${VM_SERVICE}'; do
+  if ! grep -Fq "${route}" "${REPO_ROOT}/test/e2e/scenarios/istio-available/run.sh"; then
+    echo "expected runner to derive collector-plane route: ${route}" >&2
+    exit 1
+  fi
+done
+
 echo "Istio protocol Job uses built fixture image tag: PASS"

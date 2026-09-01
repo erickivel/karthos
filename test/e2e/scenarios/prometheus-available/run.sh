@@ -7,6 +7,10 @@ set -euo pipefail
 # shellcheck disable=SC1091
 . "$(pwd)/test/e2e/cluster/profile.sh"
 
+NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
+BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"
+VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"
+
 task test:e2e:scenario:prometheus:prepare
 
 python3 - <<'PY'
@@ -47,11 +51,11 @@ sleep 65
 lsof -ti :13133 | xargs kill 2>/dev/null || true
 lsof -ti :18081 | xargs kill 2>/dev/null || true
 lsof -ti :18428 | xargs kill 2>/dev/null || true
-kubectl port-forward -n oksg-system deployment/oksg-backend 13133:13133 &
+kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 13133:13133 &
 PF_HEALTH_PID=$!
-kubectl port-forward -n oksg-system deployment/oksg-backend 18081:8080 &
+kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 18081:8080 &
 PF_API_PID=$!
-kubectl port-forward -n oksg-system svc/oksg-otel-victoria-metrics-single-server 18428:8428 &
+kubectl port-forward -n "${NAMESPACE}" svc/${VM_SERVICE} 18428:8428 &
 PF_VM_PID=$!
 trap "kill $PF_HEALTH_PID $PF_API_PID $PF_VM_PID 2>/dev/null || true" EXIT
 sleep 3
