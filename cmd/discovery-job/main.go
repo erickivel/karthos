@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -42,8 +43,12 @@ type commandPlanner struct {
 	compiler *otel.Compiler
 }
 
-func newCommandPlanner(namespace string) *commandPlanner {
-	return &commandPlanner{modules: sources.DefaultRegistry(), composer: collector.NewComposer(namespace), compiler: otel.NewCompiler()}
+func newCommandPlanner(namespace string, collectorDebug bool) *commandPlanner {
+	return &commandPlanner{
+		modules:  sources.DefaultRegistry(),
+		composer: collector.NewComposer(namespace),
+		compiler: otel.NewCompilerWithOptions(otel.CompilerOptions{DebugEnabled: collectorDebug}),
+	}
 }
 
 func (p *commandPlanner) Plan(_ context.Context, capabilityProfile *profile.ClusterProfile) (*deploymentPlan, error) {
@@ -82,10 +87,13 @@ func main() {
 }
 
 const defaultClusterName = "default-cluster"
-const defaultReleaseName = "oksg-otel"
 const defaultLogLevel = "info"
 
 func run(ctx context.Context, args []string, deps dependencies) error {
+	collectorDebugDefault, err := envBool("OKSG_COLLECTOR_DEBUG", false)
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("discovery-job", flag.ContinueOnError)
 	mode := fs.String("mode", "discover", "mode to run: discover, plan, deploy")
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig")
@@ -96,19 +104,27 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	resolvedPlanOutputPath := fs.String("resolved-plan-output", "", "output path for resolved source plan JSON (defaults beside --values-output)")
 	renderedOutputPath := fs.String("rendered-output", "", "directory for helm template output")
 	namespace := fs.String("namespace", collector.DefaultNamespace, "namespace for generated collector resources")
-	helmNamespace := fs.String("helm-namespace", "", "namespace for Helm release resources (defaults to --namespace)")
-	releaseName := fs.String("release-name", defaultReleaseName, "helm release name")
-	chartPath := fs.String("chart-path", configgen.DefaultChartPath, "path to the Helm chart")
+	releaseName := fs.String("release-name", deployer.DefaultReleaseName, "helm release name")
+	chartPath := fs.String("chart-path", deployer.DefaultChartPath, "path to the Helm chart")
 	helmTimeout := fs.Duration("helm-timeout", deployer.DefaultTimeout, "timeout for helm operations")
 	helmDryRun := fs.Bool("helm-dry-run", false, "run helm upgrade with --dry-run")
 	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultLogLevel), "structured log level: info, warn, error")
 	targetNamespace := fs.String("target-namespace", "", "filter Prometheus discovery to this namespace (empty = all namespaces)")
-	collectorImageRepository := fs.String("collector-image-repository", envOrDefault("OKSG_COLLECTOR_IMAGE_REPOSITORY", configgen.DefaultCollectorRepository), "collector image repository")
-	collectorImageTag := fs.String("collector-image-tag", envOrDefault("OKSG_COLLECTOR_IMAGE_TAG", configgen.DefaultCollectorTag), "collector image tag")
-	collectorImagePullPolicy := fs.String("collector-image-pull-policy", envOrDefault("OKSG_COLLECTOR_IMAGE_PULL_POLICY", configgen.DefaultCollectorPullPolicy), "collector image pull policy")
-	backendImageRepository := fs.String("backend-image-repository", envOrDefault("OKSG_BACKEND_IMAGE_REPOSITORY", configgen.DefaultBackendRepository), "backend image repository")
-	backendImageTag := fs.String("backend-image-tag", envOrDefault("OKSG_BACKEND_IMAGE_TAG", configgen.DefaultBackendTag), "backend image tag")
-	backendImagePullPolicy := fs.String("backend-image-pull-policy", envOrDefault("OKSG_BACKEND_IMAGE_PULL_POLICY", configgen.DefaultBackendPullPolicy), "backend image pull policy")
+	collectorImageRepository := fs.String("collector-image-repository", envOrDefault("OKSG_COLLECTOR_IMAGE_REPOSITORY", ""), "collector image repository override")
+	collectorImageTag := fs.String("collector-image-tag", envOrDefault("OKSG_COLLECTOR_IMAGE_TAG", ""), "collector image tag override")
+	collectorImagePullPolicy := fs.String("collector-image-pull-policy", envOrDefault("OKSG_COLLECTOR_IMAGE_PULL_POLICY", ""), "collector image pull policy override")
+	backendImageRepository := fs.String("backend-image-repository", envOrDefault("OKSG_BACKEND_IMAGE_REPOSITORY", ""), "backend image repository override")
+	backendImageTag := fs.String("backend-image-tag", envOrDefault("OKSG_BACKEND_IMAGE_TAG", ""), "backend image tag override")
+	backendImagePullPolicy := fs.String("backend-image-pull-policy", envOrDefault("OKSG_BACKEND_IMAGE_PULL_POLICY", ""), "backend image pull policy override")
+	frontendImageRepository := fs.String("frontend-image-repository", envOrDefault("OKSG_FRONTEND_IMAGE_REPOSITORY", ""), "frontend image repository override")
+	frontendImageTag := fs.String("frontend-image-tag", envOrDefault("OKSG_FRONTEND_IMAGE_TAG", ""), "frontend image tag override")
+	frontendImagePullPolicy := fs.String("frontend-image-pull-policy", envOrDefault("OKSG_FRONTEND_IMAGE_PULL_POLICY", ""), "frontend image pull policy override")
+	storageBackend := fs.String("storage-backend", envOrDefault("OKSG_DEPLOY_STORAGE_BACKEND", ""), "storage backend override: memory or external")
+	postgresqlMode := fs.String("postgresql-mode", envOrDefault("OKSG_DEPLOY_POSTGRESQL_MODE", ""), "external PostgreSQL mode: bundled or remote")
+	postgresqlDSN := fs.String("postgresql-dsn", envOrDefault("OKSG_POSTGRES_DSN", ""), "remote PostgreSQL DSN override")
+	victoriaMetricsMode := fs.String("victoriametrics-mode", envOrDefault("OKSG_DEPLOY_VICTORIAMETRICS_MODE", ""), "external VictoriaMetrics mode: bundled or remote")
+	victoriaMetricsURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "remote VictoriaMetrics URL override")
+	collectorDebug := fs.Bool("collector-debug", collectorDebugDefault, "enable development-only Collector debug output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -122,9 +138,6 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	}
 
 	activeNamespace := *namespace
-	if *helmNamespace != "" {
-		activeNamespace = *helmNamespace
-	}
 
 	valuesPath := *valuesOutputPath
 	resolvedPlanPath := coalesce(*resolvedPlanOutputPath, defaultResolvedPlanPath(valuesPath))
@@ -136,20 +149,16 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 		DryRun:       *helmDryRun,
 		RenderedPath: *renderedOutputPath,
 	}
-	generatorOptions := configgen.GeneratorOptions{
-		CollectorImage: configgen.ImageValues{
-			Repository: *collectorImageRepository,
-			Tag:        *collectorImageTag,
-			PullPolicy: *collectorImagePullPolicy,
+	generatorOptions := configgen.GeneratorOptions{Runtime: configgen.RuntimeSettings{
+		CollectorImage: configgen.ImageValues{Repository: *collectorImageRepository, Tag: *collectorImageTag, PullPolicy: *collectorImagePullPolicy},
+		BackendImage:   configgen.ImageValues{Repository: *backendImageRepository, Tag: *backendImageTag, PullPolicy: *backendImagePullPolicy},
+		FrontendImage:  configgen.ImageValues{Repository: *frontendImageRepository, Tag: *frontendImageTag, PullPolicy: *frontendImagePullPolicy},
+		Storage: configgen.StorageSettings{
+			Backend:         configgen.StorageBackend(*storageBackend),
+			PostgreSQL:      configgen.StoreSettings{Mode: configgen.StoreMode(*postgresqlMode), Endpoint: *postgresqlDSN},
+			VictoriaMetrics: configgen.StoreSettings{Mode: configgen.StoreMode(*victoriaMetricsMode), Endpoint: *victoriaMetricsURL},
 		},
-		BackendImage: configgen.ImageValues{
-			Repository: *backendImageRepository,
-			Tag:        *backendImageTag,
-			PullPolicy: *backendImagePullPolicy,
-		},
-		ReleaseName: *releaseName,
-		ChartPath:   *chartPath,
-	}
+	}}
 
 	logger.Info("starting command",
 		logging.String("mode", *mode),
@@ -183,7 +192,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = newCommandPlanner(activeNamespace)
+			deps.planner = newCommandPlanner(activeNamespace, *collectorDebug)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator(generatorOptions)
@@ -229,7 +238,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = newCommandPlanner(activeNamespace)
+			deps.planner = newCommandPlanner(activeNamespace, *collectorDebug)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator(generatorOptions)
@@ -365,4 +374,16 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) (bool, error) {
+	value, found := os.LookupEnv(key)
+	if !found || value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean: %w", key, err)
+	}
+	return parsed, nil
 }

@@ -1,2 +1,2 @@
-// Package configgen renders discovery-driven OpenTelemetry collector manifests.
+// Package configgen renders discovery-driven Helm values for OpenTelemetry Collector workloads.
 package configgen

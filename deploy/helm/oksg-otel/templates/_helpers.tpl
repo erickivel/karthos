@@ -1,9 +1,29 @@
 {{- define "oksg-otel.name" -}}
-{{- default .Chart.Name .Values.global.releaseName | trunc 63 | trimSuffix "-" -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "oksg-otel.namespace" -}}
-{{- default .Release.Namespace .Values.namespace.name -}}
+{{- .Release.Namespace -}}
+{{- end -}}
+
+{{- define "oksg-otel.agentName" -}}
+{{- printf "%s-agent" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "oksg-otel.gatewayName" -}}
+{{- printf "%s-gateway" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "oksg-otel.backendName" -}}
+{{- printf "%s-backend" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "oksg-otel.frontendName" -}}
+{{- printf "%s-frontend" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "oksg-otel.frontendConfigName" -}}
+{{- printf "%s-frontend-nginx" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "oksg-otel.labels" -}}
@@ -36,27 +56,11 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
 {{- define "oksg-otel.gatewayChecksum" -}}
-{{- printf "%s:%s" .Values.gateway.collectorConfig (.Values.collectorDebug | toJson) | sha256sum -}}
+{{- .Values.gateway.collectorConfig | sha256sum -}}
 {{- end -}}
 
 {{- define "oksg-otel.agentChecksum" -}}
-{{- printf "%s:%s" .Values.agent.collectorConfig (.Values.collectorDebug | toJson) | sha256sum -}}
-{{- end -}}
-
-{{/* Render generated collector config, optionally attaching the OTel adapter's
-debug exporter to each selected pipeline. */}}
-{{- define "oksg-otel.collectorConfig" -}}
-{{- $context := .context -}}
-{{- $config := mustDeepCopy (.config | fromYaml) -}}
-{{- if $context.Values.collectorDebug.enabled -}}
-{{- $exporters := get $config "exporters" -}}
-{{- $_ := set $exporters $context.Values.collectorDebug.exporterID $context.Values.collectorDebug.exporterConfig -}}
-{{- $service := get $config "service" -}}
-{{- range $_, $pipeline := get $service "pipelines" -}}
-{{- $_ := set $pipeline "exporters" (append (get $pipeline "exporters") $context.Values.collectorDebug.exporterID) -}}
-{{- end -}}
-{{- end -}}
-{{- toYaml $config -}}
+{{- .Values.agent.collectorConfig | sha256sum -}}
 {{- end -}}
 
 {{/*

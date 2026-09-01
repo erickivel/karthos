@@ -1,8 +1,7 @@
-{{- if .Values.backend.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: oksg-backend
+  name: {{ include "oksg-otel.backendName" . }}
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
@@ -20,9 +19,9 @@ spec:
         app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
         app.kubernetes.io/component: backend
     spec:
-      serviceAccountName: oksg-backend
+      serviceAccountName: {{ include "oksg-otel.backendName" . }}
       containers:
-        - name: oksg-backend
+        - name: backend
           image: {{ include "oksg-otel.backendImage" . }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
           args:
@@ -51,10 +50,6 @@ spec:
             - name: OKSG_VICTORIAMETRICS_URL
               value: {{ include "oksg-otel.vmURL" . | quote }}
             {{- end }}
-          {{- range $key, $value := .Values.backend.runtimeEnv }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-          {{- end }}
           ports:
             - containerPort: {{ .Values.backend.grpcPort }}
               name: otlp-grpc
@@ -84,4 +79,3 @@ spec:
         - name: source-contract
           configMap:
             name: {{ include "oksg-otel.sourceContractName" . }}
-{{- end }}

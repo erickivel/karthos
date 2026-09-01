@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: oksg-frontend
+  name: {{ include "oksg-otel.frontendName" . }}
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "frontend") | nindent 4 }}
@@ -48,5 +48,5 @@ spec:
       volumes:
         - name: nginx-config
           configMap:
-            name: oksg-frontend-nginx
+            name: {{ include "oksg-otel.frontendConfigName" . }}
 {{- end }}

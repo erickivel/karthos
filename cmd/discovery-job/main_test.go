@@ -25,7 +25,7 @@ func TestRunPlanWritesResolvedSourcePlanBesideValues(t *testing.T) {
 		"--mode=plan",
 		"--capability-profile=" + profilePath,
 		"--values-output=" + valuesPath,
-	}, dependencies{planner: newCommandPlanner("oksg-system"), generator: defaultGenerator(configgen.GeneratorOptions{})})
+	}, dependencies{planner: newCommandPlanner("oksg-system", false), generator: defaultGenerator(configgen.GeneratorOptions{})})
 	require.NoError(t, err)
 
 	values, err := os.ReadFile(valuesPath)
@@ -38,6 +38,53 @@ func TestRunPlanWritesResolvedSourcePlanBesideValues(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(resolved), "profile_fingerprint")
 	require.Contains(t, string(resolved), "metric_assignments")
+}
+
+func TestRunPlanCollectorDebugCompilesFixedDebugExporter(t *testing.T) {
+	tempDir := t.TempDir()
+	profilePath := filepath.Join(tempDir, "profile.json")
+	valuesPath := filepath.Join(tempDir, "otel-values.yaml")
+	require.NoError(t, os.WriteFile(profilePath, []byte(capabilityProfileJSON), 0o644))
+
+	err := run(context.Background(), []string{
+		"--mode=plan",
+		"--capability-profile=" + profilePath,
+		"--values-output=" + valuesPath,
+		"--collector-debug",
+	}, dependencies{})
+	require.NoError(t, err)
+
+	values, err := os.ReadFile(valuesPath)
+	require.NoError(t, err)
+	require.Contains(t, string(values), "debug/oksg:")
+	require.Contains(t, string(values), "verbosity: detailed")
+	require.Contains(t, string(values), "use_internal_logger: false")
+	require.Contains(t, string(values), "- stdout")
+}
+
+func TestRunPlanCollectorDebugEnvironmentCompilesFixedDebugExporter(t *testing.T) {
+	t.Setenv("OKSG_COLLECTOR_DEBUG", "true")
+	tempDir := t.TempDir()
+	profilePath := filepath.Join(tempDir, "profile.json")
+	valuesPath := filepath.Join(tempDir, "otel-values.yaml")
+	require.NoError(t, os.WriteFile(profilePath, []byte(capabilityProfileJSON), 0o644))
+
+	err := run(context.Background(), []string{
+		"--mode=plan",
+		"--capability-profile=" + profilePath,
+		"--values-output=" + valuesPath,
+	}, dependencies{})
+	require.NoError(t, err)
+
+	values, err := os.ReadFile(valuesPath)
+	require.NoError(t, err)
+	require.Contains(t, string(values), "debug/oksg:")
+}
+
+func TestRunRejectsInvalidCollectorDebugEnvironment(t *testing.T) {
+	t.Setenv("OKSG_COLLECTOR_DEBUG", "not-a-boolean")
+	err := run(context.Background(), []string{"--mode=discover"}, dependencies{})
+	require.ErrorContains(t, err, "OKSG_COLLECTOR_DEBUG must be a boolean")
 }
 
 func TestRunDiscoverWritesCapabilityProfile(t *testing.T) {
@@ -77,6 +124,92 @@ func TestRunDeployAppliesGeneratedHelmValuesAndWritesRequestedArtifact(t *testin
 	writtenValues, err := os.ReadFile(valuesPath)
 	require.NoError(t, err)
 	require.Equal(t, append(generatedValues, '\n'), writtenValues)
+}
+
+func TestRunDeployCompilesTypedExternalStorageAndFrontendImageSettings(t *testing.T) {
+	tempDir := t.TempDir()
+	profilePath := filepath.Join(tempDir, "profile.json")
+	valuesPath := filepath.Join(tempDir, "otel-values.yaml")
+	require.NoError(t, os.WriteFile(profilePath, []byte(capabilityProfileJSON), 0o644))
+
+	deployer := &recordingDeployer{}
+	err := run(context.Background(), []string{
+		"--mode=deploy",
+		"--capability-profile=" + profilePath,
+		"--values-output=" + valuesPath,
+		"--storage-backend=external",
+		"--postgresql-mode=bundled",
+		"--victoriametrics-mode=bundled",
+		"--frontend-image-repository=registry.example/oksg-frontend",
+		"--frontend-image-tag=e2e",
+		"--frontend-image-pull-policy=Always",
+	}, dependencies{deployer: deployer})
+	require.NoError(t, err)
+	require.Contains(t, string(deployer.appliedValues), "backend: external")
+	require.Contains(t, string(deployer.appliedValues), "postgresql:")
+	require.Contains(t, string(deployer.appliedValues), "enabled: true")
+	require.Contains(t, string(deployer.appliedValues), "repository: registry.example/oksg-frontend")
+	require.Contains(t, string(deployer.appliedValues), "tag: e2e")
+}
+
+func TestRunDeployRejectsIncompleteExternalStorageBeforeHelm(t *testing.T) {
+	tempDir := t.TempDir()
+	profilePath := filepath.Join(tempDir, "profile.json")
+	require.NoError(t, os.WriteFile(profilePath, []byte(capabilityProfileJSON), 0o644))
+
+	deployer := &recordingDeployer{}
+	err := run(context.Background(), []string{
+		"--mode=deploy",
+		"--capability-profile=" + profilePath,
+		"--storage-backend=external",
+		"--postgresql-mode=bundled",
+	}, dependencies{deployer: deployer})
+	require.ErrorContains(t, err, "victoriametrics mode is required for external storage")
+	require.Empty(t, deployer.appliedValues)
+}
+
+func TestRunDeployCompilesSupportedStorageModes(t *testing.T) {
+	testCases := []struct {
+		name       string
+		arguments  []string
+		expectText []string
+	}{
+		{
+			name:       "memory",
+			arguments:  []string{"--storage-backend=memory"},
+			expectText: []string{"backend: memory", "enabled: false"},
+		},
+		{
+			name:       "bundled PostgreSQL and VictoriaMetrics",
+			arguments:  []string{"--storage-backend=external", "--postgresql-mode=bundled", "--victoriametrics-mode=bundled"},
+			expectText: []string{"backend: external", "postgresql:", "victoriametrics:", "enabled: true"},
+		},
+		{
+			name:       "remote PostgreSQL and bundled VictoriaMetrics",
+			arguments:  []string{"--storage-backend=external", "--postgresql-mode=remote", "--postgresql-dsn=postgres://remote", "--victoriametrics-mode=bundled"},
+			expectText: []string{"dsn: postgres://remote", "victoriametrics:", "enabled: true"},
+		},
+		{
+			name:       "bundled PostgreSQL and remote VictoriaMetrics",
+			arguments:  []string{"--storage-backend=external", "--postgresql-mode=bundled", "--victoriametrics-mode=remote", "--victoriametrics-url=https://vm.example"},
+			expectText: []string{"postgresql:", "enabled: true", "url: https://vm.example"},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			profilePath := filepath.Join(tempDir, "profile.json")
+			require.NoError(t, os.WriteFile(profilePath, []byte(capabilityProfileJSON), 0o644))
+			deployer := &recordingDeployer{}
+			arguments := append([]string{"--mode=deploy", "--capability-profile=" + profilePath}, testCase.arguments...)
+
+			require.NoError(t, run(context.Background(), arguments, dependencies{deployer: deployer}))
+			for _, expected := range testCase.expectText {
+				require.Contains(t, string(deployer.appliedValues), expected)
+			}
+		})
+	}
 }
 
 type staticPlanner struct{ plan *deploymentPlan }

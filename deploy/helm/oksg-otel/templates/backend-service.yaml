@@ -1,8 +1,7 @@
-{{- if .Values.backend.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: oksg-backend
+  name: {{ include "oksg-otel.backendName" . }}
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
@@ -18,4 +17,3 @@ spec:
     - name: api
       port: {{ .Values.backend.service.apiPort }}
       targetPort: api
-{{- end }}

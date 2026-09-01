@@ -1,25 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["global", "namespace", "agent", "gateway", "backend", "collectorDebug", "storage", "rollout"],
+  "required": ["global", "agent", "gateway", "backend", "storage"],
+  "additionalProperties": false,
   "properties": {
     "global": {
       "type": "object",
-      "required": ["clusterName", "namespace", "releaseName", "image", "logging"],
+      "required": ["clusterName", "image", "logging"],
+      "additionalProperties": false,
       "properties": {
         "clusterName": { "type": "string", "minLength": 1 },
-        "namespace": { "type": "string", "minLength": 1 },
-        "releaseName": { "type": "string", "minLength": 1 },
-        "chartPath": { "type": "string" },
-        "image": {
-          "type": "object",
-          "required": ["repository", "tag", "pullPolicy"],
-          "properties": {
-            "repository": { "type": "string", "minLength": 1 },
-            "tag": { "type": "string", "minLength": 1 },
-            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
-          }
-        },
+        "image": { "$ref": "#/definitions/image" },
         "logging": { "$ref": "#/definitions/applicationLogging" }
       }
     },
@@ -27,16 +18,6 @@
       "type": "array",
       "items": { "type": "string", "enum": ["metric", "trace"] },
       "minItems": 1
-    },
-    "collectorDebug": {
-      "type": "object",
-      "required": ["enabled", "exporterID", "exporterConfig"],
-      "additionalProperties": false,
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "exporterID": { "type": "string", "minLength": 1 },
-        "exporterConfig": { "type": "object", "minProperties": 1 }
-      }
     },
     "storage": {
       "type": "object",
@@ -71,42 +52,44 @@
         ] }
       }]
     },
-    "namespace": {
+    "agent": {
       "type": "object",
-      "required": ["create", "name"],
+      "required": ["logging", "collectorConfig", "resources", "tolerations", "nodeSelector"],
+      "additionalProperties": false,
       "properties": {
-        "create": { "type": "boolean" },
-        "name": { "type": "string", "minLength": 1 }
+        "logging": { "$ref": "#/definitions/collectorLogging" },
+        "collectorConfig": { "type": "string", "minLength": 1 },
+        "resources": { "type": "object" },
+        "tolerations": { "type": "array", "items": { "type": "object" } },
+        "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     },
-    "agent": { "$ref": "#/definitions/componentDaemonSet" },
     "gateway": {
-      "allOf": [
-        { "$ref": "#/definitions/component" },
-        {
+      "type": "object",
+      "required": ["logging", "collectorConfig", "resources", "replicas", "service"],
+      "additionalProperties": false,
+      "properties": {
+        "logging": { "$ref": "#/definitions/collectorLogging" },
+        "collectorConfig": { "type": "string", "minLength": 1 },
+        "resources": { "type": "object" },
+        "replicas": { "type": "integer", "minimum": 1 },
+        "service": {
           "type": "object",
-          "required": ["replicas", "service"],
+          "required": ["type", "port", "httpPort"],
+          "additionalProperties": false,
           "properties": {
-            "replicas": { "type": "integer", "minimum": 1 },
-            "service": {
-              "type": "object",
-              "required": ["type", "port", "httpPort"],
-              "properties": {
-                "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
-                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-                "httpPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
-              }
-            }
+            "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "httpPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
           }
         }
-      ]
+      }
     },
     "backend": {
       "type": "object",
-      "required": ["enabled", "grpcPort", "image", "service", "statusStaleSeconds", "topologyFlushInterval", "runtimeEnv", "sourceContract", "resources"],
+      "required": ["grpcPort", "image", "service", "statusStaleSeconds", "topologyFlushInterval", "sourceContract", "resources"],
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
         "grpcPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "image": { "$ref": "#/definitions/image" },
         "service": {
@@ -120,10 +103,6 @@
         },
         "statusStaleSeconds": { "type": "integer", "minimum": 1 },
         "topologyFlushInterval": { "type": "string", "minLength": 1 },
-        "runtimeEnv": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
-        },
         "sourceContract": {
           "type": "object",
           "required": ["capabilityProfile", "sourcePlan"],
@@ -178,24 +157,38 @@
         "resources": { "type": "object" }
       }
     },
-    "secrets": {
+    "frontend": {
       "type": "object",
+      "required": ["enabled", "image", "replicas", "service", "resources"],
+      "additionalProperties": false,
       "properties": {
-        "existingSecretName": { "type": "string" }
+        "enabled": { "type": "boolean" },
+        "image": { "$ref": "#/definitions/image" },
+        "replicas": { "type": "integer", "minimum": 1 },
+        "service": {
+          "type": "object",
+          "required": ["type", "port"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
+        "resources": { "type": "object" }
       }
     },
-    "rollout": {
-      "type": "object",
-      "required": ["useConfigChecksum"],
-      "properties": {
-        "useConfigChecksum": { "type": "boolean" }
-      }
+    "postgresql": {
+      "type": "object"
+    },
+    "victoria-metrics-single": {
+      "type": "object"
     }
   },
   "definitions": {
     "image": {
       "type": "object",
       "required": ["repository", "tag", "pullPolicy"],
+      "additionalProperties": false,
       "properties": {
         "repository": { "type": "string", "minLength": 1 },
         "tag": { "type": "string", "minLength": 1 },
@@ -205,6 +198,7 @@
     "applicationLogging": {
       "type": "object",
       "required": ["format", "level"],
+      "additionalProperties": false,
       "properties": {
         "format": { "type": "string", "enum": ["json"] },
         "level": { "type": "string", "enum": ["info", "warn", "error"] }
@@ -213,48 +207,11 @@
     "collectorLogging": {
       "type": "object",
       "required": ["format", "level"],
+      "additionalProperties": false,
       "properties": {
         "format": { "type": "string", "enum": ["json"] },
         "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] }
       }
-    },
-    "component": {
-      "type": "object",
-      "required": ["enabled", "logging", "collectorConfig"],
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "logging": { "$ref": "#/definitions/collectorLogging" },
-        "featureGates": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 }
-        },
-        "runtimeEnv": {
-          "type": "object",
-          "additionalProperties": { "type": "string" }
-        },
-        "collectorConfig": { "type": "string", "minLength": 1 },
-        "resources": { "type": "object" }
-      }
-    },
-    "componentDaemonSet": {
-      "allOf": [
-        { "$ref": "#/definitions/component" },
-        {
-          "type": "object",
-          "required": ["hostNetwork"],
-          "properties": {
-            "hostNetwork": { "type": "boolean" },
-            "tolerations": {
-              "type": "array",
-              "items": { "type": "object" }
-            },
-            "nodeSelector": {
-              "type": "object",
-              "additionalProperties": { "type": "string" }
-            }
-          }
-        }
-      ]
     }
   }
 }

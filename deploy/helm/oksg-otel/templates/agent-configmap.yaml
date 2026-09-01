@@ -1,12 +1,10 @@
-{{- if .Values.agent.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: otel-collector-agent-config
+  name: {{ include "oksg-otel.agentName" . }}-config
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
 data:
   config.yaml: |
-{{ include "oksg-otel.collectorConfig" (dict "context" . "config" (required "agent.collectorConfig must be supplied by generated collector-plan values" .Values.agent.collectorConfig)) | indent 4 }}
-{{- end }}
+{{ required "agent.collectorConfig must be supplied by generated collector-plan values" .Values.agent.collectorConfig | indent 4 }}

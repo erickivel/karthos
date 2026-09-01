@@ -1,4 +1,3 @@
-{{- if .Values.gateway.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -31,6 +30,5 @@ roleRef:
   name: {{ printf "%s-gateway" (include "oksg-otel.name" .) }}
 subjects:
   - kind: ServiceAccount
-    name: otel-collector-gateway
+    name: {{ include "oksg-otel.gatewayName" . }}
     namespace: {{ include "oksg-otel.namespace" . }}
-{{- end }}

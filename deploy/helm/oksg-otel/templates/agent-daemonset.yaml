@@ -1,8 +1,7 @@
-{{- if .Values.agent.enabled }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: otel-collector-agent
+  name: {{ include "oksg-otel.agentName" . }}
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
@@ -17,22 +16,17 @@ spec:
         app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
         app.kubernetes.io/component: agent
       annotations:
-        {{- if .Values.rollout.useConfigChecksum }}
         checksum/config: {{ include "oksg-otel.agentChecksum" . }}
-        {{- end }}
     spec:
-      serviceAccountName: otel-collector-agent
-      hostNetwork: {{ .Values.agent.hostNetwork }}
-      dnsPolicy: {{ ternary "ClusterFirstWithHostNet" "ClusterFirst" .Values.agent.hostNetwork }}
+      serviceAccountName: {{ include "oksg-otel.agentName" . }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       containers:
-        - name: otel-collector-agent
+        - name: agent
           image: {{ include "oksg-otel.image" . }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           args:
             - --config=/conf/config.yaml
-            {{- if .Values.agent.featureGates }}
-            - --feature-gates={{ join "," .Values.agent.featureGates }}
-            {{- end }}
           env:
             - name: K8S_NODE_NAME
               valueFrom:
@@ -40,10 +34,8 @@ spec:
                   fieldPath: spec.nodeName
             - name: OTEL_LOG_LEVEL
               value: {{ .Values.agent.logging.level | quote }}
-          {{- range $key, $value := .Values.agent.runtimeEnv }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-          {{- end }}
+            - name: OKSG_GATEWAY_GRPC_ENDPOINT
+              value: {{ printf "%s:%d" (include "oksg-otel.gatewayName" .) (int .Values.gateway.service.port) | quote }}
           ports:
             - containerPort: 4317
               hostPort: 4317
@@ -79,7 +71,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: otel-collector-agent-config
+            name: {{ include "oksg-otel.agentName" . }}-config
         - name: hostfs
           hostPath:
             path: /
@@ -91,4 +83,3 @@ spec:
       tolerations:
 {{ toYaml . | indent 8 }}
       {{- end }}
-{{- end }}

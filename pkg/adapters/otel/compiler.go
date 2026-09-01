@@ -11,13 +11,13 @@ import (
 )
 
 const (
-	DefaultGatewayGRPCEndpoint = "otel-collector-gateway:4317"
 	DefaultGatewayHTTPEndpoint = "0.0.0.0:4318"
 	DefaultHealthEndpoint      = "0.0.0.0:13133"
 	backendGRPCEndpointEnv     = "${env:OKSG_BACKEND_GRPC_ENDPOINT}"
+	gatewayGRPCEndpointEnv     = "${env:OKSG_GATEWAY_GRPC_ENDPOINT}"
 	otlpGRPCExporter           = "otlp_grpc"
-	debugExporterID            = "debug/oksg"
 	oksgSourceTaggerProcessor  = "transform/oksg-source"
+	collectorDebugExporter     = "debug/oksg"
 )
 
 // kubeClusterV0156MetricDefaults is the complete metric inventory exposed by
@@ -39,14 +39,6 @@ var kubeClusterV0156MetricDefaults = []string{
 
 type BackendConfig struct {
 	Enabled bool
-}
-
-// DebugExporter is the OpenTelemetry-specific development diagnostic output.
-// Helm controls whether it is attached to generated pipelines; this adapter
-// owns its Collector component name and configuration shape.
-type DebugExporter struct {
-	ID     string
-	Config map[string]any
 }
 
 type CollectorConfig struct {
@@ -76,14 +68,25 @@ type Deployment struct {
 	Namespace      string
 	EnabledSignals []string
 	Backend        BackendConfig
-	DebugExporter  DebugExporter
 	AgentConfig    CollectorConfig
 	GatewayConfig  CollectorConfig
 }
 
-type Compiler struct{}
+// CompilerOptions are fixed OpenTelemetry adapter choices supplied by the
+// deployment command. They do not expose Collector configuration syntax.
+type CompilerOptions struct {
+	DebugEnabled bool
+}
+
+type Compiler struct {
+	options CompilerOptions
+}
 
 func NewCompiler() *Compiler { return &Compiler{} }
+
+func NewCompilerWithOptions(options CompilerOptions) *Compiler {
+	return &Compiler{options: options}
+}
 
 func (c *Compiler) Compile(plan collectorspec.CollectionPlan) (Deployment, error) {
 	if plan.Namespace == "" {
@@ -94,23 +97,27 @@ func (c *Compiler) Compile(plan collectorspec.CollectionPlan) (Deployment, error
 	}
 	agentConfig := compileAgent(plan.Agent)
 	gatewayConfig := compileGateway(plan.Gateway)
+	if c.options.DebugEnabled {
+		attachCollectorDebug(&agentConfig)
+		attachCollectorDebug(&gatewayConfig)
+	}
 	return Deployment{
 		ClusterName: plan.ClusterName, Namespace: plan.Namespace,
 		EnabledSignals: append([]string(nil), plan.EnabledSignals...),
 		Backend:        BackendConfig{Enabled: true},
-		DebugExporter:  debugExporter(),
 		AgentConfig:    agentConfig, GatewayConfig: gatewayConfig,
 	}, nil
 }
 
-func debugExporter() DebugExporter {
-	return DebugExporter{
-		ID: debugExporterID,
-		Config: map[string]any{
-			"verbosity":           "detailed",
-			"use_internal_logger": false,
-			"output_paths":        []string{"stdout"},
-		},
+func attachCollectorDebug(config *CollectorConfig) {
+	config.Exporters[collectorDebugExporter] = map[string]any{
+		"verbosity":           "detailed",
+		"use_internal_logger": false,
+		"output_paths":        []string{"stdout"},
+	}
+	for pipelineName, pipeline := range config.Service.Pipelines {
+		pipeline.Exporters = append(pipeline.Exporters, collectorDebugExporter)
+		config.Service.Pipelines[pipelineName] = pipeline
 	}
 }
 
@@ -216,7 +223,7 @@ func otlpReceiver() map[string]any {
 	return map[string]any{"protocols": map[string]any{"grpc": map[string]any{"endpoint": "0.0.0.0:4317"}, "http": map[string]any{"endpoint": DefaultGatewayHTTPEndpoint}}}
 }
 func agentExporter() map[string]any {
-	return map[string]any{"endpoint": DefaultGatewayGRPCEndpoint, "tls": map[string]any{"insecure": true}}
+	return map[string]any{"endpoint": gatewayGRPCEndpointEnv, "tls": map[string]any{"insecure": true}}
 }
 func gatewayExporter() map[string]any {
 	return map[string]any{"endpoint": backendGRPCEndpointEnv, "tls": map[string]any{"insecure": true}, "sending_queue": map[string]any{"enabled": true}, "retry_on_failure": map[string]any{"enabled": true}}

@@ -1,8 +1,5 @@
 global:
   clusterName: default-cluster
-  namespace: oksg-system
-  releaseName: oksg-otel
-  chartPath: ./deploy/helm/oksg-otel
   image:
     repository: otel/opentelemetry-collector-contrib
     tag: 0.156.0
@@ -12,29 +9,13 @@ global:
     level: info
 
 enabledSignals: []
-collectorDebug:
-  enabled: false
-  exporterID: debug/oksg
-  exporterConfig:
-    verbosity: detailed
-    use_internal_logger: false
-    output_paths:
-      - stdout
-namespace:
-  create: true
-  name: oksg-system
-
 # Collector configuration is intentionally absent from chart defaults. It is
 # generated from a discovered profile by collector/configgen and required by
 # the ConfigMap templates.
 agent:
-  enabled: true
-  hostNetwork: true
   logging:
     format: json
     level: info
-  featureGates: []
-  runtimeEnv: {}
   resources: {}
   tolerations:
     - key: node-role.kubernetes.io/control-plane
@@ -43,12 +24,9 @@ agent:
   nodeSelector: {}
 
 gateway:
-  enabled: true
   logging:
     format: json
     level: info
-  featureGates: []
-  runtimeEnv: {}
   replicas: 1
   service:
     type: ClusterIP
@@ -57,7 +35,6 @@ gateway:
   resources: {}
 
 backend:
-  enabled: true
   grpcPort: 4317
   image:
     repository: oksg-backend
@@ -68,7 +45,6 @@ backend:
     apiPort: 8080
   statusStaleSeconds: 300
   topologyFlushInterval: "60s"
-  runtimeEnv: {}
   sourceContract:
     capabilityProfile: {}
     sourcePlan: {}
@@ -108,8 +84,3 @@ frontend:
     type: ClusterIP
     port: 80
   resources: {}
-
-secrets:
-  existingSecretName: ""
-rollout:
-  useConfigChecksum: true

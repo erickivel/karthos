@@ -25,16 +25,38 @@ func TestCompileUsesDerivedServiceGraphOnlyWhenRequested(t *testing.T) {
 	require.Equal(t, []string{otlpGRPCExporter, "service_graph"}, deployment.GatewayConfig.Service.Pipelines["traces"].Exporters)
 }
 
-func TestCompileProvidesDevelopmentDebugExporterSpecification(t *testing.T) {
+func TestCompileOmitsCollectorDebugByDefault(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
 		Namespace:   "oksg-system",
+		Agent:       collectorspec.AgentRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true, Traces: true}},
+		Gateway:     collectorspec.GatewayRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true, Traces: true}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, "debug/oksg", deployment.DebugExporter.ID)
-	require.Equal(t, "detailed", deployment.DebugExporter.Config["verbosity"])
-	require.Equal(t, false, deployment.DebugExporter.Config["use_internal_logger"])
-	require.Equal(t, []string{"stdout"}, deployment.DebugExporter.Config["output_paths"])
+	require.NotContains(t, deployment.AgentConfig.Exporters, "debug/oksg")
+	require.NotContains(t, deployment.GatewayConfig.Exporters, "debug/oksg")
+}
+
+func TestCompileAddsFixedCollectorDebugToEveryEnabledPipeline(t *testing.T) {
+	deployment, err := NewCompilerWithOptions(CompilerOptions{DebugEnabled: true}).Compile(collectorspec.CollectionPlan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
+		Agent:       collectorspec.AgentRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true, Traces: true}},
+		Gateway:     collectorspec.GatewayRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true, Traces: true}},
+	})
+	require.NoError(t, err)
+
+	wantExporter := map[string]any{
+		"verbosity":           "detailed",
+		"use_internal_logger": false,
+		"output_paths":        []string{"stdout"},
+	}
+	for _, config := range []CollectorConfig{deployment.AgentConfig, deployment.GatewayConfig} {
+		require.Equal(t, wantExporter, config.Exporters["debug/oksg"])
+		for pipelineName, pipeline := range config.Service.Pipelines {
+			require.Containsf(t, pipeline.Exporters, "debug/oksg", "expected %s pipeline to emit debug batches", pipelineName)
+		}
+	}
 }
 
 func TestCompileGatewayUsesReservedBackendEndpointEnvironment(t *testing.T) {
@@ -46,6 +68,17 @@ func TestCompileGatewayUsesReservedBackendEndpointEnvironment(t *testing.T) {
 
 	exporter := deployment.GatewayConfig.Exporters[otlpGRPCExporter].(map[string]any)
 	require.Equal(t, "${env:OKSG_BACKEND_GRPC_ENDPOINT}", exporter["endpoint"])
+}
+
+func TestCompileAgentUsesReservedGatewayEndpointEnvironment(t *testing.T) {
+	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
+	})
+	require.NoError(t, err)
+
+	exporter := deployment.AgentConfig.Exporters[otlpGRPCExporter].(map[string]any)
+	require.Equal(t, "${env:OKSG_GATEWAY_GRPC_ENDPOINT}", exporter["endpoint"])
 }
 
 func TestCompileRetainsIstioProtocolCounters(t *testing.T) {
