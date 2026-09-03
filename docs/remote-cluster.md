@@ -10,14 +10,15 @@ CLUSTER_PROFILE=<your-name>    # k3s on a remote Ubuntu host over SSH
 ```
 
 `CLUSTER_PROFILE` names a file under `.env.d/<name>.env` that carries the
-engine, registry, kubeconfig path, and engine-specific knobs.
+engine, kubeconfig path, and engine-specific knobs. The E2E registry is always
+`localhost:5001` in both supported cells.
 
 ## Key Takeaways
 
 For day-to-day use, three things are worth remembering:
 
 1. **One variable switches everything.** `CLUSTER_PROFILE` in `.env` picks
-   the engine, registry path, kubeconfig, and (when remote) the SSH host.
+   the engine, kubeconfig, and (when remote) the SSH host.
    No other file or task needs editing to flip cells.
 2. **Image tags never change between cells.** kind pushes to its local
    registry. For k3s+ssh, the harness streams the locally built image over
@@ -43,7 +44,6 @@ For day-to-day use, three things are worth remembering:
               │ .env.d/X.env            │
               │   CLUSTER_ENGINE=...    │   (kind | k3s)
               │   CLUSTER_LOCATION=...  │   (local | ssh)
-              │   REGISTRY_HOST=...     │
               │   KUBECONFIG=...        │
               │   IMAGE_TAG=...         │
               │   [engine-specific]     │
@@ -88,9 +88,9 @@ directory + new case in those branches; nothing else moves.
 | `k3s` + `ssh` (single-node)   | **Tested** by this change       |
 | Anything else (k3d, minikube, kubeadm, EKS/GKE, multi-node k3s, etc.) | Out of scope — provider hooks are open, scripts are not |
 
-The two supported cells share the same logical registry URL
-(`REGISTRY_HOST=localhost:5001`), so image tags and Helm values are
-identical across them.
+The two supported cells use the fixed registry URL `localhost:5001`; profiles
+cannot override it. Image tags and Helm values are therefore identical across
+the supported cells.
 
 ## Cell: `kind` + `local` (default)
 
@@ -283,12 +283,12 @@ to inspect the remote registry from the laptop.
        ─────────────                              ───────────────
 
  VARIANT=base task test:e2e:deploy                task test:cluster:tunnel
-       │ docker build → docker save → SSH load/push     │ ssh -N -L 5001:…
+       │ fixture docker build → docker save → SSH load/push │ ssh -N -L 5001:…
        │                                                │ (registry inspection only)
        │ kubectl apply                                  │
        │                                                │
  task test:e2e:apply-otel                              │
-       │ discovery-job --mode=deploy → Helm             │
+       │ platform image build/publish → discovery-job --mode=deploy → Helm │
        │                                                │
  kubectl port-forward 18081:8080 &                      │
        │                                                │
@@ -305,6 +305,7 @@ task test:cluster:doctor      # confirms SSH, k3s, server registry, kubectl, TLS
 
 # Pane 1, normal work:
 VARIANT=base task test:e2e:deploy
+# apply-otel publishes the backend/frontend images through this cell first.
 task test:e2e:apply-otel
 task test:e2e:verify
 kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080 &

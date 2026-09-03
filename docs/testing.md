@@ -75,6 +75,9 @@ What each stage does:
 
 - `test:e2e:discover`
   writes `bin/e2e/profile.json`
+- `test:e2e:prepare-platform-images`
+  builds and publishes backend/frontend images through the active cell's image
+  transport; fixture deployment never builds those platform images
 - `test:e2e:apply-otel`
   runs `discovery-job --mode=deploy`, which self-contains planning, compiles dynamic values, and uses
   Helm to deploy agent, gateway, backend, and frontend with the chart-owned
@@ -82,13 +85,16 @@ What each stage does:
 - `test:e2e:verify`
   checks Helm status, pod readiness including the frontend rollout, and recent agent/gateway/backend logs
 
-`test:e2e:deploy` waits for the demo app Deployments and pods before discovery
+`test:e2e:deploy` builds and publishes fixture images only, then waits for the
+demo app Deployments and pods before discovery
 runs. This keeps capability profiles from capturing terminating rollout pods
 that would later appear as duplicate topology cards.
 
 `test:e2e:plan` remains available only to inspect generated values or render
 output manually. Live scenarios intentionally use the single deploy path:
-fixture deployment → discovery → `e2e:apply-otel` → verification.
+fixture deployment → discovery → `e2e:apply-otel` → verification. The latter
+first runs `e2e:prepare-platform-images`, so the deployed release never relies
+on fixture deployment to build a platform image.
 
 ## Scenario Expectations
 
@@ -113,17 +119,6 @@ VictoriaMetrics/API assertions. The `e2e:scenario:prometheus` task invokes the
 standalone runner, warms the cumulative servicegraph baseline, sends 30 normal
 and 10 intentional `/error` requests, and verifies the resulting increases,
 window rates, active rates, units, metadata, and duration.
-
-It is a deployment-compatibility scenario, not retired-Pod lifecycle proof.
-The retired `runs_on` contract is unit-tested in this repository and is
-accepted end-to-end by the deadline-backed E3 evaluation: capture the exact
-edge and its baseline `last_seen`, observe its terminal Pod state, retain raw
-timestamped polls through the 60-second deadline, and require that the edge is
-absent from the latest graph while still queryable with `metadata.retired_at`
-and without an advancing `last_seen`. Then create a same-name replacement and
-require its UID-versioned assignment in the latest graph while the old one
-remains audit-queryable. This is not historical graph replay:
-there is no `graph?at=` API in the POC.
 
 Expected:
 
@@ -231,6 +226,10 @@ Recommended local port convention during e2e work:
 - `18081` -> backend REST API
 - `13133` -> backend health checks
 
+The debug and traffic tasks never terminate a process occupying one of these
+ports. They fail with the conflicting port and the Task variable to override,
+for example `task test:e2e:traffic GATEWAY_LOCAL_PORT=18082`.
+
 ## Frontend Topology QA
 
 The topology Playwright suite runs against the live frontend and a
@@ -277,10 +276,15 @@ volume capacity and available samples.
 
 Expected:
 
-- no Prometheus targets are present
-- generated Helm values keep only the `kubelet_stats` receiver instance
-- agent, gateway, and backend still deploy successfully
-- backend logs still show infrastructure-oriented envelopes received through the fallback path
+- preparation first removes every E2E-owned workload and, if present, the
+  E2E-owned Istio control plane; it refuses to remove an externally owned
+  Istio installation and explains how to use a clean cluster
+- `kubernetes.structure`, `kubelet`, `host-os`, and `kube-cluster` are
+  available; Prometheus, Istio, and servicegraph are unavailable
+- no Prometheus targets are present and the resolved source plan selects only
+  `kubelet`, `host-os`, and `kube-cluster`
+- generated values contain the direct collector requirements (`kubeletstats`,
+  `hostmetrics`, and `k8s_cluster`), and the full collection plane deploys
 
 ## Logs and Failure Inspection
 
@@ -300,6 +304,6 @@ When changing the e2e flow, keep log inspection and rendered Helm artifacts easy
 ```bash
 task test:e2e:reset       # remove the Helm-owned OTel release and source contract
 task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
-task test:e2e:reset-all   # remove both OTel collectors and all demo fixtures
+task test:e2e:reset-all   # remove release, fixtures, and E2E-owned Istio
 task test:e2e:teardown    # destroy the kind cluster and local registry
 ```

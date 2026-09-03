@@ -83,12 +83,10 @@ adapter := NewDiscoveryAdapter(client, "kind-test")
 adapter := NewDiscoveryAdapter(client, clusterName)
 ```
 
-```yaml
-# BAD: hardcoded registry name
+```bash
+# E2E transport contract: both supported cells use this fixed registry.
 docker inspect oksg-kind-registry
-
-# GOOD: use variable reference
-docker inspect {{.KIND_REGISTRY_NAME}}
+# Images are published through localhost:5001; no registry override is supported.
 ```
 
 ## Architecture Boundaries

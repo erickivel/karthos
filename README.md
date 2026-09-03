@@ -69,13 +69,13 @@ task test:e2e:setup                       # one control-plane + one worker node
 
 task test:e2e:scenario:prometheus         # Prometheus discovery + servicegraph traces
 task test:e2e:scenario:istio              # Istio sidecar mesh scrape
-task test:e2e:scenario:fallback           # bare services, kubeletstats only
+task test:e2e:scenario:fallback           # strict direct-source baseline
 ```
 
 Targeting a remote k3s cluster (or any other supported cell) is a
 `CLUSTER_PROFILE` switch in `.env` — see [docs/remote-cluster.md](docs/remote-cluster.md).
 
-Step-by-step (`deploy → discover → plan → apply-otel → verify`) is documented
+Step-by-step (`fixture deploy → discover → apply-otel → verify`) is documented
 in [docs/testing.md](docs/testing.md).
 
 After deploying, generate traffic and inspect:
@@ -109,7 +109,7 @@ forwards `/api/*` to `http://localhost:18081`.
 ```bash
 task test:e2e:reset           # remove the Helm-owned OTel release and source contract
 task test:e2e:reset-apps      # remove demo fixtures
-task test:e2e:reset-all       # both
+task test:e2e:reset-all       # both, plus an E2E-owned Istio control plane
 task test:e2e:teardown        # destroy cluster and registry
 ```
 
