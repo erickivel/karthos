@@ -52,14 +52,19 @@ tasks:
     desc: Run repository-owned nested fixture test suites
     cmds:
       - bash test/e2e/cluster/image_test.sh
+      - bash test/e2e/cluster/registry_identity_test.sh
+      - bash test/e2e/cluster/istio_test.sh
+      - bash test/e2e/cluster/reset_all_test.sh
       - bash test/e2e/apps/deploy_test.sh
+      - bash test/e2e/prepare_platform_images_test.sh
+      - bash test/e2e/scenarios/no-telemetry/run_test.sh
       - bash test/e2e/scenarios/istio-available/run_test.sh
       - bash test/e2e/scenarios/prometheus-available/run_test.sh
       - bash test/e2e/scenarios/source-contract-rejection/run_test.sh
-      - bash test/e2e/scripts/deployment_identity_test.sh
       - go -C test/e2e/apps/instrumented/gateway-go test ./...
       - go -C test/e2e/apps/mesh-protocol-go test ./...
       - bash test/e2e/scripts/traffic_schedule_test.sh
+      - bash test/e2e/scripts/port_forward_cleanup_test.sh
       - python3 test/e2e/scenarios/istio-available/verify_protocol_metrics_test.py
 
   build:

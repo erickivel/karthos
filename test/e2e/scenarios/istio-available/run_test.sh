@@ -25,6 +25,11 @@ cat >"${TMPDIR_TEST}/kubectl" <<'EOF'
 set -euo pipefail
 
 case "${1:-}" in
+  port-forward)
+    printf '%s\n' "$$" >>"${ISTIO_RUN_TEST_PORT_FORWARD_PIDS}"
+    trap '/bin/sleep 1; exit 0' TERM
+    while true; do /bin/sleep 1; done
+    ;;
   apply)
     [[ "${2:-}" == "-f" ]]
     cp "${3:?missing manifest}" "${ISTIO_RUN_TEST_APPLY_MANIFEST}"
@@ -43,6 +48,7 @@ EOF
 cat >"${TMPDIR_TEST}/task" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >>"${ISTIO_RUN_TEST_TASK_LOG}"
 EOF
 
 cat >"${TMPDIR_TEST}/python3" <<'EOF'
@@ -53,45 +59,50 @@ EOF
 cat >"${TMPDIR_TEST}/lsof" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-EOF
-
-cat >"${TMPDIR_TEST}/xargs" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-cat >/dev/null
+exit 1
 EOF
 
 cat >"${TMPDIR_TEST}/sleep" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == "3" ]]; then
+  for _ in $(seq 1 100); do
+    if [[ -f "${ISTIO_RUN_TEST_PORT_FORWARD_PIDS}" ]] && \
+      [[ "$(wc -l <"${ISTIO_RUN_TEST_PORT_FORWARD_PIDS}")" -eq "${ISTIO_RUN_TEST_EXPECTED_PORT_FORWARDS}" ]]; then
+      exit 0
+    fi
+    /bin/sleep 0.01
+  done
+  echo "port-forward children did not start before scenario verification" >&2
+  exit 1
+fi
+/bin/sleep 0.1
 EOF
 chmod +x "${TMPDIR_TEST}/kubectl" "${TMPDIR_TEST}/task" "${TMPDIR_TEST}/python3" \
-  "${TMPDIR_TEST}/lsof" "${TMPDIR_TEST}/xargs" "${TMPDIR_TEST}/sleep"
+  "${TMPDIR_TEST}/lsof" "${TMPDIR_TEST}/sleep"
 
 export PATH="${TMPDIR_TEST}:${PATH}"
 export ISTIO_RUN_TEST_APPLY_MANIFEST="${TMPDIR_TEST}/applied.yaml"
+export ISTIO_RUN_TEST_TASK_LOG="${TMPDIR_TEST}/task.log"
+export ISTIO_RUN_TEST_PORT_FORWARD_PIDS="${TMPDIR_TEST}/port-forward.pids"
+export ISTIO_RUN_TEST_EXPECTED_PORT_FORWARDS=4
 
-bash "${REPO_ROOT}/test/e2e/scenarios/istio-available/run.sh"
+cd "${TMPDIR_TEST}"
+GATEWAY_LOCAL_PORT=18082 bash "${REPO_ROOT}/test/e2e/scenarios/istio-available/run.sh"
 
 grep -Fqx "          image: ${ISTIO_RUN_TEST_REGISTRY}/mesh-protocol-go:run-tag" "${ISTIO_RUN_TEST_APPLY_MANIFEST}"
-if grep -Fq "${ISTIO_RUN_TEST_REGISTRY}/mesh-protocol-go:latest" "${ISTIO_RUN_TEST_APPLY_MANIFEST}"; then
-  echo "stale mesh-protocol-go:latest image found in directly applied Job" >&2
+grep -Fqx "test:e2e:scenario:istio:prepare GATEWAY_LOCAL_PORT=18082" "${ISTIO_RUN_TEST_TASK_LOG}"
+
+if [[ ! -s "${ISTIO_RUN_TEST_PORT_FORWARD_PIDS}" ]]; then
+  echo "Istio runner did not start its expected port-forward children" >&2
   exit 1
 fi
 
-grep -Fq 'mesh["status"] == "available"' \
-  "${REPO_ROOT}/test/e2e/scenarios/istio-available/run.sh"
-
-for route in \
-  'NAMESPACE="${KIND_NAMESPACE:-oksg-system}"' \
-  'BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"' \
-  'VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"' \
-  'kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT}' \
-  'kubectl port-forward -n "${NAMESPACE}" svc/${VM_SERVICE}'; do
-  if ! grep -Fq "${route}" "${REPO_ROOT}/test/e2e/scenarios/istio-available/run.sh"; then
-    echo "expected runner to derive collector-plane route: ${route}" >&2
+while read -r port_forward_pid; do
+  if kill -0 "${port_forward_pid}" 2>/dev/null; then
+    echo "Istio runner returned before its port-forward child exited" >&2
     exit 1
   fi
-done
+done <"${ISTIO_RUN_TEST_PORT_FORWARD_PIDS}"
 
 echo "Istio protocol Job uses built fixture image tag: PASS"

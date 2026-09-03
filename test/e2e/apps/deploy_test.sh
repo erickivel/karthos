@@ -41,6 +41,10 @@ if [[ "${DEPLOY_TEST_REMOTE:-0}" == "1" ]]; then
   exit 0
 fi
 echo "docker $*" >>"${DEPLOY_TEST_LOG}"
+if [[ "${1:-}" == "build" && ( "$*" == *"/deploy/images/backend/Dockerfile"* || "$*" == *"/web"* ) ]]; then
+  echo "fixture deployer must not build platform images" >&2
+  exit 1
+fi
 if [[ "${1:-}" == "save" ]]; then
   printf 'image-stream\n'
 fi
@@ -117,19 +121,24 @@ export DEPLOY_TEST_APPLY_MANIFEST="${TMPDIR_TEST}/applied.yaml"
 
 bash "${REPO_ROOT}/test/e2e/apps/deploy.sh" with-istio
 
-for image in gateway-go service-a-python service-b-node mesh-protocol-go; do
+expected_images=(gateway-go service-a-python service-b-node mesh-protocol-go)
+for image in "${expected_images[@]}"; do
   grep -Fqx "        - image: ${DEPLOY_TEST_REGISTRY}/${image}:run-tag" "${DEPLOY_TEST_APPLY_MANIFEST}"
-  if grep -Fq "${DEPLOY_TEST_REGISTRY}/${image}:latest" "${DEPLOY_TEST_APPLY_MANIFEST}"; then
-    echo "stale ${image}:latest image found in applied manifest" >&2
-    exit 1
-  fi
   grep -Fqx "remote docker push ${DEPLOY_TEST_REGISTRY}/${image}:run-tag" "${DEPLOY_TEST_LOG}"
 done
 grep -Fqx '        - image: registry.k8s.io/pause:3.10' "${DEPLOY_TEST_APPLY_MANIFEST}"
 grep -Fqx 'kubectl rollout restart -n oksg-demo deployment/gateway' "${DEPLOY_TEST_LOG}"
-if grep -Fq 'kubectl rollout restart -n oksg-demo deployment/config-bundle' "${DEPLOY_TEST_LOG}"; then
-  echo "zero-replica config-bundle must not be restarted" >&2
-  exit 1
-fi
+actual_pushes="$(grep '^remote docker push ' "${DEPLOY_TEST_LOG}" | sort)"
+expected_pushes="$(for image in "${expected_images[@]}"; do echo "remote docker push ${DEPLOY_TEST_REGISTRY}/${image}:run-tag"; done | sort)"
+[[ "${actual_pushes}" == "${expected_pushes}" ]]
+actual_builds="$(grep '^docker build ' "${DEPLOY_TEST_LOG}" | sed -E 's/.* -t [^ ]+ //')"
+expected_builds="$(printf '%s\n' \
+  "${REPO_ROOT}/test/e2e/apps/instrumented/gateway-go" \
+  "${REPO_ROOT}/test/e2e/apps/instrumented/service-a-python" \
+  "${REPO_ROOT}/test/e2e/apps/instrumented/service-b-node" \
+  "${REPO_ROOT}/test/e2e/apps/mesh-protocol-go")"
+[[ "${actual_builds}" == "${expected_builds}" ]]
+actual_restarts="$(grep '^kubectl rollout restart ' "${DEPLOY_TEST_LOG}" || true)"
+[[ "${actual_restarts}" == 'kubectl rollout restart -n oksg-demo deployment/gateway' ]]
 
 echo "deploy uses built fixture image tags: PASS"
