@@ -14,7 +14,7 @@ metadata:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "namespaces", "services", "replicationcontrollers", "resourcequotas"]
+    resources: ["nodes", "namespaces", "services", "replicationcontrollers"]
     verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["pods"]

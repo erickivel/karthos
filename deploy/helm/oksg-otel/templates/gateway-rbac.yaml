@@ -6,6 +6,8 @@ metadata:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
 rules:
   - apiGroups: [""]
+    # The pinned k8s_cluster receiver watches resourcequotas even though OKSG
+    # explicitly disables the unsupported ResourceQuota metric family.
     resources: ["nodes", "pods", "namespaces", "services", "endpoints", "resourcequotas", "replicationcontrollers"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]

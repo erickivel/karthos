@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -130,6 +131,22 @@ func TestModuleBuildsWorkloadChainsFromOwnerReferences(t *testing.T) {
 	contains := edgesByRelation(snapshot.Graph.Edges, topology.RelContains)
 	require.True(t, hasEdge(contains, deploymentID, replicaSetID))
 	require.True(t, hasEdge(contains, replicaSetID, podID))
+}
+
+func TestModuleKeepsHPANamespaceContained(t *testing.T) {
+	client := fake.NewClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
+		&autoscalingv2.HorizontalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: "api-scale", Namespace: "demo"}},
+	)
+	graphs := persistence.NewInMemoryGraphStore()
+	module := New(client, "test", graphs, persistence.NewInMemoryEntityRegistry())
+	require.NoError(t, module.Refresh(context.Background()))
+
+	snapshot, err := graphs.GetLatest(context.Background())
+	require.NoError(t, err)
+	namespaceID := entities.ComputeEntityID(entities.KindNamespace, "test", "demo")
+	hpaID := entities.NewHPA("test", "demo", "api-scale", nil).ID()
+	require.True(t, hasEdge(edgesByRelation(snapshot.Graph.Edges, topology.RelContains), namespaceID, hpaID))
 }
 
 func hasEdge(edges []topology.Edge, source, target entities.EntityID) bool {

@@ -12,7 +12,6 @@ export type EntityKind =
   | 'secret'
   | 'pvc'
   | 'hpa'
-  | 'resourcequota'
 
 export type RelationType =
   | 'calls'

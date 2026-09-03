@@ -78,7 +78,6 @@ type inventory struct {
 	namespaces []entities.Namespace
 	workloads  []workloadRecord
 	hpas       []entities.HPA
-	quotas     []entities.ResourceQuota
 	pods       []podRecord
 	services   []serviceRecord
 	ingresses  []ingressRecord
@@ -152,10 +151,6 @@ func (m *Module) collect(ctx context.Context) (inventory, error) {
 	if err != nil {
 		return inventory{}, fmt.Errorf("list horizontalpodautoscalers: %w", err)
 	}
-	quotas, err := m.client.CoreV1().ResourceQuotas("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return inventory{}, fmt.Errorf("list resourcequotas: %w", err)
-	}
 	pods, err := m.client.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return inventory{}, fmt.Errorf("list pods: %w", err)
@@ -200,9 +195,6 @@ func (m *Module) collect(ctx context.Context) (inventory, error) {
 	sort.Slice(result.workloads, func(i, j int) bool { return result.workloads[i].entity.ID() < result.workloads[j].entity.ID() })
 	for _, item := range hpas.Items {
 		result.hpas = append(result.hpas, entities.NewHPA(m.cluster, item.Namespace, item.Name, item.Labels))
-	}
-	for _, item := range quotas.Items {
-		result.quotas = append(result.quotas, entities.NewResourceQuota(m.cluster, item.Namespace, item.Name, item.Labels))
 	}
 	for _, item := range pods.Items {
 		if terminating(item) {
@@ -376,13 +368,6 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 		namespaceID := entities.ComputeEntityID(entities.KindNamespace, m.cluster, hpa.Namespace)
 		add(node(namespaceID, entities.KindNamespace, m.cluster, hpa.Namespace, hpa.Namespace, nil))
 		link(namespaceID, hpa.ID(), topology.RelContains)
-	}
-	for _, quota := range inventory.quotas {
-		add(node(quota.ID(), entities.KindResourceQuota, m.cluster, quota.Namespace, quota.Name, quota.Labels()))
-		put(entities.KindResourceQuota, quota.ID(), quota.Namespace, quota.Name, quota.Labels())
-		namespaceID := entities.ComputeEntityID(entities.KindNamespace, m.cluster, quota.Namespace)
-		add(node(namespaceID, entities.KindNamespace, m.cluster, quota.Namespace, quota.Namespace, nil))
-		link(namespaceID, quota.ID(), topology.RelContains)
 	}
 	workloadByOwnerUID := map[string]workloadRecord{}
 	for _, workload := range inventory.workloads {

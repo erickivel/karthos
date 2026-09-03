@@ -15,7 +15,6 @@ const (
 	ResourceK8sPodUID                    = "k8s.pod.uid"
 	ResourceK8sReplicationControllerName = "k8s.replicationcontroller.name"
 	ResourceK8sReplicaSetName            = "k8s.replicaset.name"
-	ResourceK8sResourceQuotaName         = "k8s.resourcequota.name"
 	ResourceK8sStatefulSetName           = "k8s.statefulset.name"
 	ResourceServiceName                  = "service.name"
 )

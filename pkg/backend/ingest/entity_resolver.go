@@ -34,7 +34,7 @@ func NewOTLPEntityResolverWithRegistry(clusterName string, registry persistence.
 // Resolve maps OTLP resource attributes to a canonical EntityID using OTLP semantic conventions.
 // Resolution is attempted in priority order: container, pod, node, deployment,
 // statefulset, replicaset, daemonset, job, cronjob, replicationcontroller,
-// hpa, resourcequota, namespace, service.
+// hpa, namespace, service.
 // Returns ErrUnresolvableEntity when no known attributes are present.
 func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]string) (entities.EntityID, error) {
 	containerName, hasContainer := resource[semconv.ResourceK8sContainerName]
@@ -50,7 +50,6 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 	cronJobName, hasCronJob := resource[semconv.ResourceK8sCronJobName]
 	replicationControllerName, hasReplicationController := resource[semconv.ResourceK8sReplicationControllerName]
 	hpaName, hasHPA := resource[semconv.ResourceK8sHPAName]
-	resourceQuotaName, hasResourceQuota := resource[semconv.ResourceK8sResourceQuotaName]
 
 	var id entities.EntityID
 	var kind entities.EntityKind
@@ -123,19 +122,13 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 		kind = entities.KindHPA
 		name = hpaName
 
-	// 12. ResourceQuota: requires resourcequota name and namespace
-	case hasResourceQuota && hasNamespace:
-		id = entities.ComputeEntityID(entities.KindResourceQuota, r.clusterName, namespace, resourceQuotaName)
-		kind = entities.KindResourceQuota
-		name = resourceQuotaName
-
-	// 13. Namespace: requires namespace name but no more specific entity or service
+	// 12. Namespace: requires namespace name but no more specific entity or service
 	case hasNamespace && !hasService:
 		id = entities.ComputeEntityID(entities.KindNamespace, r.clusterName, namespace)
 		kind = entities.KindNamespace
 		name = namespace
 
-	// 14. Service: requires service name; namespace is optional (best-effort)
+	// 13. Service: requires service name; namespace is optional (best-effort)
 	case hasService && hasNamespace:
 		id = entities.ComputeEntityID(entities.KindService, r.clusterName, namespace, serviceName)
 		kind = entities.KindService

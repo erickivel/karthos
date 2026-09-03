@@ -177,7 +177,7 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 	for _, s := range samples {
 		unit := resolved.Unit
 		// A generic resolved unit marks a heterogeneous family whose physical
-		// unit is carried by the sample (currently ResourceQuota). Fixed-unit
+		// unit is carried by the sample. Fixed-unit
 		// metrics, especially counter modes, must keep the mode-aware resolved
 		// unit even when raw storage carries a presentation unit that differs.
 		if resolved.Unit == metrics.UnitResource && metrics.IsValidUnit(s.Unit) {

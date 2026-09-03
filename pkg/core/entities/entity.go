@@ -3,20 +3,19 @@ package entities
 type EntityKind string
 
 const (
-	KindCluster       EntityKind = "cluster"
-	KindNode          EntityKind = "node"
-	KindNamespace     EntityKind = "namespace"
-	KindWorkload      EntityKind = "workload"
-	KindPod           EntityKind = "pod"
-	KindContainer     EntityKind = "container"
-	KindService       EntityKind = "service"
-	KindIngress       EntityKind = "ingress"
-	KindEndpoint      EntityKind = "endpoint"
-	KindConfigMap     EntityKind = "configmap"
-	KindSecret        EntityKind = "secret"
-	KindPVC           EntityKind = "pvc"
-	KindHPA           EntityKind = "hpa"
-	KindResourceQuota EntityKind = "resourcequota"
+	KindCluster   EntityKind = "cluster"
+	KindNode      EntityKind = "node"
+	KindNamespace EntityKind = "namespace"
+	KindWorkload  EntityKind = "workload"
+	KindPod       EntityKind = "pod"
+	KindContainer EntityKind = "container"
+	KindService   EntityKind = "service"
+	KindIngress   EntityKind = "ingress"
+	KindEndpoint  EntityKind = "endpoint"
+	KindConfigMap EntityKind = "configmap"
+	KindSecret    EntityKind = "secret"
+	KindPVC       EntityKind = "pvc"
+	KindHPA       EntityKind = "hpa"
 )
 
 type EntityID string

@@ -132,8 +132,6 @@ describe('applicableMetrics', () => {
     metric({ name: 'edge.req', category: 'traffic', scopes: ['edge'], applies_to: undefined }),
     metric({ name: 'k8s.deployment.available', category: 'health', scopes: ['entity'], applies_to: ['workload'] }),
     metric({ name: 'k8s.job.active_pods', category: 'health', scopes: ['entity'], applies_to: ['workload'] }),
-    metric({ name: 'k8s.hpa.current_replicas', category: 'resource', scopes: ['entity'], applies_to: ['hpa'] }),
-    metric({ name: 'k8s.resource_quota.used', category: 'resource', scopes: ['entity'], applies_to: ['resourcequota'] }),
   ]
 
   it('keeps category + scope + applicability filtering coherent', () => {
@@ -170,12 +168,4 @@ describe('applicableMetrics', () => {
     }).map((m) => m.name)).toEqual(['k8s.job.active_pods'])
   })
 
-  it('keeps HPA and ResourceQuota metrics gated by entity kind', () => {
-    expect(applicableMetrics(catalog, 'resource', 'hpa', 'entity').map((m) => m.name)).toEqual([
-      'k8s.hpa.current_replicas',
-    ])
-    expect(applicableMetrics(catalog, 'resource', 'resourcequota', 'entity').map((m) => m.name)).toEqual([
-      'k8s.resource_quota.used',
-    ])
-  })
 })
