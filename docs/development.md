@@ -196,10 +196,13 @@ Do not reintroduce ad hoc manifest rendering in Go.
 
 ## Logging
 
-OKSG-owned components log structured JSON to stdout only.
+The backend logs structured JSON to stdout. Configure a Helm deployment through
+`backend.logLevel` (`info`, `warn`, or `error`); direct commands retain their
+`--log-level` and `OKSG_LOG_LEVEL` inputs. The OTel adapter fixes agent and
+gateway Collector self-telemetry to JSON at `info` on stdout, without a Helm
+override. Development-only Collector debug-exporter output is transient
+diagnostic output, not structured application logging.
 
-- configure application level through `--log-level` or environment defaults
-  (`info`, `warn`, or `error`); Collector `OTEL_LOG_LEVEL` remains independent
 - inspect runtime behavior with `kubectl logs`
 - keep operational logging in docs, not buried in ad hoc comments
 

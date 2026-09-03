@@ -49,7 +49,7 @@ packages that output with the mounted source contract. Receivers and connectors:
 
 - kubeletstats as component ID `kubelet_stats` (always; pod, container, volume metrics)
 - hostmetrics as component ID `host_metrics` (always; per-node CPU, memory, disk, filesystem, and network data). Agent pods use the host network so interface counters describe the node.
-- `k8s_cluster` (always on the gateway; an explicit Collector v0.156 allowlist retains only container requests/limits/status, pod phase/reason, and selected node conditions)
+- `k8s_cluster` (always on the gateway; an explicit Collector v0.156 allowlist retains only container requests/limits/status, pod phase/reason, and selected node conditions). Its pinned receiver still watches `resourcequotas`, so gateway RBAC retains that permission while the ResourceQuota metric family and graph kind remain disabled. See the [v0.156 receiver RBAC contract](https://raw.githubusercontent.com/open-telemetry/opentelemetry-collector-contrib/v0.156.0/receiver/k8sclusterreceiver/README.md).
 - `prometheus` on the singleton gateway for application Service-DNS targets (scrape jobs stamp `oksg_source=prometheus.app`)
 - `mesh-istio` Prometheus job (only when discovery finds a complete sidecar mesh; each DaemonSet agent scrapes only `istio-proxy:15020/stats/prometheus` Pods on its own node, rewrites Istio labels into servicegraph `client`/`server` edge attributes, and stamps `oksg_source=mesh.istio`)
 - `otlp` receivers (when discovery finds workloads with `oksg.io/otlp-traces: "true"` or ports `4317`/`4318`)
@@ -69,7 +69,7 @@ The backend ingest pipeline:
 
 | Component | File | Role |
 |-----------|------|------|
-| `OTLPEntityResolver` | `pkg/backend/ingest/entity_resolver.go` | Maps OTLP resource attributes to deterministic `EntityID` (SHA-256 of kind + cluster + attributes) and persists canonical entity metadata. Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > job > cronjob > replicationcontroller > HPA > resourcequota > namespace > service. Volume metrics with a PVC label resolve to the PVC entity before the generic fallback. |
+| `OTLPEntityResolver` | `pkg/backend/ingest/entity_resolver.go` | Maps OTLP resource attributes to deterministic `EntityID` (SHA-256 of kind + cluster + attributes) and persists canonical entity metadata. Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > job > cronjob > replicationcontroller > HPA > namespace > service. Volume metrics with a PVC label resolve to the PVC entity before the generic fallback. |
 | `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Performs generic OTLP scalar/histogram traversal after a stamped source parser returns a canonical candidate; validates catalog membership and assignment, applies conversion, and emits samples. Datapoints without a producer timestamp are dropped; histograms are stored as `_sum`/`_count`; delta-valued series are preserved raw with `temporality=delta`. |
 | Source modules | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}` | Each module owns stamped raw-name parsing, bounded source-specific labels, calls-edge classification/metadata, entity/edge attachment, conversions, and derived metrics through the shared `pkg/sources/contract` boundary. OTLP temporality handling remains generic. |
 | `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | `runs_on` (pod→node), `contains` (namespace→pod, pod→container) plus topology nodes for those entity kinds. In Helm deployments, `runs_on` additionally requires a live matching Pod UID and node from Kubernetes lifecycle state. |
@@ -273,11 +273,15 @@ The chart schema requires an explicit `storage.backend` (`memory` or
 
 ## Logging Policy
 
-OKSG-owned components log structured JSON to stdout only. Required fields:
-`ts`, `level`, `component`, `msg`. Common context: `cluster`, `namespace`,
-`mode`, `error`. Debugging path: `kubectl logs`. OTel collector workloads
-are also configured for stdout JSON; level is set per component through
-Helm values.
+The backend logs structured JSON to stdout only. Required fields: `ts`,
+`level`, `component`, `msg`. Common context: `cluster`, `namespace`, `mode`,
+`error`. Its Helm-owned `backend.logLevel` accepts `info`, `warn`, or `error`.
+
+The OTel adapter fixes Collector self-telemetry to JSON at `info` on stdout in
+both the agent and gateway configuration. It is not a Helm setting. When
+enabled for development, the adapter-owned debug exporter emits transient
+diagnostic batches to Collector stdout; that output is distinct from the
+structured self-telemetry policy. Use `kubectl logs` for both paths.
 
 ## Design Principles
 

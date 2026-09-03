@@ -288,7 +288,10 @@ Expected:
 
 ## Logs and Failure Inspection
 
-OKSG uses structured JSON logs to stdout only. For operational debugging:
+The backend uses structured JSON logs to stdout. The OTel adapter fixes agent
+and gateway self-telemetry to JSON at `info` on stdout. Development-only
+Collector debug-exporter output is transient diagnostics rather than structured
+application logging. For operational debugging:
 
 ```bash
 kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=agent --tail=30
