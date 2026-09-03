@@ -36,7 +36,7 @@ spec:
             - --source-plan=/etc/oksg/source-plan.json
           env:
             - name: OKSG_LOG_LEVEL
-              value: {{ .Values.global.logging.level | quote }}
+              value: {{ .Values.backend.logLevel | quote }}
             - name: OKSG_STORAGE_BACKEND
               value: {{ .Values.storage.backend | quote }}
             - name: OKSG_TOPOLOGY_FLUSH_INTERVAL

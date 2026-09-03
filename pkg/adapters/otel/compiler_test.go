@@ -5,10 +5,25 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/yaml"
 
 	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
 	"github.com/erickivel/oksg/pkg/core/metrics"
 )
+
+func TestCompileAddsFixedJSONStdoutServiceTelemetry(t *testing.T) {
+	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
+	})
+	require.NoError(t, err)
+
+	for _, config := range []CollectorConfig{deployment.AgentConfig, deployment.GatewayConfig} {
+		encoded, err := yaml.Marshal(config)
+		require.NoError(t, err)
+		require.Contains(t, string(encoded), "telemetry:\n    logs:\n      encoding: json\n      level: info\n      output_paths:\n      - stdout\n")
+	}
+}
 
 func TestCompileUsesDerivedServiceGraphOnlyWhenRequested(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{

@@ -53,6 +53,19 @@ type CollectorConfig struct {
 type ServiceConfig struct {
 	Extensions []string                  `json:"extensions,omitempty" yaml:"extensions,omitempty"`
 	Pipelines  map[string]PipelineConfig `json:"pipelines" yaml:"pipelines"`
+	Telemetry  ServiceTelemetryConfig    `json:"telemetry" yaml:"telemetry"`
+}
+
+// ServiceTelemetryConfig is the fixed Collector self-telemetry policy. It is
+// intentionally owned by this adapter rather than exposed as a chart setting.
+type ServiceTelemetryConfig struct {
+	Logs ServiceTelemetryLogs `json:"logs" yaml:"logs"`
+}
+
+type ServiceTelemetryLogs struct {
+	Encoding    string   `json:"encoding" yaml:"encoding"`
+	Level       string   `json:"level" yaml:"level"`
+	OutputPaths []string `json:"output_paths" yaml:"output_paths"`
 }
 
 type PipelineConfig struct {
@@ -121,6 +134,14 @@ func attachCollectorDebug(config *CollectorConfig) {
 	}
 }
 
+func fixedServiceTelemetry() ServiceTelemetryConfig {
+	return ServiceTelemetryConfig{Logs: ServiceTelemetryLogs{
+		Encoding:    "json",
+		Level:       "info",
+		OutputPaths: []string{"stdout"},
+	}}
+}
+
 func compileAgent(requirements collectorspec.AgentRequirements) CollectorConfig {
 	receivers := map[string]any{}
 	metricReceivers := make([]string, 0, 3)
@@ -160,7 +181,7 @@ func compileAgent(requirements collectorspec.AgentRequirements) CollectorConfig 
 			oksgSourceTaggerProcessor: sourceTagger(requirements.SourceStamps), "batch": map[string]any{},
 		},
 		Exporters: map[string]any{otlpGRPCExporter: agentExporter()},
-		Service: ServiceConfig{Extensions: []string{"health_check"}, Pipelines: map[string]PipelineConfig{
+		Service: ServiceConfig{Extensions: []string{"health_check"}, Telemetry: fixedServiceTelemetry(), Pipelines: map[string]PipelineConfig{
 			"metrics": {Receivers: metricReceivers, Processors: []string{"resource", "k8s_attributes", oksgSourceTaggerProcessor, "batch"}, Exporters: []string{otlpGRPCExporter}},
 		}},
 	}
@@ -204,7 +225,7 @@ func compileGateway(requirements collectorspec.GatewayRequirements) CollectorCon
 		Extensions: map[string]any{"health_check": map[string]any{"endpoint": DefaultHealthEndpoint}}, Receivers: receivers,
 		Processors: map[string]any{"memory_limiter": map[string]any{"check_interval": "1s", "limit_percentage": 75, "spike_limit_percentage": 15}, oksgSourceTaggerProcessor: sourceTagger(requirements.SourceStamps), "batch": map[string]any{}},
 		Connectors: connectors, Exporters: map[string]any{otlpGRPCExporter: gatewayExporter()},
-		Service: ServiceConfig{Extensions: []string{"health_check"}, Pipelines: map[string]PipelineConfig{
+		Service: ServiceConfig{Extensions: []string{"health_check"}, Telemetry: fixedServiceTelemetry(), Pipelines: map[string]PipelineConfig{
 			"metrics":      {Receivers: metricReceivers, Processors: []string{"memory_limiter", oksgSourceTaggerProcessor, "batch"}, Exporters: []string{otlpGRPCExporter}},
 			"metrics/otlp": {Receivers: []string{"otlp"}, Processors: []string{"memory_limiter", "batch"}, Exporters: []string{otlpGRPCExporter}},
 		}},

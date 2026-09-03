@@ -4,18 +4,12 @@ global:
     repository: otel/opentelemetry-collector-contrib
     tag: 0.156.0
     pullPolicy: IfNotPresent
-  logging:
-    format: json
-    level: info
 
 enabledSignals: []
 # Collector configuration is intentionally absent from chart defaults. It is
 # generated from a discovered profile by collector/configgen and required by
 # the ConfigMap templates.
 agent:
-  logging:
-    format: json
-    level: info
   resources: {}
   tolerations:
     - key: node-role.kubernetes.io/control-plane
@@ -24,9 +18,6 @@ agent:
   nodeSelector: {}
 
 gateway:
-  logging:
-    format: json
-    level: info
   replicas: 1
   service:
     type: ClusterIP
@@ -36,6 +27,7 @@ gateway:
 
 backend:
   grpcPort: 4317
+  logLevel: info
   image:
     repository: oksg-backend
     tag: latest

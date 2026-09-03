@@ -27,8 +27,6 @@ spec:
           args:
             - --config=/conf/config.yaml
           env:
-            - name: OTEL_LOG_LEVEL
-              value: {{ .Values.gateway.logging.level | quote }}
             - name: OKSG_BACKEND_GRPC_ENDPOINT
               value: {{ printf "%s:%d" (include "oksg-otel.backendName" .) (int .Values.backend.grpcPort) | quote }}
           ports:

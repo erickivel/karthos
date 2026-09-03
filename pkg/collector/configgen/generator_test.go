@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
+	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources/contract"
 )
@@ -22,12 +23,13 @@ func TestGenerateEmitsDynamicValuesAndExplicitRuntimeOverrides(t *testing.T) {
 		},
 	}})
 
-	values, err := renderer.Generate(testDeployment(), profile.ClusterProfile{ClusterName: "kind-test"}, contract.ResolvedSourcePlan{ProfileFingerprint: "fingerprint"})
+	values, err := renderer.Generate(testDeployment(t), profile.ClusterProfile{ClusterName: "kind-test"}, contract.ResolvedSourcePlan{ProfileFingerprint: "fingerprint"})
 	require.NoError(t, err)
 
 	generated := string(values)
 	require.Contains(t, generated, "clusterName: kind-test")
 	require.Contains(t, generated, "collectorConfig: |")
+	require.Contains(t, generated, "      telemetry:\n        logs:\n          encoding: json\n          level: info\n          output_paths:\n          - stdout")
 	require.Contains(t, generated, "sourceContract:")
 	require.Contains(t, generated, "tag: 0.156.1")
 	require.Contains(t, generated, "repository: registry.example/oksg-frontend")
@@ -41,7 +43,7 @@ func TestGenerateRejectsIncompleteExternalStorageSettings(t *testing.T) {
 		PostgreSQL: StoreSettings{Mode: StoreModeBundled},
 	}}})
 
-	_, err := renderer.Generate(testDeployment(), profile.ClusterProfile{}, contract.ResolvedSourcePlan{})
+	_, err := renderer.Generate(testDeployment(t), profile.ClusterProfile{}, contract.ResolvedSourcePlan{})
 	require.ErrorContains(t, err, "victoriametrics mode is required for external storage")
 }
 
@@ -55,24 +57,21 @@ func TestBuildEmbedsSourceContract(t *testing.T) {
 		MetricAssignments:  map[string]string{"k8s.pod.cpu.usage": "kubelet"},
 	}
 
-	values, err := NewGenerator().Build(testDeployment(), capabilityProfile, resolved)
+	values, err := NewGenerator().Build(testDeployment(t), capabilityProfile, resolved)
 	require.NoError(t, err)
 	require.Equal(t, capabilityProfile, values.Backend.SourceContract.CapabilityProfile)
 	require.Equal(t, resolved, values.Backend.SourceContract.SourcePlan)
 }
 
-func testDeployment() otel.Deployment {
-	return otel.Deployment{
-		ClusterName:    "kind-test",
-		Namespace:      "oksg-system",
-		EnabledSignals: []string{"metric"},
-		AgentConfig: otel.CollectorConfig{
-			Receivers: map[string]any{"otlp": map[string]any{}}, Processors: map[string]any{}, Exporters: map[string]any{},
-			Service: otel.ServiceConfig{Pipelines: map[string]otel.PipelineConfig{}},
-		},
-		GatewayConfig: otel.CollectorConfig{
-			Receivers: map[string]any{"otlp": map[string]any{}}, Processors: map[string]any{}, Exporters: map[string]any{},
-			Service: otel.ServiceConfig{Pipelines: map[string]otel.PipelineConfig{}},
-		},
-	}
+func testDeployment(t *testing.T) otel.Deployment {
+	t.Helper()
+
+	deployment, err := otel.NewCompiler().Compile(collectorspec.CollectionPlan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
+		Agent:       collectorspec.AgentRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true}},
+		Gateway:     collectorspec.GatewayRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true}},
+	})
+	require.NoError(t, err)
+	return deployment
 }

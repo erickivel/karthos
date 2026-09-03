@@ -66,6 +66,12 @@ func TestRenderedChartPreservesAdapterOwnedCollectorDebugConfiguration(t *testin
 	require.Equal(t, 2, strings.Count(rendered, "debug/oksg:"), "both generated Collector ConfigMaps must retain the adapter-owned exporter")
 }
 
+func TestRenderedChartUsesFixedCollectorTelemetryAndBackendLogLevel(t *testing.T) {
+	rendered := renderChartWithRuntime(t, "oksg-otel", "oksg-system", "logging-test", configgen.RuntimeSettings{}, "--set", "backend.logLevel=warn")
+	require.Equal(t, 2, strings.Count(rendered, "      telemetry:\n        logs:\n          encoding: json\n          level: info\n          output_paths:\n          - stdout"), "both generated Collector ConfigMaps must retain adapter-owned logging")
+	require.Contains(t, rendered, "name: OKSG_LOG_LEVEL\n              value: \"warn\"")
+}
+
 func TestRenderedChartRejectsUnknownComponentSetting(t *testing.T) {
 	helm, err := exec.LookPath("helm")
 	if err != nil {

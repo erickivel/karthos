@@ -6,12 +6,11 @@
   "properties": {
     "global": {
       "type": "object",
-      "required": ["clusterName", "image", "logging"],
+      "required": ["clusterName", "image"],
       "additionalProperties": false,
       "properties": {
         "clusterName": { "type": "string", "minLength": 1 },
-        "image": { "$ref": "#/definitions/image" },
-        "logging": { "$ref": "#/definitions/applicationLogging" }
+        "image": { "$ref": "#/definitions/image" }
       }
     },
     "enabledSignals": {
@@ -54,10 +53,9 @@
     },
     "agent": {
       "type": "object",
-      "required": ["logging", "collectorConfig", "resources", "tolerations", "nodeSelector"],
+      "required": ["collectorConfig", "resources", "tolerations", "nodeSelector"],
       "additionalProperties": false,
       "properties": {
-        "logging": { "$ref": "#/definitions/collectorLogging" },
         "collectorConfig": { "type": "string", "minLength": 1 },
         "resources": { "type": "object" },
         "tolerations": { "type": "array", "items": { "type": "object" } },
@@ -66,10 +64,9 @@
     },
     "gateway": {
       "type": "object",
-      "required": ["logging", "collectorConfig", "resources", "replicas", "service"],
+      "required": ["collectorConfig", "resources", "replicas", "service"],
       "additionalProperties": false,
       "properties": {
-        "logging": { "$ref": "#/definitions/collectorLogging" },
         "collectorConfig": { "type": "string", "minLength": 1 },
         "resources": { "type": "object" },
         "replicas": { "type": "integer", "minimum": 1 },
@@ -87,10 +84,11 @@
     },
     "backend": {
       "type": "object",
-      "required": ["grpcPort", "image", "service", "statusStaleSeconds", "topologyFlushInterval", "sourceContract", "resources"],
+      "required": ["grpcPort", "logLevel", "image", "service", "statusStaleSeconds", "topologyFlushInterval", "sourceContract", "resources"],
       "additionalProperties": false,
       "properties": {
         "grpcPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "logLevel": { "type": "string", "enum": ["info", "warn", "error"] },
         "image": { "$ref": "#/definitions/image" },
         "service": {
           "type": "object",
@@ -193,24 +191,6 @@
         "repository": { "type": "string", "minLength": 1 },
         "tag": { "type": "string", "minLength": 1 },
         "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
-      }
-    },
-    "applicationLogging": {
-      "type": "object",
-      "required": ["format", "level"],
-      "additionalProperties": false,
-      "properties": {
-        "format": { "type": "string", "enum": ["json"] },
-        "level": { "type": "string", "enum": ["info", "warn", "error"] }
-      }
-    },
-    "collectorLogging": {
-      "type": "object",
-      "required": ["format", "level"],
-      "additionalProperties": false,
-      "properties": {
-        "format": { "type": "string", "enum": ["json"] },
-        "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] }
       }
     }
   }

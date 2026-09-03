@@ -32,8 +32,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: OTEL_LOG_LEVEL
-              value: {{ .Values.agent.logging.level | quote }}
             - name: OKSG_GATEWAY_GRPC_ENDPOINT
               value: {{ printf "%s:%d" (include "oksg-otel.gatewayName" .) (int .Values.gateway.service.port) | quote }}
           ports:
