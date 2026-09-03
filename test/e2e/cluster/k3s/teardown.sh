@@ -21,6 +21,7 @@ done
 echo "==> removing OKSG Helm release + demo namespaces"
 helm uninstall oksg-otel --namespace oksg-system 2>/dev/null || true
 kubectl delete namespace oksg-demo oksg-sparse --ignore-not-found
+"${REPO_ROOT}/test/e2e/cluster/istio.sh" reset
 
 if [ "${FULL}" -eq 1 ]; then
   : "${K3S_SSH_HOST:?K3S_SSH_HOST required for --full teardown}"

@@ -10,7 +10,6 @@ set -uo pipefail
 : "${K3S_SSH_HOST:?K3S_SSH_HOST required (check .env.d/${CLUSTER_PROFILE}.env)}"
 : "${K3S_SERVER_IP:?K3S_SERVER_IP required (check .env.d/${CLUSTER_PROFILE}.env)}"
 : "${K3S_API_PORT:=6443}"
-: "${K3S_REGISTRY_PORT:=5001}"
 
 FAILED=0
 pass() { printf '  [ ok ] %s\n' "$1"; }
@@ -54,10 +53,10 @@ else
   fail "oksg-registry container not running (run: task test:e2e:setup)"
 fi
 
-if ${SSH} "curl -fsS --max-time 5 http://127.0.0.1:${K3S_REGISTRY_PORT}/v2/" >/dev/null 2>&1; then
-  pass "remote registry reachable from the k3s server at 127.0.0.1:${K3S_REGISTRY_PORT}"
+if ${SSH} "curl -fsS --max-time 5 http://127.0.0.1:5001/v2/" >/dev/null 2>&1; then
+  pass "remote registry reachable from the k3s server at 127.0.0.1:5001"
 else
-  fail "remote registry is not reachable from the k3s server at 127.0.0.1:${K3S_REGISTRY_PORT} (run: task test:e2e:setup)"
+  fail "remote registry is not reachable from the k3s server at 127.0.0.1:5001 (run: task test:e2e:setup)"
 fi
 
 if kubectl --kubeconfig "${KUBECONFIG}" get --raw=/readyz >/dev/null 2>&1; then

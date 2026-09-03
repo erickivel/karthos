@@ -50,8 +50,6 @@ build_and_load "${REGISTRY_HOST}/service-b-node:${IMAGE_TAG}" "${APP_SOURCE_DIR}
 if [[ "${VARIANT}" == "with-istio" ]]; then
   build_and_load "${REGISTRY_HOST}/mesh-protocol-go:${IMAGE_TAG}" "${SCRIPT_DIR}/mesh-protocol-go"
 fi
-build_and_load "${REGISTRY_HOST}/oksg-backend:${IMAGE_TAG}" "${REPO_ROOT}" "${REPO_ROOT}/deploy/images/backend/Dockerfile"
-build_and_load "${REGISTRY_HOST}/oksg-frontend:${IMAGE_TAG}" "${REPO_ROOT}/web"
 
 RENDERED_APPS="${RENDERED_DIR}/apps.yaml"
 kubectl kustomize "${VARIANT_DIR}" >"${RENDERED_APPS}"

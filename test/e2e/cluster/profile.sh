@@ -43,7 +43,7 @@ fi
 
 : "${CLUSTER_ENGINE:=kind}"
 : "${CLUSTER_LOCATION:=local}"
-: "${REGISTRY_HOST:=localhost:${KIND_REGISTRY_PORT:-5001}}"
+REGISTRY_HOST="localhost:5001"
 : "${IMAGE_TAG:=latest}"
 : "${IMAGE_PLATFORM:=}"
 : "${KUBECONFIG:=${HOME}/.kube/config}"

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+cd "${REPO_ROOT}"
+
 NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
 CONTRACT_NAME="${HELM_RELEASE_NAME:-oksg-otel}-source-contract"
 TMPDIR_TEST="$(mktemp -d -t oksg-source-contract-rejection.XXXXXX)"

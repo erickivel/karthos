@@ -2,14 +2,49 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+cd "${REPO_ROOT}"
+
 # Standalone commands below use kubectl directly, so load the same active
 # cluster profile and KUBECONFIG as the Taskfile.
 # shellcheck disable=SC1091
-. "$(pwd)/test/e2e/cluster/profile.sh"
+. "${REPO_ROOT}/test/e2e/cluster/profile.sh"
 
 NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
 BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"
 VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"
+GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT:-18080}"
+
+require_open_port() {
+  local port="$1"
+  if lsof -ti ":${port}" >/dev/null 2>&1; then
+    echo "local port ${port} is busy; stop the conflicting process before running this live scenario" >&2
+    exit 1
+  fi
+}
+
+cleanup_port_forwards() {
+  local pid
+  for pid in "$@"; do
+    kill "${pid}" 2>/dev/null || true
+  done
+  for _ in $(seq 1 20); do
+    for pid in "$@"; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        sleep 0.1
+        continue 2
+      fi
+    done
+    break
+  done
+  for pid in "$@"; do
+    if kill -0 "${pid}" 2>/dev/null; then
+      kill -KILL "${pid}" 2>/dev/null || true
+    fi
+    wait "${pid}" 2>/dev/null || true
+  done
+}
 
 task test:e2e:scenario:prometheus:prepare
 
@@ -43,21 +78,22 @@ PY
 
 # Create every success/error branch, then let the cumulative series span the
 # minimum query window before capturing the controlled-traffic baseline.
-task test:e2e:traffic TRAFFIC_REQUESTS=1 TRAFFIC_ERROR_REQUESTS=1 TRAFFIC_INTERVAL=0.2 TRAFFIC_INTERLEAVE_ERRORS=true
+task test:e2e:traffic GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT}" TRAFFIC_REQUESTS=1 TRAFFIC_ERROR_REQUESTS=1 TRAFFIC_INTERVAL=0.2 TRAFFIC_INTERLEAVE_ERRORS=true
 sleep 65
 
 # Port-forward before traffic so the v0.156 servicegraph cumulative-counter
 # baselines can be captured. The exact raw truth is the post-traffic increase.
-lsof -ti :13133 | xargs kill 2>/dev/null || true
-lsof -ti :18081 | xargs kill 2>/dev/null || true
-lsof -ti :18428 | xargs kill 2>/dev/null || true
+require_open_port 13133
+require_open_port 18081
+require_open_port 18428
 kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 13133:13133 &
 PF_HEALTH_PID=$!
 kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 18081:8080 &
 PF_API_PID=$!
 kubectl port-forward -n "${NAMESPACE}" svc/${VM_SERVICE} 18428:8428 &
 PF_VM_PID=$!
-trap "kill $PF_HEALTH_PID $PF_API_PID $PF_VM_PID 2>/dev/null || true" EXIT
+trap 'cleanup_port_forwards "${PF_HEALTH_PID}" "${PF_API_PID}" "${PF_VM_PID}"' EXIT
+trap 'exit 130' INT TERM
 sleep 3
 
 python3 - <<'PY'
@@ -118,7 +154,7 @@ print("✓ Captured servicegraph cumulative-counter baselines")
 PY
 
 # Generate one bounded traffic window so every rate and ratio has a known truth set.
-task test:e2e:traffic TRAFFIC_REQUESTS=30 TRAFFIC_ERROR_REQUESTS=10 TRAFFIC_INTERVAL=0.5 TRAFFIC_INTERLEAVE_ERRORS=true
+task test:e2e:traffic GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT}" TRAFFIC_REQUESTS=30 TRAFFIC_ERROR_REQUESTS=10 TRAFFIC_INTERVAL=0.5 TRAFFIC_INTERLEAVE_ERRORS=true
 
 # Inspect the graph through the public API.
 python3 - <<'PY'
@@ -163,6 +199,22 @@ expected_calls = [
 assert sorted(calls) == sorted(expected_calls), \
     f"calls graph gate mismatch (including duplicates): {calls} != {expected_calls}"
 print(f"✓ Backend graph contains the exact three controlled calls edges ({len(nodes)} nodes total)")
+
+fixture_nodes = {
+    (node.get("kind"), node.get("labels", {}).get("namespace"), node.get("labels", {}).get("name")): node["id"]
+    for node in nodes
+}
+namespace = fixture_nodes[("namespace", "oksg-demo", "oksg-demo")]
+workload = fixture_nodes[("workload", "oksg-demo", "config-bundle")]
+config_map = fixture_nodes[("configmap", "oksg-demo", "bundle-config")]
+secret = fixture_nodes[("secret", "oksg-demo", "bundle-secret")]
+pvc = fixture_nodes[("pvc", "oksg-demo", "bundle-cache")]
+relations = {(edge.get("source"), edge.get("target"), edge.get("relation")) for edge in edges}
+assert (namespace, workload, "contains") in relations
+assert (workload, config_map, "uses") in relations
+assert (workload, secret, "uses") in relations
+assert (workload, pvc, "mounts") in relations
+print("✓ Structural fixture bundle preserves Namespace containment and workload references")
 unrelated_calls = [edge for edge in all_calls if edge not in calls]
 if unrelated_calls:
     print(f"  diagnostic: ignored {len(unrelated_calls)} unrelated stored calls edge(s): {sorted(unrelated_calls)}")

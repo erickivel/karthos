@@ -2,16 +2,51 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+cd "${REPO_ROOT}"
+
 # Standalone commands below use kubectl directly, so load the same active
 # cluster profile and KUBECONFIG as the Taskfile.
 # shellcheck disable=SC1091
-. "$(pwd)/test/e2e/cluster/profile.sh"
+. "${REPO_ROOT}/test/e2e/cluster/profile.sh"
 
 NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
 BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"
 VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"
+GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT:-18080}"
 
-task test:e2e:scenario:istio:prepare
+require_open_port() {
+  local port="$1"
+  if lsof -ti ":${port}" >/dev/null 2>&1; then
+    echo "local port ${port} is busy; stop the conflicting process before running this live scenario" >&2
+    exit 1
+  fi
+}
+
+cleanup_port_forwards() {
+  local pid
+  for pid in "$@"; do
+    kill "${pid}" 2>/dev/null || true
+  done
+  for _ in $(seq 1 20); do
+    for pid in "$@"; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        sleep 0.1
+        continue 2
+      fi
+    done
+    break
+  done
+  for pid in "$@"; do
+    if kill -0 "${pid}" 2>/dev/null; then
+      kill -KILL "${pid}" 2>/dev/null || true
+    fi
+    wait "${pid}" 2>/dev/null || true
+  done
+}
+
+task test:e2e:scenario:istio:prepare GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT}"
 
 python3 - <<'PY'
 import json
@@ -64,10 +99,10 @@ if [[ "${warmup_ready}" != "true" ]]; then
   exit 1
 fi
 
-lsof -ti :13133 | xargs kill 2>/dev/null || true
-lsof -ti :18081 | xargs kill 2>/dev/null || true
-lsof -ti :18428 | xargs kill 2>/dev/null || true
-lsof -ti :19020 | xargs kill 2>/dev/null || true
+require_open_port 13133
+require_open_port 18081
+require_open_port 18428
+require_open_port 19020
 MESH_SERVER_POD="$(kubectl get pods -n oksg-demo -l app=mesh-protocol-server -o jsonpath='{.items[0].metadata.name}')"
 kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 13133:13133 &
 PF_HEALTH_PID=$!
@@ -77,7 +112,8 @@ kubectl port-forward -n "${NAMESPACE}" svc/${VM_SERVICE} 18428:8428 &
 PF_VM_PID=$!
 kubectl port-forward -n oksg-demo "pod/${MESH_SERVER_POD}" 19020:15020 &
 PF_MESH_PID=$!
-trap "kill $PF_HEALTH_PID $PF_API_PID $PF_VM_PID $PF_MESH_PID 2>/dev/null || true" EXIT
+trap 'cleanup_port_forwards "${PF_HEALTH_PID}" "${PF_API_PID}" "${PF_VM_PID}" "${PF_MESH_PID}"' EXIT
+trap 'exit 130' INT TERM
 sleep 3
 
 python3 test/e2e/scenarios/istio-available/verify_protocol_metrics.py capture-baseline

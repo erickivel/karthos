@@ -30,7 +30,7 @@ split_image_reference() {
   repository="${repository_and_tag%:*}"
   tag="${repository_and_tag##*:}"
 
-  if [[ "${registry}" != localhost:* || "${registry#localhost:}" == *[!0-9]* || -z "${registry#localhost:}" || -z "${repository}" || "${repository}" == "${repository_and_tag}" || -z "${tag}" ]]; then
+  if [[ "${registry}" != "localhost:5001" || -z "${repository}" || "${repository}" == "${repository_and_tag}" || -z "${tag}" ]]; then
     echo "image transport: expected registry/repository:tag, got ${image}" >&2
     return 1
   fi
@@ -41,14 +41,13 @@ push_k3s_image() {
   local pushed_digest manifest_digest
 
   : "${K3S_SSH_HOST:?K3S_SSH_HOST required for CLUSTER_ENGINE=k3s}"
-  : "${K3S_REGISTRY_PORT:=5001}"
   split_image_reference "${image}"
 
   pushed_digest="$({ printf '%s\n' "${image}"; docker save "${image}"; } | ssh -o BatchMode=yes "${K3S_SSH_HOST}" 'bash -c '"'"'
 set -euo pipefail
 IFS= read -r image
 case "$image" in
-  localhost:[0-9]*/*:*) ;;
+  localhost:5001/*:*) ;;
   *) echo "image transport: invalid remote image reference" >&2; exit 1 ;;
 esac
 case "$image" in
@@ -65,11 +64,10 @@ fi
 printf "%s\\n" "$pushed_digest"
 '"'"'')"
 
-  manifest_digest="$(printf '%s\n%s\n%s\n' "${repository}" "${tag}" "${K3S_REGISTRY_PORT}" | ssh -o BatchMode=yes "${K3S_SSH_HOST}" 'bash -c '"'"'
+  manifest_digest="$(printf '%s\n%s\n' "${repository}" "${tag}" | ssh -o BatchMode=yes "${K3S_SSH_HOST}" 'bash -c '"'"'
 set -euo pipefail
 IFS= read -r repository
 IFS= read -r tag
-IFS= read -r registry_port
 if [[ -z "$repository" || "$repository" == *[!A-Za-z0-9._/-]* ]]; then
   echo "image transport: invalid remote repository" >&2
   exit 1
@@ -78,13 +76,9 @@ if [[ -z "$tag" || "$tag" == *[!A-Za-z0-9._-]* ]]; then
   echo "image transport: invalid remote tag" >&2
   exit 1
 fi
-if [[ -z "$registry_port" || "$registry_port" == *[!0-9]* ]]; then
-  echo "image transport: invalid remote registry port" >&2
-  exit 1
-fi
 curl -fsSI \
   -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
-  "http://127.0.0.1:${registry_port}/v2/${repository}/manifests/${tag}"
+  "http://127.0.0.1:5001/v2/${repository}/manifests/${tag}"
 '"'"'' | awk 'tolower($1) == "docker-content-digest:" { gsub("\\r", "", $2); print $2; exit }')"
 
   if [[ ! "${manifest_digest}" =~ ^sha256:[[:xdigit:]]{64}$ ]]; then
