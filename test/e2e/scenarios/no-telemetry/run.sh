@@ -16,7 +16,7 @@ from pathlib import Path
 
 output_dir = Path(sys.argv[1])
 profile = json.loads((output_dir / "profile.json").read_text())
-plan = json.loads((output_dir / "source-plan.json").read_text())
+plan = json.loads((output_dir / "otel-values.yaml.source-plan.json").read_text())
 values = (output_dir / "otel-values.yaml").read_text()
 
 capabilities = {capability["source_id"]: capability for capability in profile["capabilities"]}
@@ -27,6 +27,6 @@ for source_id in ("prometheus.app", "mesh.istio", "traces.servicegraph"):
 
 assert capabilities["prometheus.app"].get("evidence", {}).get("prometheus_targets", []) == []
 assert set(plan["selected_sources"]) == {"host-os", "kube-cluster", "kubelet"}
-for receiver in ("kubeletstats", "hostmetrics", "k8s_cluster"):
+for receiver in ("kubelet_stats", "host_metrics", "k8s_cluster"):
     assert receiver in values, receiver
 PY

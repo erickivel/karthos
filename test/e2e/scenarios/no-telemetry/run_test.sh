@@ -32,13 +32,13 @@ cat >"${TMPDIR_TEST}/profile.json" <<'EOF'
   ]
 }
 EOF
-cat >"${TMPDIR_TEST}/source-plan.json" <<'EOF'
+cat >"${TMPDIR_TEST}/otel-values.yaml.source-plan.json" <<'EOF'
 {"selected_sources":["host-os","kube-cluster","kubelet"]}
 EOF
 cat >"${TMPDIR_TEST}/otel-values.yaml" <<'EOF'
 receivers:
-  kubeletstats: {}
-  hostmetrics: {}
+  kubelet_stats: {}
+  host_metrics: {}
   k8s_cluster: {}
 EOF
 
