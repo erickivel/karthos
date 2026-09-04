@@ -1,11 +1,4 @@
 services:
-  oksg-backend:
-    build:
-      context: .
-      dockerfile: deploy/images/backend/Dockerfile
-    ports:
-      - "18081:8080"
-
   oksg-frontend:
     build:
       context: ./web

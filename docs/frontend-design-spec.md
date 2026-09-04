@@ -315,8 +315,8 @@ Persistent bottom bar across all routes. Shows both cluster system status and OK
 **Layout:** Single horizontal bar, left-to-right:
 - **System status indicator**: green dot + `SYSTEM_NOMINAL` (or red + `DEGRADED` based on `/api/v1/status` components)
 - **OKSG tool status**: `[OKSG] BACKEND CONNECTED · LAST SNAPSHOT 12s AGO · 52 NODES · 56 EDGES`
-- **Network info** (right-aligned): `[NET] POLLING oksg-backend:8080` (a stable
-  UI label; Helm's nginx proxy targets the release-scoped backend Service)
+- **Network info** (right-aligned): `[NET] API PROXY` (a stable UI
+  label; Helm's nginx proxy targets the release-scoped backend Service)
 
 **Status logic:**
 - `SYSTEM_NOMINAL`: all components in `/api/v1/status` report healthy
@@ -405,9 +405,10 @@ TanStack Query hooks are the **only** data consumers. Components never fetch dir
 ### Development
 
 - A `Dockerfile.dev` provides a development container with Vite's dev server (HMR enabled)
-- `docker-compose.yml` (or a `task dev` command) spins up the frontend container alongside the backend
+- `docker-compose.yml` (or `task web:dev`) runs the frontend container; the
+  backend remains Helm-deployed and is reached through a local port-forward
 - Vite dev server runs inside the container, with source files mounted as a volume for live reload
-- API requests proxy to the backend container via Vite's `server.proxy` config
+- API requests proxy through Vite's `server.proxy` config to the port-forwarded backend
 - Developers interact with the app via `http://localhost:<mapped-port>` but the process itself runs in Docker
 
 ### Production (Kubernetes)
