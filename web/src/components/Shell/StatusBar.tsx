@@ -46,7 +46,7 @@ export function StatusBar() {
       <div className={styles.right}>
         <span className={styles.tag}>[NET]</span>
         <span className={styles.label}>
-          API {status ? 'oksg-backend:8080' : '--'}
+          API {status ? 'PROXY' : '--'}
         </span>
       </div>
     </footer>

@@ -97,7 +97,6 @@ web/
     styles/           CSS custom properties theme system (dark theme)
   Dockerfile.dev     development container (Vite HMR)
   Dockerfile         production multi-stage (Vite build → nginx)
-  nginx.conf         SPA fallback + /api/* proxy
 
 deploy/
   helm/              Helm charts and release packaging
@@ -131,6 +130,10 @@ task web:e2e         # run topology Playwright tests against the live frontend/b
 task web:e2e:update  # update committed topology screenshot baselines
 task ci              # backend checks plus frontend Docker build verification
 ```
+
+The production frontend image contains only static assets. Helm mounts the
+release-scoped Nginx ConfigMap that provides the SPA fallback and routes `/api`
+to the matching backend Service. Running that image by itself is unsupported.
 
 ## Discovery And Deployment Workflow
 

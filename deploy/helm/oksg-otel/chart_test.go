@@ -53,6 +53,18 @@ func TestRenderedChartUsesTypedFrontendImageOverride(t *testing.T) {
 	require.Contains(t, rendered, "imagePullPolicy: Always")
 }
 
+func TestRenderedChartMountsHelmOwnedFrontendProxy(t *testing.T) {
+	rendered := renderChart(t, "project-observe", "observability", "frontend-proxy-test")
+	for _, expected := range []string{
+		"mountPath: /etc/nginx/conf.d/default.conf",
+		"subPath: default.conf",
+		"configMap:\n            name: project-observe-frontend-nginx",
+		"proxy_pass http://project-observe-backend:8080;",
+	} {
+		require.Contains(t, rendered, expected)
+	}
+}
+
 func TestRenderedChartPreservesAdapterOwnedCollectorDebugConfiguration(t *testing.T) {
 	rendered := renderChartWithCompilerOptions(t, "oksg-otel", "oksg-system", "debug-test", configgen.RuntimeSettings{}, otel.CompilerOptions{DebugEnabled: true})
 	for _, expected := range []string{
