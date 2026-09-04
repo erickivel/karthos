@@ -219,7 +219,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s duration=%s", r.Method, r.URL.Path, time.Since(start))
+		log.Printf("request completed duration=%s", time.Since(start))
 	})
 }
 
@@ -268,8 +268,14 @@ func metricsMiddleware(next http.Handler) http.Handler {
 
 func routeTemplate(path string) string {
 	switch path {
-	case "/", "/error", "/health", "/metrics":
-		return path
+	case "/":
+		return "/"
+	case "/error":
+		return "/error"
+	case "/health":
+		return "/health"
+	case "/metrics":
+		return "/metrics"
 	default:
 		return "/{path}"
 	}

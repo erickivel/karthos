@@ -1,6 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -34,5 +39,26 @@ func TestRouteTemplateUsesBoundedKnownRoutes(t *testing.T) {
 		if got := routeTemplate(path); got != want {
 			t.Errorf("routeTemplate(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+func TestLoggingMiddlewareDoesNotLogRequestInput(t *testing.T) {
+	var output bytes.Buffer
+	previousOutput := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousOutput)
+		log.SetFlags(previousFlags)
+	})
+
+	handler := loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://example.test/%0Aforged", nil))
+
+	if got := output.String(); !strings.HasPrefix(got, "request completed duration=") || strings.Contains(got, "forged") {
+		t.Fatalf("loggingMiddleware() log = %q, want request-independent output", got)
 	}
 }

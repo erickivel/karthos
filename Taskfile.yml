@@ -2,6 +2,9 @@ version: "3"
 
 dotenv: ['.env']
 
+vars:
+  GO_PACKAGE_PATHS: ./cmd/... ./pkg/... ./deploy/helm/oksg-otel ./test/e2e/apps/base/gateway-go
+
 includes:
   test:
     taskfile: ./Taskfile.test.yml
@@ -26,22 +29,22 @@ tasks:
   generate:
     desc: Generate JSON schemas
     cmds:
-      - go generate ./...
+      - go generate {{.GO_PACKAGE_PATHS}}
 
   vet:
     desc: Run go vet
     cmds:
-      - go vet ./...
+      - go vet {{.GO_PACKAGE_PATHS}}
 
   test:
     desc: Run unit tests
     cmds:
-      - go test ./...
+      - go test {{.GO_PACKAGE_PATHS}}
 
   test:race:
     desc: Run unit tests with race detection and coverage
     cmds:
-      - go test -race -coverprofile=coverage.out ./...
+      - go test -race -coverprofile=coverage.out {{.GO_PACKAGE_PATHS}}
 
   test:postgres:
     desc: Run PostgreSQL storage integration tests (requires Docker)
@@ -91,12 +94,28 @@ tasks:
   lint:
     desc: Run golangci-lint (long timeout for CI package loading)
     cmds:
-      - golangci-lint run --timeout=5m ./...
+      - golangci-lint run --timeout=5m {{.GO_PACKAGE_PATHS}}
 
   security:
-    desc: Run security scanning (govulncheck + gosec)
+    desc: Run security scanning across root and nested Go modules
     cmds:
-      - govulncheck ./... || true
+      - govulncheck {{.GO_PACKAGE_PATHS}}
+      - gosec -quiet {{.GO_PACKAGE_PATHS}}
+      - task: security:fixture:instrumented-gateway
+      - task: security:fixture:mesh-protocol
+
+  security:fixture:instrumented-gateway:
+    internal: true
+    dir: ./test/e2e/apps/instrumented/gateway-go
+    cmds:
+      - govulncheck ./...
+      - gosec -quiet ./...
+
+  security:fixture:mesh-protocol:
+    internal: true
+    dir: ./test/e2e/apps/mesh-protocol-go
+    cmds:
+      - govulncheck ./...
       - gosec -quiet ./...
 
   ci:
