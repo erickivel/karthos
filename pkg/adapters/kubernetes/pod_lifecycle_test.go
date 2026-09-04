@@ -24,7 +24,7 @@ import (
 func TestPodLifecycleTrackerRejectsDeletedUIDAndAcceptsReplacement(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 
@@ -50,7 +50,7 @@ func TestPodLifecycleTrackerRejectsDeletedUIDAndAcceptsReplacement(t *testing.T)
 func TestPodLifecycleTrackerRetiresDeletedActiveUIDImmediately(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 
@@ -75,7 +75,7 @@ func TestPodLifecycleTrackerRetiresDeletedActiveUIDImmediately(t *testing.T) {
 func TestPodLifecycleTrackerKeepsTerminalGraceWhenDeletedBeforeDeadline(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-terminal", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 
@@ -120,7 +120,7 @@ func TestPodLifecycleTrackerKeepsTerminalGraceWhenDeletedBeforeDeadline(t *testi
 func TestPodLifecycleTrackerRetiresReplacedActiveUIDImmediately(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 
@@ -148,7 +148,7 @@ func TestPodLifecycleTrackerRetiresReplacedActiveUIDImmediately(t *testing.T) {
 func TestPodLifecycleTrackerRetriesRetirementObserverWithoutBlockingWatch(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 
@@ -184,7 +184,7 @@ func TestPodLifecycleTrackerRetriesRetirementObserverWithoutBlockingWatch(t *tes
 func TestPodLifecycleTrackerRetriesRetirementObserverPastThreeFailures(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-old", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 
@@ -224,7 +224,7 @@ func TestPodLifecycleTrackerInitialReconciliationRetiresPreseededReplacement(t *
 
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-new", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -260,7 +260,7 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 
 	firstWatcher := watch.NewRaceFreeFake()
 	firstClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
-	firstClient.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	firstClient.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, firstWatcher, nil
 	})
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
@@ -303,7 +303,7 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 
 	secondWatcher := watch.NewRaceFreeFake()
 	secondClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-new", "node-a"))
-	secondClient.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	secondClient.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, secondWatcher, nil
 	})
 	secondCtx, cancelSecond := context.WithCancel(context.Background())
@@ -340,7 +340,7 @@ func TestPodLifecycleTrackerRestoresPersistedTerminalGraceAfterReplacement(t *te
 func TestPodLifecycleTrackerDeniesTerminalRefreshUntilDeadlineMarkerPersists(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-terminal", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 	markerStarted := make(chan struct{})
@@ -372,7 +372,7 @@ func TestPodLifecycleTrackerDeniesTerminalRefreshUntilDeadlineMarkerPersists(t *
 func TestPodLifecycleTrackerFailsClosedAndRetriesTerminalMarkerWithOriginalDeadline(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-terminal", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 	var attempts atomic.Int32
@@ -435,7 +435,7 @@ func TestPodLifecycleTrackerRestoresPersistedDeadlineForTerminalUIDStillListed(t
 	terminal := podForLifecycle("default", "job-0", "uid-terminal", "node-a")
 	terminal.Status.Phase = corev1.PodSucceeded
 	client := fake.NewClientset(terminal)
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 	var markerWrites atomic.Int32
@@ -478,7 +478,7 @@ func TestPodLifecycleTrackerRetirementWinsWhenDelayedMarkerRetriesAcrossRestart(
 
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 	var markerAttempts atomic.Int32
@@ -539,7 +539,7 @@ func TestPodLifecycleTrackerRetirementWinsWhenDelayedMarkerRetriesAcrossRestart(
 
 	restartWatcher := watch.NewRaceFreeFake()
 	restartClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-new", "node-a"))
-	restartClient.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	restartClient.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, restartWatcher, nil
 	})
 	restartCtx, cancelRestart := context.WithCancel(context.Background())
@@ -572,7 +572,7 @@ func TestPodLifecycleTrackerRestartRetiresUnconfirmedRetryMarkerAfterReplacement
 
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 	var markerAttempts atomic.Int32
@@ -641,7 +641,7 @@ func TestPodLifecycleTrackerRestartRetiresUnconfirmedRetryMarkerAfterReplacement
 
 	restartWatcher := watch.NewRaceFreeFake()
 	restartClient := fake.NewClientset(podForLifecycle("default", "job-0", "uid-new", "node-a"))
-	restartClient.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	restartClient.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, restartWatcher, nil
 	})
 	restartCtx, cancelRestart := context.WithCancel(context.Background())
@@ -663,7 +663,7 @@ func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T
 		t.Run(string(phase), func(t *testing.T) {
 			watcher := watch.NewRaceFreeFake()
 			client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-a", "node-a"))
-			client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+			client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 				return true, watcher, nil
 			})
 
@@ -704,7 +704,7 @@ func TestPodLifecycleTrackerRetiresSucceededAndFailedPodsAfterGrace(t *testing.T
 func TestPodLifecycleTrackerRetiresOldUIDWithoutRetiringReplacement(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-old", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 
@@ -747,7 +747,7 @@ func TestPodLifecycleTrackerRetiresOldUIDWithoutRetiringReplacement(t *testing.T
 func TestPodLifecycleTrackerDeniesTerminalUIDAfterDeadlineBeforeTimerCallback(t *testing.T) {
 	watcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "job-0", "uid-a", "node-a"))
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		return true, watcher, nil
 	})
 
@@ -779,7 +779,7 @@ func TestPodLifecycleTrackerFailsClosedUntilWatchRecovers(t *testing.T) {
 	secondWatcher := watch.NewRaceFreeFake()
 	client := fake.NewClientset(podForLifecycle("default", "api-0", "uid-a", "node-a"))
 	var watchCalls atomic.Int32
-	client.Fake.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
+	client.PrependWatchReactor("pods", func(k8stesting.Action) (bool, watch.Interface, error) {
 		if watchCalls.Add(1) == 1 {
 			return true, firstWatcher, nil
 		}

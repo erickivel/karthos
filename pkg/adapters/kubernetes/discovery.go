@@ -62,7 +62,7 @@ func (d *DiscoveryAdapter) Discover(ctx context.Context) (*profile.ClusterProfil
 
 func (d *DiscoveryAdapter) inventory(ctx context.Context) (detection.Inventory, error) {
 	if d.client == nil {
-		return detection.Inventory{}, fmt.Errorf("Kubernetes client is required")
+		return detection.Inventory{}, fmt.Errorf("kubernetes client is required")
 	}
 	nodes, err := d.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
