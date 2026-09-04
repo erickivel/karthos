@@ -46,15 +46,19 @@ func targetFor(service corev1.Service, targetNamespaces []string) (profile.Prome
 	if !strings.EqualFold(service.Annotations[prometheusAnnotationScrape], "true") || !targetNamespace(service.Namespace, targetNamespaces) {
 		return profile.PrometheusTarget{}, false
 	}
-	port, err := strconv.Atoi(service.Annotations[prometheusAnnotationPort])
-	if err != nil || port < 1 || port > 65535 || !declaresPort(service, int32(port)) {
+	port, err := strconv.ParseInt(service.Annotations[prometheusAnnotationPort], 10, 32)
+	if err != nil || port < 1 || port > 65535 {
+		return profile.PrometheusTarget{}, false
+	}
+	declaredPort := int32(port)
+	if !declaresPort(service, declaredPort) {
 		return profile.PrometheusTarget{}, false
 	}
 	path := service.Annotations[prometheusAnnotationPath]
 	if path == "" {
 		path = defaultPrometheusPath
 	}
-	return profile.PrometheusTarget{ServiceName: service.Name, Namespace: service.Namespace, Port: int32(port), Path: path}, true
+	return profile.PrometheusTarget{ServiceName: service.Name, Namespace: service.Namespace, Port: declaredPort, Path: path}, true
 }
 
 func declaresPort(service corev1.Service, port int32) bool {
