@@ -170,7 +170,7 @@ func clearRenderedPath(path string) error {
 	if err := os.RemoveAll(path); err != nil {
 		return fmt.Errorf("clear rendered output directory: %w", err)
 	}
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	if err := os.MkdirAll(path, 0o750); err != nil {
 		return fmt.Errorf("create rendered output directory: %w", err)
 	}
 	return nil

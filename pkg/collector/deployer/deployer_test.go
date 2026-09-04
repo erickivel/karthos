@@ -68,6 +68,18 @@ func TestTemplateClearsStaleRenderedArtifactsBeforeHelmWrites(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTemplateRestrictsRenderedOutputDirectoryPermissions(t *testing.T) {
+	renderedPath := filepath.Join(t.TempDir(), "rendered")
+	deployer := New(func(_ context.Context, _ string, _ []string) error {
+		return nil
+	})
+
+	require.NoError(t, deployer.Template(context.Background(), []byte("compiled-values"), Options{RenderedPath: renderedPath}))
+	info, err := os.Stat(renderedPath)
+	require.NoError(t, err)
+	require.Zero(t, info.Mode().Perm()&0o027)
+}
+
 func TestWriteTempFileRemovesPartialFileWhenWriteOrCloseFails(t *testing.T) {
 	testCases := []struct {
 		name     string
