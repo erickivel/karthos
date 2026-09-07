@@ -65,6 +65,7 @@ first_action="$(head -n1 "${RESET_ALL_ACTION_LOG}")"
 }
 grep -Fx 'kubectl delete namespace istio-system --ignore-not-found' "${RESET_ALL_ACTION_LOG}"
 grep -Fx 'helm uninstall oksg-otel --namespace oksg-system' "${RESET_ALL_ACTION_LOG}"
+grep -Fx 'kubectl delete pvc data-oksg-otel-postgresql-0 --namespace oksg-system --ignore-not-found' "${RESET_ALL_ACTION_LOG}"
 grep -Fx 'kubectl delete namespace oksg-demo --ignore-not-found' "${RESET_ALL_ACTION_LOG}"
 
 echo "strict fallback rejects external Istio and resets E2E-owned Istio first: PASS"

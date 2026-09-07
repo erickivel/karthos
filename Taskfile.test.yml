@@ -133,9 +133,10 @@ tasks:
       - kubectl logs -n {{.KIND_NAMESPACE}} deployment/{{.HELM_RELEASE_NAME}}-backend --tail=30
 
   e2e:reset:
-    desc: Remove deployed OTel Helm release
+    desc: Remove deployed OTel Helm release and its harness-owned PostgreSQL data
     cmds:
       - helm uninstall {{.HELM_RELEASE_NAME}} --namespace {{.KIND_NAMESPACE}} || true
+      - kubectl delete pvc data-{{.HELM_RELEASE_NAME}}-postgresql-0 --namespace {{.KIND_NAMESPACE}} --ignore-not-found
 
   e2e:reset-apps:
     desc: Remove deployed demo fixtures across all e2e app namespaces

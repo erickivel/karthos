@@ -156,48 +156,62 @@ PY
 # Generate one bounded traffic window so every rate and ratio has a known truth set.
 task test:e2e:traffic GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT}" TRAFFIC_REQUESTS=30 TRAFFIC_ERROR_REQUESTS=10 TRAFFIC_INTERVAL=0.5 TRAFFIC_INTERLEAVE_ERRORS=true
 
-# Inspect the graph through the public API.
+# Inspect the graph through the public API. Calls are current observations, so
+# they become visible only when the backend publishes the next materialized
+# graph snapshot (the supported production cadence is five minutes).
 python3 - <<'PY'
 import json
+import time
 import urllib.request
 
-graph_resp = urllib.request.urlopen("http://localhost:18081/api/v1/graph")
-graph = json.loads(graph_resp.read())["data"]
-edges = graph.get("graph", {}).get("edges", [])
-nodes = graph.get("graph", {}).get("nodes", [])
-assert nodes and edges, f"expected non-empty graph snapshot, got {len(nodes)} nodes and {len(edges)} edges"
-identities = {
-    node["id"]: (
-        node.get("labels", {}).get("namespace", ""),
-        node.get("labels", {}).get("name", ""),
-    )
-    for node in nodes
-}
-all_calls = [
-    (
-        identities.get(edge.get("source"), ("", "")),
-        identities.get(edge.get("target"), ("", "")),
-    )
-    for edge in edges
-    if edge.get("relation") == "calls"
-]
 controlled_participants = {
     ("oksg-demo", "gateway-go"),
     ("oksg-demo", "service-a-python"),
     ("oksg-demo", "service-b-node"),
 }
-calls = [
-    edge
-    for edge in all_calls
-    if edge[0] in controlled_participants and edge[1] in controlled_participants
-]
 expected_calls = [
     (("oksg-demo", "gateway-go"), ("oksg-demo", "service-a-python")),
     (("oksg-demo", "gateway-go"), ("oksg-demo", "service-b-node")),
     (("oksg-demo", "service-a-python"), ("oksg-demo", "service-b-node")),
 ]
+deadline = time.time() + 330
+graph = {}
+nodes = []
+edges = []
+all_calls = []
+calls = []
+while time.time() < deadline:
+    graph_resp = urllib.request.urlopen("http://localhost:18081/api/v1/graph", timeout=5)
+    graph = json.loads(graph_resp.read())["data"]
+    edges = graph.get("graph", {}).get("edges", [])
+    nodes = graph.get("graph", {}).get("nodes", [])
+    identities = {
+        node["id"]: (
+            node.get("labels", {}).get("namespace", ""),
+            node.get("labels", {}).get("name", ""),
+        )
+        for node in nodes
+    }
+    all_calls = [
+        (
+            identities.get(edge.get("source"), ("", "")),
+            identities.get(edge.get("target"), ("", "")),
+        )
+        for edge in edges
+        if edge.get("relation") == "calls"
+    ]
+    calls = [
+        edge
+        for edge in all_calls
+        if edge[0] in controlled_participants and edge[1] in controlled_participants
+    ]
+    if sorted(calls) == sorted(expected_calls):
+        break
+    time.sleep(5)
+
+assert nodes and edges, f"expected non-empty graph snapshot, got {len(nodes)} nodes and {len(edges)} edges"
 assert sorted(calls) == sorted(expected_calls), \
-    f"calls graph gate mismatch (including duplicates): {calls} != {expected_calls}"
+    f"calls graph gate mismatch after waiting for one materialization interval: {calls} != {expected_calls}"
 print(f"✓ Backend graph contains the exact three controlled calls edges ({len(nodes)} nodes total)")
 
 fixture_nodes = {

@@ -138,17 +138,30 @@ python3 test/e2e/scenarios/istio-available/verify_protocol_metrics.py verify
 
 python3 - <<'PY'
 import json
+import time
 import urllib.request
 
-graph = json.loads(urllib.request.urlopen("http://localhost:18081/api/v1/graph/edges?relation=calls&page_size=1000").read())
-edges = graph.get("data", {}).get("edges", [])
-assert edges, "expected calls edges from mesh telemetry"
-mesh_edges = [e for e in edges if "mesh.istio" in e.get("provenance", [])]
-assert mesh_edges, "expected at least one mesh.istio-provenance edge"
+deadline = time.time() + 330
+edges = []
+mesh_edges = []
+nodes = []
+while time.time() < deadline:
+    graph = json.loads(urllib.request.urlopen(
+        "http://localhost:18081/api/v1/graph/edges?relation=calls&page_size=1000",
+        timeout=5,
+    ).read())
+    edges = graph.get("data", {}).get("edges", [])
+    mesh_edges = [e for e in edges if "mesh.istio" in e.get("provenance", [])]
+    if any(e.get("metadata", {}).get("mesh.security.policy") == "mutual_tls" for e in mesh_edges):
+        snapshot = json.loads(urllib.request.urlopen("http://localhost:18081/api/v1/graph", timeout=5).read())
+        nodes = snapshot.get("data", {}).get("graph", {}).get("nodes", [])
+        break
+    time.sleep(5)
+
+assert edges, "expected calls edges from mesh telemetry after one materialization interval"
+assert mesh_edges, "expected at least one mesh.istio-provenance edge after one materialization interval"
 assert any(e.get("metadata", {}).get("mesh.security.policy") == "mutual_tls" for e in mesh_edges), \
-    "expected at least one mutual_tls mesh edge"
-snapshot = json.loads(urllib.request.urlopen("http://localhost:18081/api/v1/graph").read())
-nodes = snapshot.get("data", {}).get("graph", {}).get("nodes", [])
+    "expected at least one mutual_tls mesh edge after one materialization interval"
 node_names = {node.get("id"): node.get("name", "") for node in nodes}
 assert not any(
     "ops-toolbox" in node_names.get(endpoint, "")
