@@ -10,12 +10,11 @@
 //    and disappear from the view. Do NOT add `calls` here — that's a
 //    runtime traffic relation and belongs to the Traffic layer only.
 //
-// 2. Layer `relations` plays a dual role:
-//    a) decides which entities qualify as direct participants
-//       (see `computeParticipants` below);
-//    b) decides which edges are rendered between visible entities
-//       (see the `spec.relations.has(...)` filter in `project()`).
-//    Adding a relation here changes BOTH of those — that's deliberate.
+// 2. Layer `relations` decides which edges render between visible entities.
+//    It also determines structural context for non-traffic layers. Traffic
+//    starts from observed `calls` evidence, then expands through its allowed
+//    structural context. This keeps idle workload wiring out of a live
+//    traffic flow.
 //
 // 3. Traffic mode is split across THREE flows by granularity:
 //    - overview  → Endpoint Flow  (ingress, service; routes_to + calls)
@@ -274,6 +273,44 @@ function computeParticipants(
   return ids
 }
 
+// A traffic view is evidence-led: `calls` is the observed signal, while
+// `routes_to` and (for Workload Flow) `exposes` explain how that observed
+// traffic reaches Kubernetes endpoints and controllers. Treating every
+// structural `exposes` edge as a seed makes all installed workloads look like
+// active traffic participants even when no telemetry has observed them.
+function computeTrafficParticipants(
+  edges: GraphEdge[],
+  spec: LayerSpec,
+): Set<string> {
+  const ids = new Set<string>()
+
+  for (const edge of edges) {
+    if (edge.relation === 'calls') {
+      ids.add(edge.source)
+      ids.add(edge.target)
+    }
+  }
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const edge of edges) {
+      if (!spec.relations.has(edge.relation)) continue
+      if (!ids.has(edge.source) && !ids.has(edge.target)) continue
+      if (!ids.has(edge.source)) {
+        ids.add(edge.source)
+        changed = true
+      }
+      if (!ids.has(edge.target)) {
+        ids.add(edge.target)
+        changed = true
+      }
+    }
+  }
+
+  return ids
+}
+
 export function project(
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -292,7 +329,9 @@ export function project(
   if (includeOrphans) {
     visibleNodes = kindFiltered
   } else {
-    const participants = computeParticipants(kindFiltered, edges, spec)
+    const participants = mode === 'traffic'
+      ? computeTrafficParticipants(edges, spec)
+      : computeParticipants(kindFiltered, edges, spec)
     visibleNodes = kindFiltered.filter((n) => participants.has(n.id))
   }
 

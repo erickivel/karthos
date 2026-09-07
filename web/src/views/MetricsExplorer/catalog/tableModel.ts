@@ -33,13 +33,13 @@ function normalized(value: string | undefined | null): string {
 }
 
 function sourceIds(metric: CanonicalMetric): string[] {
-  return (metric.sources ?? []).map((source) => source.id)
+  return metric.sources.map((source) => source.id)
 }
 
 function sourceFilterMatches(metric: CanonicalMetric, selected: string[]): boolean {
   if (selected.length === 0) return true
   const ids = sourceIds(metric)
-  return selected.some((value) => (value === 'derived' ? ids.length === 0 : ids.includes(value)))
+  return selected.some((value) => ids.includes(value))
 }
 
 function includesSelected(values: readonly string[] | undefined, selected: string[]): boolean {
@@ -122,8 +122,8 @@ export function sortCatalogRows(
         break
       }
       case 'sources': {
-        const aSources = sourceIds(a.metric).join(',') || 'derived'
-        const bSources = sourceIds(b.metric).join(',') || 'derived'
+        const aSources = sourceIds(a.metric).join(',')
+        const bSources = sourceIds(b.metric).join(',')
         result =
           sourceIds(a.metric).length - sourceIds(b.metric).length ||
           compareText(aSources, bSources) ||

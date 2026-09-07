@@ -45,7 +45,7 @@ export function MetricCatalogTable({ onOpenInExplorer }: MetricCatalogTableProps
     const now = Date.now()
     return catalog.metrics.map((metric) => {
       const entry = statByName.get(metric.name)
-      return { metric, stats: entry, rowStats: computeRowStats(metric, entry, now) }
+      return { metric, stats: entry, rowStats: computeRowStats(entry, now) }
     })
   }, [catalog?.metrics, stats?.stats])
 
@@ -277,9 +277,9 @@ function rowsForFacet(
 function countSources(rows: CatalogTableRowModel[]): Map<string, number> {
   const sourceCounts = new Map<string, number>()
   for (const row of rows) {
-    const sources = row.metric.sources ?? []
-    if (sources.length === 0) sourceCounts.set('derived', (sourceCounts.get('derived') ?? 0) + 1)
-    for (const source of sources) sourceCounts.set(source.id, (sourceCounts.get(source.id) ?? 0) + 1)
+    for (const source of row.metric.sources) {
+      sourceCounts.set(source.id, (sourceCounts.get(source.id) ?? 0) + 1)
+    }
   }
   return sourceCounts
 }

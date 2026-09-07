@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatCpu,
   formatLatency,
+  formatMetricValue,
   formatMem,
   formatValue,
 } from "./formatters";
@@ -33,6 +34,12 @@ describe("formatters", () => {
     expect(formatLatency(9_500_000)).toBe("9.50ms");
     expect(formatLatency(125_000_000)).toBe("125ms");
     expect(formatLatency(1_500_000_000)).toBe("1.5s");
+  });
+
+  it("separates a human-readable duration value from its unit", () => {
+    expect(formatMetricValue(5_625_000, "nanoseconds")).toEqual({ value: "5.63", unit: "ms" });
+    expect(formatMetricValue(830_000, "nanoseconds")).toEqual({ value: "0.83", unit: "ms" });
+    expect(formatMetricValue(1_500_000_000, "nanoseconds")).toEqual({ value: "1.5", unit: "s" });
   });
 
   it("formats snapshot ages in status-bar style", () => {

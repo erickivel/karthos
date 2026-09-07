@@ -12,12 +12,14 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useGraphSnapshot } from "@/hooks/useGraphSnapshot";
 import { useNodeMetrics } from "@/hooks/useNodeMetrics";
-import { useEdgeMetrics } from "@/hooks/useEdgeMetrics";
+import { useMetricCatalog } from '@/hooks/useMetricCatalog'
 import { useAppStore } from "@/stores/useAppStore";
-import { useGraphLayout, type LayoutInput } from "./useGraphLayout";
+import { useGraphLayout } from "./useGraphLayout";
+import { applyOwnershipDependencyFocus } from "./ownershipFocus";
+import { OwnershipRelationshipCard } from "./OwnershipRelationshipCard";
 import { useProjectionState } from "./useProjectionState";
 import { project } from "./projection";
-import type { MeasuredSize } from "./layouts/types";
+import type { LayoutInput, MeasuredSize } from "./layouts/types";
 import { EntityNode } from "./nodes/EntityNode";
 import { NamespaceNode } from "./nodes/NamespaceNode";
 import { RelationEdge } from "./edges/RelationEdge";
@@ -59,11 +61,14 @@ export function TopologyGraph() {
 
 function TopologyGraphInner() {
   const { data: snapshot } = useGraphSnapshot();
-  const nodeMetrics = useNodeMetrics();
-  const edgeMetrics = useEdgeMetrics();
+  const { data: catalog } = useMetricCatalog();
+  const nodeMetrics = useNodeMetrics(catalog?.metrics);
   const [searchParams] = useSearchParams();
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
-  const { mode, granularity, includeOrphans, layoutAlgorithm } = useProjectionState();
+  const relationshipCardEntityId = useAppStore((s) => s.relationshipCardEntityId);
+  const relationshipCardPinned = useAppStore((s) => s.relationshipCardPinned);
+  const openRelationshipCard = useAppStore((s) => s.openRelationshipCard);
+  const { mode, granularity, includeOrphans } = useProjectionState();
 
   const kindFilter = searchParams.get("kind");
   const namespaceFilter = searchParams.get("namespace");
@@ -217,19 +222,24 @@ function TopologyGraphInner() {
     [projection, measuredSizes],
   );
 
-  const { nodes, edges } = useGraphLayout(
+  const layout = useGraphLayout(
     layoutInput,
     mode,
-    layoutAlgorithm,
     nodeMetrics,
-    edgeMetrics,
+  );
+  const { nodes, edges } = useMemo(
+    () => applyOwnershipDependencyFocus(layout, mode),
+    [layout, mode],
   );
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
       setSelectedEntityId(node.id);
+      if (relationshipCardEntityId && !relationshipCardPinned) {
+        openRelationshipCard(node.id);
+      }
     },
-    [setSelectedEntityId],
+    [openRelationshipCard, relationshipCardEntityId, relationshipCardPinned, setSelectedEntityId],
   );
 
   const onPaneClick = useCallback(() => {
@@ -288,6 +298,7 @@ function TopologyGraphInner() {
         </ReactFlow>
       </div>
       <FilterToolbar filters={snapshot?.summary.available_filters} />
+      <OwnershipRelationshipCard mode={mode} />
       <NodeInspector />
     </div>
   );

@@ -1,9 +1,8 @@
 import { memo, type CSSProperties, type KeyboardEvent, type MouseEvent } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { Activity } from "lucide-react";
+import { Activity, ArrowUpRight } from "lucide-react";
 import { useAppStore } from "@/stores/useAppStore";
 import type { GraphNode, EntityKind } from "@/types/graph";
-import { entityKindLabel } from "@/utils/entityDisplay";
 import type { NodeMetricValues } from "@/hooks/useNodeMetrics";
 import { topologyEntityTestId } from "../testIds";
 import { getNodeMetricSpecs, type MetricSelector } from "../nodeMetrics";
@@ -11,8 +10,14 @@ import { NodeMetric } from "./NodeMetric";
 import styles from "./EntityNode.module.css";
 import { namespaceColor } from "../namespaceColor";
 import type { ProjectionMode } from "../projection";
+import { presentEntityNode } from "./nodePresentation";
+import type { DependencyLinkCounts } from "../ownershipFocus";
 
-type GraphNodeData = GraphNode & { metrics?: NodeMetricValues; mode?: ProjectionMode } & Record<string, unknown>;
+type GraphNodeData = GraphNode & {
+  metrics?: NodeMetricValues;
+  mode?: ProjectionMode;
+  dependencyLinks?: DependencyLinkCounts;
+} & Record<string, unknown>;
 
 const KIND_COLOR_VAR: Record<EntityKind, string> = {
   cluster: "var(--kind-cluster)",
@@ -45,30 +50,7 @@ function getHeaderColor(
 
 const SMALL_KINDS: EntityKind[] = ["configmap", "secret", "pvc"];
 
-function getDisplayName(node: GraphNode): string {
-  return `${entityKindLabel(node)}_${node.name}`
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toUpperCase();
-}
-
-function getPrimarySignal(node: GraphNode): { label: string; value: string; tone: string } {
-  const labels = node.labels ?? {};
-  const phase = labels["k8s.pod.phase"];
-  if (node.status === "error" || node.status === "critical") {
-    return { label: "Exception detected", value: "CRITICAL", tone: "alert" };
-  }
-  if (phase === "2") return { label: "Status", value: "RUNNING", tone: "signal" };
-  if (node.kind === "service") {
-    return { label: "Endpoint", value: node.name, tone: "signal" };
-  }
-  if (node.namespace) {
-    return { label: "Namespace", value: node.namespace, tone: "info" };
-  }
-  return { label: "Status", value: node.status.toUpperCase(), tone: "muted" };
-}
-
-function metricValue(values: NodeMetricValues, selector: MetricSelector | undefined): number | undefined {
+function metricValue(values: NodeMetricValues, selector: MetricSelector | undefined) {
   if (!selector) return undefined;
   if (typeof selector === "string") {
     return values[selector];
@@ -88,6 +70,7 @@ function EntityNodeComponent({
   const sourceP = sourcePosition ?? Position.Bottom;
   const targetP = targetPosition ?? Position.Top;
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
+  const openRelationshipCard = useAppStore((s) => s.openRelationshipCard);
   const isSmall = SMALL_KINDS.includes(node.kind);
   const metrics: NodeMetricValues = node.metrics ?? {};
   const hasTelemetry =
@@ -95,24 +78,11 @@ function EntityNodeComponent({
     Object.keys(node.labels ?? {}).length > 0 ||
     Object.keys(metrics).length > 0;
   const specs = getNodeMetricSpecs(node.kind);
-  const hasMetricData = specs.some((spec) => {
-    switch (spec.kind) {
-      case 'utilization':
-        return metricValue(metrics, spec.metric) !== undefined;
-      case 'fraction':
-        return (
-          metricValue(metrics, spec.numeratorMetric) !== undefined &&
-          (metricValue(metrics, spec.denominatorMetric) !== undefined ||
-            (spec.denominatorMetadataKey !== undefined &&
-              Number.isFinite(Number(node.labels?.[spec.denominatorMetadataKey]))))
-        );
-      case 'rate':
-        return metricValue(metrics, spec.metric) !== undefined;
-      case 'gauge':
-        return metricValue(metrics, spec.metric) !== undefined;
-    }
-  });
-  const primarySignal = getPrimarySignal(node);
+  const hasMetricData = specs.some((spec) => metricValue(metrics, spec.metric) !== undefined);
+  const presentation = presentEntityNode(node, node.mode);
+  const primarySignal = presentation.signal;
+  const dependencySummary = formatDependencySummary(node.dependencyLinks);
+  const hasBodyContent = Boolean(primarySignal) || hasMetricData || Boolean(dependencySummary) || !hasTelemetry;
   const selectNode = () => setSelectedEntityId(node.id);
   const handleClick = (event: MouseEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -147,38 +117,59 @@ function EntityNodeComponent({
       tabIndex={0}
     >
       <Handle type="target" position={targetP} className={styles.handle} />
-
       <div
         className={styles.header}
-        data-tone={primarySignal.tone}
+        data-tone={primarySignal?.tone}
       >
-        <span className={styles.name}>{getDisplayName(node)}</span>
+        <span className={styles.identity}>
+          <span className={styles.kind}>{presentation.kind}</span>
+          <span className={styles.name}>{presentation.name}</span>
+        </span>
         <Activity size={13} strokeWidth={2} className={styles.icon} />
       </div>
 
-      <div className={styles.body}>
-        <div className={styles.signalBlock} data-tone={primarySignal.tone}>
-          <span className={styles.propLabel}>{primarySignal.label}</span>
-          <span className={styles.propValue}>{primarySignal.value}</span>
-        </div>
+      {hasBodyContent && (
+        <div className={styles.body}>
+          {primarySignal && (
+            <div className={styles.signalBlock} data-tone={primarySignal.tone}>
+              <span className={styles.propLabel}>{primarySignal.label}</span>
+              <span className={styles.propValue}>{primarySignal.value}</span>
+            </div>
+          )}
 
-        {hasMetricData && (
-          <div className={styles.metrics} data-topology-dynamic="metrics">
-            {specs.map((spec, idx) => (
-              <NodeMetric
-                key={`${spec.kind}-${idx}`}
+          {hasMetricData && (
+            <div className={styles.metrics} data-topology-dynamic="metrics">
+              {specs.map((spec, idx) => (
+                <NodeMetric
+                key={`${spec.label}-${idx}`}
                 spec={spec}
                 values={metrics}
-                metadata={node.labels}
-              />
-            ))}
-          </div>
-        )}
+                entityId={node.id}
+                />
+              ))}
+            </div>
+          )}
 
-        {!hasTelemetry && (
-          <div className={styles.telemetryHint}>Awaiting telemetry data</div>
-        )}
-      </div>
+          {dependencySummary && (
+            <button
+              type="button"
+              className={styles.dependencySummary}
+              onClick={(event) => {
+                event.stopPropagation();
+                openRelationshipCard(node.id);
+              }}
+              aria-label={`Open relationships for ${node.name}`}
+            >
+              <span>{dependencySummary}</span>
+              <span className={styles.dependencyAction}>Open <ArrowUpRight size={11} strokeWidth={2.5} /></span>
+            </button>
+          )}
+
+          {!hasTelemetry && (
+            <div className={styles.telemetryHint}>Awaiting telemetry data</div>
+          )}
+        </div>
+      )}
 
       <Handle
         type="source"
@@ -187,6 +178,18 @@ function EntityNodeComponent({
       />
     </div>
   );
+}
+
+function formatDependencySummary(counts: DependencyLinkCounts | undefined): string | undefined {
+  if (!counts || (counts.dependencies === 0 && counts.dependents === 0)) return undefined;
+  const summary: string[] = [];
+  if (counts.dependencies > 0) {
+    summary.push(`${counts.dependencies} ${counts.dependencies === 1 ? "dependency" : "dependencies"}`);
+  }
+  if (counts.dependents > 0) {
+    summary.push(`${counts.dependents} ${counts.dependents === 1 ? "dependent" : "dependents"}`);
+  }
+  return summary.join(" · ");
 }
 
 export const EntityNode = memo(EntityNodeComponent);

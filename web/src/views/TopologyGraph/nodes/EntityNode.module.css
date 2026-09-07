@@ -45,10 +45,26 @@
     color-mix(in srgb, var(--color-alert) 86%, #272a31);
 }
 
-.name {
-  font-size: 0.78rem;
+.identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kind {
+  font-size: 0.58rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  line-height: 1.2;
   color: currentColor;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -131,50 +147,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.metricSegments {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 2px;
-  height: 5px;
-}
-
-.metricSegments span {
-  min-width: 0;
-  background: rgb(255 255 255 / 10%);
-}
-
-.metricSegments span[data-active="true"] {
-  background: var(--node-accent, var(--color-info));
-}
-
-.metricSegments[data-tone="signal"] span[data-active="true"] {
-  background: var(--color-signal);
-}
-
-.metricSegments[data-tone="warn"] span[data-active="true"] {
-  background: var(--color-warn);
-}
-
-.metricSegments[data-tone="alert"] span[data-active="true"] {
-  background: var(--color-alert);
-}
-
-.sparkline {
-  display: flex;
-  align-items: end;
-  gap: 4px;
-  height: 32px;
-  margin-top: 2px;
-}
-
-.sparkline span {
-  width: 100%;
-  height: var(--bar-height);
-  min-height: 5px;
-  background: var(--node-accent, var(--color-info));
-  opacity: 0.82;
-}
-
 .telemetryHint {
   padding-top: 2px;
   font-size: 0.62rem;
@@ -190,3 +162,38 @@
   border: none;
 }
 
+.dependencySummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--surface-divider);
+  border-radius: 6px;
+  background: var(--surface-base);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.59rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.dependencySummary:hover,
+.dependencySummary:focus-visible {
+  border-color: var(--color-signal);
+  background: var(--surface-active);
+  color: var(--color-signal);
+  outline: none;
+}
+
+.dependencyAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-signal);
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+}

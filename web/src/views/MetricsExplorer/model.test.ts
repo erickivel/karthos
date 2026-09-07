@@ -1,66 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { buildEntityOptions, filterMetricsForMode } from './model'
-import type { GraphNode } from '@/types/graph'
-import type { CanonicalMetric } from '@/types/metrics'
+import { hasCurrentCallsEdge } from './model'
+import type { GraphEdge } from '@/types/graph'
 
 describe('MetricsExplorer model', () => {
-  it('filters edge mode down to edge-capable metrics only', () => {
-    const metrics: CanonicalMetric[] = [
+  it('accepts an edge selection only while its calls relation is in the current graph', () => {
+    const edges: GraphEdge[] = [
       {
-        name: 'servicegraph.request.count',
-        display_name: 'Service Graph Request Rate',
-        unit: 'per_second',
-        category: 'traffic',
-        scopes: ['entity', 'edge'],
-        description: 'rate',
+        id: 'gateway-calls-service', source: 'gateway', target: 'service', relation: 'calls',
+        confidence: 1, first_seen: '2026-09-06T15:00:00Z', last_seen: '2026-09-06T15:00:00Z', metadata: {},
       },
       {
-        name: 'k8s.pod.cpu.usage',
-        display_name: 'Pod CPU Usage',
-        unit: 'bytes',
-        category: 'resource',
-        scopes: ['entity'],
-        description: 'cpu',
+        id: 'service-uses-config', source: 'service', target: 'config', relation: 'uses',
+        confidence: 1, first_seen: '2026-09-06T15:00:00Z', last_seen: '2026-09-06T15:00:00Z', metadata: {},
       },
     ]
 
-    expect(filterMetricsForMode(metrics, 'traffic', 'edge').map((metric) => metric.name)).toEqual([
-      'servicegraph.request.count',
-    ])
-  })
-
-  it('builds entity options from live graph nodes and sorts them by kind, namespace, and name', () => {
-    const nodes: GraphNode[] = [
-      {
-        id: 'stale-id',
-        kind: 'workload',
-        namespace: 'zeta',
-        name: 'old-rollout',
-        cluster: '',
-        status: 'unknown',
-      },
-      {
-        id: 'service-a',
-        kind: 'service',
-        namespace: 'alpha',
-        name: 'api',
-        cluster: '',
-        status: 'ready',
-      },
-      {
-        id: 'pod-a',
-        kind: 'pod',
-        namespace: 'alpha',
-        name: 'api-7b4c',
-        cluster: '',
-        status: 'ready',
-      },
-    ]
-
-    expect(buildEntityOptions(nodes)).toEqual([
-      { id: 'pod-a', label: '[pod] alpha/api-7b4c' },
-      { id: 'service-a', label: '[service] alpha/api' },
-      { id: 'stale-id', label: '[workload] zeta/old-rollout' },
-    ])
+    expect(hasCurrentCallsEdge(edges, 'gateway', 'service')).toBe(true)
+    expect(hasCurrentCallsEdge(edges, 'service', 'config')).toBe(false)
+    expect(hasCurrentCallsEdge(edges, 'past-client', 'past-server')).toBe(false)
   })
 })

@@ -1,20 +1,36 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useQueries } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
+import { ChevronDown, ListTree } from 'lucide-react'
 import { useMetricCatalog } from '@/hooks/useMetricCatalog'
 import { useGraphSnapshot } from '@/hooks/useGraphSnapshot'
-import { getSeries } from '@/api/metrics'
+import { getAllSeries, getSeries } from '@/api/metrics'
 import { getTimeRange, type TimeRange } from './TimeRangeSelector'
 import { CategoryTabs } from './CategoryTabs'
 import { MetricCard } from './MetricCard'
+import { NodeCpuSummary } from './NodeCpuSummary'
+import { PodHealthSummary } from './PodHealthSummary'
+import { PodVolumeList } from './PodVolumeList'
+import { ContainerOverview } from './ContainerOverview'
+import { PVCOverview } from './PVCOverview'
+import { deriveNodeCpuUtilization } from './nodeCpuDerivation'
+import { ServiceTrafficSummary } from './ServiceTrafficSummary'
+import { MetricLoadingSkeleton } from './MetricLoadingSkeleton'
 import { RawSamplesTable } from './RawSamplesTable'
 import { SelectionSummary } from './SelectionSummary'
 import { GlobalEntitySearch } from './filter/GlobalEntitySearch'
 import { FilterBreadcrumbBuilder } from './filter/FilterBreadcrumbBuilder'
 import { EdgeSelector } from './edge/EdgeSelector'
+import { hasCurrentCallsEdge } from './model'
 import { EMPTY_FILTER, type FilterState } from './filter/types'
 import { applicableMetrics, visibleCategoriesForSelection, type ExplorerMode } from './applicability/applicability'
 import { MetricCatalogTable } from './catalog/MetricCatalogTable'
+import { metricsForNodeResourceSection, NODE_RESOURCE_SECTIONS, type NodeResourceSection } from './nodeResourceSections'
+import { metricsForPodSection, POD_METRIC_SECTIONS, type PodMetricSection } from './podMetricSections'
+import { groupPodVolumeSeries } from './podVolumeModel'
+import { buildContainerOverview, CONTAINER_METRIC_NAMES, type ContainerMetricName, type ContainerSeriesByMetric } from './containerOverviewModel'
+import { buildPVCOverview, PVC_METRIC_NAMES, type PVCMetricName, type PVCSeriesByMetric } from './pvcOverviewModel'
+import { metricPresentation } from './metricPresentation'
 import type { GraphNode } from '@/types/graph'
 import type { CanonicalMetric, MetricCategory, MetricSample, MetricSeries } from '@/types/metrics'
 import styles from './MetricsExplorer.module.css'
@@ -35,9 +51,13 @@ export function MetricsExplorer() {
   const [timeRange, setTimeRange] = useState<TimeRange>('15m')
   const [category, setCategory] = useState<MetricCategory>('resource')
   const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER)
+  const [seriesPageTokens, setSeriesPageTokens] = useState<Record<string, string[]>>({})
+  const [cpuBreakdownOpen, setCpuBreakdownOpen] = useState(false)
+  const [nodeResourceSection, setNodeResourceSection] = useState<NodeResourceSection>('compute')
+  const [podMetricSection, setPodMetricSection] = useState<PodMetricSection>('overview')
 
-  const { data: catalog } = useMetricCatalog()
-  const { data: snapshot } = useGraphSnapshot()
+  const { data: catalog, isLoading: catalogLoading } = useMetricCatalog()
+  const { data: snapshot, isLoading: snapshotLoading } = useGraphSnapshot()
   const nodes = snapshot?.graph.nodes
   const edges = snapshot?.graph.edges
 
@@ -66,29 +86,118 @@ export function MetricsExplorer() {
 
   const selectedNode = isEntityMode && filter.entityId ? nodeById.get(filter.entityId) ?? null : null
   const selectedKind = selectedNode?.kind ?? null
-  const applicabilityContext = useMemo(
-    () => ({ labels: selectedNode?.labels }),
-    [selectedNode?.labels],
+  const visibleCategories = useMemo(
+    () => visibleCategoriesForSelection(catalog?.metrics, isEntityMode ? selectedKind : null, mode),
+    [catalog?.metrics, isEntityMode, selectedKind, mode],
   )
 
-  const visibleCategories = useMemo(
-    () => visibleCategoriesForSelection(catalog?.metrics, isEntityMode ? selectedKind : null, mode, applicabilityContext),
-    [catalog?.metrics, isEntityMode, selectedKind, mode, applicabilityContext],
+  const isPodPresentation = isEntityMode && selectedKind === 'pod'
+  const isContainerPresentation = isEntityMode && selectedKind === 'container'
+  const isPVCPresentation = isEntityMode && selectedKind === 'pvc'
+  const podApplicableMetrics = useMemo(
+    () => (catalog?.metrics ?? []).filter((metric) => metric.scopes.includes('entity') && metric.applies_to?.includes('pod')),
+    [catalog?.metrics],
+  )
+  const containerApplicableMetrics = useMemo(
+    () => (catalog?.metrics ?? []).filter((metric) => metric.scopes.includes('entity') && metric.applies_to?.includes('container')),
+    [catalog?.metrics],
+  )
+  const pvcApplicableMetrics = useMemo(
+    () => (catalog?.metrics ?? []).filter((metric) => metric.scopes.includes('entity') && metric.applies_to?.includes('pvc')),
+    [catalog?.metrics],
   )
 
   const categoryMetrics = useMemo(
-    () =>
-      applicableMetrics(
+    () => isPodPresentation
+      ? podApplicableMetrics
+      : isContainerPresentation
+        ? containerApplicableMetrics
+        : isPVCPresentation
+          ? pvcApplicableMetrics
+        : applicableMetrics(
         catalog?.metrics,
         category,
         isEntityMode ? selectedKind : null,
         mode,
-        applicabilityContext,
       ),
-    [catalog?.metrics, category, mode, selectedKind, isEntityMode, applicabilityContext],
+    [catalog?.metrics, category, mode, selectedKind, isEntityMode, isPodPresentation, isContainerPresentation, isPVCPresentation, podApplicableMetrics, containerApplicableMetrics, pvcApplicableMetrics],
   )
 
-  const hasSelection = isEntityMode ? Boolean(selectedNode) : isEdgeMode ? Boolean(edgeSourceId && edgeTargetId) : false
+  const isNodeResourcePresentation = isEntityMode && selectedKind === 'node' && category === 'resource'
+  const isNodeCpuPresentation = isNodeResourcePresentation && nodeResourceSection === 'compute'
+  const isPodHealthPresentation = isPodPresentation && podMetricSection === 'health'
+  const isPodVolumePresentation = isPodPresentation && podMetricSection === 'volumes'
+  const isServiceTrafficPresentation = isEntityMode && selectedKind === 'service' && category === 'traffic'
+  const serviceTrafficMetric = isServiceTrafficPresentation
+    ? categoryMetrics.find((metric) => metric.name === 'servicegraph.request.count')
+    : undefined
+  const displayedCategoryMetrics = useMemo(() => {
+    if (isPodPresentation) {
+      const allowed = new Set(metricsForPodSection(categoryMetrics.map((metric) => metric.name), podMetricSection))
+      return categoryMetrics.filter((metric) => allowed.has(metric.name))
+    }
+    if (isContainerPresentation) return categoryMetrics
+    if (isPVCPresentation) return categoryMetrics
+    if (!isNodeResourcePresentation) return categoryMetrics
+    const metricNames = metricsForNodeResourceSection(categoryMetrics.map((metric) => metric.name), nodeResourceSection)
+    const allowed = new Set(metricNames)
+    return categoryMetrics.filter((metric) => allowed.has(metric.name))
+  }, [categoryMetrics, isNodeResourcePresentation, isPodPresentation, isContainerPresentation, isPVCPresentation, nodeResourceSection, podMetricSection])
+  // CPU state series are fetched as one complete cursor walk for the summary
+  // and expandable breakdown. Service graph request series are likewise fetched
+  // as complete cursor walks before deriving source-scoped inbound and outbound
+  // summaries without mixing their directional evidence.
+  const queriedMetrics = useMemo(
+    () => (isPodHealthPresentation || isPodVolumePresentation || isContainerPresentation || isPVCPresentation ? [] : displayedCategoryMetrics.filter((metric) => (
+      !(isNodeCpuPresentation && metric.name === 'system.cpu.utilization')
+      && metric.name !== serviceTrafficMetric?.name
+    ))),
+    [displayedCategoryMetrics, isNodeCpuPresentation, isPodHealthPresentation, isPodVolumePresentation, isContainerPresentation, isPVCPresentation, serviceTrafficMetric?.name],
+  )
+
+  const podHealthMetrics = useMemo(
+    () => isPodHealthPresentation ? displayedCategoryMetrics : [],
+    [displayedCategoryMetrics, isPodHealthPresentation],
+  )
+  const podVolumeMetrics = useMemo(
+    () => isPodVolumePresentation ? displayedCategoryMetrics : [],
+    [displayedCategoryMetrics, isPodVolumePresentation],
+  )
+  const containerMetrics = useMemo(
+    () => isContainerPresentation
+      ? CONTAINER_METRIC_NAMES.flatMap((name) => {
+          const metric = categoryMetrics.find((candidate) => candidate.name === name)
+          return metric ? [metric] : []
+        })
+      : [],
+    [categoryMetrics, isContainerPresentation],
+  )
+  const pvcMetrics = useMemo(
+    () => isPVCPresentation
+      ? PVC_METRIC_NAMES.flatMap((name) => {
+          const metric = categoryMetrics.find((candidate) => candidate.name === name)
+          return metric ? [metric] : []
+        })
+      : [],
+    [categoryMetrics, isPVCPresentation],
+  )
+
+  const selectedCurrentCallsEdge = useMemo(
+    () => hasCurrentCallsEdge(edges, edgeSourceId, edgeTargetId),
+    [edges, edgeSourceId, edgeTargetId],
+  )
+  const staleEdgeSelection = isEdgeMode
+    && Boolean(edgeSourceId && edgeTargetId)
+    && snapshot !== undefined
+    && !selectedCurrentCallsEdge
+  const hasSelection = isEntityMode
+    ? Boolean(selectedNode)
+    : isEdgeMode
+      ? selectedCurrentCallsEdge
+      : false
+  const awaitingEntityContext = isEntityMode
+    && Boolean(entityId)
+    && (catalogLoading || snapshotLoading)
 
   // Snap to a still-visible category whenever the visibility set changes.
   useEffect(() => {
@@ -99,7 +208,7 @@ export function MetricsExplorer() {
   }, [category, visibleCategories])
 
   const seriesQueries = useQueries({
-    queries: categoryMetrics.map((metric) => ({
+    queries: queriedMetrics.map((metric) => ({
       queryKey: [
         'metrics',
         mode,
@@ -109,38 +218,249 @@ export function MetricsExplorer() {
         edgeTargetId,
         from,
         to,
+        seriesPageTokens[metric.name]?.[seriesPageTokens[metric.name]!.length - 1] ?? '',
       ],
       queryFn: () =>
         isEntityMode
-          ? getSeries({ metric_name: metric.name, entity_id: [filter.entityId], from, to })
+          ? getSeries({
+              metric_name: metric.name,
+              entity_id: [filter.entityId],
+              from,
+              to,
+              page_size: 50,
+              next_token: seriesPageTokens[metric.name]?.[seriesPageTokens[metric.name]!.length - 1],
+            })
           : getSeries({
               metric_name: metric.name,
               edge_source_id: edgeSourceId,
               edge_target_id: edgeTargetId,
               from,
               to,
+              page_size: 50,
+              next_token: seriesPageTokens[metric.name]?.[seriesPageTokens[metric.name]!.length - 1],
             }),
       enabled: !isCatalogMode && hasSelection,
       refetchInterval: 30_000,
     })),
   })
 
-  const seriesByMetric = useMemo(() => {
-    const map = new Map<string, MetricSeries>()
-    categoryMetrics.forEach((metric, i) => {
-      const series = seriesQueries[i]?.data?.series?.[0]
-      if (series) map.set(metric.name, series)
+  const cpuBreakdownQuery = useQuery({
+    queryKey: ['node-cpu-breakdown', filter.entityId, from, to],
+    queryFn: () => getAllSeries({
+      metric_name: 'system.cpu.utilization',
+      entity_id: [filter.entityId],
+      from,
+      to,
+      page_size: 50,
+    }),
+    enabled: isNodeCpuPresentation && cpuBreakdownOpen && Boolean(filter.entityId),
+    refetchInterval: 30_000,
+  })
+
+  const podHealthQueries = useQueries({
+    queries: podHealthMetrics.map((metric) => ({
+      queryKey: ['pod-health', metric.name, filter.entityId, from, to],
+      queryFn: () => getSeries({
+        metric_name: metric.name,
+        entity_id: [filter.entityId],
+        from,
+        to,
+        page_size: 50,
+      }),
+      enabled: Boolean(filter.entityId),
+      refetchInterval: 30_000,
+    })),
+  })
+
+  const podVolumeQueries = useQueries({
+    queries: podVolumeMetrics.map((metric) => ({
+      queryKey: ['pod-volumes', metric.name, filter.entityId, from, to],
+      queryFn: () => getAllSeries({
+        metric_name: metric.name,
+        entity_id: [filter.entityId],
+        from,
+        to,
+        page_size: 50,
+      }),
+      enabled: Boolean(filter.entityId),
+      refetchInterval: 30_000,
+    })),
+  })
+
+  const containerQueries = useQueries({
+    queries: containerMetrics.map((metric) => ({
+      queryKey: ['container-overview', metric.name, filter.entityId, from, to],
+      queryFn: () => getAllSeries({
+        metric_name: metric.name,
+        entity_id: [filter.entityId],
+        from,
+        to,
+        page_size: 50,
+      }),
+      enabled: Boolean(filter.entityId),
+      refetchInterval: 30_000,
+    })),
+  })
+
+  const pvcQueries = useQueries({
+    queries: pvcMetrics.map((metric) => ({
+      queryKey: ['pvc-overview', metric.name, filter.entityId, from, to],
+      queryFn: () => getAllSeries({
+        metric_name: metric.name,
+        entity_id: [filter.entityId],
+        from,
+        to,
+        page_size: 50,
+      }),
+      enabled: Boolean(filter.entityId),
+      refetchInterval: 30_000,
+    })),
+  })
+
+  const serviceTrafficOutboundQuery = useQuery({
+    queryKey: ['service-traffic-summary', 'outbound', serviceTrafficMetric?.name, filter.entityId, from, to],
+    queryFn: () => getAllSeries({
+      metric_name: serviceTrafficMetric!.name,
+      edge_source_id: filter.entityId,
+      from,
+      to,
+      page_size: 50,
+    }),
+    enabled: Boolean(serviceTrafficMetric && filter.entityId),
+    refetchInterval: 30_000,
+  })
+
+  const serviceTrafficInboundQuery = useQuery({
+    queryKey: ['service-traffic-summary', 'inbound', serviceTrafficMetric?.name, filter.entityId, from, to],
+    queryFn: () => getAllSeries({
+      metric_name: serviceTrafficMetric!.name,
+      edge_target_id: filter.entityId,
+      from,
+      to,
+      page_size: 50,
+    }),
+    enabled: Boolean(serviceTrafficMetric && filter.entityId),
+    refetchInterval: 30_000,
+  })
+
+  useEffect(() => {
+    setSeriesPageTokens({})
+  }, [mode, filter.entityId, edgeSourceId, edgeTargetId, from, to])
+
+  const visibleSeries = useMemo(() => {
+    const rows: { metric: CanonicalMetric; series: MetricSeries; queryIndex: number }[] = []
+    queriedMetrics.forEach((metric, queryIndex) => {
+      for (const series of seriesQueries[queryIndex]?.data?.series ?? []) {
+        if (isNodeCpuPresentation && metric.name === 'k8s.node.cpu.usage') continue
+        rows.push({ metric, series, queryIndex })
+      }
     })
-    return map
-  }, [categoryMetrics, seriesQueries])
+    return rows
+  }, [queriedMetrics, seriesQueries, isNodeCpuPresentation])
+
+  const directNodeCpuQueryIndex = queriedMetrics.findIndex((metric) => metric.name === 'k8s.node.cpu.usage')
+  const directNodeCpuResponse = directNodeCpuQueryIndex >= 0 ? seriesQueries[directNodeCpuQueryIndex]?.data : undefined
+  const nodeCpuMetric = categoryMetrics.find((metric) => metric.name === 'k8s.node.cpu.usage')
+  const cpuBreakdownMetric = categoryMetrics.find((metric) => metric.name === 'system.cpu.utilization')
+  const derivedNodeCpu = useMemo(
+    () => deriveNodeCpuUtilization(cpuBreakdownQuery.data?.series ?? []),
+    [cpuBreakdownQuery.data?.series],
+  )
+
+  const emptyNodeMetrics = useMemo(() => {
+    if (!isEntityMode || selectedKind !== 'node') return []
+    return queriedMetrics.flatMap((metric, queryIndex) => {
+      // The dedicated CPU summary owns the direct kubelet empty state too.
+      if (isNodeCpuPresentation && metric.name === 'k8s.node.cpu.usage') return []
+      const response = seriesQueries[queryIndex]?.data
+      return response && response.series.length === 0 ? [{ metric, response }] : []
+    })
+  }, [isEntityMode, isNodeCpuPresentation, queriedMetrics, selectedKind, seriesQueries])
+
+  const metricsLoading = seriesQueries.some((query) => query.isLoading)
+    || podHealthQueries.some((query) => query.isLoading)
+    || podVolumeQueries.some((query) => query.isLoading)
+    || containerQueries.some((query) => query.isLoading)
+    || pvcQueries.some((query) => query.isLoading)
+
+  const podHealthByName = new Map(podHealthMetrics.map((metric, index) => [metric.name, podHealthQueries[index]?.data]))
+  const podVolumeGroups = useMemo(() => groupPodVolumeSeries(Object.fromEntries(
+    podVolumeMetrics.map((metric, index) => [metric.name, podVolumeQueries[index]?.data?.series ?? []]),
+  )), [podVolumeMetrics, podVolumeQueries])
+  const containerSeriesByMetric = useMemo(() => Object.fromEntries(
+    containerMetrics.map((metric, index) => [metric.name, containerQueries[index]?.data?.series ?? []]),
+  ) as ContainerSeriesByMetric, [containerMetrics, containerQueries])
+  const containerOverview = useMemo(
+    () => buildContainerOverview(selectedNode?.status, containerSeriesByMetric),
+    [containerSeriesByMetric, selectedNode?.status],
+  )
+  const containerMetricsByName = useMemo(() => Object.fromEntries(
+    containerMetrics.map((metric) => [metric.name, metric]),
+  ) as Partial<Record<ContainerMetricName, CanonicalMetric>>, [containerMetrics])
+  const containerQueriesByName = useMemo(() => Object.fromEntries(
+    containerMetrics.flatMap((metric, index) => {
+      const query = containerQueries[index]?.data?.query
+      return query ? [[metric.name, query] as const] : []
+    }),
+  ) as Partial<Record<ContainerMetricName, NonNullable<(typeof containerQueries)[number]['data']>['query']>>, [containerMetrics, containerQueries])
+  const containerDetailSeries = useMemo(() => containerMetrics.flatMap((metric, index) => {
+    const response = containerQueries[index]?.data
+    return response && response.series.length > 1
+      ? response.series.map((series) => ({ metric, series, query: response.query }))
+      : []
+  }), [containerMetrics, containerQueries])
+  const pvcSeriesByMetric = useMemo(() => Object.fromEntries(
+    pvcMetrics.map((metric, index) => [metric.name, pvcQueries[index]?.data?.series ?? []]),
+  ) as PVCSeriesByMetric, [pvcMetrics, pvcQueries])
+  const pvcOverview = useMemo(
+    () => buildPVCOverview(pvcSeriesByMetric),
+    [pvcSeriesByMetric],
+  )
+  const pvcMetricsByName = useMemo(() => Object.fromEntries(
+    pvcMetrics.map((metric) => [metric.name, metric]),
+  ) as Partial<Record<PVCMetricName, CanonicalMetric>>, [pvcMetrics])
+  const pvcQueriesByName = useMemo(() => Object.fromEntries(
+    pvcMetrics.flatMap((metric, index) => {
+      const query = pvcQueries[index]?.data?.query
+      return query ? [[metric.name, query] as const] : []
+    }),
+  ) as Partial<Record<PVCMetricName, NonNullable<(typeof pvcQueries)[number]['data']>['query']>>, [pvcMetrics, pvcQueries])
 
   const allSamples = useMemo(() => {
     const out: MetricSample[] = []
-    for (const [, series] of seriesByMetric) {
-      for (const sample of series.samples) out.push(sample)
+    for (const { series } of visibleSeries) {
+      out.push(...series.samples)
+    }
+    for (const series of serviceTrafficOutboundQuery.data?.series ?? []) {
+      out.push(...series.samples)
+    }
+    for (const series of serviceTrafficInboundQuery.data?.series ?? []) {
+      out.push(...series.samples)
+    }
+    for (const response of podHealthQueries) {
+      for (const series of response.data?.series ?? []) out.push(...series.samples)
+    }
+    for (const response of podVolumeQueries) {
+      for (const series of response.data?.series ?? []) out.push(...series.samples)
+    }
+    for (const response of containerQueries) {
+      for (const series of response.data?.series ?? []) out.push(...series.samples)
+    }
+    for (const response of pvcQueries) {
+      for (const series of response.data?.series ?? []) out.push(...series.samples)
     }
     return out
-  }, [seriesByMetric])
+  }, [visibleSeries, serviceTrafficInboundQuery.data?.series, serviceTrafficOutboundQuery.data?.series, podHealthQueries, podVolumeQueries, containerQueries, pvcQueries])
+
+  const changeSeriesPage = (metricName: string, nextToken?: string, direction: 'next' | 'previous' = 'next') => {
+    setSeriesPageTokens((current) => {
+      const stack = current[metricName] ?? []
+      if (direction === 'previous') {
+        return { ...current, [metricName]: stack.slice(0, -1) }
+      }
+      return nextToken ? { ...current, [metricName]: [...stack, nextToken] } : current
+    })
+  }
 
   const setMode = (next: ExplorerMode) => {
     setSearchParams((prev) => {
@@ -306,7 +626,7 @@ export function MetricsExplorer() {
           onTimeRangeChange={setTimeRange}
         />
       )}
-      {!isCatalogMode && !isEntityMode && edgeSourceId && edgeTargetId && (
+      {!isCatalogMode && isEdgeMode && selectedCurrentCallsEdge && (
         <SelectionSummary
           kind="edge"
           source={nodeById.get(edgeSourceId) ?? null}
@@ -317,7 +637,20 @@ export function MetricsExplorer() {
         />
       )}
 
-      {!isCatalogMode && !hasSelection && (
+      {!isCatalogMode && staleEdgeSelection && (
+        <div className={styles.prompt}>
+          <span>This connection is not in the current graph snapshot</span>
+          <span className={styles.promptHint}>
+            The explorer only shows traffic for active <code>calls</code> edges. Choose a current edge above.
+          </span>
+        </div>
+      )}
+
+      {awaitingEntityContext && (
+        <MetricLoadingSkeleton count={2} label="Loading selected entity metrics" />
+      )}
+
+      {!isCatalogMode && !hasSelection && !staleEdgeSelection && !awaitingEntityContext && (
         <div className={styles.prompt}>
           {isEntityMode ? (
             <>
@@ -337,8 +670,40 @@ export function MetricsExplorer() {
         </div>
       )}
 
-      {!isCatalogMode && hasSelection && visibleCategories.length > 0 && (
+      {!isCatalogMode && hasSelection && visibleCategories.length > 0 && !isPodPresentation && !isContainerPresentation && !isPVCPresentation && (
         <CategoryTabs active={category} categories={visibleCategories} onChange={setCategory} />
+      )}
+
+      {isNodeResourcePresentation && (
+        <div className={styles.resourceSections} aria-label="Node resource sections">
+          {NODE_RESOURCE_SECTIONS.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={styles.resourceSection}
+              data-active={nodeResourceSection === section.id}
+              onClick={() => setNodeResourceSection(section.id)}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {isPodPresentation && (
+        <div className={styles.resourceSections} aria-label="Pod metric sections">
+          {POD_METRIC_SECTIONS.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={styles.resourceSection}
+              data-active={podMetricSection === section.id}
+              onClick={() => setPodMetricSection(section.id)}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
       )}
 
       {!isCatalogMode && hasSelection && visibleCategories.length === 0 && (
@@ -349,18 +714,169 @@ export function MetricsExplorer() {
 
       {!isCatalogMode && hasSelection && visibleCategories.length > 0 && categoryMetrics.length > 0 && (
         <div className={styles.chartGrid}>
-          {categoryMetrics.map((metric) => {
-            const series = seriesByMetric.get(metric.name)
+          {metricsLoading && visibleSeries.length === 0 && (
+            <MetricLoadingSkeleton
+              count={isNodeCpuPresentation || isContainerPresentation || isPVCPresentation ? 1 : Math.min(3, Math.max(1, queriedMetrics.length))}
+              fullWidth={isNodeCpuPresentation || isContainerPresentation || isPVCPresentation}
+              label={`Loading ${isNodeResourcePresentation ? nodeResourceSection : isPodPresentation ? podMetricSection : isContainerPresentation ? 'container overview' : isPVCPresentation ? 'PVC storage' : category} metrics`}
+            />
+          )}
+          {isNodeCpuPresentation && directNodeCpuResponse && nodeCpuMetric && (
+            <NodeCpuSummary
+              directSeries={directNodeCpuResponse.series[0]}
+              derived={derivedNodeCpu}
+              sources={nodeCpuMetric.sources}
+            />
+          )}
+          {isNodeCpuPresentation && cpuBreakdownMetric && (
+            <section className={styles.cpuBreakdown} aria-label="CPU per-core and state breakdown">
+              <div className={styles.cpuBreakdownHeader}>
+                <div>
+                  <span className={styles.cpuBreakdownLabel}>CPU breakdown</span>
+                  <span className={styles.cpuBreakdownHint}>{cpuBreakdownQuery.data?.total ?? 'Per-core/state data loads when opened'} {cpuBreakdownQuery.data ? 'per-core/state series' : ''}</span>
+                </div>
+                <button
+                  type="button"
+                  className={styles.cpuBreakdownAction}
+                  aria-expanded={cpuBreakdownOpen}
+                  onClick={() => setCpuBreakdownOpen((open) => !open)}
+                >
+                  <ListTree size={15} aria-hidden="true" />
+                  {cpuBreakdownOpen ? 'Hide per-core details' : 'Inspect per-core details'}
+                  <ChevronDown size={15} aria-hidden="true" data-open={cpuBreakdownOpen} />
+                </button>
+              </div>
+              {cpuBreakdownOpen && cpuBreakdownQuery.isLoading && (
+                <MetricLoadingSkeleton count={2} label="Loading CPU per-core and state breakdown" />
+              )}
+              {cpuBreakdownOpen && cpuBreakdownQuery.data && <div className={styles.chartGrid}>
+                {cpuBreakdownQuery.data.series.map((series, index) => (
+                  <MetricCard
+                    key={`cpu-breakdown:${index}:${series.samples[0]?.entity_id ?? ''}`}
+                    name={cpuBreakdownMetric.display_name}
+                    canonicalName={cpuBreakdownMetric.name}
+                    unit={series.unit || cpuBreakdownMetric.unit}
+                    samples={series.samples}
+                    sources={cpuBreakdownMetric.sources}
+                    query={cpuBreakdownQuery.data.query}
+                    description={cpuBreakdownMetric.description}
+                    scope="entity"
+                    labels={series.samples[0]?.labels}
+                    syncId={SYNCED_CURSOR_ID}
+                  />
+                ))}
+              </div>}
+            </section>
+          )}
+          {isPodHealthPresentation && !metricsLoading && (
+            <PodHealthSummary
+              phaseMetric={podHealthMetrics.find((metric) => metric.name === 'k8s.pod.phase')}
+              reasonMetric={podHealthMetrics.find((metric) => metric.name === 'k8s.pod.status_reason')}
+              phase={podHealthByName.get('k8s.pod.phase')?.series[0]}
+              reason={podHealthByName.get('k8s.pod.status_reason')?.series[0]}
+              query={podHealthByName.get('k8s.pod.phase')?.query ?? podHealthByName.get('k8s.pod.status_reason')?.query}
+            />
+          )}
+          {isPodVolumePresentation && !metricsLoading && <PodVolumeList volumes={podVolumeGroups} />}
+          {isContainerPresentation && !metricsLoading && (
+            <ContainerOverview overview={containerOverview} metrics={containerMetricsByName} queries={containerQueriesByName} />
+          )}
+          {isPVCPresentation && !metricsLoading && (
+            <PVCOverview overview={pvcOverview} metrics={pvcMetricsByName} queries={pvcQueriesByName} />
+          )}
+          {isContainerPresentation && containerDetailSeries.map(({ metric, series, query }, index) => (
+            <MetricCard
+              key={`container-detail:${metric.name}:${index}:${series.samples[0]?.entity_id ?? ''}`}
+              name={metricPresentation({
+                canonicalName: metric.name,
+                scope: 'entity',
+                fallbackTitle: metric.display_name,
+                fallbackMeaning: metric.description,
+              }).title}
+              canonicalName={metric.name}
+              unit={series.unit || metric.unit}
+              samples={series.samples}
+              sources={metric.sources}
+              query={query}
+              description={metric.description}
+              scope="entity"
+              labels={series.samples[0]?.labels}
+              syncId={SYNCED_CURSOR_ID}
+            />
+          ))}
+          {isServiceTrafficPresentation && serviceTrafficMetric && selectedNode && serviceTrafficInboundQuery.data && (
+            <ServiceTrafficSummary
+              metric={serviceTrafficMetric}
+              series={serviceTrafficInboundQuery.data.series}
+              query={serviceTrafficInboundQuery.data.query}
+              direction="inbound"
+              serviceName={selectedNode.name}
+            />
+          )}
+          {isServiceTrafficPresentation && serviceTrafficMetric && selectedNode && serviceTrafficOutboundQuery.data && (
+            <ServiceTrafficSummary
+              metric={serviceTrafficMetric}
+              series={serviceTrafficOutboundQuery.data.series}
+              query={serviceTrafficOutboundQuery.data.query}
+              direction="outbound"
+              serviceName={selectedNode.name}
+            />
+          )}
+          {!isPodHealthPresentation && !isPodVolumePresentation && !isContainerPresentation && !isPVCPresentation && visibleSeries.map(({ metric, series, queryIndex }, seriesIndex) => {
+            const response = seriesQueries[queryIndex]?.data
+            if (!response) return null
             return (
               <MetricCard
-                key={metric.name}
+                key={`${metric.name}:${seriesIndex}:${series.samples[0]?.entity_id ?? ''}`}
                 name={metric.display_name}
                 canonicalName={metric.name}
-                unit={metric.unit}
-                samples={series?.samples ?? []}
+                unit={series.unit || metric.unit}
+                samples={series.samples}
                 sources={metric.sources}
+                query={response.query}
+                description={metric.description}
+                scope={isEntityMode ? 'entity' : 'edge'}
+                labels={series.samples[0]?.labels}
+                edge={series.edge ?? series.samples[0]?.edge}
                 syncId={SYNCED_CURSOR_ID}
               />
+            )
+          })}
+          {emptyNodeMetrics.map(({ metric, response }) => (
+            <MetricCard
+              key={`empty:${metric.name}`}
+              name={metric.display_name}
+              canonicalName={metric.name}
+              unit={metric.unit}
+              samples={[]}
+              sources={metric.sources}
+              query={response.query}
+              description={metric.description}
+              scope="entity"
+              emptyMessage={`No current samples from ${metric.sources?.[0]?.id ?? 'the configured source'}`}
+              syncId={SYNCED_CURSOR_ID}
+            />
+          ))}
+        </div>
+      )}
+
+      {!isCatalogMode && hasSelection && visibleCategories.length > 0 && categoryMetrics.length > 0 && !isPodPresentation && !isContainerPresentation && !isPVCPresentation && (
+        <div className={styles.seriesPagination}>
+          {queriedMetrics.filter((metric) => !(isNodeCpuPresentation && metric.name === 'k8s.node.cpu.usage')).map((metric) => {
+            const index = queriedMetrics.indexOf(metric)
+            const response = seriesQueries[index]?.data
+            if (!response) return null
+            const page = seriesPageTokens[metric.name] ?? []
+            return (
+              <div key={metric.name} className={styles.seriesPager}>
+                <span>{metric.display_name}: {response.series.length} of {response.total} series</span>
+                {page.length > 0 && (
+                  <button type="button" onClick={() => changeSeriesPage(metric.name, undefined, 'previous')}>Previous</button>
+                )}
+                {response.next_token && (
+                  <button type="button" onClick={() => changeSeriesPage(metric.name, response.next_token)}>Next</button>
+                )}
+              </div>
             )
           })}
         </div>

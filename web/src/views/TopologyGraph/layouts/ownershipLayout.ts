@@ -4,6 +4,8 @@ import type { LayoutStrategy, LayoutInput, LayoutDeps, LayoutResult } from './ty
 import { NODE_WIDTH, NODE_HEIGHT_DEFAULT } from './types'
 
 const DIRECTED_RELATIONS: RelationType[] = ['calls', 'runs_on', 'routes_to', 'exposes']
+const DEPENDENCY_KINDS = new Set<EntityKind>(['configmap', 'secret', 'pvc'])
+const ENDPOINT_KINDS = new Set<EntityKind>(['ingress', 'service'])
 
 const OWNERSHIP_TREE = {
   namespaceGap: 170,
@@ -46,6 +48,13 @@ interface ComponentLayout {
   nodes: PositionedNode[]
   width: number
   height: number
+  edgeRoutes: Map<string, OwnershipEdgeRoute>
+}
+
+interface OwnershipEdgeRoute {
+  sourceHandle: string
+  targetHandle: string
+  routePoints: Array<{ x: number; y: number }>
 }
 
 interface RankedEdge {
@@ -56,8 +65,8 @@ interface RankedEdge {
 
 interface ComponentModel {
   nodes: GraphNode[]
-  ranks: Map<string, number>
   edges: RankedEdge[]
+  hierarchyEdges: RankedEdge[]
 }
 
 export const ownershipLayout: LayoutStrategy = {
@@ -93,6 +102,7 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
 
   const positioned: Node[] = []
   const parentContainers: Node[] = []
+  const edgeRoutes = new Map<string, OwnershipEdgeRoute>()
   // Ownership stacks namespaces top-to-bottom (one rectangle per row) so each
   // namespace's tree gets the full canvas width and reads vertically. Earlier
   // versions packed them side-by-side, which made wide namespaces overlap and
@@ -176,13 +186,22 @@ function runOwnershipTree(input: LayoutInput, deps: LayoutDeps): LayoutResult {
         const y = baseY + item.y
         positioned.push(toReactNode(item.node, x, y, deps))
       }
+      for (const [edgeID, route] of component.edgeRoutes) {
+        edgeRoutes.set(edgeID, {
+          ...route,
+          routePoints: route.routePoints.map((point) => ({
+            x: componentX + point.x,
+            y: baseY + point.y,
+          })),
+        })
+      }
       componentX += component.width + OWNERSHIP_TREE.componentGap
     }
 
     nextNamespaceY += namespaceHeight + OWNERSHIP_TREE.namespaceGap
   }
 
-  const edges = contentEdges.map((edge) => toReactEdge(edge, contentNodeMap))
+  const edges = contentEdges.map((edge) => toReactEdge(edge, contentNodeMap, edgeRoutes.get(edge.id)))
 
   return { nodes: [...parentContainers, ...positioned], edges }
 }
@@ -229,57 +248,87 @@ function buildComponentModel(nodes: GraphNode[], edges: GraphEdge[]): ComponentM
   )
   return {
     nodes: sortOwnershipNodes(nodes),
-    ranks: computeDynamicRanks(nodes, rankedEdges),
     edges: rankedEdges,
+    hierarchyEdges: rankedEdges.filter((edge) => edge.edge.relation === 'contains'),
   }
 }
 
 function layoutOwnershipComponent(component: ComponentModel): ComponentLayout {
   const nodeById = new Map(component.nodes.map((n) => [n.id, n]))
+  const endpointNodes = sortOwnershipNodes(
+    component.nodes.filter((node) => ENDPOINT_KINDS.has(node.kind)),
+  )
+  const allDependencyNodes = sortOwnershipNodes(
+    component.nodes.filter((node) => DEPENDENCY_KINDS.has(node.kind)),
+  )
+  const dependencyNodes = allDependencyNodes
+  const hierarchyNodes = component.nodes.filter(
+    (node) => !ENDPOINT_KINDS.has(node.kind) && !DEPENDENCY_KINDS.has(node.kind),
+  )
+  const hierarchyNodeById = new Map(hierarchyNodes.map((node) => [node.id, node]))
   const incomingByNode = new Map<string, RankedEdge[]>()
-  for (const node of component.nodes) incomingByNode.set(node.id, [])
-  for (const edge of component.edges) {
-    if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) continue
+  for (const node of hierarchyNodes) incomingByNode.set(node.id, [])
+  for (const edge of component.hierarchyEdges) {
+    if (!hierarchyNodeById.has(edge.source) || !hierarchyNodeById.has(edge.target)) continue
     incomingByNode.get(edge.target)!.push(edge)
   }
 
   const parentOf = new Map<string, string | null>()
-  for (const node of component.nodes) {
+  for (const node of hierarchyNodes) {
     const incoming = incomingByNode.get(node.id) ?? []
     if (incoming.length === 0) {
       parentOf.set(node.id, null)
       continue
     }
-    let bestParent: string | null = null
-    let bestRank = Infinity
-    for (const edge of incoming) {
-      if (edge.source === node.id) continue
-      const rank = component.ranks.get(edge.source) ?? 0
-      if (rank < bestRank) {
-        bestRank = rank
-        bestParent = edge.source
-      } else if (
-        rank === bestRank &&
-        bestParent !== null &&
-        compareOwnershipNodes(nodeById.get(edge.source)!, nodeById.get(bestParent)!) < 0
-      ) {
-        bestParent = edge.source
-      }
-    }
-    parentOf.set(node.id, bestParent)
+    const parents = incoming
+      .map((edge) => hierarchyNodeById.get(edge.source))
+      .filter(isGraphNode)
+      .sort(compareOwnershipNodes)
+    parentOf.set(node.id, parents[0]?.id ?? null)
   }
 
   const childrenOf = new Map<string, GraphNode[]>()
-  for (const node of component.nodes) childrenOf.set(node.id, [])
-  for (const node of component.nodes) {
+  for (const node of hierarchyNodes) childrenOf.set(node.id, [])
+  for (const node of hierarchyNodes) {
     const parent = parentOf.get(node.id)
     if (parent && parent !== node.id) childrenOf.get(parent)!.push(node)
   }
   for (const list of childrenOf.values()) list.sort(compareOwnershipNodes)
 
   const roots = sortOwnershipNodes(
-    component.nodes.filter((n) => parentOf.get(n.id) == null),
+    hierarchyNodes.filter((n) => parentOf.get(n.id) == null),
   )
+
+  // `routes_to` is not a containment relation, but it does have an explicit
+  // visual direction in Ownership mode: ingress sits above the Service it
+  // routes to. Compute only endpoint ranks here; `contains` remains the sole
+  // hierarchy parent relationship.
+  const endpointByID = new Map(endpointNodes.map((node) => [node.id, node]))
+  const endpointRanks = new Map(endpointNodes.map((node) => [node.id, 0]))
+  for (let pass = 0; pass < endpointNodes.length; pass += 1) {
+    let changed = false
+    for (const edge of component.edges) {
+      if (edge.edge.relation !== 'routes_to') continue
+      if (!endpointByID.has(edge.source) || !endpointByID.has(edge.target)) continue
+      const nextRank = (endpointRanks.get(edge.source) ?? 0) + 1
+      if (nextRank > (endpointRanks.get(edge.target) ?? 0)) {
+        endpointRanks.set(edge.target, nextRank)
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+  const endpointsByRank = new Map<number, GraphNode[]>()
+  for (const endpoint of endpointNodes) {
+    const rank = endpointRanks.get(endpoint.id) ?? 0
+    const row = endpointsByRank.get(rank) ?? []
+    row.push(endpoint)
+    endpointsByRank.set(rank, row)
+  }
+  for (const row of endpointsByRank.values()) row.sort(compareOwnershipNodes)
+  const endpointRankCount = endpointNodes.length === 0
+    ? 0
+    : Math.max(...endpointsByRank.keys()) + 1
 
   const widthOf = new Map<string, number>()
   const computeWidth = (id: string, stack: Set<string>): number => {
@@ -299,11 +348,18 @@ function layoutOwnershipComponent(component: ComponentModel): ComponentLayout {
     return w
   }
   for (const root of roots) computeWidth(root.id, new Set())
-  for (const node of component.nodes) computeWidth(node.id, new Set())
+  for (const node of hierarchyNodes) computeWidth(node.id, new Set())
 
   const positioned: PositionedNode[] = []
   const visited = new Set<string>()
-  let maxDepth = 0
+  const treeRootWidth = rowWidth(roots, (node) => widthOf.get(node.id) ?? NODE_WIDTH)
+  const endpointWidth = Math.max(
+    0,
+    ...[...endpointsByRank.values()].map((row) => rowWidth(row, () => NODE_WIDTH)),
+  )
+  const dependencyWidth = rowWidth(dependencyNodes, () => NODE_WIDTH)
+  const spineWidth = Math.max(NODE_WIDTH, treeRootWidth, endpointWidth, dependencyWidth)
+  let maxDepth = endpointRankCount > 0 ? endpointRankCount - 1 : -1
 
   const place = (id: string, leftEdge: number, depth: number) => {
     if (visited.has(id)) return
@@ -330,61 +386,67 @@ function layoutOwnershipComponent(component: ComponentModel): ComponentLayout {
     }
   }
 
-  let cursor = 0
+  for (const [rank, endpoints] of [...endpointsByRank.entries()].sort(([a], [b]) => a - b)) {
+    placeRow(endpoints, rank * OWNERSHIP_TREE.rankGap, spineWidth, positioned)
+  }
+
+  let cursor = (spineWidth - treeRootWidth) / 2
+  const treeStartDepth = endpointRankCount
   for (const root of roots) {
-    place(root.id, cursor, 0)
+    place(root.id, cursor, treeStartDepth)
     cursor += (widthOf.get(root.id) ?? NODE_WIDTH) + OWNERSHIP_TREE.siblingGap
   }
-  for (const node of component.nodes) {
+  for (const node of hierarchyNodes) {
     if (visited.has(node.id)) continue
-    place(node.id, cursor, 0)
+    place(node.id, cursor, treeStartDepth)
     cursor += (widthOf.get(node.id) ?? NODE_WIDTH) + OWNERSHIP_TREE.siblingGap
   }
 
-  const totalWidth = Math.max(NODE_WIDTH, cursor - OWNERSHIP_TREE.siblingGap)
+  if (dependencyNodes.length > 0) {
+    maxDepth += 1
+    placeRow(
+      dependencyNodes,
+      maxDepth * OWNERSHIP_TREE.rankGap,
+      spineWidth,
+      positioned,
+    )
+  }
+
+  const edgeRoutes = new Map<string, OwnershipEdgeRoute>()
+
+  const treeHeight = maxDepth < 0
+    ? NODE_HEIGHT_DEFAULT
+    : maxDepth * OWNERSHIP_TREE.rankGap + NODE_HEIGHT_DEFAULT
   return {
     nodes: positioned,
-    width: totalWidth,
-    height: maxDepth * OWNERSHIP_TREE.rankGap + NODE_HEIGHT_DEFAULT,
+    width: spineWidth,
+    height: treeHeight,
+    edgeRoutes,
   }
 }
 
-function computeDynamicRanks(nodes: GraphNode[], edges: RankedEdge[]): Map<string, number> {
-  const ranks = new Map(nodes.map((node) => [node.id, 0]))
-  const incomingCount = new Map(nodes.map((node) => [node.id, 0]))
-  const outgoing = new Map(nodes.map((node) => [node.id, [] as RankedEdge[]]))
-
-  for (const edge of edges) {
-    incomingCount.set(edge.target, (incomingCount.get(edge.target) ?? 0) + 1)
-    const list = outgoing.get(edge.source) ?? []
-    list.push(edge)
-    outgoing.set(edge.source, list)
-  }
-
-  const roots = sortOwnershipNodes(
-    nodes.filter((node) => (incomingCount.get(node.id) ?? 0) === 0),
+function rowWidth(
+  nodes: GraphNode[],
+  widthFor: (node: GraphNode) => number,
+): number {
+  return nodes.reduce(
+    (total, node, index) => total + widthFor(node) + (index > 0 ? OWNERSHIP_TREE.siblingGap : 0),
+    0,
   )
-  const fallbackRoot = sortOwnershipNodes(nodes)[0]
-  const traversalRoots = roots.length > 0 ? roots : fallbackRoot ? [fallbackRoot] : []
-  const visiting = new Set<string>()
+}
 
-  const visit = (nodeId: string, rank: number) => {
-    ranks.set(nodeId, Math.max(ranks.get(nodeId) ?? 0, rank))
-    if (visiting.has(nodeId)) return
-
-    visiting.add(nodeId)
-    for (const edge of outgoing.get(nodeId) ?? []) {
-      if (visiting.has(edge.target)) continue
-      visit(edge.target, (ranks.get(nodeId) ?? rank) + 1)
-    }
-    visiting.delete(nodeId)
+function placeRow(
+  nodes: GraphNode[],
+  y: number,
+  totalWidth: number,
+  positioned: PositionedNode[],
+): void {
+  const width = rowWidth(nodes, () => NODE_WIDTH)
+  let x = (totalWidth - width) / 2
+  for (const node of nodes) {
+    positioned.push({ node, x, y })
+    x += NODE_WIDTH + OWNERSHIP_TREE.siblingGap
   }
-
-  for (const root of traversalRoots) {
-    visit(root.id, ranks.get(root.id) ?? 0)
-  }
-
-  return ranks
 }
 
 function sortOwnershipNodes(nodes: GraphNode[]): GraphNode[] {
@@ -449,6 +511,7 @@ function toReactNode(node: GraphNode, x: number, y: number, deps: LayoutDeps): N
 function toReactEdge(
   edge: GraphEdge,
   contentNodeMap: Map<string, GraphNode>,
+  route: OwnershipEdgeRoute | undefined,
 ): Edge {
   const directed = DIRECTED_RELATIONS.includes(edge.relation)
   const sourceNode = contentNodeMap.get(edge.source)
@@ -460,11 +523,16 @@ function toReactEdge(
     target: edge.target,
     type: 'relation',
     zIndex: edge.relation === 'calls' ? 12 : 6,
+    ...(route && {
+      sourceHandle: route.sourceHandle,
+      targetHandle: route.targetHandle,
+    }),
     data: {
       ...edge,
       sourceName: sourceNode?.name,
       targetName: targetNode?.name,
       routeStyle: 'ownership',
+      ...(route && { routePoints: route.routePoints }),
     } as Record<string, unknown>,
     ...(directed && {
       markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },

@@ -33,6 +33,21 @@ export function formatLatency(ns?: number): string | null {
   return `${ms.toFixed(2)}ms`;
 }
 
+/**
+ * Keeps the API unit available while giving a metric card a readable duration.
+ * The raw sample remains nanoseconds in the API and raw-samples table.
+ */
+export function formatMetricValue(value: number, unit: string): { value: string; unit: string } {
+  if (unit === 'nanoseconds') {
+    const formatted = formatLatency(value)
+    if (formatted) {
+      const match = formatted.match(/^(.*?)(ms|s)$/)
+      if (match) return { value: match[1]!, unit: match[2]! }
+    }
+  }
+  return { value: formatValue(value), unit }
+}
+
 export function formatAge(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s AGO`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m AGO`;

@@ -8,19 +8,13 @@ declares whether a metric supports entity queries, edge queries, or both.
 `CanonicalMetric.applies_to` declares which graph entity kinds an entity-scoped
 metric is valid for.
 
-For `workload` entities, the graph label `k8s.workload.type` further narrows
-controller-specific metric families. A Deployment workload renders
-`k8s.deployment.*`, a Job renders `k8s.job.*`, and so on. Missing subtype
-metadata fails open so older graph snapshots keep the previous generic workload
-behavior.
-
-## The Three Card States
+## Series card states
 
 | State | Meaning | Driven by |
 | --- | --- | --- |
 | **Hidden** | Metric is structurally inapplicable to this kind. Card never renders. | `scopes` + `applies_to` from `/api/v1/metrics/catalog` |
 | **Shown with data** | Metric is applicable and the API returned at least one sample. | The query result |
-| **Shown empty** | Metric is applicable but the API returned zero samples in the window. | Card-level empty state in `MetricCard` |
+| **Shown** | The API returned one dimensional series. | One `MetricCard` with its labels and samples |
 
 Category tabs are derived from the applicable catalog metrics for the current
 selection. If a selected container has resource and health metrics, only those
@@ -30,9 +24,9 @@ tabs are shown.
 ## Files
 
 - `applicability.ts` — pure functions consumed by the Explorer:
-  - `visibleCategoriesForSelection(metrics, kind, mode, context)`
-  - `isMetricApplicableToKind(metric, kind, context)`
-  - `applicableMetrics(metrics, category, kind, mode, context)`
+  - `visibleCategoriesForSelection(metrics, kind, mode)`
+  - `isMetricApplicableToKind(metric, kind)`
+  - `applicableMetrics(metrics, category, kind, mode)`
 - `applicability.test.ts` — unit tests covering the contract.
 
 ## How to Extend
@@ -50,8 +44,6 @@ tabs are shown.
 2. Add `applies_to` metadata for every entity kind the metric can be queried
    against. Edge-only metrics intentionally omit `applies_to`.
 3. Add or update frontend applicability tests for the expected entity kind.
-4. If the metric applies to `workload`, add or verify the `k8s.workload.type`
-   subtype rule when the metric is controller-specific.
 
 ### Add a New Metric Category
 
@@ -62,7 +54,5 @@ tabs are shown.
 
 ## Drift Detection
 
-Current backend tests require every entity-scoped catalog metric to declare at
-least one `applies_to` kind. The frontend keeps a compatibility fail-open path
-for older catalog responses and logs a dev-only warning when that metadata is
-missing.
+Entity-scoped catalog entries must declare at least one `applies_to` kind. The
+frontend treats that mounted `/api/v1` contract as authoritative.

@@ -39,13 +39,13 @@ describe('metric catalog table model', () => {
       scopes: ['entity'],
     }), 12, 'live'),
     row(metric({
-      name: 'servicegraph.request.error.ratio',
-      display_name: 'Service Graph Error Ratio',
-      unit: 'ratio',
-      category: 'error',
-      sources: undefined,
+      name: 'servicegraph.request.count',
+      display_name: 'Service Graph Request Rate',
+      unit: 'per_second',
+      category: 'traffic',
+      sources: [{ id: 'traces.servicegraph', priority: 1 }],
       scopes: ['entity', 'edge'],
-    }), 0, 'derived'),
+    }), 0, 'no-data'),
     row(metric({
       name: 'k8s.container.memory.limit',
       display_name: 'Container Memory Limit',
@@ -60,25 +60,25 @@ describe('metric catalog table model', () => {
     expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, query: 'http' }).map((r) => r.metric.name)).toEqual([
       'http.server.request.count',
     ])
-    expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, source: ['derived'] }).map((r) => r.metric.name)).toEqual([
-      'servicegraph.request.error.ratio',
+    expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, source: ['traces.servicegraph'] }).map((r) => r.metric.name)).toEqual([
+      'servicegraph.request.count',
     ])
     expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, category: ['resource'], unit: ['bytes'] }).map((r) => r.metric.name)).toEqual([
       'k8s.container.memory.limit',
     ])
-    expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, scope: ['edge'], coverage: ['derived'] }).map((r) => r.metric.name)).toEqual([
-      'servicegraph.request.error.ratio',
+    expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, scope: ['edge'], coverage: ['no-data'] }).map((r) => r.metric.name)).toEqual([
+      'servicegraph.request.count',
     ])
   })
 
   it('treats multiple selected values in one filter as OR choices', () => {
-    expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, source: ['derived', 'prometheus.app'] }).map((r) => r.metric.name)).toEqual([
+    expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, source: ['traces.servicegraph', 'prometheus.app'] }).map((r) => r.metric.name)).toEqual([
       'http.server.request.count',
-      'servicegraph.request.error.ratio',
+      'servicegraph.request.count',
     ])
-    expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, category: ['error', 'traffic'] }).map((r) => r.metric.name)).toEqual([
+    expect(filterCatalogRows(rows, { ...EMPTY_CATALOG_FILTERS, category: ['traffic'] }).map((r) => r.metric.name)).toEqual([
       'http.server.request.count',
-      'servicegraph.request.error.ratio',
+      'servicegraph.request.count',
     ])
   })
 
@@ -86,12 +86,12 @@ describe('metric catalog table model', () => {
     expect(sortCatalogRows(rows, 'samples', 'desc').map((r) => r.metric.name)).toEqual([
       'http.server.request.count',
       'k8s.container.memory.limit',
-      'servicegraph.request.error.ratio',
+      'servicegraph.request.count',
     ])
     expect(sortCatalogRows(rows, 'category', 'asc').map((r) => r.metric.name)).toEqual([
-      'servicegraph.request.error.ratio',
       'k8s.container.memory.limit',
       'http.server.request.count',
+      'servicegraph.request.count',
     ])
   })
 })

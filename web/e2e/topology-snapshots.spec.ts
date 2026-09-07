@@ -4,12 +4,9 @@ import { openTopology, setGranularity, setMode, waitForGraph } from './topology-
 const MODES = ['ownership', 'infrastructure', 'traffic'] as const
 const GRANULARITIES = ['overview', 'runtime', 'detailed'] as const
 
-async function waitForSnapshotReady(page: Page, granularity: (typeof GRANULARITIES)[number]) {
-  if (granularity === 'overview') return
-
-  await expect
-    .poll(async () => page.locator('[data-topology-dynamic="metrics"]').count())
-    .toBeGreaterThan(0)
+async function waitForLayoutSettled(page: Page) {
+  // Resource chips are optional: the current graph contract renders topology
+  // independently from catalog-backed metric availability.
   await page.waitForTimeout(250)
 }
 
@@ -21,7 +18,7 @@ test.describe('topology projection snapshots', () => {
         await waitForGraph(page)
         await setMode(page, mode)
         await setGranularity(page, granularity)
-        await waitForSnapshotReady(page, granularity)
+        await waitForLayoutSettled(page)
         await expect(page.getByTestId('topology-graph')).toHaveScreenshot(
           `topology-${mode}-${granularity}.png`,
           {

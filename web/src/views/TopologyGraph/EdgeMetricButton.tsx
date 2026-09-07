@@ -1,8 +1,8 @@
-import type { EnrichedEdge } from "@/types/graph";
+import type { GraphEdge } from "@/types/graph";
 import styles from "./NodeInspector.module.css";
 
 interface EdgeMetricButtonProps {
-  edge: EnrichedEdge;
+  edge: GraphEdge;
   onNavigate: (sourceId: string, targetId: string) => void;
 }
 

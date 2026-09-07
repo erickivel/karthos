@@ -9,10 +9,16 @@ const MODE_LABEL: Record<ProjectionMode, string> = {
   traffic: 'Traffic',
 }
 
-const GRANULARITY_LABEL: Record<Granularity, string> = {
-  overview: 'L1',
-  runtime: 'L2',
-  detailed: 'L3',
+const OWNERSHIP_GRANULARITY_LABEL: Record<Granularity, string> = {
+  overview: 'Workloads',
+  runtime: 'Pods',
+  detailed: 'Resources',
+}
+
+const INFRASTRUCTURE_GRANULARITY_LABEL: Record<Granularity, string> = {
+  overview: 'Nodes',
+  runtime: 'Pods',
+  detailed: 'Containers',
 }
 
 const TRAFFIC_GRANULARITY_LABEL: Record<Granularity, string> = {
@@ -22,9 +28,9 @@ const TRAFFIC_GRANULARITY_LABEL: Record<Granularity, string> = {
 }
 
 function granularityLabel(mode: ProjectionMode, granularity: Granularity): string {
-  return mode === 'traffic'
-    ? TRAFFIC_GRANULARITY_LABEL[granularity]
-    : GRANULARITY_LABEL[granularity]
+  if (mode === 'traffic') return TRAFFIC_GRANULARITY_LABEL[granularity]
+  if (mode === 'infrastructure') return INFRASTRUCTURE_GRANULARITY_LABEL[granularity]
+  return OWNERSHIP_GRANULARITY_LABEL[granularity]
 }
 
 function slugify(value: string): string {
@@ -78,9 +84,8 @@ export async function setGranularity(page: Page, granularity: Granularity) {
     'aria-pressed',
     'true',
   )
-  // Picker labels differ between Traffic mode (Endpoint/Workload/Instance)
-  // and the others (L1/L2/L3) — pick the right label by reading the
-  // active mode from the toolbar.
+  // Each projection maps the stable URL granularity values to its own
+  // user-facing vocabulary, so assert the active mode's label.
   const activeMode = await page.locator('[aria-pressed="true"][data-testid^="mode-"]').first().getAttribute('data-testid')
   const mode = (activeMode?.replace('mode-', '') ?? 'ownership') as ProjectionMode
   await expect(page.getByTestId('topology-granularity-group')).toContainText(
