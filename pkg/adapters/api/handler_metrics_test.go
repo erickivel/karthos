@@ -184,6 +184,21 @@ func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
 	assert.Contains(t, resp.Body.String(), `"value_label":"unknown"`)
 }
 
+func TestQueryMetricsReturnsReadablePodPhase(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
+		MetricName: "k8s.pod.phase",
+		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
+		Value:      2,
+		Timestamp:  time.Now().UTC(),
+		Unit:       metrics.UnitCount,
+	}}))
+
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.phase")
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.Contains(t, resp.Body.String(), `"value_label":"running"`)
+}
+
 func TestQueryMetricsFilterByEntityID(t *testing.T) {
 	ms := seedMetrics(t)
 	srv := newTestServer(t, Config{MetricStore: ms})

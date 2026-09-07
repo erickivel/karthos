@@ -88,7 +88,7 @@ Configuration:
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `300` | Snapshot staleness threshold in seconds |
+| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `360` | Snapshot staleness threshold in seconds |
 
 ### GET /api/v1/discovery
 
@@ -123,11 +123,18 @@ Response:
 }
 ```
 
+Unavailable sources may serialize `signals` as `null`; clients should treat
+that as an empty signal list.
+
 ## Graph
 
 ### GET /api/v1/graph
 
-Full latest topology snapshot with expanded summary.
+The newest complete materialized topology snapshot with expanded summary.
+Every materialization is an immutable point-in-time graph: the direct
+Kubernetes structure is authoritative for membership, and only fresh active
+telemetry/lifecycle edges whose endpoints still exist in that structure are
+included. Materialized snapshots are retained for 24 hours.
 
 ```bash
 curl -s http://localhost:18081/api/v1/graph | jq .data.summary
@@ -138,8 +145,9 @@ Response shape:
 ```json
 {
   "data": {
+    "snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
     "version": {"major": 1, "minor": 0},
-    "from": "2026-04-02T15:11:12Z",
+    "from": "2026-04-02T15:22:12Z",
     "to": "2026-04-02T15:22:12Z",
     "created_at": "2026-04-02T15:22:12Z",
     "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
@@ -160,7 +168,10 @@ Response shape:
 }
 ```
 
-Returns 404 if no snapshot exists.
+Pass `at=<RFC3339 timestamp>` to select the newest retained materialized
+snapshot at or before that instant. The timestamp cannot be in the future.
+Returns 400 for an invalid or future `at`, and 404 if no current snapshot (or
+no retained snapshot at the requested time) exists.
 
 ### GET /api/v1/graph/nodes
 
@@ -170,8 +181,9 @@ List enriched graph nodes with optional filtering and pagination.
 |-------|------|-------------|
 | `kind` | string | Filter by entity kind (`pod`, `service`, `node`, etc.) |
 | `namespace` | string | Filter by namespace |
+| `at` | RFC3339 timestamp | Select the newest retained snapshot at or before this instant |
 | `page_size` | int | Items per page (default 100) |
-| `next_token` | string | Pagination cursor |
+| `next_token` | string | Opaque pagination cursor bound to the selected snapshot |
 
 ```bash
 curl -s "http://localhost:18081/api/v1/graph/nodes?kind=pod&page_size=10" | jq .
@@ -182,6 +194,7 @@ Response:
 ```json
 {
   "data": {
+	"snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
     "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
     "nodes": [
       {"id": "...", "kind": "pod", "name": "pod-a", "namespace": "default", "cluster": "oksg-test", "status": "unknown", "labels": {...}}
@@ -194,9 +207,15 @@ Response:
 
 Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
 
+The `data.snapshot` object identifies the exact graph that produced the page.
+Repeat both `at` and `next_token` when paging a historical result. A cursor
+from another snapshot is rejected rather than mixing graph versions.
+
 ### GET /api/v1/graph/nodes/{id}
 
 Single node with enriched inbound/outbound edges including related entity summaries.
+Accepts the same optional `at=<RFC3339 timestamp>` selection as the graph list
+endpoints and returns `data.snapshot` for the selected materialized graph.
 
 ```bash
 curl -s http://localhost:18081/api/v1/graph/nodes/<entity-id> | jq .
@@ -207,6 +226,7 @@ Response:
 ```json
 {
   "data": {
+	"snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
     "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
     "node": {"id": "...", "kind": "service", "name": "svc-a", "namespace": "default", "cluster": "oksg-test", "status": "unknown", "labels": {...}},
     "edges": {
@@ -227,17 +247,18 @@ Returns 404 if node not found.
 
 ### GET /api/v1/graph/edges
 
-List edges from the current composed graph with optional filtering and
-pagination. The result uses the newest non-expired structural projection plus
-active telemetry and lifecycle observations, matching `/api/v1/graph`.
+List edges from one selected materialized graph with optional filtering and
+pagination. By default this is the latest snapshot; `at` selects the newest
+retained snapshot at or before a requested RFC3339 instant.
 
 | Param | Type | Description |
 |-------|------|-------------|
 | `source` | canonical entity ID | Filter by source entity ID |
 | `target` | canonical entity ID | Filter by target entity ID |
 | `relation` | string | Filter by relation type (`calls`, `runs_on`, `contains`, `exposes`, `routes_to`, `uses`, `mounts`) |
+| `at` | RFC3339 timestamp | Select the newest retained snapshot at or before this instant |
 | `page_size` | int | Items per page (default 100) |
-| `next_token` | string | Pagination cursor |
+| `next_token` | string | Opaque pagination cursor bound to the selected snapshot |
 
 ```bash
 curl -s "http://localhost:18081/api/v1/graph/edges?relation=calls" | jq .
@@ -247,7 +268,7 @@ Response:
 
 ```json
 {
-  "data": {"edges": [...], "total": 12},
+  "data": {"snapshot": {"id": 481, "created_at": "..."}, "edges": [...], "total": 12},
   "next_token": ""
 }
 ```
@@ -280,6 +301,7 @@ bounded `http_route` only when the application or collector supplied
 Without that route, the canonical application metric is service-level
 aggregation rather than per-path data.
 
+- `k8s.pod.phase` -> receiver enum translated at the API boundary: `1=pending`, `2=running`, `3=succeeded`, `4=failed`, `5=unknown`.
 - `k8s.pod.status_reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
 - `http.server.request.duration` / `servicegraph.request.duration` -> temporality-aware `<metric>_sum` rate divided by the corresponding `<metric>_count` rate
 
@@ -324,9 +346,9 @@ Response:
 }
 ```
 
-For `k8s.pod.status_reason`, samples carry a `value_label` translated from the integer value. Derived graph/status health is not a queryable metric.
+For `k8s.pod.phase` and `k8s.pod.status_reason`, samples carry a `value_label` translated from the integer value. The phase label reports Kubernetes lifecycle state; graph/status health remains a separate derived view and is not a queryable metric.
 
-Health composites use `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`; pod status reasons use `evicted | node_affinity | node_lost | shutdown | unexpected_admission_error | unknown`. Canonical mappings live in `pkg/core/metrics/health_status.go`. The `value_label` field is omitted on non-enum metrics.
+Health composites use `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`; Pod phases use `pending | running | succeeded | failed | unknown`; pod status reasons use `evicted | node_affinity | node_lost | shutdown | unexpected_admission_error | unknown`. Canonical mappings live in `pkg/core/metrics/health_status.go`. The `value_label` field is omitted on non-enum metrics.
 
 For edge-oriented metrics, samples include an optional `edge` object plus the original edge labels:
 
@@ -548,7 +570,7 @@ When modifying or adding API endpoints, update these files:
 | `pkg/adapters/api/handler_metrics.go` | Metrics query, catalog, and series handlers |
 | `pkg/adapters/api/handler_entities.go` | Entity query handlers |
 | `cmd/backend/main.go` | API server wiring into the backend binary |
-| `deploy/helm/oksg-otel/values.yaml` | `backend.service.apiPort` and `backend.statusStaleSeconds` values |
+| `deploy/helm/oksg-otel/values.yaml` | `backend.service.apiPort`, `backend.statusStaleSeconds`, and `backend.structureRefreshInterval` values |
 | `deploy/helm/oksg-otel/templates/backend-deployment.yaml` | API port arg and containerPort |
 | `deploy/helm/oksg-otel/templates/backend-service.yaml` | API service port entry |
 | `docs/api-reference.md` | **This file** -- update when endpoints change |

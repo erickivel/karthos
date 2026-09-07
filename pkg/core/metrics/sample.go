@@ -11,7 +11,7 @@ import (
 // Value carries the numeric form: a regular gauge/counter value for most
 // metrics, or an integer-encoded enum (rounded float) for the
 // enum metrics such as `oksg.{pod,container}.health.status` and
-// `k8s.pod.status_reason`. ValueLabel is the public
+// `k8s.pod.phase` and `k8s.pod.status_reason`. ValueLabel is the public
 // plain-text translation of an integer-enum value and is set ONLY by the
 // API/store boundary for metrics where IsHealthStatusMetric reports true.
 // Frontends should render ValueLabel for those metrics; the integer encoding

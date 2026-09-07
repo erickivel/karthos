@@ -44,7 +44,9 @@ func seedGraph(t *testing.T) *persistence.InMemoryGraphStore {
 			},
 		},
 	}
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), snap))
+	require.NoError(t, gs.PutStructuralSnapshot(context.Background(), snap))
+	_, err := gs.Materialize(context.Background(), now)
+	require.NoError(t, err)
 	return gs
 }
 
@@ -101,6 +103,53 @@ func TestGetGraphReturnsSnapshot(t *testing.T) {
 	require.Contains(t, filters["relations"], "calls")
 }
 
+func TestGetGraphSelectsSnapshotAtRequestedTime(t *testing.T) {
+	gs := persistence.NewInMemoryGraphStore()
+	ctx := context.Background()
+	firstAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	secondAt := firstAt.Add(5 * time.Minute)
+	firstService := entities.ComputeEntityID(entities.KindService, "cluster", "default", "first")
+	secondService := entities.ComputeEntityID(entities.KindService, "cluster", "default", "second")
+
+	require.NoError(t, gs.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: firstAt, Graph: topology.Graph{Nodes: []topology.Node{{ID: firstService, Kind: entities.KindService}}}}))
+	first, err := gs.Materialize(ctx, firstAt)
+	require.NoError(t, err)
+	require.NoError(t, gs.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: secondAt, Graph: topology.Graph{Nodes: []topology.Node{{ID: secondService, Kind: entities.KindService}}}}))
+	_, err = gs.Materialize(ctx, secondAt)
+	require.NoError(t, err)
+
+	srv := newTestServer(t, Config{GraphStore: gs})
+	defer srv.cancel()
+	resp := doGet(t, srv, "/api/v1/graph?at="+firstAt.Format(time.RFC3339))
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	data := parseResponseData(t, resp)
+	snapshot := data["snapshot"].(map[string]any)
+	require.EqualValues(t, first.ID, snapshot["id"])
+	nodes := data["graph"].(map[string]any)["nodes"].([]any)
+	require.Len(t, nodes, 1)
+	require.Equal(t, string(firstService), nodes[0].(map[string]any)["id"])
+}
+
+func TestGraphEndpointsRejectInvalidOrFutureSnapshotTime(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/graph?at=not-a-time",
+		"/api/v1/graph/nodes?at=not-a-time",
+		"/api/v1/graph/nodes/any?at=not-a-time",
+		"/api/v1/graph/edges?at=not-a-time",
+		"/api/v1/graph?at=" + time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+	} {
+		t.Run(path, func(t *testing.T) {
+			srv := newTestServer(t, Config{GraphStore: seedGraph(t)})
+			defer srv.cancel()
+			resp := doGet(t, srv, path)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		})
+	}
+}
+
 func TestGetGraphReportsUnavailableHealthEnrichmentWithoutMetricStore(t *testing.T) {
 	srv := newTestServer(t, Config{GraphStore: seedGraph(t)})
 	defer srv.cancel()
@@ -121,10 +170,10 @@ func TestGetGraphHealthQueriesStayConstantSize(t *testing.T) {
 			topology.Node{ID: entities.EntityID("container-" + strconv.Itoa(i)), Kind: entities.KindContainer},
 		)
 	}
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		CreatedAt: now,
 		Graph:     topology.Graph{Timestamp: now, Nodes: nodes},
-	}))
+	})
 	store := &recordingMetricStore{samples: map[string][]metrics.MetricSample{}}
 	srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
 	defer srv.cancel()
@@ -141,13 +190,13 @@ func TestGetGraphHealthQueriesStayConstantSize(t *testing.T) {
 func TestGetGraphReportsPartialHealthEnrichment(t *testing.T) {
 	gs := persistence.NewInMemoryGraphStore()
 	now := time.Now().UTC()
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		CreatedAt: now,
 		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
 			{ID: "pod-1", Kind: entities.KindPod},
 			{ID: "container-1", Kind: entities.KindContainer},
 		}},
-	}))
+	})
 	store := &recordingMetricStore{
 		samples: map[string][]metrics.MetricSample{},
 		errors:  map[string]error{"k8s.pod.phase": errors.New("pod query failed")},
@@ -189,7 +238,7 @@ func TestListNodesFilterByKind(t *testing.T) {
 	require.EqualValues(t, 2, data["total"])
 }
 
-func TestListNodesWithoutSnapshotIncludesHealthEnrichment(t *testing.T) {
+func TestListNodesRequiresMaterializedSnapshot(t *testing.T) {
 	srv := newTestServer(t, Config{
 		GraphStore:  persistence.NewInMemoryGraphStore(),
 		MetricStore: persistence.NewInMemoryMetricStore(),
@@ -198,14 +247,7 @@ func TestListNodesWithoutSnapshotIncludesHealthEnrichment(t *testing.T) {
 
 	resp := doGet(t, srv, "/api/v1/graph/nodes")
 	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data := parsePaginatedData(t, resp)
-	require.EqualValues(t, 0, data["total"])
-	health := data["health_enrichment"].(map[string]any)
-	require.Equal(t, "complete", health["status"])
-	require.Equal(t, "complete", health["pods"])
-	require.Equal(t, "complete", health["containers"])
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 func TestListNodesFilterByNamespace(t *testing.T) {
@@ -262,6 +304,31 @@ func TestListNodesPagination(t *testing.T) {
 	nodes2 := data2["nodes"].([]any)
 	require.Len(t, nodes2, 2)
 	require.Empty(t, nextToken2)
+}
+
+func TestListNodesRejectsCursorFromAnotherGraphSnapshot(t *testing.T) {
+	gs := seedGraph(t)
+	srv := newTestServer(t, Config{GraphStore: gs})
+	defer srv.cancel()
+
+	resp := doGet(t, srv, "/api/v1/graph/nodes?page_size=2")
+	data, nextToken := parsePaginatedDataWithToken(t, resp)
+	require.NoError(t, resp.Body.Close())
+	require.EqualValues(t, 4, data["total"])
+	require.NotEmpty(t, nextToken)
+
+	now := time.Now().UTC()
+	newService := entities.ComputeEntityID(entities.KindService, "cluster", "default", "new")
+	require.NoError(t, gs.PutStructuralSnapshot(context.Background(), topology.Snapshot{
+		CreatedAt: now,
+		Graph:     topology.Graph{Nodes: []topology.Node{{ID: newService, Kind: entities.KindService}}},
+	}))
+	_, err := gs.Materialize(context.Background(), now)
+	require.NoError(t, err)
+
+	resp = doGet(t, srv, "/api/v1/graph/nodes?page_size=2&next_token="+nextToken)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
 func TestGetNodeReturnsEnrichedEdges(t *testing.T) {
@@ -344,10 +411,10 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 	for _, tt := range orders {
 		t.Run(tt.name, func(t *testing.T) {
 			gs := persistence.NewInMemoryGraphStore()
-			require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+			putMaterializedGraph(t, gs, topology.Snapshot{
 				CreatedAt: now,
 				Graph:     topology.Graph{Timestamp: now, Nodes: []topology.Node{{ID: podID, Kind: entities.KindPod}}},
-			}))
+			})
 			store := &recordingMetricStore{samples: map[string][]metrics.MetricSample{"k8s.pod.phase": tt.samples}}
 			srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
 			defer srv.cancel()
@@ -461,11 +528,12 @@ func TestListEdgesIncludesCurrentStructuralEdges(t *testing.T) {
 	route := topology.NewEdge(ingressID, serviceID, topology.RelRoutesTo, now)
 	calls := topology.NewEdge(serviceID, databaseID, topology.RelCalls, now)
 	require.NoError(t, gs.PutStructuralSnapshot(context.Background(), topology.Snapshot{CreatedAt: now, Graph: topology.Graph{
+		Nodes: []topology.Node{{ID: ingressID, Kind: entities.KindIngress}, {ID: serviceID, Kind: entities.KindService}, {ID: databaseID, Kind: entities.KindService}},
 		Edges: []topology.Edge{route},
 	}}))
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{CreatedAt: now, Graph: topology.Graph{
-		Edges: []topology.Edge{calls},
-	}}))
+	require.NoError(t, gs.PutObservedEdges(context.Background(), []topology.Edge{calls}))
+	_, err := gs.Materialize(context.Background(), now)
+	require.NoError(t, err)
 
 	srv := newTestServer(t, Config{GraphStore: gs})
 	defer srv.cancel()
@@ -517,7 +585,7 @@ func TestGetGraphIncludesStructuralKindsWhenGraphContainsThem(t *testing.T) {
 	pvcID := entities.ComputeEntityID(entities.KindPVC, "cluster", "default", "app-pvc")
 	ingressID := entities.ComputeEntityID(entities.KindIngress, "cluster", "default", "app-ingress", "app.default.local")
 
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		From:      now,
 		To:        now,
 		CreatedAt: now,
@@ -539,7 +607,7 @@ func TestGetGraphIncludesStructuralKindsWhenGraphContainsThem(t *testing.T) {
 				topology.NewEdge(ingressID, serviceID, topology.RelRoutesTo, now),
 			},
 		},
-	}))
+	})
 
 	srv := newTestServer(t, Config{GraphStore: gs})
 	defer srv.cancel()

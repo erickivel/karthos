@@ -112,12 +112,22 @@ func TestLatestSamplePerEntity(t *testing.T) {
 func freshGraphStore(t *testing.T) persistence.GraphStore {
 	t.Helper()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		Version:   schema.CurrentVersion,
 		CreatedAt: time.Now(),
 		Graph:     topology.Graph{Timestamp: time.Now()},
-	}))
+	})
 	return gs
+}
+
+func putMaterializedGraph(t *testing.T, store *persistence.InMemoryGraphStore, snapshot topology.Snapshot) {
+	t.Helper()
+	if snapshot.CreatedAt.IsZero() {
+		snapshot.CreatedAt = time.Now().UTC()
+	}
+	require.NoError(t, store.PutStructuralSnapshot(context.Background(), snapshot))
+	_, err := store.Materialize(context.Background(), snapshot.CreatedAt)
+	require.NoError(t, err)
 }
 
 func TestStatusNominalWithFreshSnapshot(t *testing.T) {
@@ -262,7 +272,7 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 	ms := persistence.NewInMemoryMetricStore()
 	now := time.Now().UTC()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		Version:   schema.CurrentVersion,
 		CreatedAt: now,
 		Graph: topology.Graph{
@@ -279,7 +289,7 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 				{ID: "pod-6", Kind: entities.KindPod}, // no health sample → unknown
 			},
 		},
-	}))
+	})
 
 	// Pod health buckets are derived from the direct Kubernetes pod phase.
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
@@ -336,14 +346,14 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 func TestStatusHealthSummaryUnavailableWithoutMetricStore(t *testing.T) {
 	now := time.Now().UTC()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		Version: schema.CurrentVersion, CreatedAt: now,
 		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
 			{ID: "node-1", Kind: entities.KindNode},
 			{ID: "pod-1", Kind: entities.KindPod},
 			{ID: "pod-2", Kind: entities.KindPod},
 		}},
-	}))
+	})
 	srv := newTestServer(t, Config{
 		GraphStore:     gs,
 		MetadataStore:  persistence.NewInMemoryMetadataStore(),
@@ -373,9 +383,9 @@ func TestStatusBulkHealthQueriesDoNotEmbedEntityIDs(t *testing.T) {
 		nodes = append(nodes, topology.Node{ID: entities.EntityID("pod-" + strconv.Itoa(i+1)), Kind: entities.KindPod})
 	}
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		Version: schema.CurrentVersion, CreatedAt: now, Graph: topology.Graph{Timestamp: now, Nodes: nodes},
-	}))
+	})
 	ms := &recordingMetricStore{samples: map[string][]metrics.MetricSample{}}
 	srv := newTestServer(t, Config{MetricStore: ms, GraphStore: gs, MetadataStore: persistence.NewInMemoryMetadataStore(), EntityRegistry: persistence.NewInMemoryEntityRegistry()})
 	defer srv.cancel()
@@ -392,14 +402,14 @@ func TestStatusBulkHealthQueriesDoNotEmbedEntityIDs(t *testing.T) {
 func TestStatusHealthSummaryDoesNotQueryContainerHealth(t *testing.T) {
 	now := time.Now().UTC()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		Version: schema.CurrentVersion, CreatedAt: now,
 		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
 			{ID: "node-1", Kind: entities.KindNode},
 			{ID: "pod-1", Kind: entities.KindPod},
 			{ID: "container-1", Kind: entities.KindContainer},
 		}},
-	}))
+	})
 	ms := &recordingMetricStore{samples: map[string][]metrics.MetricSample{}}
 	srv := newTestServer(t, Config{MetricStore: ms, GraphStore: gs, MetadataStore: persistence.NewInMemoryMetadataStore(), EntityRegistry: persistence.NewInMemoryEntityRegistry()})
 	defer srv.cancel()
@@ -415,12 +425,12 @@ func TestStatusHealthSummaryDoesNotQueryContainerHealth(t *testing.T) {
 func TestStatusDegradesWhenPodHealthBranchFails(t *testing.T) {
 	now := time.Now().UTC()
 	gs := persistence.NewInMemoryGraphStore()
-	require.NoError(t, gs.PutObservedSnapshot(context.Background(), topology.Snapshot{
+	putMaterializedGraph(t, gs, topology.Snapshot{
 		Version: schema.CurrentVersion, CreatedAt: now,
 		Graph: topology.Graph{Timestamp: now, Nodes: []topology.Node{
 			{ID: "node-1", Kind: entities.KindNode}, {ID: "pod-1", Kind: entities.KindPod},
 		}},
-	}))
+	})
 	ms := &recordingMetricStore{
 		samples: map[string][]metrics.MetricSample{
 			"k8s.node.condition.ready": {{MetricName: "k8s.node.condition.ready", EntityID: "node-1", Value: 1, Timestamp: now}},
