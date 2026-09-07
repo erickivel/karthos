@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
@@ -27,12 +27,10 @@ const edgeUpsertSQL = `INSERT INTO topology_edges (id, source, target, relation,
 	     ELSE topology_edges.metadata
 	   END`
 
-const latestActiveEdgeQuery = `SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
-	 FROM topology_edges
-	 WHERE relation <> 'runs_on' OR (
-	   NOT (metadata ? 'retired_at') AND
-	   (NOT (metadata ? 'terminal_deadline') OR (metadata->>'terminal_deadline')::timestamptz > NOW())
-	 )`
+const (
+	graphSnapshotRetention          = 24 * time.Hour
+	graphObservationFreshnessWindow = 5 * time.Minute
+)
 
 const retireRunsOnSQL = `INSERT INTO topology_edges (id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata)
 	 VALUES ($1, $2, $3, 'runs_on', 1.0, '{}', $4, $4, jsonb_build_object('retired_at', $5::text, 'k8s.pod.uid', $6::text))
@@ -62,15 +60,15 @@ const reconcileActiveRunsOnSQL = `SELECT id, source, target, metadata
 // PostgresGraphStore implements persistence.GraphStore using PostgreSQL.
 type PostgresGraphStore struct {
 	conn    *Conn
-	nodeTTL time.Duration // 0 = no current-projection TTL
+	nodeTTL time.Duration // 0 = no structural freshness guard
 }
 
 // PostgresGraphStoreOption configures a PostgresGraphStore.
 type PostgresGraphStoreOption func(*PostgresGraphStore)
 
-// WithPostgresNodeTTL excludes an expired structural projection and stale
-// observed nodes from GetLatest. Historical structural snapshots remain stored.
-// A zero ttl disables current-projection expiry.
+// WithPostgresNodeTTL refuses to materialize from an expired structural
+// projection. Retained materialized snapshots remain queryable. A zero ttl
+// disables the structural freshness guard.
 func WithPostgresNodeTTL(ttl time.Duration) PostgresGraphStoreOption {
 	return func(s *PostgresGraphStore) { s.nodeTTL = ttl }
 }
@@ -88,38 +86,64 @@ func NewPostgresGraphStore(conn *Conn, opts ...PostgresGraphStoreOption) *Postgr
 // graph reads select only the newest projection; earlier snapshots remain
 // available as structural history.
 func (s *PostgresGraphStore) PutStructuralSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
-	return s.putSnapshot(ctx, snapshot, "structural", true)
+	_, err := s.putSnapshot(ctx, snapshot, "structural")
+	return err
 }
 
-// PutObservedSnapshot stores telemetry-derived and lifecycle observations.
-// Their edges remain current state and never alter structural history.
-func (s *PostgresGraphStore) PutObservedSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
-	return s.putSnapshot(ctx, snapshot, "observation", false)
-}
-
-func (s *PostgresGraphStore) putSnapshot(ctx context.Context, snapshot topology.Snapshot, scope string, structural bool) error {
+// PutObservedEdges stores current telemetry-derived and lifecycle edges.
+// Observations do not create graph snapshots: only Materialize persists a
+// complete historical graph projection.
+func (s *PostgresGraphStore) PutObservedEdges(ctx context.Context, edges []topology.Edge) error {
 	tx, err := s.conn.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("pg graph put snapshot begin: %w", err)
+		return fmt.Errorf("pg graph begin observation write: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	for _, edge := range edges {
+		metadataJSON, err := json.Marshal(edge.Metadata)
+		if err != nil {
+			return fmt.Errorf("pg graph marshal observed edge metadata: %w", err)
+		}
+		if _, err := tx.Exec(ctx, edgeUpsertSQL,
+			edge.ID, string(edge.Source), string(edge.Target), string(edge.Relation),
+			edge.Confidence, postgresProvenance(edge.Provenance), edge.FirstSeen, edge.LastSeen, metadataJSON,
+		); err != nil {
+			return fmt.Errorf("pg graph upsert observed edge: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pg graph commit observation write: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresGraphStore) putSnapshot(ctx context.Context, snapshot topology.Snapshot, scope string) (int64, error) {
+	tx, err := s.conn.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("pg graph put snapshot begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	// Insert snapshot row.
 	var snapshotID int64
+	createdAt := snapshot.CreatedAt.UTC()
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
 	err = tx.QueryRow(ctx,
-		`INSERT INTO topology_snapshots (scope, version_major, version_minor, from_ts, to_ts)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		scope, snapshot.Version.Major, snapshot.Version.Minor, snapshot.From, snapshot.To,
+		`INSERT INTO topology_snapshots (scope, version_major, version_minor, from_ts, to_ts, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		scope, snapshot.Version.Major, snapshot.Version.Minor, snapshot.From, snapshot.To, createdAt,
 	).Scan(&snapshotID)
 	if err != nil {
-		return fmt.Errorf("pg graph insert snapshot: %w", err)
+		return 0, fmt.Errorf("pg graph insert snapshot: %w", err)
 	}
 
 	// Batch insert nodes.
 	for _, n := range snapshot.Graph.Nodes {
 		labelsJSON, err := json.Marshal(n.Labels)
 		if err != nil {
-			return fmt.Errorf("pg graph marshal node labels: %w", err)
+			return 0, fmt.Errorf("pg graph marshal node labels: %w", err)
 		}
 		_, err = tx.Exec(ctx,
 			`INSERT INTO topology_nodes (snapshot_id, entity_id, kind, labels)
@@ -128,39 +152,31 @@ func (s *PostgresGraphStore) putSnapshot(ctx context.Context, snapshot topology.
 			snapshotID, string(n.ID), string(n.Kind), labelsJSON,
 		)
 		if err != nil {
-			return fmt.Errorf("pg graph insert node: %w", err)
+			return 0, fmt.Errorf("pg graph insert node: %w", err)
 		}
 	}
 
-	// Structural edges belong to this complete projection. Observation edges are
-	// current telemetry/lifecycle state and retain their existing lifecycle rules.
+	// Structural and materialized edges belong to one complete projection.
 	for _, e := range snapshot.Graph.Edges {
 		metadataJSON, err := json.Marshal(e.Metadata)
 		if err != nil {
-			return fmt.Errorf("pg graph marshal edge metadata: %w", err)
+			return 0, fmt.Errorf("pg graph marshal edge metadata: %w", err)
 		}
-		if structural {
-			_, err = tx.Exec(ctx,
-				`INSERT INTO topology_snapshot_edges (snapshot_id, id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-				snapshotID, e.ID, string(e.Source), string(e.Target), string(e.Relation),
-				e.Confidence, postgresProvenance(e.Provenance), e.FirstSeen, e.LastSeen, metadataJSON,
-			)
-		} else {
-			_, err = tx.Exec(ctx, edgeUpsertSQL,
-				e.ID, string(e.Source), string(e.Target), string(e.Relation),
-				e.Confidence, postgresProvenance(e.Provenance), e.FirstSeen, e.LastSeen, metadataJSON,
-			)
-		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO topology_snapshot_edges (snapshot_id, id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			snapshotID, e.ID, string(e.Source), string(e.Target), string(e.Relation),
+			e.Confidence, postgresProvenance(e.Provenance), e.FirstSeen, e.LastSeen, metadataJSON,
+		)
 		if err != nil {
-			return fmt.Errorf("pg graph upsert edge: %w", err)
+			return 0, fmt.Errorf("pg graph upsert edge: %w", err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("pg graph put snapshot commit: %w", err)
+		return 0, fmt.Errorf("pg graph put snapshot commit: %w", err)
 	}
-	return nil
+	return snapshotID, nil
 }
 
 func postgresProvenance(provenance []string) []string {
@@ -170,85 +186,163 @@ func postgresProvenance(provenance []string) []string {
 	return provenance
 }
 
-// GetLatest composes the newest complete structural projection with current
-// telemetry and lifecycle observations. Structural history is never replayed:
-// objects omitted from the newest Kubernetes projection are absent here while
-// their earlier snapshots remain stored for historical inspection.
-func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot, error) {
+// Materialize stores one immutable graph snapshot from the newest Kubernetes
+// structure and fresh active observed edges. Kubernetes structure is the
+// authority for node membership.
+func (s *PostgresGraphStore) Materialize(ctx context.Context, at time.Time) (*topology.Snapshot, error) {
 	structural, structuralID, hasStructural, err := s.latestSnapshot(ctx, "structural")
 	if err != nil {
 		return nil, err
 	}
-	observation, _, hasObservation, err := s.latestSnapshot(ctx, "observation")
-	if err != nil {
-		return nil, err
-	}
-	staleStructural := hasStructural && s.nodeTTL > 0 && structural.CreatedAt.Before(time.Now().UTC().Add(-s.nodeTTL))
-	if staleStructural {
-		hasStructural = false
-	}
-	if !hasStructural && !hasObservation {
-		if staleStructural {
-			structural.Graph.Nodes = nil
-			structural.Graph.Edges = nil
-			applySnapshotTimestamp(&structural)
-			return &structural, nil
-		}
+	if !hasStructural || (s.nodeTTL > 0 && structural.CreatedAt.Before(at.Add(-s.nodeTTL))) {
 		return nil, nil
 	}
 
-	snap := observation
-	if hasStructural {
-		snap = structural
-	}
+	snap := structural
 	nodesByID := make(map[string]topology.Node)
-	if err := s.loadLatestObservedNodes(ctx, nodesByID); err != nil {
+	if err := s.loadStructuralNodes(ctx, structuralID, nodesByID); err != nil {
 		return nil, err
-	}
-	if hasStructural {
-		if err := s.loadStructuralNodes(ctx, structuralID, nodesByID); err != nil {
-			return nil, err
-		}
 	}
 
 	edgesByID := make(map[string]topology.Edge)
-	if err := s.loadEdges(ctx, latestActiveEdgeQuery, nil, edgesByID); err != nil {
+	if err := s.loadEdges(ctx,
+		`SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
+		 FROM topology_snapshot_edges WHERE snapshot_id = $1`,
+		[]any{structuralID}, edgesByID); err != nil {
 		return nil, err
 	}
-	if hasStructural {
-		if err := s.loadEdges(ctx,
-			`SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
-			 FROM topology_snapshot_edges WHERE snapshot_id = $1`,
-			[]any{structuralID}, edgesByID); err != nil {
-			return nil, err
+	observed := make(map[string]topology.Edge)
+	if err := s.loadEdges(ctx,
+		`SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
+		 FROM topology_edges
+		 WHERE relation IN ('runs_on', 'calls')
+		   AND last_seen >= $1
+		   AND (relation <> 'runs_on' OR (
+		     NOT (metadata ? 'retired_at') AND
+		     (NOT (metadata ? 'terminal_deadline') OR (metadata->>'terminal_deadline')::timestamptz > $2)
+		   ))`,
+		[]any{at.Add(-graphObservationFreshnessWindow), at}, observed); err != nil {
+		return nil, err
+	}
+	for _, edge := range observed {
+		if _, ok := nodesByID[string(edge.Source)]; !ok {
+			continue
 		}
+		if _, ok := nodesByID[string(edge.Target)]; !ok {
+			continue
+		}
+		edgesByID[edge.ID] = edge
 	}
 
 	snap.Graph.Nodes = make([]topology.Node, 0, len(nodesByID))
 	for _, node := range nodesByID {
 		snap.Graph.Nodes = append(snap.Graph.Nodes, node)
 	}
+	sort.Slice(snap.Graph.Nodes, func(i, j int) bool { return snap.Graph.Nodes[i].ID < snap.Graph.Nodes[j].ID })
 	snap.Graph.Edges = make([]topology.Edge, 0, len(edgesByID))
 	for _, edge := range edgesByID {
 		snap.Graph.Edges = append(snap.Graph.Edges, edge)
 	}
+	sort.Slice(snap.Graph.Edges, func(i, j int) bool { return snap.Graph.Edges[i].ID < snap.Graph.Edges[j].ID })
+	snap.CreatedAt = at.UTC()
+	snap.From = snap.CreatedAt
+	snap.To = snap.CreatedAt
 	applySnapshotTimestamp(&snap)
+	id, err := s.putSnapshot(ctx, snap, "materialized")
+	if err != nil {
+		return nil, err
+	}
+	snap.ID = id
+	if err := s.pruneMaterializedSnapshots(ctx, at.Add(-graphSnapshotRetention)); err != nil {
+		return nil, err
+	}
 	return &snap, nil
 }
 
+// GetLatest returns the newest complete materialized graph snapshot.
+func (s *PostgresGraphStore) GetLatest(ctx context.Context) (*topology.Snapshot, error) {
+	return s.getMaterialized(ctx, time.Time{})
+}
+
+// GetAt returns the newest retained materialized snapshot at or before at.
+func (s *PostgresGraphStore) GetAt(ctx context.Context, at time.Time) (*topology.Snapshot, error) {
+	return s.getMaterialized(ctx, at)
+}
+
+func (s *PostgresGraphStore) getMaterialized(ctx context.Context, at time.Time) (*topology.Snapshot, error) {
+	snapshot, snapshotID, found, err := s.latestSnapshotAt(ctx, "materialized", at)
+	if err != nil || !found {
+		return nil, err
+	}
+	snapshot.ID = snapshotID
+	nodes := make(map[string]topology.Node)
+	if err := s.loadStructuralNodes(ctx, snapshotID, nodes); err != nil {
+		return nil, err
+	}
+	edges := make(map[string]topology.Edge)
+	if err := s.loadEdges(ctx,
+		`SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
+		 FROM topology_snapshot_edges WHERE snapshot_id = $1`, []any{snapshotID}, edges); err != nil {
+		return nil, err
+	}
+	snapshot.Graph.Nodes = make([]topology.Node, 0, len(nodes))
+	for _, node := range nodes {
+		snapshot.Graph.Nodes = append(snapshot.Graph.Nodes, node)
+	}
+	sort.Slice(snapshot.Graph.Nodes, func(i, j int) bool { return snapshot.Graph.Nodes[i].ID < snapshot.Graph.Nodes[j].ID })
+	snapshot.Graph.Edges = make([]topology.Edge, 0, len(edges))
+	for _, edge := range edges {
+		snapshot.Graph.Edges = append(snapshot.Graph.Edges, edge)
+	}
+	sort.Slice(snapshot.Graph.Edges, func(i, j int) bool { return snapshot.Graph.Edges[i].ID < snapshot.Graph.Edges[j].ID })
+	applySnapshotTimestamp(&snapshot)
+	return &snapshot, nil
+}
+
+func (s *PostgresGraphStore) pruneMaterializedSnapshots(ctx context.Context, before time.Time) error {
+	tx, err := s.conn.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("pg graph begin materialized snapshot prune: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `DELETE FROM topology_snapshot_edges WHERE snapshot_id IN (SELECT id FROM topology_snapshots WHERE scope = 'materialized' AND created_at < $1)`, before); err != nil {
+		return fmt.Errorf("pg graph delete materialized edges: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM topology_nodes WHERE snapshot_id IN (SELECT id FROM topology_snapshots WHERE scope = 'materialized' AND created_at < $1)`, before); err != nil {
+		return fmt.Errorf("pg graph delete materialized nodes: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM topology_snapshots WHERE scope = 'materialized' AND created_at < $1`, before); err != nil {
+		return fmt.Errorf("pg graph delete materialized snapshots: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pg graph commit materialized snapshot prune: %w", err)
+	}
+	return nil
+}
+
 func (s *PostgresGraphStore) latestSnapshot(ctx context.Context, scope string) (topology.Snapshot, int64, bool, error) {
+	return s.latestSnapshotAt(ctx, scope, time.Time{})
+}
+
+func (s *PostgresGraphStore) latestSnapshotAt(ctx context.Context, scope string, at time.Time) (topology.Snapshot, int64, bool, error) {
 	var snapshot topology.Snapshot
 	var snapshotID int64
-	err := s.conn.pool.QueryRow(ctx,
-		`SELECT id, version_major, version_minor, from_ts, to_ts, created_at
-		 FROM topology_snapshots WHERE scope = $1 ORDER BY id DESC LIMIT 1`, scope,
-	).Scan(&snapshotID, &snapshot.Version.Major, &snapshot.Version.Minor, &snapshot.From, &snapshot.To, &snapshot.CreatedAt)
+	statement := `SELECT id, version_major, version_minor, from_ts, to_ts, created_at
+	 FROM topology_snapshots WHERE scope = $1`
+	args := []any{scope}
+	if !at.IsZero() {
+		statement += ` AND created_at <= $2`
+		args = append(args, at)
+	}
+	statement += ` ORDER BY created_at DESC, id DESC LIMIT 1`
+	err := s.conn.pool.QueryRow(ctx, statement, args...).Scan(&snapshotID, &snapshot.Version.Major, &snapshot.Version.Minor, &snapshot.From, &snapshot.To, &snapshot.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return topology.Snapshot{}, 0, false, nil
 	}
 	if err != nil {
 		return topology.Snapshot{}, 0, false, fmt.Errorf("pg graph get latest %s snapshot: %w", scope, err)
 	}
+	snapshot.ID = snapshotID
 	return snapshot, snapshotID, true, nil
 }
 
@@ -263,25 +357,6 @@ func (s *PostgresGraphStore) loadStructuralNodes(ctx context.Context, snapshotID
 		return err
 	}
 	return nil
-}
-
-func (s *PostgresGraphStore) loadLatestObservedNodes(ctx context.Context, nodes map[string]topology.Node) error {
-	query := `SELECT DISTINCT ON (n.entity_id) n.entity_id, n.kind, n.labels
-		FROM topology_nodes n
-		JOIN topology_snapshots ts ON ts.id = n.snapshot_id
-		WHERE ts.scope = 'observation'`
-	args := []any(nil)
-	if s.nodeTTL > 0 {
-		query += ` AND ts.created_at > NOW() - $1::interval`
-		args = []any{s.nodeTTL.String()}
-	}
-	query += ` ORDER BY n.entity_id, n.snapshot_id DESC`
-	rows, err := s.conn.pool.Query(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("pg graph get observed nodes: %w", err)
-	}
-	defer rows.Close()
-	return scanNodes(rows, nodes)
 }
 
 func scanNodes(rows pgx.Rows, nodes map[string]topology.Node) error {
@@ -336,8 +411,8 @@ func (s *PostgresGraphStore) loadEdges(ctx context.Context, query string, args [
 }
 
 // RetireRunsOn records terminal Pod lifecycle state in edge metadata without
-// changing first_seen or last_seen. Current graph reads filter retired edges
-// through latestActiveEdgeQuery while lifecycle reconciliation retains them.
+// changing first_seen or last_seen. Materialization excludes retired edges,
+// while lifecycle reconciliation retains their state for its own decisions.
 func (s *PostgresGraphStore) RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error {
 	edgeID := topology.ComputeEdgeIDWithDiscriminator(podID, nodeID, topology.RelRunsOn, podUID)
 	_, err := s.conn.pool.Exec(ctx, retireRunsOnSQL,
@@ -470,15 +545,4 @@ func applySnapshotTimestamp(snap *topology.Snapshot) {
 		return
 	}
 	snap.Graph.Timestamp = snap.CreatedAt
-}
-
-// QueryEdges filters the current composed graph by Source, Target, and/or
-// Relation. Zero-value filters are ignored.
-func (s *PostgresGraphStore) QueryEdges(ctx context.Context, q query.EdgeQuery) ([]topology.Edge, error) {
-	snapshot, err := s.GetLatest(ctx)
-	if err != nil || snapshot == nil {
-		return nil, err
-	}
-
-	return query.FilterEdges(snapshot.Graph.Edges, q), nil
 }

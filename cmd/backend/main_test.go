@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources"
 	"github.com/erickivel/oksg/pkg/sources/contract"
@@ -26,6 +28,8 @@ func TestParseConfigAppliesDefaults(t *testing.T) {
 	require.Equal(t, defaultStorageBackend, cfg.StorageBackend)
 	require.Equal(t, "", cfg.PostgresDSN)
 	require.Equal(t, "", cfg.VMURL)
+	require.Equal(t, 5*time.Minute, cfg.StructureRefreshInterval)
+	require.Equal(t, 360, cfg.StatusStaleSeconds)
 }
 
 func TestParseConfigAllowsSignalOverride(t *testing.T) {
@@ -73,6 +77,37 @@ func TestValidateStructureRefreshIntervalRequiresStrictNodeTTLBound(t *testing.T
 	require.NoError(t, validateStructureRefreshInterval(10*time.Minute, 24*time.Hour))
 	require.ErrorContains(t, validateStructureRefreshInterval(24*time.Hour, 24*time.Hour), "strictly less")
 	require.ErrorContains(t, validateStructureRefreshInterval(0, 24*time.Hour), "must be greater than zero")
+}
+
+func TestRefreshGraphSnapshotMaterializesOnlyAfterSuccessfulStructureRefresh(t *testing.T) {
+	refresher := &recordingStructuralRefresher{}
+	materializer := &recordingGraphMaterializer{}
+	require.NoError(t, refreshGraphSnapshot(context.Background(), refresher, materializer))
+	require.Equal(t, 1, refresher.calls)
+	require.Len(t, materializer.calls, 1)
+
+	refresher.err = os.ErrPermission
+	require.ErrorIs(t, refreshGraphSnapshot(context.Background(), refresher, materializer), os.ErrPermission)
+	require.Len(t, materializer.calls, 1, "failed structure refresh must not publish a graph snapshot")
+}
+
+type recordingStructuralRefresher struct {
+	calls int
+	err   error
+}
+
+func (r *recordingStructuralRefresher) Refresh(context.Context) error {
+	r.calls++
+	return r.err
+}
+
+type recordingGraphMaterializer struct {
+	calls []time.Time
+}
+
+func (m *recordingGraphMaterializer) Materialize(_ context.Context, at time.Time) (*topology.Snapshot, error) {
+	m.calls = append(m.calls, at)
+	return &topology.Snapshot{ID: int64(len(m.calls)), CreatedAt: at}, nil
 }
 
 func TestLoadSourceContractRejectsMismatchedProfileFingerprint(t *testing.T) {

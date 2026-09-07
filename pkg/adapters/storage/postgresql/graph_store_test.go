@@ -18,18 +18,3 @@ func TestApplySnapshotTimestampSetsGraphTimestampFromCreatedAt(t *testing.T) {
 
 	assert.Equal(t, createdAt, snap.Graph.Timestamp)
 }
-
-func TestRunsOnLifecycleSQLPreservesCurrentStateAndBlocksStaleRefreshes(t *testing.T) {
-	assert.Contains(t, latestActiveEdgeQuery, "relation <> 'runs_on' OR (")
-	assert.Contains(t, latestActiveEdgeQuery, "NOT (metadata ? 'retired_at')")
-	assert.Contains(t, latestActiveEdgeQuery, "terminal_deadline")
-	assert.Contains(t, edgeUpsertSQL, "topology_edges.relation = 'runs_on' AND topology_edges.metadata ? 'retired_at'")
-	assert.Contains(t, retireRunsOnSQL, "jsonb_set")
-	assert.Contains(t, retireRunsOnSQL, "relation = 'runs_on'")
-	assert.Contains(t, retireRunsOnSQL, "INSERT INTO topology_edges")
-	assert.Contains(t, edgeUpsertSQL, "LEAST(topology_edges.last_seen, EXCLUDED.last_seen)")
-	assert.Contains(t, retireRunsOnSQL, "'k8s.pod.uid'")
-	assert.Contains(t, markRunsOnTerminalSQL, "topology_edges.metadata ? 'terminal_deadline'")
-	assert.Contains(t, markRunsOnTerminalSQL, "EXCLUDED.metadata - 'terminal_deadline'")
-	assert.Contains(t, reconcileActiveRunsOnSQL, "metadata->>'k8s.cluster.name' = $1")
-}

@@ -10,13 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/schema"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
-// recordingGraphStore records observation snapshots for test assertions.
+// recordingGraphStore records observed edge batches for test assertions.
 type recordingGraphStore struct {
 	mu        sync.Mutex
 	snapshots []topology.Snapshot
@@ -38,7 +36,7 @@ type blockingFailOnceGraphStore struct {
 	failWith error
 }
 
-func (s *blockingFailOnceGraphStore) PutObservedSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
+func (s *blockingFailOnceGraphStore) PutObservedEdges(ctx context.Context, edges []topology.Edge) error {
 	s.mu.Lock()
 	if !s.failed {
 		s.failed = true
@@ -48,10 +46,10 @@ func (s *blockingFailOnceGraphStore) PutObservedSnapshot(ctx context.Context, sn
 		return s.failWith
 	}
 	s.mu.Unlock()
-	return s.recordingGraphStore.PutObservedSnapshot(ctx, snapshot)
+	return s.recordingGraphStore.PutObservedEdges(ctx, edges)
 }
 
-func (s *failOnceGraphStore) PutObservedSnapshot(ctx context.Context, snapshot topology.Snapshot) error {
+func (s *failOnceGraphStore) PutObservedEdges(ctx context.Context, edges []topology.Edge) error {
 	s.mu.Lock()
 	if !s.failed {
 		s.failed = true
@@ -60,28 +58,14 @@ func (s *failOnceGraphStore) PutObservedSnapshot(ctx context.Context, snapshot t
 		return err
 	}
 	s.mu.Unlock()
-	return s.recordingGraphStore.PutObservedSnapshot(ctx, snapshot)
+	return s.recordingGraphStore.PutObservedEdges(ctx, edges)
 }
 
-func (r *recordingGraphStore) PutObservedSnapshot(_ context.Context, snapshot topology.Snapshot) error {
+func (r *recordingGraphStore) PutObservedEdges(_ context.Context, edges []topology.Edge) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.snapshots = append(r.snapshots, snapshot)
+	r.snapshots = append(r.snapshots, topology.Snapshot{Graph: topology.Graph{Edges: edges}})
 	return nil
-}
-
-func (r *recordingGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.snapshots) == 0 {
-		return nil, nil
-	}
-	s := r.snapshots[len(r.snapshots)-1]
-	return &s, nil
-}
-
-func (r *recordingGraphStore) QueryEdges(_ context.Context, _ query.EdgeQuery) ([]topology.Edge, error) {
-	return nil, nil
 }
 
 func (r *recordingGraphStore) count() int {
@@ -96,10 +80,9 @@ func (r *recordingGraphStore) last() topology.Snapshot {
 	return r.snapshots[len(r.snapshots)-1]
 }
 
-// configuredBuilder implements TopologyBuilder and optionally NodeBuilder.
+// configuredBuilder implements TopologyBuilder.
 type configuredBuilder struct {
 	edges      []topology.Edge
-	nodes      []topology.Node
 	errOnBuild error
 }
 
@@ -108,10 +91,6 @@ func (b *configuredBuilder) Build(_ context.Context, _ schema.RawEnvelope) ([]to
 		return nil, b.errOnBuild
 	}
 	return b.edges, nil
-}
-
-func (b *configuredBuilder) BuildNodes(_ context.Context, _ schema.RawEnvelope) []topology.Node {
-	return b.nodes
 }
 
 func newEnvelope(t *testing.T, signal schema.SignalType, ts time.Time) schema.RawEnvelope {
@@ -138,21 +117,21 @@ func TestBufferedTopologyIngestor_AccumulatesEdges(t *testing.T) {
 
 	env1 := newEnvelope(t, schema.SignalMetric, now)
 	require.NoError(t, buf.Ingest(context.Background(), env1))
-	assert.Equal(t, 0, store.count(), "no observation snapshot before flush")
+	assert.Equal(t, 0, store.count(), "no observed edge batch before flush")
 
 	builder.edges = []topology.Edge{edge2}
 	env2 := newEnvelope(t, schema.SignalMetric, now.Add(time.Second))
 	require.NoError(t, buf.Ingest(context.Background(), env2))
-	assert.Equal(t, 0, store.count(), "still no observation snapshot before flush")
+	assert.Equal(t, 0, store.count(), "still no observed edge batch before flush")
 
 	buf.Flush()
 
-	assert.Equal(t, 1, store.count(), "exactly one observation snapshot after flush")
+	assert.Equal(t, 1, store.count(), "exactly one observed edge batch after flush")
 	snap := store.last()
 	assert.Len(t, snap.Graph.Edges, 2, "both edges in consolidated snapshot")
 }
 
-func TestBufferedTopologyIngestor_RequeuesFailedSnapshotWithLaterObservations(t *testing.T) {
+func TestBufferedTopologyIngestor_RequeuesFailedBatchWithLaterObservations(t *testing.T) {
 	store := &failOnceGraphStore{failWith: errors.New("graph store unavailable")}
 	first := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 	later := first.Add(time.Minute)
@@ -180,11 +159,9 @@ func TestBufferedTopologyIngestor_RequeuesFailedSnapshotWithLaterObservations(t 
 	buf.Flush()
 
 	require.Equal(t, 1, store.count())
-	snapshot := store.last()
-	require.Len(t, snapshot.Graph.Edges, 2)
-	assert.Equal(t, first, snapshot.From)
-	assert.Equal(t, later, snapshot.To)
-	for _, edge := range snapshot.Graph.Edges {
+	batch := store.last()
+	require.Len(t, batch.Graph.Edges, 2)
+	for _, edge := range batch.Graph.Edges {
 		if edge.ID != firstEdge.ID {
 			continue
 		}
@@ -263,36 +240,6 @@ func TestBufferedTopologyIngestor_EdgeMerging_LastSeenUpdated(t *testing.T) {
 	assert.Equal(t, earlier, snap.Graph.Edges[0].FirstSeen, "FirstSeen should be the earlier value")
 }
 
-func TestBufferedTopologyIngestor_NodeDeduplication(t *testing.T) {
-	store := &recordingGraphStore{}
-	now := time.Now().UTC()
-
-	nodeA := topology.Node{ID: entities.EntityID("node-1"), Kind: "Node"}
-	nodeB := topology.Node{ID: entities.EntityID("pod-1"), Kind: "Pod"}
-
-	builder := &configuredBuilder{
-		edges: []topology.Edge{topology.NewEdge("pod-1", "node-1", topology.RelRunsOn, now)},
-		nodes: []topology.Node{nodeA, nodeB},
-	}
-	builders := map[schema.SignalType]TopologyBuilder{
-		schema.SignalMetric: builder,
-	}
-
-	buf := NewBufferedTopologyIngestor(builders, store, nil, time.Hour)
-	defer buf.Close()
-
-	env1 := newEnvelope(t, schema.SignalMetric, now)
-	require.NoError(t, buf.Ingest(context.Background(), env1))
-	env2 := newEnvelope(t, schema.SignalMetric, now.Add(time.Second))
-	require.NoError(t, buf.Ingest(context.Background(), env2))
-
-	buf.Flush()
-
-	require.Equal(t, 1, store.count())
-	snap := store.last()
-	assert.Len(t, snap.Graph.Nodes, 2, "nodes should be deduplicated by ID")
-}
-
 func TestBufferedTopologyIngestor_NoDirtyData_FlushIsNoop(t *testing.T) {
 	store := &recordingGraphStore{}
 	builders := map[schema.SignalType]TopologyBuilder{
@@ -304,7 +251,7 @@ func TestBufferedTopologyIngestor_NoDirtyData_FlushIsNoop(t *testing.T) {
 
 	buf.Flush()
 
-	assert.Equal(t, 0, store.count(), "flush with no ingested data should not write an observation snapshot")
+	assert.Equal(t, 0, store.count(), "flush with no ingested data should not write an observed edge batch")
 }
 
 func TestBufferedTopologyIngestor_SignalTypeRouting(t *testing.T) {
@@ -404,41 +351,6 @@ func TestBufferedTopologyIngestor_Close_FinalFlush(t *testing.T) {
 	assert.Equal(t, 1, store.count(), "Close should trigger final flush")
 }
 
-func TestBufferedTopologyIngestor_FromTo_TracksWindow(t *testing.T) {
-	store := &recordingGraphStore{}
-	t1 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
-	t2 := time.Date(2026, 1, 1, 10, 0, 30, 0, time.UTC)
-	t3 := time.Date(2026, 1, 1, 10, 1, 0, 0, time.UTC)
-
-	builder := &configuredBuilder{
-		edges: []topology.Edge{topology.NewEdge("pod-a", "node-1", topology.RelRunsOn, t2)},
-	}
-	builders := map[schema.SignalType]TopologyBuilder{
-		schema.SignalMetric: builder,
-	}
-
-	buf := NewBufferedTopologyIngestor(builders, store, nil, time.Hour)
-	defer buf.Close()
-
-	env1 := newEnvelope(t, schema.SignalMetric, t2)
-	require.NoError(t, buf.Ingest(context.Background(), env1))
-
-	builder.edges = []topology.Edge{topology.NewEdge("pod-b", "node-1", topology.RelRunsOn, t1)}
-	env2 := newEnvelope(t, schema.SignalMetric, t1)
-	require.NoError(t, buf.Ingest(context.Background(), env2))
-
-	builder.edges = []topology.Edge{topology.NewEdge("pod-c", "node-1", topology.RelRunsOn, t3)}
-	env3 := newEnvelope(t, schema.SignalMetric, t3)
-	require.NoError(t, buf.Ingest(context.Background(), env3))
-
-	buf.Flush()
-
-	require.Equal(t, 1, store.count())
-	snap := store.last()
-	assert.Equal(t, t1, snap.From, "From should be earliest timestamp")
-	assert.Equal(t, t3, snap.To, "To should be latest timestamp")
-}
-
 func TestBufferedTopologyIngestor_PeriodicFlush(t *testing.T) {
 	store := &recordingGraphStore{}
 	now := time.Now().UTC()
@@ -459,5 +371,5 @@ func TestBufferedTopologyIngestor_PeriodicFlush(t *testing.T) {
 	// Wait for at least one tick to fire.
 	require.Eventually(t, func() bool {
 		return store.count() > 0
-	}, time.Second, 10*time.Millisecond, "periodic flush should write an observation snapshot")
+	}, time.Second, 10*time.Millisecond, "periodic flush should write an observed edge batch")
 }

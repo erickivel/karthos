@@ -21,6 +21,7 @@ import (
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
 	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
 	"github.com/erickivel/oksg/pkg/sources"
 	"github.com/erickivel/oksg/pkg/sources/contract"
@@ -36,12 +37,12 @@ const (
 	defaultBackendLogLevel         = "info"
 	defaultStorageBackend          = "memory"
 	defaultTopologyFlushInterval   = 60 * time.Second
-	defaultStatusStaleSeconds      = 300
+	defaultStatusStaleSeconds      = 360
 	defaultNodeTTL                 = 24 * time.Hour
 	// defaultStructureRefreshInterval refreshes the live Kubernetes API
 	// topology. It must remain strictly below node TTL so structural-only
 	// entities (workloads, ingress, configmaps, secrets, PVCs) never age out.
-	defaultStructureRefreshInterval = 10 * time.Minute
+	defaultStructureRefreshInterval = 5 * time.Minute
 )
 
 type config struct {
@@ -121,10 +122,10 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	structural := structure.New(client, cfg.ClusterName, stores.GraphStore, stores.EntityRegistry)
-	if err := structural.Refresh(ctx); err != nil {
-		return fmt.Errorf("refresh initial Kubernetes structure: %w", err)
+	if err := refreshGraphSnapshot(ctx, structural, stores.GraphStore); err != nil {
+		return fmt.Errorf("materialize initial Kubernetes graph snapshot: %w", err)
 	}
-	go runStructureRefreshLoop(ctx, cfg.StructureRefreshInterval, structural, logger)
+	go runStructureRefreshLoop(ctx, cfg.StructureRefreshInterval, structural, stores.GraphStore, logger)
 
 	resolver := ingest.NewOTLPEntityResolverWithRegistry(cfg.ClusterName, stores.EntityRegistry)
 	modules := sources.DefaultRegistry()
@@ -459,7 +460,21 @@ type structuralRefresher interface {
 	Refresh(context.Context) error
 }
 
-func runStructureRefreshLoop(ctx context.Context, interval time.Duration, refresher structuralRefresher, logger *logging.Logger) {
+type graphMaterializer interface {
+	Materialize(context.Context, time.Time) (*topology.Snapshot, error)
+}
+
+func refreshGraphSnapshot(ctx context.Context, refresher structuralRefresher, materializer graphMaterializer) error {
+	if err := refresher.Refresh(ctx); err != nil {
+		return err
+	}
+	if _, err := materializer.Materialize(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runStructureRefreshLoop(ctx context.Context, interval time.Duration, refresher structuralRefresher, materializer graphMaterializer, logger *logging.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	logger.Info("Kubernetes structure refresh loop started", logging.String("interval", interval.String()))
@@ -469,8 +484,8 @@ func runStructureRefreshLoop(ctx context.Context, interval time.Duration, refres
 			logger.Info("Kubernetes structure refresh loop stopping")
 			return
 		case <-ticker.C:
-			if err := refresher.Refresh(ctx); err != nil {
-				logger.Warn("Kubernetes structure refresh failed", logging.Error(err))
+			if err := refreshGraphSnapshot(ctx, refresher, materializer); err != nil {
+				logger.Warn("Kubernetes graph snapshot refresh failed", logging.Error(err))
 			}
 		}
 	}

@@ -80,7 +80,6 @@ func TestMetricCallsTopologyBuilderDropsTimestamplessMetricEvidence(t *testing.T
 	edges, err := builder.Build(context.Background(), env)
 	require.NoError(t, err)
 	assert.Empty(t, edges)
-	assert.Empty(t, builder.BuildNodes(context.Background(), env))
 }
 
 func TestMetricCallsTopologyBuilderIgnoresMetricsWithoutCallsSemantics(t *testing.T) {
@@ -97,7 +96,7 @@ func TestMetricCallsTopologyBuilderIgnoresMetricsWithoutCallsSemantics(t *testin
 	assert.Empty(t, edges)
 }
 
-func TestMetricCallsTopologyBuilderRejectsInvalidSourceWithoutCreatingNodesOrEdges(t *testing.T) {
+func TestMetricCallsTopologyBuilderRejectsInvalidSource(t *testing.T) {
 	policy := NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
 		"servicegraph.request.count": metrics.SourceMeshIstio,
 	})
@@ -123,7 +122,6 @@ func TestMetricCallsTopologyBuilderRejectsInvalidSourceWithoutCreatingNodesOrEdg
 			edges, err := builder.Build(context.Background(), env)
 			require.NoError(t, err)
 			assert.Empty(t, edges)
-			assert.Empty(t, builder.BuildNodes(context.Background(), env))
 		})
 	}
 }

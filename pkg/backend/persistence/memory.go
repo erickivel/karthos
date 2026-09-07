@@ -345,22 +345,26 @@ func (s *InMemoryMetricStore) QueryCatalogStats(_ context.Context, lookback time
 
 // InMemoryGraphStore is a thread-safe in-memory implementation of GraphStore.
 type InMemoryGraphStore struct {
-	mu                  sync.RWMutex
-	structuralSnapshots []topology.Snapshot
-	observedSnapshot    *topology.Snapshot
-	edges               map[string]topology.Edge // observed edges keyed by edge ID
-	nodes               map[string]topology.Node // observed nodes keyed by entity ID string
-	lastSeen            map[string]time.Time     // observed node entity ID -> most recent observation time
-	nodeTTL             time.Duration            // 0 = no current-projection TTL
-	nowFn               func() time.Time
+	mu                    sync.RWMutex
+	structuralSnapshots   []topology.Snapshot
+	materializedSnapshots []topology.Snapshot
+	nextMaterializedID    int64
+	edges                 map[string]topology.Edge // observed edges keyed by edge ID
+	nodeTTL               time.Duration            // 0 = no structural freshness guard
+	nowFn                 func() time.Time
 }
+
+const (
+	graphSnapshotRetention          = 24 * time.Hour
+	graphObservationFreshnessWindow = 5 * time.Minute
+)
 
 // InMemoryGraphStoreOption configures an InMemoryGraphStore.
 type InMemoryGraphStoreOption func(*InMemoryGraphStore)
 
-// WithInMemoryNodeTTL excludes an expired structural projection and stale
-// observed nodes from GetLatest. Historical structural snapshots are retained.
-// A zero ttl disables current-projection expiry.
+// WithInMemoryNodeTTL refuses to materialize from an expired structural
+// projection. Retained materialized snapshots remain queryable. A zero ttl
+// disables the structural freshness guard.
 func WithInMemoryNodeTTL(ttl time.Duration) InMemoryGraphStoreOption {
 	return func(s *InMemoryGraphStore) { s.nodeTTL = ttl }
 }
@@ -368,10 +372,8 @@ func WithInMemoryNodeTTL(ttl time.Duration) InMemoryGraphStoreOption {
 // NewInMemoryGraphStore returns a new empty InMemoryGraphStore.
 func NewInMemoryGraphStore(opts ...InMemoryGraphStoreOption) *InMemoryGraphStore {
 	s := &InMemoryGraphStore{
-		edges:    make(map[string]topology.Edge),
-		nodes:    make(map[string]topology.Node),
-		lastSeen: make(map[string]time.Time),
-		nowFn:    func() time.Time { return time.Now().UTC() },
+		edges: make(map[string]topology.Edge),
+		nowFn: func() time.Time { return time.Now().UTC() },
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -389,16 +391,14 @@ func (s *InMemoryGraphStore) PutStructuralSnapshot(_ context.Context, snapshot t
 	return nil
 }
 
-// PutObservedSnapshot merges telemetry-derived and lifecycle observations into
-// current state. It never changes structural snapshot history.
-func (s *InMemoryGraphStore) PutObservedSnapshot(_ context.Context, snapshot topology.Snapshot) error {
+// PutObservedEdges merges telemetry-derived and lifecycle observations into
+// current edge state. It never changes structural or materialized history.
+func (s *InMemoryGraphStore) PutObservedEdges(_ context.Context, edges []topology.Edge) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	snapshot = cloneSnapshot(snapshot)
-	s.observedSnapshot = &snapshot
-
-	for _, e := range snapshot.Graph.Edges {
+	for _, e := range edges {
+		e = cloneEdge(e)
 		existing, ok := s.edges[e.ID]
 		if !ok {
 			s.edges[e.ID] = cloneEdge(e)
@@ -423,88 +423,106 @@ func (s *InMemoryGraphStore) PutObservedSnapshot(_ context.Context, snapshot top
 		s.edges[e.ID] = MergeObservedEdge(existing, e)
 	}
 
-	now := s.nowFn()
-	for _, n := range snapshot.Graph.Nodes {
-		s.nodes[string(n.ID)] = cloneNode(n)
-		s.lastSeen[string(n.ID)] = now
-	}
-
 	return nil
 }
 
-// GetLatest returns the newest complete structural projection composed with
-// current telemetry/lifecycle observations. Returns nil, nil before any write.
-func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// Materialize stores one complete graph projection. Kubernetes structure is
+// authoritative for membership; only recent active observed edges whose
+// endpoints remain in that structure are included.
+func (s *InMemoryGraphStore) Materialize(_ context.Context, at time.Time) (*topology.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	if len(s.structuralSnapshots) == 0 && s.observedSnapshot == nil {
+	if len(s.structuralSnapshots) == 0 {
+		return nil, nil
+	}
+	latest := s.structuralSnapshots[len(s.structuralSnapshots)-1]
+	if s.nodeTTL > 0 && !latest.CreatedAt.IsZero() && latest.CreatedAt.Before(at.Add(-s.nodeTTL)) {
 		return nil, nil
 	}
 
-	var structural *topology.Snapshot
-	if len(s.structuralSnapshots) > 0 {
-		latest := s.structuralSnapshots[len(s.structuralSnapshots)-1]
-		if s.nodeTTL == 0 || latest.CreatedAt.IsZero() || !latest.CreatedAt.Before(s.nowFn().Add(-s.nodeTTL)) {
-			cloned := cloneSnapshot(latest)
-			structural = &cloned
-		}
+	result := cloneSnapshot(latest)
+	nodesByID := make(map[string]topology.Node, len(result.Graph.Nodes))
+	for _, node := range result.Graph.Nodes {
+		nodesByID[string(node.ID)] = cloneNode(node)
 	}
-
-	var result topology.Snapshot
-	if structural != nil {
-		result = *structural
-	} else if s.observedSnapshot != nil {
-		result = cloneSnapshot(*s.observedSnapshot)
-	} else {
-		// Retained stale structural history keeps GetLatest non-nil, but it is
-		// intentionally excluded from the current projection.
-		result = cloneSnapshot(s.structuralSnapshots[len(s.structuralSnapshots)-1])
-	}
-
 	edgesByID := make(map[string]topology.Edge, len(result.Graph.Edges)+len(s.edges))
-	for _, e := range s.edges {
-		if edgeRetired(e) || edgeTerminalDeadlineExpired(e, s.nowFn()) {
+	for _, edge := range result.Graph.Edges {
+		edgesByID[edge.ID] = cloneEdge(edge)
+	}
+	cutoff := at.Add(-graphObservationFreshnessWindow)
+	for _, edge := range s.edges {
+		if edge.Relation != topology.RelRunsOn && edge.Relation != topology.RelCalls {
 			continue
 		}
-		edgesByID[e.ID] = cloneEdge(e)
-	}
-	if structural != nil {
-		for _, edge := range result.Graph.Edges {
-			edgesByID[edge.ID] = cloneEdge(edge)
+		if edgeRetired(edge) || edgeTerminalDeadlineExpired(edge, at) || edge.LastSeen.Before(cutoff) {
+			continue
 		}
-	}
-	edges := make([]topology.Edge, 0, len(edgesByID))
-	for _, edge := range edgesByID {
-		edges = append(edges, edge)
+		if _, ok := nodesByID[string(edge.Source)]; !ok {
+			continue
+		}
+		if _, ok := nodesByID[string(edge.Target)]; !ok {
+			continue
+		}
+		edgesByID[edge.ID] = cloneEdge(edge)
 	}
 
-	var cutoff time.Time
-	if s.nodeTTL > 0 {
-		cutoff = s.nowFn().Add(-s.nodeTTL)
-	}
-	nodesByID := make(map[string]topology.Node, len(result.Graph.Nodes)+len(s.nodes))
-	for id, n := range s.nodes {
-		if s.nodeTTL > 0 {
-			if ts, ok := s.lastSeen[id]; !ok || ts.Before(cutoff) {
-				continue
-			}
-		}
-		nodesByID[id] = cloneNode(n)
-	}
-	if structural != nil {
-		for _, node := range result.Graph.Nodes {
-			nodesByID[string(node.ID)] = cloneNode(node)
-		}
-	}
-	nodes := make([]topology.Node, 0, len(nodesByID))
+	result.Graph.Nodes = make([]topology.Node, 0, len(nodesByID))
 	for _, node := range nodesByID {
-		nodes = append(nodes, node)
+		result.Graph.Nodes = append(result.Graph.Nodes, node)
 	}
+	sort.Slice(result.Graph.Nodes, func(i, j int) bool {
+		return result.Graph.Nodes[i].ID < result.Graph.Nodes[j].ID
+	})
+	result.Graph.Edges = make([]topology.Edge, 0, len(edgesByID))
+	for _, edge := range edgesByID {
+		result.Graph.Edges = append(result.Graph.Edges, edge)
+	}
+	sort.Slice(result.Graph.Edges, func(i, j int) bool {
+		return result.Graph.Edges[i].ID < result.Graph.Edges[j].ID
+	})
+	result.ID = s.nextMaterializedID + 1
+	s.nextMaterializedID = result.ID
+	result.CreatedAt = at.UTC()
+	result.From = result.CreatedAt
+	result.To = result.CreatedAt
+	result.Graph.Timestamp = result.CreatedAt
+	s.materializedSnapshots = append(s.materializedSnapshots, cloneSnapshot(result))
 
-	result.Graph.Edges = edges
-	result.Graph.Nodes = nodes
+	retentionCutoff := result.CreatedAt.Add(-graphSnapshotRetention)
+	kept := s.materializedSnapshots[:0]
+	for _, snapshot := range s.materializedSnapshots {
+		if !snapshot.CreatedAt.Before(retentionCutoff) {
+			kept = append(kept, snapshot)
+		}
+	}
+	s.materializedSnapshots = kept
 	return &result, nil
+}
+
+// GetLatest returns the newest complete materialized graph snapshot.
+func (s *InMemoryGraphStore) GetLatest(_ context.Context) (*topology.Snapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.materializedSnapshots) == 0 {
+		return nil, nil
+	}
+	latest := cloneSnapshot(s.materializedSnapshots[len(s.materializedSnapshots)-1])
+	return &latest, nil
+}
+
+// GetAt returns the newest retained materialized snapshot at or before at.
+func (s *InMemoryGraphStore) GetAt(_ context.Context, at time.Time) (*topology.Snapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for index := len(s.materializedSnapshots) - 1; index >= 0; index-- {
+		snapshot := s.materializedSnapshots[index]
+		if !snapshot.CreatedAt.After(at) {
+			cloned := cloneSnapshot(snapshot)
+			return &cloned, nil
+		}
+	}
+	return nil, nil
 }
 
 // RetireRunsOn records the terminal lifecycle timestamp without changing the
@@ -673,15 +691,4 @@ func mergeRetiredEdgeProvenance(existing, incoming []string) []string {
 		merged = append(merged, source)
 	}
 	return merged
-}
-
-// QueryEdges filters the current composed graph by Source, Target, and/or
-// Relation (zero values mean no filter).
-func (s *InMemoryGraphStore) QueryEdges(ctx context.Context, q query.EdgeQuery) ([]topology.Edge, error) {
-	snapshot, err := s.GetLatest(ctx)
-	if err != nil || snapshot == nil {
-		return nil, err
-	}
-
-	return query.FilterEdges(snapshot.Graph.Edges, q), nil
 }

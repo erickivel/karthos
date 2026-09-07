@@ -84,7 +84,7 @@
     },
     "backend": {
       "type": "object",
-      "required": ["grpcPort", "logLevel", "image", "service", "statusStaleSeconds", "topologyFlushInterval", "sourceContract", "resources"],
+      "required": ["grpcPort", "logLevel", "image", "service", "statusStaleSeconds", "structureRefreshInterval", "topologyFlushInterval", "sourceContract", "resources"],
       "additionalProperties": false,
       "properties": {
         "grpcPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
@@ -100,6 +100,7 @@
           }
         },
         "statusStaleSeconds": { "type": "integer", "minimum": 1 },
+        "structureRefreshInterval": { "type": "string", "minLength": 1 },
         "topologyFlushInterval": { "type": "string", "minLength": 1 },
         "sourceContract": {
           "type": "object",

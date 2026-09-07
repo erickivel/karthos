@@ -28,7 +28,8 @@ spec:
             - --grpc-listen-address=0.0.0.0:{{ .Values.backend.grpcPort }}
             - --health-listen-address=0.0.0.0:{{ .Values.backend.service.healthPort }}
             - --api-listen-address=0.0.0.0:{{ .Values.backend.service.apiPort }}
-            - --status-stale-seconds={{ .Values.backend.statusStaleSeconds | default 300 }}
+            - --status-stale-seconds={{ .Values.backend.statusStaleSeconds }}
+            - --structure-refresh-interval={{ .Values.backend.structureRefreshInterval }}
             - --enabled-signals={{ join "," .Values.enabledSignals }}
             - --cluster-name={{ .Values.global.clusterName }}
             - --pod-lifecycle-required=true

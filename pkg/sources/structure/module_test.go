@@ -3,6 +3,7 @@ package structure
 import (
 	"context"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -35,7 +36,7 @@ func TestModuleRefreshesLiveKubernetesTopology(t *testing.T) {
 				},
 			},
 		},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-1", Namespace: "demo", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{NodeName: "node-a"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-1", Namespace: "demo", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{NodeName: "node-a", Containers: []corev1.Container{{Name: "api"}}}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}},
 		&networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo"},
@@ -48,18 +49,20 @@ func TestModuleRefreshesLiveKubernetesTopology(t *testing.T) {
 	module := New(client, "test", graphStore, entitiesStore)
 	require.NoError(t, module.Refresh(context.Background()))
 
-	snapshot, err := graphStore.GetLatest(context.Background())
+	snapshot, err := graphStore.Materialize(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
 	require.Len(t, edgesByRelation(snapshot.Graph.Edges, topology.RelExposes), 1)
 	require.Len(t, edgesByRelation(snapshot.Graph.Edges, topology.RelRoutesTo), 1)
-	require.Len(t, edgesByRelation(snapshot.Graph.Edges, topology.RelContains), 2)
+	require.Len(t, edgesByRelation(snapshot.Graph.Edges, topology.RelContains), 3)
 	require.Len(t, edgesByRelation(snapshot.Graph.Edges, topology.RelUses), 1)
 
 	_, err = entitiesStore.GetEntity(context.Background(), entities.NewWorkload("test", "demo", "api", entities.WorkloadDeployment, nil).ID())
 	require.NoError(t, err)
 	_, err = entitiesStore.GetEntity(context.Background(), entities.ComputeEntityID(entities.KindConfigMap, "test", "demo", "api-config"))
 	require.NoError(t, err)
+	containerID := entities.ComputeEntityID(entities.KindContainer, "test", "demo", "api-1", "api")
+	require.True(t, hasEdge(edgesByRelation(snapshot.Graph.Edges, topology.RelContains), entities.NewPod("test", "demo", "api-1", nil).ID(), containerID))
 }
 
 func TestModuleIncludesDirectlyListedObjectsWithoutResolvedSemanticTargets(t *testing.T) {
@@ -80,7 +83,7 @@ func TestModuleIncludesDirectlyListedObjectsWithoutResolvedSemanticTargets(t *te
 	module := New(client, "test", graphStore, persistence.NewInMemoryEntityRegistry())
 	require.NoError(t, module.Refresh(context.Background()))
 
-	snapshot, err := graphStore.GetLatest(context.Background())
+	snapshot, err := graphStore.Materialize(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	nodes := map[entities.EntityID]topology.Node{}
 	for _, node := range snapshot.Graph.Nodes {
@@ -123,7 +126,7 @@ func TestModuleBuildsWorkloadChainsFromOwnerReferences(t *testing.T) {
 	module := New(client, "test", graphs, persistence.NewInMemoryEntityRegistry())
 	require.NoError(t, module.Refresh(context.Background()))
 
-	snapshot, err := graphs.GetLatest(context.Background())
+	snapshot, err := graphs.Materialize(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	deploymentID := entities.NewWorkload("test", "demo", "api", entities.WorkloadDeployment, nil).ID()
 	replicaSetID := entities.NewWorkload("test", "demo", "api-rs", entities.WorkloadReplicaSet, nil).ID()
@@ -131,6 +134,36 @@ func TestModuleBuildsWorkloadChainsFromOwnerReferences(t *testing.T) {
 	contains := edgesByRelation(snapshot.Graph.Edges, topology.RelContains)
 	require.True(t, hasEdge(contains, deploymentID, replicaSetID))
 	require.True(t, hasEdge(contains, replicaSetID, podID))
+}
+
+func TestModuleLinksServiceToTheHighestProvenMatchingWorkloadOwner(t *testing.T) {
+	controller := true
+	client := fake.NewClientset(
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo", UID: "deployment-uid"},
+			Spec:       appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}},
+		},
+		&appsv1.ReplicaSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: "demo", UID: "replicaset-uid", OwnerReferences: []metav1.OwnerReference{{UID: "deployment-uid", Controller: &controller}}},
+			Spec:       appsv1.ReplicaSetSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}},
+		},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}},
+	)
+	graphs := persistence.NewInMemoryGraphStore()
+	module := New(client, "test", graphs, persistence.NewInMemoryEntityRegistry())
+	require.NoError(t, module.Refresh(context.Background()))
+
+	snapshot, err := graphs.Materialize(context.Background(), time.Now().UTC())
+	require.NoError(t, err)
+	serviceID := entities.NewService("test", "demo", "api", nil).ID()
+	deploymentID := entities.NewWorkload("test", "demo", "api", entities.WorkloadDeployment, nil).ID()
+	workloadTargets := map[entities.EntityID]bool{}
+	for _, edge := range edgesByRelation(snapshot.Graph.Edges, topology.RelExposes) {
+		if edge.Source == serviceID {
+			workloadTargets[edge.Target] = true
+		}
+	}
+	require.Equal(t, map[entities.EntityID]bool{deploymentID: true}, workloadTargets)
 }
 
 func TestModuleKeepsHPANamespaceContained(t *testing.T) {
@@ -142,7 +175,7 @@ func TestModuleKeepsHPANamespaceContained(t *testing.T) {
 	module := New(client, "test", graphs, persistence.NewInMemoryEntityRegistry())
 	require.NoError(t, module.Refresh(context.Background()))
 
-	snapshot, err := graphs.GetLatest(context.Background())
+	snapshot, err := graphs.Materialize(context.Background(), time.Now().UTC())
 	require.NoError(t, err)
 	namespaceID := entities.ComputeEntityID(entities.KindNamespace, "test", "demo")
 	hpaID := entities.NewHPA("test", "demo", "api-scale", nil).ID()

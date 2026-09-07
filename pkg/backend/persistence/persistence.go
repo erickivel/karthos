@@ -41,23 +41,27 @@ type StructuralSnapshotStore interface {
 	PutStructuralSnapshot(ctx context.Context, snapshot topology.Snapshot) error
 }
 
-// ObservationSnapshotStore stores telemetry-derived and lifecycle observations.
-// These observations are current state, not a complete Kubernetes projection.
-type ObservationSnapshotStore interface {
-	PutObservedSnapshot(ctx context.Context, snapshot topology.Snapshot) error
+// ObservationEdgeStore stores current telemetry-derived and lifecycle edges.
+// It cannot create or amend a materialized graph snapshot.
+type ObservationEdgeStore interface {
+	PutObservedEdges(ctx context.Context, edges []topology.Edge) error
 }
 
 type GraphStore interface {
 	StructuralSnapshotStore
-	ObservationSnapshotStore
+	ObservationEdgeStore
+	// Materialize stores one complete current graph projection at the supplied
+	// time. It is the only graph snapshot exposed to API consumers.
+	Materialize(ctx context.Context, at time.Time) (*topology.Snapshot, error)
 	GetLatest(ctx context.Context) (*topology.Snapshot, error)
-	QueryEdges(ctx context.Context, q query.EdgeQuery) ([]topology.Edge, error)
+	// GetAt returns the newest retained materialized snapshot at or before at.
+	GetAt(ctx context.Context, at time.Time) (*topology.Snapshot, error)
 }
 
 // RunsOnRetirer is the narrow lifecycle-to-storage boundary for retiring a
 // terminal Pod assignment without inferring retirement from missing telemetry.
 // Retirement state is internal to lifecycle reconciliation; GraphStore queries
-// expose only the current composed graph.
+// expose only a materialized graph snapshot.
 type RunsOnRetirer interface {
 	RetireRunsOn(ctx context.Context, podID, nodeID entities.EntityID, podUID string, retiredAt time.Time) error
 }

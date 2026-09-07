@@ -94,8 +94,9 @@ type workloadRecord struct {
 }
 
 type podRecord struct {
-	entity   entities.Pod
-	ownerUID string
+	entity         entities.Pod
+	ownerUID       string
+	containerNames []string
 }
 
 type serviceRecord struct {
@@ -201,7 +202,7 @@ func (m *Module) collect(ctx context.Context) (inventory, error) {
 			continue
 		}
 		pod := entities.NewPod(m.cluster, item.Namespace, item.Name, item.Labels)
-		result.pods = append(result.pods, podRecord{entity: pod, ownerUID: controllerOwnerUID(item.OwnerReferences)})
+		result.pods = append(result.pods, podRecord{entity: pod, ownerUID: controllerOwnerUID(item.OwnerReferences), containerNames: podContainerNames(item)})
 	}
 	for _, item := range services.Items {
 		result.services = append(result.services, serviceRecord{entity: entities.NewService(m.cluster, item.Namespace, item.Name, item.Labels), selector: clone(item.Spec.Selector)})
@@ -384,6 +385,13 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 		entity := pod.entity
 		add(node(entity.ID(), entities.KindPod, m.cluster, entity.Namespace, entity.Name, entity.Labels()))
 		put(entities.KindPod, entity.ID(), entity.Namespace, entity.Name, entity.Labels())
+		for _, containerName := range pod.containerNames {
+			containerID := entities.ComputeEntityID(entities.KindContainer, m.cluster, entity.Namespace, entity.Name, containerName)
+			containerLabels := map[string]string{"k8s.pod.name": entity.Name, "k8s.container.name": containerName}
+			add(node(containerID, entities.KindContainer, m.cluster, entity.Namespace, containerName, containerLabels))
+			put(entities.KindContainer, containerID, entity.Namespace, containerName, containerLabels)
+			link(entity.ID(), containerID, topology.RelContains)
+		}
 		if workload, ok := workloadByOwnerUID[pod.ownerUID]; ok {
 			add(node(workload.entity.ID(), entities.KindWorkload, m.cluster, workload.entity.Namespace, workload.entity.Name, workloadLabels(workload.entity)))
 			link(workload.entity.ID(), entity.ID(), topology.RelContains)
@@ -403,8 +411,9 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 		for _, workload := range inventory.workloads {
 			if entity.Namespace == workload.entity.Namespace && matches(service.selector, workload.podTemplateLabels) {
 				matched = true
-				add(node(workload.entity.ID(), entities.KindWorkload, m.cluster, workload.entity.Namespace, workload.entity.Name, workloadLabels(workload.entity)))
-				link(entity.ID(), workload.entity.ID(), topology.RelExposes)
+				root := highestOwnedWorkload(workload, workloadByOwnerUID)
+				add(node(root.entity.ID(), entities.KindWorkload, m.cluster, root.entity.Namespace, root.entity.Name, workloadLabels(root.entity)))
+				link(entity.ID(), root.entity.ID(), topology.RelExposes)
 			}
 		}
 		if !matched {
@@ -434,6 +443,44 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 		}
 	}
 	return sortedEdges(edges), sortedNodes(nodes), sortedEntities(stored)
+}
+
+func podContainerNames(pod corev1.Pod) []string {
+	seen := map[string]struct{}{}
+	add := func(containers []corev1.Container) {
+		for _, container := range containers {
+			if container.Name != "" {
+				seen[container.Name] = struct{}{}
+			}
+		}
+	}
+	add(pod.Spec.InitContainers)
+	add(pod.Spec.Containers)
+	for _, container := range pod.Spec.EphemeralContainers {
+		if container.Name != "" {
+			seen[container.Name] = struct{}{}
+		}
+	}
+	return sorted(seen)
+}
+
+// highestOwnedWorkload keeps Service selector wiring at the workload boundary
+// users operate on. OwnerReferences remain the proof: a matching ReplicaSet
+// under a Deployment is represented by Service -> Deployment -> ReplicaSet -> Pod.
+func highestOwnedWorkload(workload workloadRecord, byOwnerUID map[string]workloadRecord) workloadRecord {
+	seen := map[string]struct{}{}
+	for workload.ownerUID != "" {
+		if _, duplicate := seen[workload.ownerUID]; duplicate {
+			break
+		}
+		seen[workload.ownerUID] = struct{}{}
+		parent, ok := byOwnerUID[workload.ownerUID]
+		if !ok {
+			break
+		}
+		workload = parent
+	}
+	return workload
 }
 
 func terminating(pod corev1.Pod) bool {

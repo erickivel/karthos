@@ -10,15 +10,12 @@ import (
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
-// MetricTopologyBuilder extracts structural topology edges from OTLP metric
-// envelope resource attributes. It does not parse the metric payload — the
-// resource attribute map carries enough information to derive runs_on and
-// contains relations from kubeletstats and similar receivers.
+// MetricTopologyBuilder extracts the observed runs_on relation from OTLP metric
+// envelope resource attributes. Direct Kubernetes structure refresh owns all
+// structural nodes and contains relations.
 //
-// It produces the following edges when the corresponding attributes are present:
-//   - pod runs_on node     (k8s.pod.name + k8s.namespace.name + k8s.node.name)
-//   - namespace contains pod   (k8s.namespace.name + k8s.pod.name)
-//   - pod contains container   (k8s.pod.name + k8s.namespace.name + k8s.container.name)
+// It produces a pod runs_on node edge when the corresponding attributes are
+// present.
 type MetricTopologyBuilder struct {
 	clusterName  string
 	podLifecycle PodLifecycle
@@ -49,7 +46,6 @@ func (b *MetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnve
 	podUID := res[semconv.ResourceK8sPodUID]
 	nodeName := res[semconv.ResourceK8sNodeName]
 	namespace := res[semconv.ResourceK8sNamespaceName]
-	containerName := res[semconv.ResourceK8sContainerName]
 
 	t := envelope.Timestamp
 	if t.IsZero() {
@@ -75,88 +71,5 @@ func (b *MetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnve
 		edges = append(edges, e)
 	}
 
-	// namespace contains pod
-	if namespace != "" && podName != "" {
-		nsID := entities.ComputeEntityID(entities.KindNamespace, b.clusterName, namespace)
-		podID := entities.ComputeEntityID(entities.KindPod, b.clusterName, namespace, podName)
-		e := topology.NewEdge(nsID, podID, topology.RelContains, t)
-		e.Provenance = []string{envelope.Source}
-		edges = append(edges, e)
-	}
-
-	// pod contains container
-	if podName != "" && namespace != "" && containerName != "" {
-		podID := entities.ComputeEntityID(entities.KindPod, b.clusterName, namespace, podName)
-		containerID := entities.ComputeEntityID(entities.KindContainer, b.clusterName, namespace, podName, containerName)
-		e := topology.NewEdge(podID, containerID, topology.RelContains, t)
-		e.Provenance = []string{envelope.Source}
-		edges = append(edges, e)
-	}
-
 	return edges, nil
-}
-
-// BuildNodes derives topology nodes from the envelope's resource attributes.
-// It is called in addition to Build when both structural edges and nodes are needed.
-func (b *MetricTopologyBuilder) BuildNodes(_ context.Context, envelope schema.RawEnvelope) []topology.Node {
-	res := envelope.Resource
-	podName := res[semconv.ResourceK8sPodName]
-	nodeName := res[semconv.ResourceK8sNodeName]
-	namespace := res[semconv.ResourceK8sNamespaceName]
-	containerName := res[semconv.ResourceK8sContainerName]
-
-	seen := make(map[entities.EntityID]topology.Node)
-
-	if namespace != "" {
-		id := entities.ComputeEntityID(entities.KindNamespace, b.clusterName, namespace)
-		seen[id] = topology.Node{
-			ID:   id,
-			Kind: entities.KindNamespace,
-			Labels: map[string]string{
-				"name": namespace,
-			},
-		}
-	}
-	if nodeName != "" {
-		id := entities.ComputeEntityID(entities.KindNode, b.clusterName, nodeName)
-		seen[id] = topology.Node{
-			ID:   id,
-			Kind: entities.KindNode,
-			Labels: map[string]string{
-				"name": nodeName,
-			},
-		}
-	}
-	if podName != "" && namespace != "" {
-		id := entities.ComputeEntityID(entities.KindPod, b.clusterName, namespace, podName)
-		seen[id] = topology.Node{
-			ID:   id,
-			Kind: entities.KindPod,
-			Labels: map[string]string{
-				"name":      podName,
-				"namespace": namespace,
-			},
-		}
-	}
-	if containerName != "" && podName != "" && namespace != "" {
-		id := entities.ComputeEntityID(entities.KindContainer, b.clusterName, namespace, podName, containerName)
-		seen[id] = topology.Node{
-			ID:   id,
-			Kind: entities.KindContainer,
-			Labels: map[string]string{
-				"name":      containerName,
-				"namespace": namespace,
-				"pod":       podName,
-			},
-		}
-	}
-
-	if len(seen) == 0 {
-		return nil
-	}
-	nodes := make([]topology.Node, 0, len(seen))
-	for _, n := range seen {
-		nodes = append(nodes, n)
-	}
-	return nodes
 }

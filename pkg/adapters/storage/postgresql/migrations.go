@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_entities_cluster_ns_name ON entities (cluster, na
 -- Topology snapshots
 CREATE TABLE IF NOT EXISTS topology_snapshots (
     id            BIGSERIAL   PRIMARY KEY,
-    scope         TEXT        NOT NULL CHECK (scope IN ('structural', 'observation')),
+    scope         TEXT        NOT NULL CHECK (scope IN ('structural', 'materialized')),
     version_major INT         NOT NULL DEFAULT 1,
     version_minor INT         NOT NULL DEFAULT 0,
     from_ts       TIMESTAMPTZ NOT NULL,
@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS topology_nodes (
     PRIMARY KEY (snapshot_id, entity_id)
 );
 
--- Structural edges are retained per complete Kubernetes projection. They are
--- intentionally separate from current telemetry/lifecycle observations.
+-- Structural and materialized graph edges are retained per complete projection.
+-- They are intentionally separate from current telemetry/lifecycle observations.
 CREATE TABLE IF NOT EXISTS topology_snapshot_edges (
     snapshot_id BIGINT           NOT NULL REFERENCES topology_snapshots(id),
     id          TEXT             NOT NULL,
@@ -93,7 +93,8 @@ CREATE INDEX IF NOT EXISTS idx_cluster_profiles_name ON cluster_profiles (cluste
 `
 
 // Migrate runs the schema DDL to create all required tables and indexes.
-// Uses CREATE IF NOT EXISTS so it is safe to call on every startup.
+// This materialized-snapshot model requires a fresh external schema; it does
+// not convert a prior accumulated-topology installation.
 func Migrate(ctx context.Context, conn *Conn) error {
 	if _, err := conn.pool.Exec(ctx, schemaDDL); err != nil {
 		return fmt.Errorf("postgresql migrate: %w", err)

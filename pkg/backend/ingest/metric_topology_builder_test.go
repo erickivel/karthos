@@ -73,14 +73,13 @@ func TestMetricTopologyBuilder_RequiresActiveMatchingPodLifecycleForRunsOn(t *te
 	active := NewMetricTopologyBuilderWithLifecycle(testCluster, testPodLifecycle{allows: true})
 	activeEdges, err := active.Build(context.Background(), env)
 	require.NoError(t, err)
-	assert.Len(t, activeEdges, 2)
+	assert.Len(t, activeEdges, 1)
 	assert.Equal(t, topology.RelRunsOn, activeEdges[0].Relation)
 
 	retired := NewMetricTopologyBuilderWithLifecycle(testCluster, testPodLifecycle{allows: false})
 	retiredEdges, err := retired.Build(context.Background(), env)
 	require.NoError(t, err)
-	require.Len(t, retiredEdges, 1)
-	assert.Equal(t, topology.RelContains, retiredEdges[0].Relation)
+	assert.Empty(t, retiredEdges)
 }
 
 func TestMetricTopologyBuilderVersionsRunsOnIdentityByPodUID(t *testing.T) {
@@ -170,59 +169,7 @@ func cloneStringMap(input map[string]string) map[string]string {
 	return clone
 }
 
-func TestMetricTopologyBuilder_NamespaceContainsPod(t *testing.T) {
-	b := NewMetricTopologyBuilder(testCluster)
-	env := makeMetricEnvelope("kubeletstats", map[string]string{
-		"k8s.pod.name":       "my-pod",
-		"k8s.namespace.name": "default",
-	})
-
-	edges, err := b.Build(context.Background(), env)
-	require.NoError(t, err)
-
-	var containsEdge *topology.Edge
-	for _, e := range edges {
-		if e.Relation == topology.RelContains {
-			e := e
-			containsEdge = &e
-		}
-	}
-	require.NotNil(t, containsEdge, "expected a contains edge")
-
-	expectedNsID := entities.ComputeEntityID(entities.KindNamespace, testCluster, "default")
-	expectedPodID := entities.ComputeEntityID(entities.KindPod, testCluster, "default", "my-pod")
-	assert.Equal(t, expectedNsID, containsEdge.Source)
-	assert.Equal(t, expectedPodID, containsEdge.Target)
-}
-
-func TestMetricTopologyBuilder_PodContainsContainer(t *testing.T) {
-	b := NewMetricTopologyBuilder(testCluster)
-	env := makeMetricEnvelope("kubeletstats", map[string]string{
-		"k8s.pod.name":       "my-pod",
-		"k8s.namespace.name": "default",
-		"k8s.container.name": "my-container",
-	})
-
-	edges, err := b.Build(context.Background(), env)
-	require.NoError(t, err)
-
-	expectedPodID := entities.ComputeEntityID(entities.KindPod, testCluster, "default", "my-pod")
-	expectedContainerID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "my-pod", "my-container")
-
-	// Find the contains edge whose source is the pod (not the namespace→pod edge)
-	var podContains *topology.Edge
-	for _, e := range edges {
-		if e.Relation == topology.RelContains && e.Source == expectedPodID {
-			e := e
-			podContains = &e
-		}
-	}
-	require.NotNil(t, podContains, "expected a pod contains container edge")
-	assert.Equal(t, expectedPodID, podContains.Source)
-	assert.Equal(t, expectedContainerID, podContains.Target)
-}
-
-func TestMetricTopologyBuilder_AllAttributes_ProducesAllEdges(t *testing.T) {
+func TestMetricTopologyBuilder_AllAttributes_ProducesRunsOnEdge(t *testing.T) {
 	b := NewMetricTopologyBuilder(testCluster)
 	env := makeMetricEnvelope("kubeletstats", map[string]string{
 		"k8s.pod.name":       "my-pod",
@@ -234,15 +181,8 @@ func TestMetricTopologyBuilder_AllAttributes_ProducesAllEdges(t *testing.T) {
 	edges, err := b.Build(context.Background(), env)
 	require.NoError(t, err)
 
-	// Expect: runs_on (pod→node), contains (ns→pod), contains (pod→container)
-	assert.Len(t, edges, 3)
-
-	relations := make(map[topology.RelationType]int)
-	for _, e := range edges {
-		relations[e.Relation]++
-	}
-	assert.Equal(t, 1, relations[topology.RelRunsOn])
-	assert.Equal(t, 2, relations[topology.RelContains])
+	require.Len(t, edges, 1)
+	assert.Equal(t, topology.RelRunsOn, edges[0].Relation)
 }
 
 func TestMetricTopologyBuilder_NoStructuralAttributes_ReturnsNil(t *testing.T) {
@@ -289,32 +229,4 @@ func TestMetricTopologyBuilder_EmptyEnvelope_ReturnsNil(t *testing.T) {
 	edges, err := b.Build(context.Background(), env)
 	require.NoError(t, err)
 	assert.Empty(t, edges)
-}
-
-func TestMetricTopologyBuilder_BuildNodesIncludesFilterLabels(t *testing.T) {
-	b := NewMetricTopologyBuilder(testCluster)
-	env := makeMetricEnvelope("kubeletstats", map[string]string{
-		"k8s.pod.name":       "my-pod",
-		"k8s.namespace.name": "default",
-		"k8s.node.name":      "my-node",
-		"k8s.container.name": "my-container",
-	})
-
-	nodes := b.BuildNodes(context.Background(), env)
-	require.Len(t, nodes, 4)
-
-	byID := map[entities.EntityID]topology.Node{}
-	for _, node := range nodes {
-		byID[node.ID] = node
-	}
-
-	podID := entities.ComputeEntityID(entities.KindPod, testCluster, "default", "my-pod")
-	containerID := entities.ComputeEntityID(entities.KindContainer, testCluster, "default", "my-pod", "my-container")
-	namespaceID := entities.ComputeEntityID(entities.KindNamespace, testCluster, "default")
-
-	assert.Equal(t, "default", byID[podID].Labels["namespace"])
-	assert.Equal(t, "my-pod", byID[podID].Labels["name"])
-	assert.Equal(t, "default", byID[containerID].Labels["namespace"])
-	assert.Equal(t, "my-container", byID[containerID].Labels["name"])
-	assert.Equal(t, "default", byID[namespaceID].Labels["name"])
 }

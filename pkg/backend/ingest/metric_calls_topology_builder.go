@@ -81,48 +81,6 @@ func (b *MetricCallsTopologyBuilder) Build(_ context.Context, envelope schema.Ra
 	return edges, nil
 }
 
-func (b *MetricCallsTopologyBuilder) BuildNodes(_ context.Context, envelope schema.RawEnvelope) []topology.Node {
-	var rm metricspb.ResourceMetrics
-	if err := protojson.Unmarshal(envelope.Payload, &rm); err != nil {
-		return nil
-	}
-
-	seen := make(map[entities.EntityID]topology.Node)
-	for _, sm := range rm.ScopeMetrics {
-		for _, metric := range sm.Metrics {
-			for _, dp := range metricAttributeSets(metric) {
-				if dp.TimeUnixNano == 0 {
-					continue
-				}
-				parsed, validation, ok := b.parseAndValidate(metric.Name, dp.Attributes)
-				if !ok {
-					continue
-				}
-				if _, ok := b.modules.CallsEdgeMetadata(validation.Source, metric.Name, parsed.CanonicalName, dp.Attributes); !ok {
-					continue
-				}
-				client := kvString(dp.Attributes, semconv.AttrClient)
-				server := kvString(dp.Attributes, semconv.AttrServer)
-				clientNamespace := kvString(dp.Attributes, semconv.AttrClientNamespace)
-				serverNamespace := kvString(dp.Attributes, semconv.AttrServerNamespace)
-				if client != "" && clientNamespace != "" {
-					id := entities.ComputeEntityID(entities.KindService, b.clusterName, clientNamespace, client)
-					seen[id] = topology.Node{ID: id, Kind: entities.KindService, Labels: map[string]string{"name": client, "namespace": clientNamespace}}
-				}
-				if server != "" && serverNamespace != "" {
-					id := entities.ComputeEntityID(entities.KindService, b.clusterName, serverNamespace, server)
-					seen[id] = topology.Node{ID: id, Kind: entities.KindService, Labels: map[string]string{"name": server, "namespace": serverNamespace}}
-				}
-			}
-		}
-	}
-	nodes := make([]topology.Node, 0, len(seen))
-	for _, node := range seen {
-		nodes = append(nodes, node)
-	}
-	return nodes
-}
-
 func (b *MetricCallsTopologyBuilder) parseAndValidate(rawMetricName string, attrs []*commonpb.KeyValue) (contract.ParsedMetric, SourceValidation, bool) {
 	parsed, ok := b.modules.ParseMetric(sourceFromAttrs(attrs), rawMetricName, contract.AttributeStrings(attrs))
 	if !ok {

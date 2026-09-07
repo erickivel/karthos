@@ -35,7 +35,8 @@ backend:
   service:
     healthPort: 13133
     apiPort: 8080
-  statusStaleSeconds: 300
+  statusStaleSeconds: 360
+  structureRefreshInterval: "5m"
   topologyFlushInterval: "60s"
   sourceContract:
     capabilityProfile: {}

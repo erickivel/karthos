@@ -17,7 +17,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/erickivel/oksg/pkg/backend/query"
 	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
@@ -49,7 +48,7 @@ func postgresTestURL(host string, port network.Port) string {
 	return fmt.Sprintf("postgres://oksg_test:oksg_test@%s:%s/oksg_test?sslmode=disable", host, port.Port())
 }
 
-func TestPostgresStructuralSnapshotsRetainHistoryAndComposeObservations(t *testing.T) {
+func TestPostgresMaterializedSnapshotsRetainStructureAndFreshObservations(t *testing.T) {
 	ctx := context.Background()
 	conn, err := NewConn(ctx, integrationDSN)
 	require.NoError(t, err)
@@ -64,35 +63,29 @@ func TestPostgresStructuralSnapshotsRetainHistoryAndComposeObservations(t *testi
 	route := topology.NewEdge(ingress, service, topology.RelRoutesTo, now)
 	calls := topology.NewEdge(service, database, topology.RelCalls, now)
 	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: now, Graph: topology.Graph{
-		Nodes: []topology.Node{{ID: ingress, Kind: entities.KindIngress}, {ID: service, Kind: entities.KindService}}, Edges: []topology.Edge{route},
+		Nodes: []topology.Node{{ID: ingress, Kind: entities.KindIngress}, {ID: service, Kind: entities.KindService}, {ID: database, Kind: entities.KindService}}, Edges: []topology.Edge{route},
 	}}))
-	require.NoError(t, store.PutObservedSnapshot(ctx, topology.Snapshot{CreatedAt: now, Graph: topology.Graph{Edges: []topology.Edge{calls}}}))
-	currentRoutes, err := store.QueryEdges(ctx, query.EdgeQuery{Relation: topology.RelRoutesTo})
+	require.NoError(t, store.PutObservedEdges(ctx, []topology.Edge{calls}))
+	first, err := store.Materialize(ctx, now)
 	require.NoError(t, err)
-	require.Len(t, currentRoutes, 1)
-	currentRoute := currentRoutes[0]
-	require.Equal(t, route.ID, currentRoute.ID)
-	require.Equal(t, route.Source, currentRoute.Source)
-	require.Equal(t, route.Target, currentRoute.Target)
-	require.Equal(t, route.Relation, currentRoute.Relation)
-	require.Equal(t, route.Confidence, currentRoute.Confidence)
-	require.True(t, route.FirstSeen.Equal(currentRoute.FirstSeen))
-	require.True(t, route.LastSeen.Equal(currentRoute.LastSeen))
-	require.Empty(t, currentRoute.Provenance)
-	require.Empty(t, currentRoute.Metadata)
+	require.Len(t, first.Graph.Edges, 2)
 	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: now.Add(time.Minute), Graph: topology.Graph{
 		Nodes: []topology.Node{{ID: service, Kind: entities.KindService}},
 	}}))
+	second, err := store.Materialize(ctx, now.Add(time.Minute))
+	require.NoError(t, err)
 
 	latest, err := store.GetLatest(ctx)
 	require.NoError(t, err)
+	require.Equal(t, second.ID, latest.ID)
 	require.Len(t, latest.Graph.Nodes, 1)
 	require.Equal(t, service, latest.Graph.Nodes[0].ID)
-	require.Len(t, latest.Graph.Edges, 1)
-	require.Equal(t, topology.RelCalls, latest.Graph.Edges[0].Relation)
-	var historicalEdges int
-	require.NoError(t, conn.pool.QueryRow(ctx, "SELECT count(*) FROM topology_snapshot_edges WHERE id = $1", route.ID).Scan(&historicalEdges))
-	require.Equal(t, 1, historicalEdges)
+	require.Empty(t, latest.Graph.Edges)
+
+	historical, err := store.GetAt(ctx, now.Add(time.Second))
+	require.NoError(t, err)
+	require.Equal(t, first.ID, historical.ID)
+	require.Len(t, historical.Graph.Edges, 2)
 }
 
 func TestPostgresGraphStoreNodeTTLExpiresEntireStructuralProjection(t *testing.T) {
@@ -106,19 +99,16 @@ func TestPostgresGraphStoreNodeTTLExpiresEntireStructuralProjection(t *testing.T
 	service := entities.ComputeEntityID(entities.KindService, "cluster", "demo", "api")
 	workload := entities.ComputeEntityID(entities.KindWorkload, "cluster", "demo", "api")
 	edge := topology.NewEdge(workload, service, topology.RelContains, time.Now().UTC())
-	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{Graph: topology.Graph{
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: time.Now().UTC().Add(-2 * time.Hour), Graph: topology.Graph{
 		Nodes: []topology.Node{{ID: service, Kind: entities.KindService}, {ID: workload, Kind: entities.KindWorkload}},
 		Edges: []topology.Edge{edge},
 	}}))
-	_, err = conn.pool.Exec(ctx, `UPDATE topology_snapshots SET created_at = NOW() - INTERVAL '2 hours' WHERE scope = 'structural'`)
+	materialized, err := store.Materialize(ctx, time.Now().UTC())
 	require.NoError(t, err)
-
+	assert.Nil(t, materialized)
 	latest, err := store.GetLatest(ctx)
-
 	require.NoError(t, err)
-	require.NotNil(t, latest)
-	assert.Empty(t, latest.Graph.Nodes)
-	assert.Empty(t, latest.Graph.Edges)
+	assert.Nil(t, latest)
 	var historyCount int
 	require.NoError(t, conn.pool.QueryRow(ctx, `SELECT count(*) FROM topology_snapshots WHERE scope = 'structural'`).Scan(&historyCount))
 	assert.Equal(t, 1, historyCount)
@@ -147,10 +137,13 @@ func TestPostgresObservedEdgeMergeUsesNewestPayloadAndRetainsProvenance(t *testi
 	second.Confidence = 0.9
 	second.Metadata = map[string]string{"protocol": "grpc"}
 	second.Provenance = []string{"mesh.istio"}
-	require.NoError(t, store.PutObservedSnapshot(ctx, topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{first}}}))
-	require.NoError(t, store.PutObservedSnapshot(ctx, topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{second}}}))
+	require.NoError(t, store.PutObservedEdges(ctx, []topology.Edge{first}))
+	require.NoError(t, store.PutObservedEdges(ctx, []topology.Edge{second}))
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: time.Now().UTC(), Graph: topology.Graph{
+		Nodes: []topology.Node{{ID: first.Source, Kind: entities.KindService}, {ID: first.Target, Kind: entities.KindService}},
+	}}))
 
-	latest, err := store.GetLatest(ctx)
+	latest, err := store.Materialize(ctx, time.Now().UTC())
 
 	require.NoError(t, err)
 	require.Len(t, latest.Graph.Edges, 1)
@@ -186,10 +179,13 @@ func TestPostgresObservedEdgeMergeDoesNotLetDelayedPayloadOverwriteNewerState(t 
 	delayed.Metadata = map[string]string{"protocol": "http"}
 	delayed.Provenance = []string{"traces.servicegraph"}
 
-	require.NoError(t, store.PutObservedSnapshot(ctx, topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{newer}}}))
-	require.NoError(t, store.PutObservedSnapshot(ctx, topology.Snapshot{Graph: topology.Graph{Edges: []topology.Edge{delayed}}}))
+	require.NoError(t, store.PutObservedEdges(ctx, []topology.Edge{newer}))
+	require.NoError(t, store.PutObservedEdges(ctx, []topology.Edge{delayed}))
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: time.Now().UTC(), Graph: topology.Graph{
+		Nodes: []topology.Node{{ID: newer.Source, Kind: entities.KindService}, {ID: newer.Target, Kind: entities.KindService}},
+	}}))
 
-	latest, err := store.GetLatest(ctx)
+	latest, err := store.Materialize(ctx, time.Now().UTC())
 
 	require.NoError(t, err)
 	require.Len(t, latest.Graph.Edges, 1)
