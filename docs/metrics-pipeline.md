@@ -332,7 +332,11 @@ text constant as clusters grow. Single-node lookup retains its exact entity filt
 Responses expose `complete`, `partial`, or `unavailable` quality metadata; a failed
 branch degrades `/status` but remains an HTTP 200 enrichment result.
 
-`k8s.pod.status_reason` uses the same boundary with `1=evicted`,
+`k8s.pod.phase` uses the same boundary with `1=pending`, `2=running`,
+`3=succeeded`, `4=failed`, and `5=unknown`. Its readable phase is separate
+from derived graph health: a Running phase can contribute to the `healthy`
+health-summary bucket without changing the phase value. `k8s.pod.status_reason`
+uses the same boundary with `1=evicted`,
 `2=node_affinity`, `3=node_lost`, `4=shutdown`,
 `5=unexpected_admission_error`, and `6=unknown`. Frontends never render the
 integer for these metrics. New consumers (UI, exporters, dashboards) read the
@@ -518,8 +522,10 @@ merging, redeploy to kind and verify both layers:
   curl 'http://localhost:18081/api/v1/metrics?metric_name=<canonical>&entity_id=<id>' \
     | jq '.data | {samples: (.samples | length), source: .samples[-1].labels.source}'
   ```
-- Frontend Metrics Explorer renders a non-empty chart for the metric on
-  a Container/Node/Workload entity in the appropriate category tab.
+- Frontend Metrics Explorer applies catalog applicability to the selected entity.
+  Its focused Container, Node, and Pod projections preserve dimensional truth:
+  label-distinct series remain separately inspectable rather than being chosen or
+  silently combined for a presentation summary.
 
 ### Forensic toolkit when a metric is missing
 

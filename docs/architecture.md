@@ -72,13 +72,13 @@ The backend ingest pipeline:
 | `OTLPEntityResolver` | `pkg/backend/ingest/entity_resolver.go` | Maps OTLP resource attributes to deterministic `EntityID` (SHA-256 of kind + cluster + attributes) and persists canonical entity metadata. Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > job > cronjob > replicationcontroller > HPA > namespace > service. Volume metrics with a PVC label resolve to the PVC entity before the generic fallback. |
 | `OTLPNormalizer` | `pkg/backend/ingest/normalizer.go` | Performs generic OTLP scalar/histogram traversal after a stamped source parser returns a canonical candidate; validates catalog membership and assignment, applies conversion, and emits samples. Datapoints without a producer timestamp are dropped; histograms are stored as `_sum`/`_count`; delta-valued series are preserved raw with `temporality=delta`. |
 | Source modules | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}` | Each module owns stamped raw-name parsing, bounded source-specific labels, calls-edge classification/metadata, entity/edge attachment, conversions, and derived metrics through the shared `pkg/sources/contract` boundary. OTLP temporality handling remains generic. |
-| `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | `runs_on` (pod→node), `contains` (namespace→pod, pod→container) plus topology nodes for those entity kinds. In Helm deployments, `runs_on` additionally requires a live matching Pod UID and node from Kubernetes lifecycle state. |
+| `MetricTopologyBuilder` | `pkg/backend/ingest/metric_topology_builder.go` | Observed `runs_on` (pod→node) only. In Helm deployments, it additionally requires a live matching Pod UID and node from Kubernetes lifecycle state. Direct Kubernetes refresh owns structural nodes and membership relations. |
 | `MetricCallsTopologyBuilder` | `pkg/backend/ingest/metric_calls_topology_builder.go` | Generic `calls` edge assembly from source-classified metrics. The source module owns recognition and bounded metadata; the builder validates provenance, uses datapoint timestamps for `FirstSeen`/`LastSeen`, and deduplicates edges. |
 | `TraceTopologyBuilder` | `pkg/backend/ingest/topology_builder.go` | `calls` edges from OTLP spans where `peer.service` is set; deduplicated within a batch by edge ID. |
 | `kubernetes.structure` | `pkg/sources/structure` | Direct Kubernetes API refresh of `exposes`, `routes_to`, `uses`, `mounts`, and containment with `k8s-api` provenance. |
 | `CompositeTopologyBuilder` | `pkg/backend/ingest/composite_topology_builder.go` | Chains topology builders so the metric path runs structural and source-classified metric calls together. |
 | `MultiIngestor` | `pkg/backend/ingest/normalizing_ingestor.go` | Fans an envelope to `NormalizingIngestor → MetricStore` and `BufferedTopologyIngestor → GraphStore`. |
-| `BufferedTopologyIngestor` | `pkg/backend/ingest/buffered_topology_ingestor.go` | Accumulates edges/nodes from metric and trace builders; flushes one consolidated snapshot to `GraphStore` per flush window (default `OKSG_TOPOLOGY_FLUSH_INTERVAL=60s`) and requeues a failed in-process write for the next flush. |
+| `BufferedTopologyIngestor` | `pkg/backend/ingest/buffered_topology_ingestor.go` | Accumulates only observed `runs_on` and `calls` edges from metric and trace builders; flushes one consolidated edge batch per window (default `OKSG_TOPOLOGY_FLUSH_INTERVAL=60s`) and requeues a failed in-process write for the next flush. Direct Kubernetes refresh owns all structural nodes and relations. |
 
 The `--cluster-name` flag (or `OKSG_CLUSTER_NAME`) controls the cluster name
 component of every entity ID; default `default`.
@@ -127,21 +127,21 @@ Edge model (Standard tier):
 
 Workload, ingress, configmap, secret, and PVC nodes are produced **only** by
 the direct Kubernetes structure module, never by OTLP. The backend therefore
-refreshes that module every `OKSG_STRUCTURE_REFRESH_INTERVAL` (default `10m`).
+refreshes that module every `OKSG_STRUCTURE_REFRESH_INTERVAL` (default `5m`).
 Invariant: `structure_refresh_interval < node_ttl` (default `OKSG_NODE_TTL=24h`).
 Violating it makes structural-only kinds disappear from `/api/v1/graph`
 after the TTL window.
 
 `GraphStore` separates two write paths. The direct Kubernetes structure module
-appends complete, immutable structural snapshots. Telemetry and Pod lifecycle
-ingestion update only the current observation state, preserving active
-`runs_on` and `calls` behavior. Reads compose the newest structural snapshot
-with those current observations only while that structural projection is
-younger than `node_ttl`. An object omitted by the next Kubernetes refresh
-disappears from the current graph; an expired structural projection contributes
-neither nodes nor edges, while all earlier snapshots remain retained history.
-PostgreSQL retains the structural snapshots and their edges separately; the
-in-memory implementation follows the same composition rules.
+appends complete structural snapshots. Telemetry and Pod lifecycle ingestion
+maintain only current observed edges. After the initial refresh and every
+`OKSG_STRUCTURE_REFRESH_INTERVAL`, the backend materializes one immutable full
+graph snapshot: the newest structure provides all nodes and structural edges;
+only active observed `runs_on`/`calls` edges seen in the preceding five minutes
+survive, and both endpoints must be structural members. The API reads only
+these materialized snapshots, which are retained for 24 hours and addressed by
+their ID or `?at=<RFC3339>` selection. An object omitted by the next refresh is
+absent from the next materialization without rewriting earlier history.
 
 ## Persistence
 
@@ -150,7 +150,7 @@ Store interfaces (`pkg/backend/persistence/`):
 | Interface | Responsibility |
 |-----------|----------------|
 | `MetricStore` | Write and query canonical metric samples; provider-neutral output decoration adds public enum labels |
-| `GraphStore` | Append-only structural snapshots plus current telemetry/lifecycle observations |
+| `GraphStore` | Structural writes, current observed-edge state, and retained materialized graph snapshots |
 | `MetadataStore` | Cluster capability profiles |
 | `EntityRegistry` | Canonical entity records |
 
@@ -210,7 +210,7 @@ REST API flags:
 | Flag | Env Var | Default |
 |------|---------|---------|
 | `--api-listen-address` | `OKSG_BACKEND_API_LISTEN_ADDRESS` | `0.0.0.0:8080` |
-| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `300` |
+| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `360` |
 
 ## Frontend
 

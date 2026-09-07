@@ -23,8 +23,9 @@ Key coverage areas:
 - `MetricTopologyBuilder`: structural edge and node extraction from resource attributes
 - Pod lifecycle validation: UID/node matching, synchronous immutable `terminal_deadline` persistence before grace activation, fail-closed terminal refreshes on an initial marker-write failure with retry of the original deadline, confirmed-initial versus retry-only marker provenance (an absent/replaced retry-only UID retires immediately at restart), atomic active→pending→retired storage transitions that prevent delayed marker resurrection across delete/replace/crash/restart interleavings, cluster-scoped startup reconciliation and re-arming across same-UID/deleted/replaced restart states, deadline exclusion from current graph reads, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
-- storage/query parity: append-only structural history with TTL-gated current
-  projection, current observation merge rules, defensive memory-store copies,
+- storage/query parity: append-only structural writes, 24-hour retained
+  materialized graphs, current observed-edge merge rules, point-in-time
+  selection, defensive memory-store copies,
   and 15-second evaluated metric ranges, including exact non-aligned final
   evaluations and explicit five-minute freshness behavior in VictoriaMetrics
 - `/api/v1/graph` public graph-contract correctness
@@ -134,7 +135,10 @@ Expected:
 - raw canonical servicegraph cumulative counters increase by exactly 40 requests and 10 errors for each of the three internal edges during the controlled traffic window; the scenario captures before/after VM baselines because collector v0.156 emits cumulative servicegraph Sums
 - after a mature baseline, the runner waits until every expected edge has its complete supported API result set (explicit increases, default and explicit one-minute window rates, active rate, and duration); it then verifies `40/10` increases, approximately `0.667/0.167` rates per second, and matching response metadata/units. Raw-counter readiness alone is not sufficient because derived API results can arrive later.
 - the controlled 40-request run can legitimately add 40 `otelcol_connector_servicegraph_expired_edges`: root inbound gateway server spans have no in-cluster client span to pair with. Internal pairing correctness is determined from the exact three internal edge totals, not from a zero global-expiration expectation; the generated connector pairing TTL remains 30 seconds
-- `/api/v1/graph` returns a snapshot; when traces have flowed, edges include `calls` relations
+- `/api/v1/graph` returns the newest materialized snapshot. The runner polls
+  through at most one five-minute materialization interval before requiring the
+  controlled `calls` relations; it does not treat current collector state as a
+  public graph response.
 - Traffic topology mode intentionally stays aggregated at service/workload readability even when the granularity control is set to runtime or detailed; pod replica cards are not expected in Traffic mode
 
 ### Istio Mesh Available
@@ -151,7 +155,11 @@ Expected:
 - generated Helm values place discovered application Prometheus Service-DNS jobs on the singleton gateway and stamp them with `oksg_source=prometheus.app`; agent Prometheus remains reserved for Istio pod discovery
 - application Prometheus annotations are not required for mesh metrics
 - mesh-derived samples normalize to servicegraph edge metrics: HTTP request count/duration/error plus gRPC request/response messages and TCP opened/closed/sent/received counters
-- graph `calls` edges include `mesh.istio` provenance, advance `last_seen` from metric datapoint timestamps, and preserve mesh metadata such as `network.protocol.name`, `mesh.security.policy`, and peer SPIFFE principals
+- the next materialized graph includes fresh mesh `calls` edges with
+  `mesh.istio` provenance. They retain producer-time `last_seen` and mesh
+  metadata such as `network.protocol.name`, `mesh.security.policy`, and peer
+  SPIFFE principals; the runner waits at most one five-minute materialization
+  interval before asserting them.
 - an injected Go fixture warms the protocol counters, waits 180 seconds so the collector can capture a mature baseline and the warm-up leaves the one-minute window, then emits exactly 20 unary calls plus five bidirectional request/response messages and ten fresh 1,024-byte TCP echo connections
 - destination-sidecar raw counters and canonical VictoriaMetrics counters increase by `25/25` gRPC messages, `10/10` TCP opened/closed connections, and `10,240/10,240` TCP sent/received bytes
 - API `increase` values and base units match those totals; default one-minute rates are approximately `0.417 per_second`, `0.167 per_second`, and `170.667 bytes_per_second`; active rate is present for the cumulative series
@@ -305,8 +313,13 @@ When changing the e2e flow, keep log inspection and rendered Helm artifacts easy
 ## Cleanup
 
 ```bash
-task test:e2e:reset       # remove the Helm-owned OTel release and source contract
+task test:e2e:reset       # remove the Helm-owned OTel release and its E2E PostgreSQL PVC
 task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
 task test:e2e:reset-all   # remove release, fixtures, and E2E-owned Istio
 task test:e2e:teardown    # destroy the kind cluster and local registry
 ```
+
+The live harness always deploys the bundled PostgreSQL store. Reset removes
+only that release-scoped E2E PVC so each scenario starts with the required
+fresh materialized-snapshot schema; it does not target a remote PostgreSQL
+deployment.

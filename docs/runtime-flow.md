@@ -60,7 +60,7 @@ sequenceDiagram
         Router-->>Backend: nil
     end
     loop Every flush interval (default 60s)
-        BTI->>GS: GraphStore.PutObservedSnapshot(ctx, consolidated snapshot)
+        BTI->>GS: GraphStore.PutObservedEdges(ctx, consolidated edge batch)
         GS-->>BTI: nil
     end
 ```
@@ -139,18 +139,18 @@ sequenceDiagram
 | `pkg/backend/ingest/normalizer.go` | `OTLPNormalizer` | Maps OTLP metric payloads to canonical `MetricSample` values with unit conversion |
 | `pkg/backend/ingest/topology_builder.go` | `TraceTopologyBuilder` | Extracts service-to-service `topology.Edge` values from OTLP trace envelopes |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `NormalizingIngestor` | Implements `Ingestor`; routes metric envelopes through normalizer → `MetricStore` |
-| `pkg/backend/ingest/buffered_topology_ingestor.go` | `BufferedTopologyIngestor` | Implements `Ingestor`; accumulates edges/nodes from metric and trace builders, flushes consolidated snapshots to `GraphStore` on a timer, and requeues a failed in-process write for the next flush |
+| `pkg/backend/ingest/buffered_topology_ingestor.go` | `BufferedTopologyIngestor` | Implements `Ingestor`; accumulates observed `runs_on` and `calls` edges from metric and trace builders, flushes one consolidated edge batch on a timer, and requeues a failed in-process write for the next flush |
 | `pkg/backend/ingest/normalizing_ingestor.go` | `MultiIngestor` | Implements `Ingestor`; fans envelopes to multiple downstream ingestors in order |
-| `pkg/backend/ingest/metric_topology_builder.go` | `MetricTopologyBuilder` | Extracts structural `runs_on`/`contains` edges and nodes from metric resource attributes |
+| `pkg/backend/ingest/metric_topology_builder.go` | `MetricTopologyBuilder` | Extracts lifecycle-gated observed `runs_on` edges from metric resource attributes |
 | `pkg/backend/ingest/metric_calls_topology_builder.go` | `MetricCallsTopologyBuilder` | Validates and derives `calls` edges from metrics classified by their static source module |
-| `pkg/backend/ingest/composite_topology_builder.go` | `CompositeTopologyBuilder` | Chains topology builders so the metric path runs structural + metric-calls builders together |
+| `pkg/backend/ingest/composite_topology_builder.go` | `CompositeTopologyBuilder` | Chains topology builders so the metric path contributes `runs_on` and metric-derived `calls` edges together |
 | `pkg/sources/structure` | `kubernetes.structure` | Direct in-cluster refresh of Kubernetes entities and `exposes`/`routes_to`/`uses`/`mounts` edges into GraphStore |
 | `pkg/core/metrics/{catalog,canonical,resolver}.go` + `pkg/sources/registry.go` | Metrics pipeline | Canonical catalog, provider-neutral semantics, resolver contracts, and static source-module parsing |
 | `pkg/core/semconv/keys.go` | Attribute keys | OTLP semantic-convention attribute key constants shared across ingest and topology |
 | `pkg/backend/persistence/memory.go` | `MetricStore` | Thread-safe in-memory `MetricStore`; supports write, time-range queries, and catalog stats |
-| `pkg/backend/persistence/memory.go` | `GraphStore` | Thread-safe in-memory `GraphStore`; retains structural projections and composes the newest one with current observations |
+| `pkg/backend/persistence/memory.go` | `GraphStore` | Thread-safe in-memory `GraphStore`; retains structure plus current observed edges, then materializes immutable full graph snapshots |
 | `pkg/adapters/storage/victoriametrics/` | `VMMetricStore` | `MetricStore` backed by VictoriaMetrics HTTP API (Prometheus text import + PromQL query) |
-| `pkg/adapters/storage/postgresql/` | `PostgresGraphStore` | `GraphStore` backed by PostgreSQL with append-only structural snapshots and current observation edges |
+| `pkg/adapters/storage/postgresql/` | `PostgresGraphStore` | `GraphStore` backed by PostgreSQL with structural writes, current observed edges, and retained materialized snapshots |
 | `pkg/adapters/storage/factory.go` | `Stores` / `NewStores` | Factory that wires memory or external (PG+VM) backends based on config |
 | `pkg/backend/ingest/ingest.go` | `Ingestor` interface | Contract: `Ingest(ctx, envelope) error` |
 | `pkg/core/schema` | `RawEnvelope` | Canonical telemetry envelope struct |
@@ -338,8 +338,8 @@ Metric path:
 - `OTLPEntityResolver` maps OTLP resource attributes to a canonical `EntityID` (deterministic SHA-256 of kind + cluster + attributes) and persists its canonical entity record. Resolution priority: container > pod > node > deployment > statefulset > replicaset > daemonset > job > cronjob > replicationcontroller > HPA > namespace > service. Volume metrics with a PVC label use the PVC identity before the generic resource fallback. Unresolvable resources are logged and skipped; entity persistence failures reject the envelope.
 - `OTLPNormalizer` asks the stamped static source module to parse each raw metric name and attributes. The parser returns one canonical name plus raw-unit conversion; generic ingest validates catalog membership and the mounted source assignment before dispatching the source normalizer. Source packages own bounded labels, entity attachment, directional/condition variants, and supported derived output through `pkg/sources/contract`; they cannot rename a parsed metric. The shared normalizer only traverses scalar/histogram datapoints, applies parser conversions, applies catalog instrument semantics, marks delta semantics, and emits canonical samples. Datapoints without a producer timestamp are dropped. `MetricCallsTopologyBuilder` uses the same parser and assignment validation before asking a source module for calls-edge metadata. Application Prometheus samples resolve to Service entities from preserved `namespace` / `service` scrape labels. Servicegraph connector and Istio mesh metrics are enriched with stable edge identity and bounded source dimensions. Pod status-reason integers receive public `value_label` strings at the API boundary. Istio request-duration histograms are converted from milliseconds to nanoseconds, and histograms are stored as `_sum`/`_count`. Unrecognized or wrong-source metric names are skipped.
 - `MetricStore` stores the resulting samples in memory or VictoriaMetrics. The public metric endpoints resolve a provider-neutral one-hour/15-second trend query (unless bounds are supplied), evaluate raw observations on that grid, and include the precise final `to` evaluation even when it is not grid-aligned. VictoriaMetrics uses one additional instant query only in that case. Both stores omit values older than five minutes through the same explicit query contract. Range timestamps therefore mean evaluation time rather than producer-observation time.
-- `MetricTopologyBuilder` extracts structural topology from resource attributes (no payload parsing). It derives `runs_on` edges (pod→node), `contains` edges (namespace→pod, pod→container), and the corresponding `topology.Node` values for all resolved entity kinds. Helm deployments require live Pod lifecycle validation: a `runs_on` refresh needs matching `k8s.pod.uid` and `k8s.node.name` from a scheduled Pod. Its public Pod and Node endpoints remain name-based, but the `runs_on` edge identity is versioned by Pod UID and carries `k8s.cluster.name` for lifecycle reconciliation. The backend fail-closes only `runs_on` while its Pod List/Watch state is unavailable; metric ingestion and `contains` topology continue. When Kubernetes reports a `Succeeded` or `Failed` Pod, it synchronously writes one immutable RFC3339 `terminal_deadline` for that exact UID/node assignment before arming local grace or allowing further `runs_on` refreshes. If that first write fails, that terminal UID is immediately fail-closed: its grace-period refreshes are dropped while the original deadline is retried asynchronously, without extension. A same-name replacement is checked by UID before retirement, so an old timer retires only the old assignment. `MetricCallsTopologyBuilder` asks the validated source module whether a metric derives a `calls` edge and for bounded source metadata. It then assembles and deduplicates the generic edge. Istio owns its mesh provenance, protocol, mTLS, principal, response-flag, and HTTP/gRPC metadata. Metric `calls` edges take `FirstSeen`/`LastSeen` only from a producer datapoint timestamp; timestamp-less datapoints create no metric-derived calls evidence.
-- `GraphStore` has two explicit paths. `kubernetes.structure` appends full structural snapshots, including their nodes and structural edges. Reads use only the newest structural snapshot while it is younger than `nodeTTL`; an expired structural projection contributes neither nodes nor edges to the current graph, but remains retained history. Telemetry and lifecycle writers update current observation nodes and edges. Normal active edges retain the earliest `FirstSeen`, take the newest `LastSeen`/metadata/confidence, and union provenance. A current graph is the fresh structural projection plus current observations, and both `/api/v1/graph` and `/api/v1/graph/edges` expose only that composition. The API does not expose historical snapshot replay (`graph?at=`) or retired lifecycle records. For each UID-versioned `runs_on` edge, storage is the concurrency authority for one-way `active → pending terminal → retired` transitions. The terminal marker uses a conditional upsert that returns either `pending` or `retired`; a delayed retry that observes `retired` cannot re-arm or recreate the old UID. Before accepting metric refreshes after startup, the backend reconciles persisted UID-versioned `runs_on` assignments whose `k8s.cluster.name` equals its configured cluster. It retires non-terminal assignments absent from the authoritative Pod List/Watch snapshot. An unexpired confirmed initial `terminal_deadline` remains latest-active and is returned to the tracker to re-arm the original timer after a restart, including when the same terminal UID remains in the initial List. A retry-only marker is explicitly unconfirmed: if that UID is absent or replaced at restart, reconciliation retires it immediately, intentionally losing the remaining grace instead of risking a stale assignment in the latest graph. Existing deadlines are immutable and are never reset by a restart. At the deadline, current graph reads exclude the edge even before the callback completes; retirement records RFC3339 `retired_at` without changing `first_seen` or advancing `last_seen`. Direct deletion or replacement retires a non-terminal assignment immediately. If a terminal UID with a confirmed initial marker is deleted or replaced during its 60-second grace, it remains active through the recorded deadline and only that UID is retired then. Retirement persistence, and retries after an initial terminal-marker failure, run asynchronously with retry-until-cancellation and fixed bounded per-attempt backoff.
+- `MetricTopologyBuilder` extracts only observed `runs_on` evidence from resource attributes (no payload parsing). Direct Kubernetes structure refresh owns all nodes and `contains` relations. Helm deployments require live Pod lifecycle validation: a `runs_on` refresh needs matching `k8s.pod.uid` and `k8s.node.name` from a scheduled Pod. Its public Pod and Node endpoints remain name-based, but the `runs_on` edge identity is versioned by Pod UID and carries `k8s.cluster.name` for lifecycle reconciliation. The backend fail-closes `runs_on` while its Pod List/Watch state is unavailable. When Kubernetes reports a `Succeeded` or `Failed` Pod, it synchronously writes one immutable RFC3339 `terminal_deadline` for that exact UID/node assignment before arming local grace or allowing further `runs_on` refreshes. If that first write fails, that terminal UID is immediately fail-closed: its grace-period refreshes are dropped while the original deadline is retried asynchronously, without extension. A same-name replacement is checked by UID before retirement, so an old timer retires only the old assignment. `MetricCallsTopologyBuilder` asks the validated source module whether a metric derives a `calls` edge and for bounded source metadata. It then assembles and deduplicates the generic edge. Istio owns its mesh provenance, protocol, mTLS, principal, response-flag, and HTTP/gRPC metadata. Metric `calls` edges take `FirstSeen`/`LastSeen` only from a producer datapoint timestamp; timestamp-less datapoints create no metric-derived calls evidence.
+- `GraphStore` has two explicit paths. `kubernetes.structure` appends full structural snapshots, including their nodes (Pods and containers included) and structural edges. Telemetry and lifecycle writers update only current observed edges. After startup and each five-minute structural refresh, the backend materializes one immutable graph: the newest structure owns membership, while only non-retired `runs_on`/`calls` edges seen in the previous five minutes and having two structural endpoints are copied in. Materialized snapshots receive an ID, are retained for 24 hours, and are the only graphs returned by `/api/v1/graph*`; `?at=<RFC3339>` selects the newest retained snapshot at or before that time. The `nodeTTL` guard prevents materialization from an overly old direct structure snapshot. Normal active edges retain the earliest `FirstSeen`, take the newest `LastSeen`/metadata/confidence, and union provenance. For each UID-versioned `runs_on` edge, storage is the concurrency authority for one-way `active → pending terminal → retired` transitions. The terminal marker uses a conditional upsert that returns either `pending` or `retired`; a delayed retry that observes `retired` cannot re-arm or recreate the old UID. Before accepting metric refreshes after startup, the backend reconciles persisted UID-versioned `runs_on` assignments whose `k8s.cluster.name` equals its configured cluster. It retires non-terminal assignments absent from the authoritative Pod List/Watch snapshot. An unexpired confirmed initial `terminal_deadline` remains active until its recorded deadline. Existing deadlines are immutable and are never reset by a restart. Direct deletion or replacement retires a non-terminal assignment immediately. Retirement persistence, and retries after an initial terminal-marker failure, run asynchronously with retry-until-cancellation and fixed bounded per-attempt backoff.
 
   Structural workload ownership uses only Kubernetes controller OwnerReferences.
   The snapshot retains chains such as Deployment → ReplicaSet → Pod; an object
@@ -348,7 +348,7 @@ Metric path:
 Trace path:
 
 - `TraceTopologyBuilder` scans each span for a `peer.service` attribute. When found, it resolves both caller and callee to `EntityID` values and emits a `topology.Edge` with `RelCalls` relation. Edges are deduplicated within the batch by edge ID. `FirstSeen`/`LastSeen` are taken from span timestamps.
-- `GraphStore` keeps trace-derived `calls` edges in current observation state; they are composed with the newest structural projection at read time.
+- `GraphStore` keeps trace-derived `calls` edges in current observation state; the next five-minute materialization includes only fresh edges whose endpoints are present in direct Kubernetes structure.
 
 ### 7. Source-Mismatch Drop
 
@@ -390,27 +390,27 @@ OKSG Backend
   - Signal routing
     ├── metric → MultiIngestor
     │     ├── NormalizingIngestor → OTLPNormalizer → MetricStore
-    │     └── BufferedTopologyIngestor (shared) → accumulates edges + nodes
-    │           edges: runs_on (pod→node), contains (ns→pod, pod→container)
-    │           nodes: namespace, node, pod, container
-    └── trace → BufferedTopologyIngestor (shared) → accumulates edges + nodes
+    │     └── BufferedTopologyIngestor (shared) → accumulates observed edges
+    │           edges: runs_on (pod→node), calls (metric-derived)
+    └── trace → BufferedTopologyIngestor (shared) → accumulates observed edges
           edges: calls (service→service via peer.service attribute)
   - Periodic topology flush (default 60s)
-    └── BufferedTopologyIngestor → GraphStore.PutObservedSnapshot(consolidated snapshot)
-  - kubernetes.structure refresh (at startup and on a TTL-safe timer)
+    └── BufferedTopologyIngestor → GraphStore.PutObservedEdges(consolidated edge batch)
+  - kubernetes.structure refresh (at startup and every five minutes)
     └── direct in-cluster Kubernetes API inventory → GraphStore
           edges: exposes (service→workload), routes_to (ingress→service),
                  uses (workload→configmap/secret), mounts (workload→pvc),
                  contains (workload→pod when discovery can resolve ownership)
-          nodes: workload, service, ingress, configmap, secret, pvc, pod
+          nodes: workload, service, ingress, configmap, secret, pvc, pod, container
+    └── GraphStore.Materialize → immutable full snapshot (retain 24h)
 
 REST API Server (:8080) — all list endpoints support cursor-based pagination
   - /api/v1/status         → system_status (nominal/degraded/disconnected), freshness
   - /api/v1/discovery      → MetadataStore → capability profile summary
-  - /api/v1/graph          → GraphStore → snapshot + kind/relation counts + available_filters
-  - /api/v1/graph/nodes    → GraphStore + EntityRegistry → enriched nodes (name, namespace, status)
-  - /api/v1/graph/nodes/id → GraphStore + EntityRegistry → node detail + enriched edges
-  - /api/v1/graph/edges    → GraphStore → filtered edge list
+  - /api/v1/graph          → materialized GraphStore snapshot + kind/relation counts + available_filters
+  - /api/v1/graph/nodes    → selected materialized snapshot + EntityRegistry → enriched nodes (name, namespace, status)
+  - /api/v1/graph/nodes/id → selected materialized snapshot + EntityRegistry → node detail + enriched edges
+  - /api/v1/graph/edges    → selected materialized snapshot → filtered edge list
   - /api/v1/metrics        → MetricStore → samples with unit from catalog
   - /api/v1/metrics/catalog/stats → MetricStore → per-canonical-metric source counts and last-seen timestamps
   - /api/v1/metrics/series → MetricStore → samples grouped by metric name + catalog metadata
