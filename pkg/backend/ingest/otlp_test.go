@@ -110,7 +110,7 @@ func TestBuildTraceEnvelopesFromOTLPRequest(t *testing.T) {
 		},
 	}
 
-	envelopes, err := builder.BuildTraceEnvelopes("otlp/http", request)
+	envelopes, err := builder.BuildTraceEnvelopes("test-source", request)
 	require.NoError(t, err)
 	require.Len(t, envelopes, 1)
 	require.Equal(t, schema.SignalTrace, envelopes[0].SignalType)
