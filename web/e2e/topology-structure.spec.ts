@@ -107,13 +107,6 @@ test.describe('topology projection structure', () => {
     ).toHaveCount(3)
   })
 
-  test('shows servicegraph traffic on service cards in Endpoint Flow', async ({ page }) => {
-    await setMode(page, 'traffic')
-    await setGranularity(page, 'overview')
-
-    await expect(entityCard(page, 'service', 'gateway-go')).toContainText('TRAFFIC')
-  })
-
   test('adds container detail in detailed mode without losing pod context', async ({ page }) => {
     await selectNamespace(page, 'oksg-demo')
     await setGranularity(page, 'runtime')
@@ -192,13 +185,10 @@ test.describe('topology projection structure', () => {
     await expectInspectorSelection(page, 'ops-toolbox')
 
     await expect(page.getByTestId('node-inspector')).toContainText('Technical Specs')
-    await expect(page.getByTestId('node-inspector')).toContainText('Live Telemetry')
     await expect(page.getByTestId('node-inspector')).toContainText('Graph Metadata')
     await expect(page.getByTestId('node-inspector')).toContainText('Properties')
     await expect(page.getByTestId('node-inspector')).toContainText('top to bottom into this node')
     await expect(page.getByTestId('node-inspector')).toContainText('bottom to top away from this node')
-    await expect(page.getByTestId('node-inspector')).not.toContainText('Terminal Output')
-    await expect(page.getByTestId('node-inspector')).not.toContainText('Reboot Node')
   })
 
   test('keeps legend and node inspector mutually exclusive', async ({ page }) => {

@@ -8,27 +8,33 @@ These principles govern the design and implementation of this project. They are 
 
 - Keep the design minimal and easy to change.
 - Prefer explicit contracts between layers before implementation details.
-- Keep placeholder packages lightweight until their implementation phase begins.
+- Do not add or retain placeholder packages; every package needs an active,
+  reachable ownership contract.
 - Treat prediction and future consumers as downstream of the canonical stores, not as early architectural shortcuts.
 
 ### Modular
 
 - Each key component (discovery, collection, normalization, persistence, query) can be replaced independently.
 - Preserve modularity so different telemetry sources can evolve independently.
+- Static source modules own source-specific detection, parsing, conversion, and
+  collection requirements through narrow contracts.
 - Keep the core model DRY: define canonical entities, metrics, and graph relations once.
 
 ### Decoupled Components
 
 - Separate technology-specific adapters from platform-generic domain logic.
-- Adapters own all vendor-specific integration; core packages never import adapter packages.
+- Adapters own technology transport and configuration syntax; static source
+  modules own source-specific semantics. Core packages remain source- and
+  provider-agnostic and never import adapters.
 - Persistence sits behind generic store interfaces; storage backends are swappable without changing domain logic.
 - The collection plane is assembled from plans, not from static configuration.
 
 ## Vendor Neutrality
 
-- No vendor lock-in: adapter boundaries isolate all technology-specific choices.
-- Vendor-specific packages belong exclusively in adapter boundaries, never in core.
-- Core domain logic must remain portable across different infrastructure providers and telemetry backends.
+- No vendor lock-in: adapter boundaries isolate transport choices, while static
+  source modules isolate source semantics.
+- Core domain logic remains portable across infrastructure providers and
+  telemetry backends.
 
 ## Easy Setup and Integration
 
@@ -39,9 +45,10 @@ These principles govern the design and implementation of this project. They are 
 
 ## GitOps-Ready
 
-- All configuration must be expressible as YAML or CRD resources.
-- Deployment must be automatable through Helm charts with values overrides.
-- Runtime behavior must be driven from declarative configuration, not imperative scripts.
+- Deployment configuration must be rendered through Helm values and remain
+  reviewable in version control.
+- Taskfiles and scripts may orchestrate discovery and E2E workflows, but they
+  do not replace the deployed runtime configuration.
 - Avoid manual steps that cannot be reproduced in a CI/CD pipeline.
 - Configuration changes should be reviewable in version control diffs.
 
@@ -59,14 +66,18 @@ These principles govern the design and implementation of this project. They are 
 
 ## Configuration Rules
 
-Never hardcode configuration values. All configurable settings must be externalized through one of:
+Every operator-controlled setting needs one explicit owner and an external
+contract through one of:
 
 - **CLI flags** for runtime configuration (with sensible defaults)
 - **Environment variables** for deployment-specific settings
-- **Taskfile variables** for build/test orchestration (never inline values)
+- **Taskfile variables** for build/test orchestration
 - **Named constants** in code for defaults (never magic strings)
 
-When adding new configuration:
+Fixed policy and invariants belong to their owning compiler, chart, or module
+and intentionally have no override unless the product scope requires one.
+
+When adding an operator-controlled configuration input:
 
 1. Add a CLI flag with a sensible default.
 2. Add a corresponding Taskfile variable if used in tests.
@@ -77,23 +88,20 @@ When adding new configuration:
 
 ```go
 // BAD: hardcoded cluster name
-adapter := NewDiscoveryAdapter(client, "kind-test", probe)
+adapter := NewDiscoveryAdapter(client, "kind-test")
 
 // GOOD: configurable via flag/parameter
-adapter := NewDiscoveryAdapter(client, clusterName, probe)
+adapter := NewDiscoveryAdapter(client, clusterName)
 ```
 
-```yaml
-# BAD: hardcoded registry name
+```bash
+# E2E transport contract: both supported cells use this fixed registry.
 docker inspect oksg-kind-registry
-
-# GOOD: use variable reference
-docker inspect {{.KIND_REGISTRY_NAME}}
+# Images are published through localhost:5001; no registry override is supported.
 ```
 
 ## Architecture Boundaries
 
 - Discovery results drive which collectors and receivers are enabled.
-- Adapters own all vendor-specific integration; core packages never import adapter packages.
 - Persistence sits behind generic store interfaces; storage backends are swappable without changing domain logic.
 - The collection plane is assembled from plans, not from static configuration.

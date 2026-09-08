@@ -113,11 +113,6 @@ const KIND_ENTRIES: Record<EntityKind, KindEntry> = {
     label: 'HPA',
     description: 'Horizontal pod autoscaler',
   },
-  resourcequota: {
-    kind: 'resourcequota',
-    label: 'ResourceQuota',
-    description: 'Namespace resource quota',
-  },
 }
 
 const MODE_SECTIONS: ModeSection[] = [

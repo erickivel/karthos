@@ -1,10 +1,11 @@
 import { request } from './client'
-import type { SystemStatus, DiscoverySummary } from '@/types/status'
+import { capabilityProfileSchema, systemStatusSchema } from './schemas'
+import type { CapabilityProfile, SystemStatus } from './schemas'
 
 export function getStatus(): Promise<SystemStatus> {
-  return request<SystemStatus>('/api/v1/status')
+  return request('/api/v1/status', systemStatusSchema).then(({ data }) => data)
 }
 
-export function getDiscovery(): Promise<DiscoverySummary> {
-  return request<DiscoverySummary>('/api/v1/discovery')
+export function getDiscovery(): Promise<CapabilityProfile> {
+  return request('/api/v1/discovery', capabilityProfileSchema).then(({ data }) => data)
 }

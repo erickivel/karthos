@@ -11,16 +11,6 @@ import (
 	"github.com/erickivel/oksg/pkg/core/entities"
 )
 
-// firstLabel returns the first non-empty value for the given keys.
-func firstLabel(m map[string]string, keys ...string) string {
-	for _, k := range keys {
-		if v := m[k]; v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 // PostgresEntityRegistry implements persistence.EntityRegistry using PostgreSQL.
 type PostgresEntityRegistry struct {
 	conn *Conn
@@ -34,31 +24,10 @@ func NewPostgresEntityRegistry(conn *Conn) *PostgresEntityRegistry {
 // UpsertEntity inserts or updates an entity record. On conflict, labels and
 // last_seen are updated.
 func (r *PostgresEntityRegistry) UpsertEntity(ctx context.Context, entity entities.Entity) error {
-	labels := entity.Labels()
-	labelsJSON, err := json.Marshal(labels)
+	stored := persistence.MaterializeEntity(entity)
+	labelsJSON, err := json.Marshal(stored.Metadata)
 	if err != nil {
 		return fmt.Errorf("pg entity marshal labels: %w", err)
-	}
-
-	var cluster, namespace, name string
-	if se, ok := entity.(persistence.StoredEntity); ok {
-		cluster = se.Cluster
-		namespace = se.Namespace
-		name = se.Name
-	}
-	if sep, ok := entity.(*persistence.StoredEntity); ok {
-		cluster = sep.Cluster
-		namespace = sep.Namespace
-		name = sep.Name
-	}
-	if cluster == "" {
-		cluster = firstLabel(labels, "cluster", "k8s.cluster.name")
-	}
-	if namespace == "" {
-		namespace = firstLabel(labels, "namespace", "k8s.namespace.name")
-	}
-	if name == "" {
-		name = firstLabel(labels, "name", "k8s.pod.name", "k8s.container.name", "k8s.node.name", "service.name", "k8s.namespace.name")
 	}
 
 	_, err = r.conn.pool.Exec(ctx,
@@ -70,7 +39,7 @@ func (r *PostgresEntityRegistry) UpsertEntity(ctx context.Context, entity entiti
 		   namespace = EXCLUDED.namespace,
 		   name = EXCLUDED.name,
 		   last_seen = NOW()`,
-		string(entity.ID()), string(entity.Kind()), cluster, namespace, name, labelsJSON,
+		string(stored.EntityID), string(stored.EntityKind), stored.Cluster, stored.Namespace, stored.Name, labelsJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("pg entity upsert: %w", err)

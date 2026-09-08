@@ -6,363 +6,72 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
+	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
+	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
-func TestGenerateBuildsHelmValuesFromCollectorPlan(t *testing.T) {
-	renderer := NewGenerator()
+func TestGenerateEmitsDynamicValuesAndExplicitRuntimeOverrides(t *testing.T) {
+	renderer := NewGeneratorWithOptions(GeneratorOptions{Runtime: RuntimeSettings{
+		CollectorImage: ImageValues{Tag: "0.156.1"},
+		BackendImage:   ImageValues{Repository: "registry.example/oksg-backend", Tag: "test", PullPolicy: "Always"},
+		FrontendImage:  ImageValues{Repository: "registry.example/oksg-frontend", Tag: "test", PullPolicy: "Always"},
+		Storage: StorageSettings{
+			Backend:         StorageBackendExternal,
+			PostgreSQL:      StoreSettings{Mode: StoreModeBundled},
+			VictoriaMetrics: StoreSettings{Mode: StoreModeRemote, Endpoint: "https://vm.example"},
+		},
+	}})
 
-	values, err := renderer.Generate(otel.Plan{
-		ClusterName:    "kind-test",
-		Namespace:      "oksg-system",
-		EnabledSignals: []string{"metric", "trace"},
-		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
-		},
-		AgentConfig: otel.CollectorConfig{
-			Extensions: map[string]any{
-				"health_check": map[string]any{"endpoint": "0.0.0.0:13133"},
-			},
-			Receivers: map[string]any{
-				"kubeletstats": map[string]any{"collection_interval": "30s"},
-				"prometheus":   map[string]any{"config": map[string]any{"scrape_configs": []any{}}},
-			},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
-			Service: otel.ServiceConfig{
-				Extensions: []string{"health_check"},
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {
-						Receivers:  []string{"kubeletstats", "prometheus"},
-						Processors: []string{"batch"},
-						Exporters:  []string{"otlp"},
-					},
-					"traces": {
-						Receivers:  []string{"otlp"},
-						Processors: []string{"batch"},
-						Exporters:  []string{"otlp"},
-					},
-				},
-			},
-		},
-		GatewayConfig: otel.CollectorConfig{
-			Extensions: map[string]any{
-				"health_check": map[string]any{"endpoint": "0.0.0.0:13133"},
-			},
-			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
-			Service: otel.ServiceConfig{
-				Extensions: []string{"health_check"},
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {
-						Receivers:  []string{"otlp"},
-						Processors: []string{"batch"},
-						Exporters:  []string{"otlp"},
-					},
-					"traces": {
-						Receivers:  []string{"otlp"},
-						Processors: []string{"batch"},
-						Exporters:  []string{"otlp"},
-					},
-				},
-			},
-		},
-	})
+	values, err := renderer.Generate(testDeployment(t), profile.ClusterProfile{ClusterName: "kind-test"}, contract.ResolvedSourcePlan{ProfileFingerprint: "fingerprint"})
 	require.NoError(t, err)
-	require.Contains(t, string(values), "clusterName: kind-test")
-	require.Contains(t, string(values), "collectorConfig: |")
-	require.Contains(t, string(values), "health_check:")
-	require.Contains(t, string(values), "prometheus:")
-	require.Contains(t, string(values), "format: json")
-	require.Contains(t, string(values), "releaseName: oksg-otel")
-	require.Contains(t, string(values), "backend:")
-	require.Contains(t, string(values), "grpcEndpoint: oksg-backend:4317")
-	require.Contains(t, string(values), "featureGates:")
-	require.Contains(t, string(values), "receiver.kubeletstats.enableCPUUsageMetrics")
-	require.Contains(t, string(values), "enabledSignals:")
-	require.Contains(t, string(values), "- trace")
+
+	generated := string(values)
+	require.Contains(t, generated, "clusterName: kind-test")
+	require.Contains(t, generated, "collectorConfig: |")
+	require.Contains(t, generated, "      telemetry:\n        logs:\n          encoding: json\n          level: info\n          output_paths:\n          - stdout")
+	require.Contains(t, generated, "sourceContract:")
+	require.Contains(t, generated, "tag: 0.156.1")
+	require.Contains(t, generated, "repository: registry.example/oksg-frontend")
+	require.Contains(t, generated, "backend: external")
+	require.Contains(t, generated, "url: https://vm.example")
 }
 
-func TestGenerateIncludesHostmetricsInAgentConfig(t *testing.T) {
-	renderer := NewGenerator()
+func TestGenerateRejectsIncompleteExternalStorageSettings(t *testing.T) {
+	renderer := NewGeneratorWithOptions(GeneratorOptions{Runtime: RuntimeSettings{Storage: StorageSettings{
+		Backend:    StorageBackendExternal,
+		PostgreSQL: StoreSettings{Mode: StoreModeBundled},
+	}}})
 
-	values, err := renderer.Generate(otel.Plan{
-		ClusterName:    "kind-test",
-		Namespace:      "oksg-system",
-		EnabledSignals: []string{"metric"},
-		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
-		},
-		AgentConfig: otel.CollectorConfig{
-			Receivers: map[string]any{
-				"kubeletstats": map[string]any{"collection_interval": "30s"},
-				"hostmetrics": map[string]any{
-					"collection_interval": "30s",
-					"root_path":           "/hostfs",
-					"scrapers": map[string]any{
-						"cpu":    map[string]any{},
-						"memory": map[string]any{},
-					},
-				},
-			},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {
-						Receivers:  []string{"kubeletstats", "hostmetrics"},
-						Processors: []string{"batch"},
-						Exporters:  []string{"otlp"},
-					},
-				},
-			},
-		},
-		GatewayConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-	require.Contains(t, string(values), "hostmetrics:")
-	require.Contains(t, string(values), "root_path: /hostfs")
-	require.Contains(t, string(values), "kubeletstats:")
+	_, err := renderer.Generate(testDeployment(t), profile.ClusterProfile{}, contract.ResolvedSourcePlan{})
+	require.ErrorContains(t, err, "victoriametrics mode is required for external storage")
 }
 
-func TestGenerateIncludesK8sclusterInGatewayConfig(t *testing.T) {
-	renderer := NewGenerator()
+func TestBuildEmbedsSourceContract(t *testing.T) {
+	capabilityProfile := profile.ClusterProfile{ClusterName: "kind-test", Capabilities: []profile.SourceCapability{{
+		SourceID: "kubelet", Kind: profile.SourceKindDirect, Status: profile.CapabilityAvailable, Signals: []string{"metric"},
+	}}}
+	resolved := contract.ResolvedSourcePlan{
+		ProfileFingerprint: "profile-fingerprint",
+		SelectedSources:    []string{"kubelet"},
+		MetricAssignments:  map[string]string{"k8s.pod.cpu.usage": "kubelet"},
+	}
 
-	values, err := renderer.Generate(otel.Plan{
-		ClusterName:    "kind-test",
-		Namespace:      "oksg-system",
-		EnabledSignals: []string{"metric"},
-		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
-		},
-		AgentConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"kubeletstats": map[string]any{"collection_interval": "30s"}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-		GatewayConfig: otel.CollectorConfig{
-			Receivers: map[string]any{
-				"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}},
-				"k8s_cluster": map[string]any{
-					"collection_interval":       "30s",
-					"node_conditions_to_report": []string{"Ready", "MemoryPressure"},
-				},
-			},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"otlp", "k8s_cluster"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-	})
+	values, err := NewGenerator().Build(testDeployment(t), capabilityProfile, resolved)
 	require.NoError(t, err)
-	require.Contains(t, string(values), "k8s_cluster:")
-	require.Contains(t, string(values), "node_conditions_to_report:")
+	require.Equal(t, capabilityProfile, values.Backend.SourceContract.CapabilityProfile)
+	require.Equal(t, resolved, values.Backend.SourceContract.SourcePlan)
 }
 
-func TestGenerateIncludesConnectorsWhenPresent(t *testing.T) {
-	renderer := NewGenerator()
+func testDeployment(t *testing.T) otel.Deployment {
+	t.Helper()
 
-	values, err := renderer.Generate(otel.Plan{
-		ClusterName:    "kind-test",
-		Namespace:      "oksg-system",
-		EnabledSignals: []string{"metric", "trace"},
-		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
-		},
-		AgentConfig: otel.CollectorConfig{
-			Receivers: map[string]any{
-				"otlp":         map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}},
-				"kubeletstats": map[string]any{"collection_interval": "30s"},
-			},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Connectors: map[string]any{
-				"spanmetrics": map[string]any{
-					"histogram": map[string]any{
-						"explicit": map[string]any{"buckets": []string{"100ms", "250ms", "500ms"}},
-					},
-				},
-				"servicegraph": map[string]any{
-					"latency_histogram_buckets": []string{"100ms", "500ms", "1s"},
-				},
-			},
-			Exporters: map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {
-						Receivers:  []string{"kubeletstats", "spanmetrics", "servicegraph"},
-						Processors: []string{"batch"},
-						Exporters:  []string{"otlp"},
-					},
-					"traces": {
-						Receivers:  []string{"otlp"},
-						Processors: []string{"batch"},
-						Exporters:  []string{"otlp", "spanmetrics", "servicegraph"},
-					},
-				},
-			},
-		},
-		GatewayConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-					"traces":  {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
+	deployment, err := otel.NewCompiler().Compile(collectorspec.CollectionPlan{
+		ClusterName: "kind-test",
+		Namespace:   "oksg-system",
+		Agent:       collectorspec.AgentRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true}},
+		Gateway:     collectorspec.GatewayRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true}},
 	})
 	require.NoError(t, err)
-	require.Contains(t, string(values), "connectors:")
-	require.Contains(t, string(values), "spanmetrics:")
-	require.Contains(t, string(values), "servicegraph:")
-}
-
-func TestGenerateBaselinePlanHasNoConnectorsSection(t *testing.T) {
-	renderer := NewGenerator()
-
-	values, err := renderer.Generate(otel.Plan{
-		ClusterName:    "kind-test",
-		Namespace:      "oksg-system",
-		EnabledSignals: []string{"metric"},
-		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
-		},
-		AgentConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"kubeletstats": map[string]any{"collection_interval": "30s"}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-		GatewayConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-	require.NotContains(t, string(values), "connectors:")
-}
-
-func TestGenerateUsesConfiguredBackendImageOverrides(t *testing.T) {
-	renderer := NewGeneratorWithOptions(GeneratorOptions{
-		BackendImage: ImageValues{
-			Repository: "localhost:5001/oksg-backend",
-			Tag:        "phase3",
-			PullPolicy: "IfNotPresent",
-		},
-	})
-
-	values, err := renderer.Generate(otel.Plan{
-		ClusterName:    "kind-test",
-		Namespace:      "oksg-system",
-		EnabledSignals: []string{"metric"},
-		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
-		},
-		AgentConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"kubeletstats": map[string]any{}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-		GatewayConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-	require.Contains(t, string(values), "repository: localhost:5001/oksg-backend")
-	require.Contains(t, string(values), "tag: phase3")
-}
-
-func TestGenerateUsesConfiguredReleaseMetadataOverrides(t *testing.T) {
-	renderer := NewGeneratorWithOptions(GeneratorOptions{
-		ReleaseName: "custom-otel",
-		ChartPath:   "./deploy/helm/custom-otel",
-	})
-
-	values, err := renderer.Generate(otel.Plan{
-		ClusterName:    "kind-test",
-		Namespace:      "oksg-system",
-		EnabledSignals: []string{"metric"},
-		Backend: otel.BackendConfig{
-			Enabled:      true,
-			GRPCEndpoint: "oksg-backend:4317",
-			HTTPEndpoint: "0.0.0.0:4318",
-		},
-		AgentConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"kubeletstats": map[string]any{}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "otel-collector-gateway:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"kubeletstats"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-		GatewayConfig: otel.CollectorConfig{
-			Receivers:  map[string]any{"otlp": map[string]any{"protocols": map[string]any{"grpc": map[string]any{}}}},
-			Processors: map[string]any{"batch": map[string]any{}},
-			Exporters:  map[string]any{"otlp": map[string]any{"endpoint": "oksg-backend:4317"}},
-			Service: otel.ServiceConfig{
-				Pipelines: map[string]otel.PipelineConfig{
-					"metrics": {Receivers: []string{"otlp"}, Processors: []string{"batch"}, Exporters: []string{"otlp"}},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-	require.Contains(t, string(values), "releaseName: custom-otel")
-	require.Contains(t, string(values), "chartPath: ./deploy/helm/custom-otel")
-	require.NotContains(t, string(values), "releaseName: oksg-otel")
+	return deployment
 }

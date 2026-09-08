@@ -32,11 +32,10 @@ The visual language follows the "Graphic Retro-Futurism / The Analog Superintend
 
 ### Theming Architecture
 
-**All colors are consumed exclusively via CSS custom properties (`var(--*)`).** No component or CSS module may reference a hex value directly. This enables light mode support later by swapping the theme file.
+**All colors are consumed exclusively via CSS custom properties (`var(--*)`).** No component or CSS module may reference a hex value directly.
 
-Theme files live in `src/styles/themes/`:
+The active theme file lives in `src/styles/themes/`:
 - `dark.css` — default theme, applied via `[data-theme="dark"]` on `<html>`
-- `light.css` — future, same variable names with light-mode values
 
 Components reference only semantic tokens like `var(--color-signal)`, `var(--surface-base)`, `var(--text-muted)`, etc.
 
@@ -106,12 +105,12 @@ The landing page. Operators see cluster health at a glance. TCC reviewers see pr
 - Two-column body:
   - Left: Entity Breakdown (horizontal bars per kind with counts)
   - Right: Relation Types (list of all 7 relations with counts and descriptions)
-- Bottom row: Discovery Sources (chips: Prometheus, kubeletstats, K8s API) + Graph Snapshot metadata (created age, window, version)
+- Bottom row: capability cards (source ID, direct/derived kind, availability, signals) + Graph Snapshot metadata (created age and version)
 
 **Data sources:**
-- `GET /api/v1/discovery` → KPI counts, discovery sources
-- `GET /api/v1/graph` → edge counts by relation type, snapshot metadata
-- `GET /api/v1/entities?kind=...` → entity breakdown counts
+- `GET /api/v1/discovery` → capability profile
+- `GET /api/v1/status` → supported health buckets and quality
+- `GET /api/v1/graph` → KPI, entity/relation counts, and snapshot metadata
 
 **Interactions:**
 - Clicking an entity kind or relation type navigates to `/topology` with that filter pre-applied
@@ -122,10 +121,9 @@ The core view. Interactive system graph rendered with React Flow. Layout is
 selected per projection mode through `LAYOUT_REGISTRY`
 (`web/src/views/TopologyGraph/layouts/registry.ts`): Ownership and
 Infrastructure use synchronous strategies (custom tree / `@dagrejs/dagre`),
-Traffic uses ELK layered orthogonal (`elkjs`). The registry pairs each mode
-with a default algorithm and accepts additional algorithms keyed by name, so
-new strategies plug in without touching call sites. The full graph is too
-dense to be useful flat, so the view is filtered through one of three
+Traffic uses ELK layered orthogonal (`elkjs`). The registry maps each mode
+directly to its one current strategy. The full graph is too dense to be useful
+flat, so the view is filtered through one of three
 **projection modes** with three **granularity** levels. Both are URL-backed via
 `useProjectionState`, so links into the topology view round-trip mode and
 granularity.
@@ -135,7 +133,7 @@ granularity.
 
 | Mode | Visible kinds | Layer-relevant relations | Layout strategy |
 |------|---------------|-------------------------|-----------------|
-| Ownership | namespace, workload, pod, container, configmap, secret, pvc, service, ingress | `contains`, `mounts`, `uses`, `exposes`, `routes_to` | top-down hierarchy, namespace groups side-by-side, dynamic ranks via `runLayered` |
+| Ownership | namespace, workload, pod, container, configmap, secret, pvc, service, ingress | `contains`, `mounts`, `uses`, `exposes`, `routes_to` | custom containment tree: `routes_to` ranks Ingress above Service; dependencies form a contained bottom band and open in a detached relationship card |
 | Infrastructure | node, pod, container | `runs_on`, `contains` | dagre LR for the single-tier cases (Nodes / Pods on nodes); hand-packed two-tier nesting for Containers in pods |
 | Traffic | varies by flow — see Traffic flows below | `calls`, `routes_to`, `exposes` | ELK layered (`RIGHT`) with orthogonal edge routing; route geometry returned by ELK is rendered as-is |
 
@@ -179,6 +177,10 @@ Endpoint Flow is the default and answers "which entrypoints and services
 are talking?". Workload Flow bridges runtime traffic with the controllers
 that implement the endpoints — `exposes` is rendered structurally (thin,
 muted, dashed) so it reads distinct from the rate-styled `calls` edges.
+Observed `calls` edges are the participation seed for every Traffic flow;
+`routes_to` and `exposes` add only the ingress and workload context connected
+to those calls. Idle structural Service-to-Workload wiring therefore does not
+appear as if it were live traffic.
 Instance Flow renders all participating pods for replica-level
 troubleshooting; pod auto-collapse and zero-traffic hiding are deferred.
 
@@ -193,7 +195,8 @@ already-visible nodes (the historic `calls`-leak-into-Ownership regression).
 - Floating top bar: projection-mode tabs, granularity tabs, an "include orphans" toggle
 - Floating `LegendPanel` (right): kind / relation legend, plus namespace color swatches in Infrastructure mode
 - Minimap (bottom-left), zoom controls (bottom-right)
-- Floating `NodeInspector` panel (right, conditional — appears on node click)
+- Floating `NodeInspector` panel (right, conditional — appears on node click and
+  derives the selected node plus its incident edges from the loaded snapshot)
 
 **Node Cards (React Flow custom nodes):**
 Each entity renders as a card with a colored header and property rows.
@@ -205,20 +208,23 @@ Each entity renders as a card with a colored header and property rows.
 | Data Blue `#3e9adf` | Node, Namespace | Infrastructure entities |
 | Muted Gray `#333537` | ConfigMap, Secret, PVC | Supporting context (rendered smaller, lower opacity) |
 
-Card content: entity name (bold, header bar), kind-specific icon (top-right), 2-3 key properties (label + value rows), and **minimalist segmented bar indicators** for metrics like CPU, MEM, I/O — solid rectangular blocks with gaps, matching the reference mockup style (e.g., the IO `450MB/s` segmented bar in the POD_COMPUTE_02 card).
+Card content: a distinct entity kind and Kubernetes name in the header,
+kind-specific icon (top-right), 2-3 key properties (label + value rows), and
+concise current metric values where direct telemetry is available. Child cards
+omit their namespace property in Ownership mode because the enclosing namespace
+rectangle already supplies that context.
 
 **Edge Rendering — `RelationEdge`:**
 Edges are a custom React Flow edge component (`edges/RelationEdge.tsx`):
 
-- Path geometry uses React Flow's live source/target handle coordinates as the source of truth — never stale layout-box estimates. This is enforced because dagre/tree layout positions are advisory; React Flow may reposition handles after re-render and the edge must follow. **Exception:** edges with `data.rawElk === true` carry an explicit `routePoints` array produced by ELK; these are rendered as-is and the live handle coordinates are intentionally ignored, otherwise the first/last segment would tilt off the orthogonal route.
+- Path geometry uses React Flow's live source/target handle coordinates as the source of truth — never stale layout-box estimates. This is enforced because dagre/tree layout positions are advisory; React Flow may reposition handles after re-render and the edge must follow. **Exception:** edges with `data.rawElk === true` carry explicit ELK route points and are rendered as-is.
 - Stroke color is keyed to relation type via CSS custom properties (`--color-signal` for `calls`, `--color-info` for `runs_on`/`contains`, `--color-text-muted` for `exposes` and other structural relations). In Workload Flow the `exposes` edge is rendered thin, muted and dashed so it visually separates from rate-styled `calls`.
-- For `calls` edges, stroke width scales with the live request rate snapshot from `useEdgeMetrics`, so high-traffic links read as visually heavier.
-- The original "cable bundle" mockup is approximated with stroke-width modulation rather than literal multi-line bundles; this kept the SVG cost flat as graph density grew.
-- An `EdgeMetricButton` overlay opens the Metrics Explorer pre-filtered to that edge.
+- Calls remain graph edges with their relation/provenance metadata; the canvas does not poll or render edge-metric overlays.
+- A `calls` relation exposes a stable-ID Metrics Explorer link for its detailed series.
 
 **Node Inspector Panel:**
 Appears when a node is clicked. Contents:
-- Entity name + status indicator dot. The dot reads `node.status` directly — one of the public health-status string set (`healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`) supplied by the backend at the API boundary. The frontend does no enum translation; see `pkg/core/metrics/health_status.go`.
+- Entity name and graph status.
 - Kind/type chips
 - Properties section: namespace, kind-specific fields from entity labels
 - Inbound relations: list with relation type + source entity name (clickable)
@@ -228,10 +234,10 @@ Appears when a node is clicked. Contents:
 
 **Data sources:**
 - `GET /api/v1/graph` → full topology snapshot (nodes + edges)
-- `GET /api/v1/graph/nodes/{id}` → selected node detail with inbound/outbound edges
-- `GET /api/v1/graph/nodes?kind=&namespace=` → filtered node queries
-- `GET /api/v1/graph/edges?relation=` → filtered edge queries
-- `GET /api/v1/metrics?entity_id[]={id}` → metrics preview for inspector
+
+The Node Inspector derives the selected node and its inbound/outbound edges
+from the latest graph snapshot. `GET /api/v1/graph/nodes/{id}` remains a public
+endpoint for external consumers, but the frontend does not call it.
 
 **Interactions:**
 - Pan, zoom, scroll on canvas
@@ -252,8 +258,13 @@ Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped 
 3. **Breadcrumb / Builder filter** (`filter/FilterBreadcrumbBuilder.tsx`): path-style `Namespace / Kind / Entity` segments backed by `SearchablePopover`. An "Edit Filters" toggle expands an advanced builder with `SCOPE` (namespace, kind), `WHERE` (status, name-contains query), and `SELECT` (entity) rows. "Reset" clears all state. Each picker is fed by `applyFilters(allNodes, ...)` minus its own field, so the namespace, kind, and entity dropdowns only ever list options that are still viable under the *other* active filters; if a previously-selected entity falls out of the new candidate set, it auto-clears. Popovers dismiss on outside click or `Escape` (`useClickOutside` hook).
 4. **Selection summary** (`SelectionSummary.tsx`): card with health dot, entity name, kind badge, namespace/cluster/status chips, and the segmented time-range control (`5m / 15m / 1h / 6h / 24h`).
 5. **Category tabs**: derived from catalog metrics whose `scopes` and `applies_to` match the current selection.
-6. **Chart grid**: one `MetricCard` per applicable canonical metric. Cards share a Recharts `syncId` so the hover cursor mirrors across cards even though only a single entity is selected.
-7. **Raw Samples table**: scrollable, scope column shows `namespace/name` for entity samples and `src → tgt` for edge samples.
+6. **Chart grid**: one `MetricCard` per returned dimensional series. Cards share a Recharts `syncId`; no label-distinct series is collapsed or selected arbitrarily. The only presentation exception is a selected Service's `servicegraph.request.count`: the frontend groups its current, same-source, same-evaluation status series into separate **Inbound requests** (`edge_target_id`) and **Outbound requests** (`edge_source_id`) summaries. Each preserves source boundaries, lists the opposite service, and lets the user inspect its exact HTTP outcome series and labels. The two directions are never summed together. The raw samples table continues to expose every returned sample.
+7. **Node Resource sections**: Node Resource metrics are separated into **Compute**, **Memory**, **Storage**, and **Network**. The active section alone requests its metric families, so opening a Node does not wait for every host dimension. A left-to-right loading skeleton reserves chart space while that section is loading.
+8. **Node CPU presentation**: the primary card shows direct Kubelet mCPU. Its supplementary host-derived utilization is shown only when every current core has one idle sample. The expensive per-core/state cursor walk is deferred until the explicit **Inspect per-core details** button is opened; the entire CPU card is not a click target. The expanded breakdown shows a compact loading skeleton while its series arrive.
+9. **Pod sections**: Pod selections replace generic category tabs with **Overview**, **Health**, and **Volumes**. Overview requests only direct CPU and working-memory series. Health renders readable API `value_label` values for Kubernetes phase and separately reported reason rather than numeric enum charts. Volumes is deferred and groups returned values by `volume_name`; every row remains a mount-level fact, never a summed Pod capacity or inferred utilization. A missing `volume_name` stays as an independent “Unnamed volume” row so distinct mount series are never merged.
+10. **Container Overview**: Container selections replace generic category tabs with one compact view. CPU and memory show direct use alongside separately reported request and limit context; the view never derives utilization. Current status comes solely from the backend-enriched graph entity, while restart count is shown as a cumulative observed value. All eight applicable Container metric families are cursor-complete. If a metric has label-distinct series, the summary says how many and preserves each series in a detail card below rather than choosing or merging one.
+11. **PVC Storage snapshot**: PersistentVolumeClaim selections replace generic category tabs with a cursor-complete, capacity-first view. **Available storage** and **Storage capacity** remain direct Kubelet gauges; the page never invents used space or utilization. **Inode details** exposes Free, Used, and Total inodes. When the API returns label-distinct PVC series, the primary view shows a neutral count and expands to one independent snapshot per full label identity. With no current samples, it says that the claim has no current Kubelet volume telemetry and distinguishes the structural graph relationship from observed filesystem evidence. Pod Volumes remain a separate mount-oriented presentation.
+12. **Raw Samples table**: scrollable, scope column shows `namespace/name` for entity samples and `src → tgt` for edge samples.
 
 **Layout (edge mode):**
 1. Same header, mode tab on Edge.
@@ -275,8 +286,9 @@ Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped 
 - Deep-links from the topology `NodeInspector` (`entityMetricsUrl` / `edgeMetricsUrl` in `web/src/lib/links.ts`) are preserved.
 
 **Chart Cards (`MetricCard.tsx`):**
-- Title + `InfoTooltip` showing sample count, canonical metric name, and source list (active source highlighted in Signal Green).
-- Source chips listing `metric.sources[]` with the active one accent-coloured.
+- Title + `InfoTooltip` showing sample count, canonical metric name, and declared source priorities.
+- Source chips list catalog priorities; the observed sample source is read only from returned sample labels.
+- Each card displays its complete label set, optional stable edge identity, and the effective aggregation/window/range/grid/timestamp semantics returned by the API.
 - Prominent current value (last sample) + unit, right-aligned.
 - Recharts `BarChart` with horizontal gridlines, hidden Y axis, and a 5-tick X axis (left/center/right + "now" label on the rightmost tick).
 - Empty state: dashed border + "No samples in selected time range" + the list of expected sources, so empty cards distinguish "no data right now" from "this never applies".
@@ -288,7 +300,7 @@ Segmented control inside the selection summary. Maps to `from` / `to` query para
 Maps 1:1 to the canonical `MetricCategory` values: resource, traffic, latency, error, capacity, health. Active tab highlighted in Signal Green.
 
 **Raw Samples Table (`RawSamplesTable.tsx`):**
-Scrollable table with columns: Metric, Scope, Source, (Mesh — only when mesh-labelled samples are present), Value, Unit, Timestamp. The page passes a snapshot-aware `scopeFor` formatter so users see human-readable namespace/name, not raw IDs.
+Scrollable table with columns: Metric, Scope, Source, (Mesh — only when mesh-labelled samples are present), Value, enum Label, Unit, Timestamp. The page passes a snapshot-aware `scopeFor` formatter so users see human-readable namespace/name, not raw IDs.
 
 **Data sources:**
 - `GET /api/v1/metrics/series?metric_name={name}&entity_id[]={id}&from=&to=` → entity metric series
@@ -304,9 +316,7 @@ The Metrics Explorer must treat catalog `scopes` as authoritative:
 - edge mode renders only metrics whose scopes include `edge`
 - edge mode uses edge-capable catalog entries such as servicegraph and HTTP request metrics; unsupported pod-network metrics must not be requested or displayed
 
-**Applicability layer.** On top of `scopes`, the Explorer hides tabs and cards that are *structurally* inapplicable to the selected entity kind using catalog-owned `applies_to` metadata. For workload entities, `k8s.workload.type` narrows controller-specific metric families so Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob, and ReplicationController cards only appear on the matching subtype; missing subtype metadata fails open for older graph snapshots. `sources` describe metric producers and source arbitration only; the frontend must not infer entity applicability from source IDs.
-
-Cards that are applicable but currently empty render an informative empty state listing the metric's expected sources, distinguishing "no data right now" from "this never applies". Catalog responses missing `applies_to` fail open for compatibility and emit a single `console.warn` in dev. See `web/src/views/MetricsExplorer/applicability/README.md` for the full model and how to extend it.
+**Applicability layer.** On top of `scopes`, the Explorer hides tabs and cards that are structurally inapplicable to the selected entity kind using catalog-owned `applies_to` metadata. `sources` describe producer priority only; the frontend never infers applicability or an observed source from them. Cursor controls make every API-returned series page reachable.
 
 ### 5.4 Status Bar
 
@@ -315,7 +325,8 @@ Persistent bottom bar across all routes. Shows both cluster system status and OK
 **Layout:** Single horizontal bar, left-to-right:
 - **System status indicator**: green dot + `SYSTEM_NOMINAL` (or red + `DEGRADED` based on `/api/v1/status` components)
 - **OKSG tool status**: `[OKSG] BACKEND CONNECTED · LAST SNAPSHOT 12s AGO · 52 NODES · 56 EDGES`
-- **Network info** (right-aligned): `[NET] POLLING oksg-backend:8080`
+- **Network info** (right-aligned): `[NET] API PROXY` (a stable UI
+  label; Helm's nginx proxy targets the release-scoped backend Service)
 
 **Status logic:**
 - `SYSTEM_NOMINAL`: all components in `/api/v1/status` report healthy
@@ -330,14 +341,16 @@ Persistent bottom bar across all routes. Shows both cluster system status and OK
 
 ## 6. Data Layer Architecture
 
-### Principle: Polling Now, WebSocket-Ready
+### Principle: REST Polling
 
-The backend has REST-only endpoints. Topology snapshots flush every 60s. The frontend polls on intervals. The data layer is structured so a WebSocket upgrade later is a transport swap, not a rewrite.
+The backend exposes REST endpoints. It materializes the graph after startup and
+each five-minute structure refresh. The frontend polls the latest graph
+snapshot every 30 seconds.
 
 ### HTTP Client: Native `fetch`
 
 No axios. The API client is a thin wrapper around the browser's native `fetch`:
-- `client.ts` provides a `request<T>(path, options)` function that handles base URL, JSON parsing, error mapping, and typed responses
+- `client.ts` provides a schema-validated request boundary: every successful response is parsed with Zod before a view receives it
 - Each API domain module (`graph.ts`, `metrics.ts`, etc.) exports pure functions that call `request<T>`
 - TanStack Query's `queryFn` calls these functions — components never call `fetch` directly
 
@@ -347,41 +360,28 @@ No axios. The API client is a thin wrapper around the browser's native `fetch`:
 src/
   api/
     client.ts          — thin native fetch wrapper (base URL, JSON, error handling)
-    graph.ts           — getSnapshot(), getNode(id), getEdges(filters)
-    metrics.ts         — getSamples(entityId, timeRange), getCatalog()
-    entities.ts        — listEntities(filters), getEntity(id)
+    schemas.ts         — Zod `/api/v1` response schemas and inferred types
+    graph.ts           — getSnapshot()
+    metrics.ts         — getSeries(), getCatalog(), and catalog statistics
     discovery.ts       — getDiscovery(), getStatus()
   hooks/
     useGraphSnapshot.ts   — TanStack Query + polling (refetchInterval: 30s)
-    useNodeDetail.ts      — fetches node + edges on entity selection
-    useMetrics.ts         — fetches samples with time range and category
     useSystemStatus.ts    — polls /status for status bar, derives connection state
     useDiscovery.ts       — polls /discovery for cluster overview
   stores/
-    useAppStore.ts        — Zustand: selectedEntityId, activeFilters, connectionStatus
+    useAppStore.ts        — Zustand: selected entity, detached relationship-card state, connection status
   types/
     graph.ts              — Snapshot, Node, Edge, EntityKind, RelationType
     metrics.ts            — MetricSample, MetricCategory, CanonicalMetric
-    entities.ts           — Entity, EntityQuery
-    api.ts                — API response envelopes, error types
   styles/
     themes/
       dark.css           — dark theme variables ([data-theme="dark"])
-      light.css          — light theme variables (future, same var names)
     tokens.css           — semantic aliases, spacing scale, typography tokens
     global.css           — base styles, font import, theme loading
 ```
 
-Each layer is independently replaceable: swap `api/client.ts` to change HTTP transport, swap `themes/dark.css` to change visual theme, swap a `hooks/` file to change data fetching strategy.
-
-### WebSocket-Ready Pattern
-
-TanStack Query hooks are the **only** data consumers. Components never fetch directly. To upgrade to WebSocket:
-
-1. Add a WS connection manager
-2. On WS message, call `queryClient.setQueryData('graph', newSnapshot)`
-3. Remove `refetchInterval` from the graph query
-4. Zero component changes needed
+Each layer has one current responsibility: `api/client.ts` owns HTTP transport,
+`themes/dark.css` owns the dark theme, and hooks own polling and query caching.
 
 ### Polling Intervals
 
@@ -390,8 +390,7 @@ TanStack Query hooks are the **only** data consumers. Components never fetch dir
 | Graph snapshot | 30s | `GET /api/v1/graph` |
 | System status | 30s | `GET /api/v1/status` |
 | Discovery | 120s | `GET /api/v1/discovery` |
-| Metrics (when visible) | 30s | `GET /api/v1/metrics` |
-| Node detail | On demand | `GET /api/v1/graph/nodes/{id}` |
+| Metrics (when visible) | 30s | `GET /api/v1/metrics/series` |
 | Metric catalog | Once (stale: Infinity) | `GET /api/v1/metrics/catalog` |
 | Metric catalog stats | 30s | `GET /api/v1/metrics/catalog/stats` |
 
@@ -404,20 +403,23 @@ TanStack Query hooks are the **only** data consumers. Components never fetch dir
 ### Development
 
 - A `Dockerfile.dev` provides a development container with Vite's dev server (HMR enabled)
-- `docker-compose.yml` (or a `task dev` command) spins up the frontend container alongside the backend
+- `docker-compose.yml` (or `task web:dev`) runs the frontend container; the
+  backend remains Helm-deployed and is reached through a local port-forward
 - Vite dev server runs inside the container, with source files mounted as a volume for live reload
-- API requests proxy to the backend container via Vite's `server.proxy` config
+- API requests proxy through Vite's `server.proxy` config to the port-forwarded backend
 - Developers interact with the app via `http://localhost:<mapped-port>` but the process itself runs in Docker
 
 ### Production (Kubernetes)
 
 - **Build:** Multi-stage Dockerfile — stage 1 builds static files with Vite, stage 2 copies `dist/` into an nginx image
-- **Container:** nginx serving static files + reverse proxy for `/api/*` → `oksg-backend:8080`
+- **Container:** nginx serving static files + reverse proxy for `/api/*` → the
+  Helm release's backend Service (`oksg-otel-backend:8080` by default)
 - **Helm:** Deployed as additional templates under `deploy/helm/oksg-otel/`
   - Deployment: single replica, nginx image with built frontend baked in
   - Service: ClusterIP on port 80
-  - ConfigMap: nginx.conf with `/api/*` proxy pass to `oksg-backend:8080`
-- **Service name:** `oksg-frontend` in `oksg-system` namespace
+  - ConfigMap: nginx.conf with `/api/*` proxy pass to the release-scoped backend
+    Service
+- **Service name:** `<release>-frontend` in the Helm release namespace
 - **No direct backend access from the browser** — nginx handles the API proxy
 
 ---
@@ -435,10 +437,10 @@ web/
     main.tsx               — app entry, providers (QueryClient, Router, theme init)
     App.tsx                — shell layout with floating sidebar, top bar, status bar, <Outlet/>
     api/
-      client.ts            — thin native fetch wrapper
+      client.ts            — schema-validated native fetch wrapper
+      schemas.ts           — Zod `/api/v1` response contracts
       graph.ts             — graph API functions
       metrics.ts           — metrics API functions
-      entities.ts          — entity API functions
       discovery.ts         — discovery/status API functions
     hooks/                 — TanStack Query + Zustand hooks (one per data domain)
     stores/                — Zustand stores
@@ -453,11 +455,10 @@ web/
       MetricsExplorer/     — /metrics route components
     components/
       Shell/               — TopBar (floating), Sidebar (floating), StatusBar
-      shared/              — reusable primitives (DataChip, SegmentedBar, etc.)
+      shared/              — reusable primitives (DataChip, etc.)
     styles/
       themes/
         dark.css           — [data-theme="dark"] CSS custom property definitions
-        light.css          — [data-theme="light"] (future, same variable names)
       tokens.css           — semantic aliases, spacing scale, typography tokens
       global.css           — base styles, font import, dotted canvas background
 ```
@@ -493,20 +494,20 @@ Constraints that have caused regressions if ignored:
 - **Layouts are picked through `LAYOUT_REGISTRY`** in
   `web/src/views/TopologyGraph/layouts/registry.ts`. Ownership runs a custom
   tree layout, Infrastructure uses `@dagrejs/dagre`, Traffic uses ELK
-  (`elkjs`) layered orthogonal. The registry maps each `ProjectionMode` to a
-  default algorithm plus any optional alternates so adding a new strategy is
-  a one-line change.
+  (`elkjs`) layered orthogonal. The registry maps each `ProjectionMode`
+  directly to its one current strategy.
 - **Catalog scopes are authoritative.** Metrics Explorer renders entity
   cards only when the catalog entry's `scopes` includes `entity`, and edge
   cards only when it includes `edge`.
 - **Health summary.** Cluster Overview's runtime health row reads
   `/api/v1/status.health_summary`: node health from
-  `k8s.node.condition.ready`, pod health from the latest topology snapshot's
-  pod labels (`phase`, `status`, `k8s.pod.phase`) with an explicit `unknown`
-  bucket. The UI does not infer phase from absence of telemetry.
-- **Node Inspector** renders only live metric labels attached to graph
-  nodes (CPU, memory, phase, etc.) plus inbound/outbound relations and the
-  "View Full Metrics →" link. No fabricated bars or sparklines.
+  `k8s.node.condition.ready` and pod health from `k8s.pod.phase`, both
+  intersected with current graph entities and with an explicit `unknown` bucket.
+  Consumers must also honor the aggregate and branch `complete` / `partial` /
+  `unavailable` quality values. The UI does not infer phase from absence of telemetry.
+- **Node Inspector** renders graph status, properties, inbound/outbound
+  relations, and the "View Full Metrics →" link. Telemetry is queried only
+  through Metrics Explorer; graph labels are never treated as metric samples.
 - **Status bar.** `BACKEND_OK` / `BACKEND_OFFLINE` / `DISCONNECTED` are
   derived from the `/api/v1/status` poll and fetch-failure fallback.
   Topology screenshots are only valid evidence when the footer reads
@@ -516,8 +517,19 @@ Constraints that have caused regressions if ignored:
     `exposes`, and `routes_to`. Removing any one of them filters Ingress
     or call-only services out of `computeParticipants` and they vanish.
   - Do **NOT** add `calls` to ownership; `calls` belongs to Traffic only.
+  - Ownership layout uses only `contains` to choose visual ancestry. It ranks
+    endpoint cards by `routes_to` so an Ingress is above its routed Service,
+    while `exposes`, `uses`, and `mounts` remain cross-links and never make a
+    target a direct child. ConfigMaps, Secrets, and PVCs occupy a centered
+    bottom band within the namespace. Their cards show `uses`/`mounts` counts.
+    Selecting that count opens a draggable relationship card listing the
+    source-aware inbound or outbound dependencies. The canvas deliberately
+    omits those dependency edges, so multi-parent resources do not produce
+    long lines across the ownership hierarchy. A related-resource row selects
+    its canonical graph entity; pinning keeps the original relationship
+    context visible for comparison.
   - Traffic relations: `calls`, `routes_to`, `exposes`. Infrastructure:
-    `runs_on`, `mounts`. Don't blend them.
+    `runs_on`, `contains`. Don't blend them.
   - The edge filter in `project()` MUST check
     `spec.relations.has(e.relation)` in addition to endpoint visibility,
     or stale relations leak into the wrong layer.

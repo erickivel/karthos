@@ -40,12 +40,12 @@ func TestEntityRegistry_UpsertOverwrites(t *testing.T) {
 	reg := NewInMemoryEntityRegistry()
 	ctx := context.Background()
 
-	svc1 := entities.NewService("cluster", "default", "api", nil, map[string]string{
+	svc1 := entities.NewService("cluster", "default", "api", map[string]string{
 		"version": "v1",
 	})
 	require.NoError(t, reg.UpsertEntity(ctx, svc1))
 
-	svc2 := entities.NewService("cluster", "default", "api", nil, map[string]string{
+	svc2 := entities.NewService("cluster", "default", "api", map[string]string{
 		"version": "v2",
 	})
 	require.NoError(t, reg.UpsertEntity(ctx, svc2))
@@ -64,7 +64,7 @@ func TestEntityRegistry_ListByKind(t *testing.T) {
 		"namespace": "default",
 		"name":      "pod-1",
 	})
-	svc := entities.NewService("cluster", "default", "svc-1", nil, map[string]string{
+	svc := entities.NewService("cluster", "default", "svc-1", map[string]string{
 		"cluster":   "cluster",
 		"namespace": "default",
 		"name":      "svc-1",
@@ -154,12 +154,37 @@ func TestEntityRegistry_UpsertOTLPLabelsDerivesFields(t *testing.T) {
 	assert.Equal(t, "default", stored.Namespace)
 }
 
+func TestMaterializeEntityClonesLabelsAndUsesCanonicalFallbacks(t *testing.T) {
+	labels := map[string]string{
+		"k8s.cluster.name":   "cluster-a",
+		"k8s.namespace.name": "payments",
+		"service.name":       "checkout",
+	}
+
+	got := MaterializeEntity(entities.NewService("", "", "", labels))
+	labels["service.name"] = "mutated"
+
+	assert.Equal(t, "cluster-a", got.Cluster)
+	assert.Equal(t, "payments", got.Namespace)
+	assert.Equal(t, "checkout", got.Name)
+	assert.Equal(t, "checkout", got.Metadata["service.name"])
+}
+
+func TestStoredEntityLabelsReturnsCopy(t *testing.T) {
+	entity := StoredEntity{Metadata: map[string]string{"name": "api"}}
+
+	labels := entity.Labels()
+	labels["name"] = "mutated"
+
+	assert.Equal(t, "api", entity.Metadata["name"])
+}
+
 func TestEntityRegistry_ListAll(t *testing.T) {
 	reg := NewInMemoryEntityRegistry()
 	ctx := context.Background()
 
 	pod := entities.NewPod("cluster", "default", "pod-1", nil)
-	svc := entities.NewService("cluster", "default", "svc-1", nil, nil)
+	svc := entities.NewService("cluster", "default", "svc-1", nil)
 
 	require.NoError(t, reg.UpsertEntity(ctx, pod))
 	require.NoError(t, reg.UpsertEntity(ctx, svc))

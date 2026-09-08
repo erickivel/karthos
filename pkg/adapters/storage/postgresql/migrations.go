@@ -24,12 +24,15 @@ CREATE INDEX IF NOT EXISTS idx_entities_cluster_ns_name ON entities (cluster, na
 -- Topology snapshots
 CREATE TABLE IF NOT EXISTS topology_snapshots (
     id            BIGSERIAL   PRIMARY KEY,
+    scope         TEXT        NOT NULL CHECK (scope IN ('structural', 'materialized')),
     version_major INT         NOT NULL DEFAULT 1,
     version_minor INT         NOT NULL DEFAULT 0,
     from_ts       TIMESTAMPTZ NOT NULL,
     to_ts         TIMESTAMPTZ NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_topology_snapshots_scope_id ON topology_snapshots (scope, id DESC);
 
 -- Topology nodes (per snapshot)
 CREATE TABLE IF NOT EXISTS topology_nodes (
@@ -40,7 +43,25 @@ CREATE TABLE IF NOT EXISTS topology_nodes (
     PRIMARY KEY (snapshot_id, entity_id)
 );
 
--- Topology edges (accumulated, not per-snapshot)
+-- Structural and materialized graph edges are retained per complete projection.
+-- They are intentionally separate from current telemetry/lifecycle observations.
+CREATE TABLE IF NOT EXISTS topology_snapshot_edges (
+    snapshot_id BIGINT           NOT NULL REFERENCES topology_snapshots(id),
+    id          TEXT             NOT NULL,
+    source      TEXT             NOT NULL,
+    target      TEXT             NOT NULL,
+    relation    TEXT             NOT NULL,
+    confidence  DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    provenance  TEXT[]           NOT NULL DEFAULT '{}',
+    first_seen  TIMESTAMPTZ      NOT NULL,
+    last_seen   TIMESTAMPTZ      NOT NULL,
+    metadata    JSONB            NOT NULL DEFAULT '{}',
+    PRIMARY KEY (snapshot_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshot_edges_snapshot ON topology_snapshot_edges (snapshot_id);
+
+-- Current telemetry and lifecycle edges (not structural history)
 CREATE TABLE IF NOT EXISTS topology_edges (
     id         TEXT             PRIMARY KEY,
     source     TEXT             NOT NULL,
@@ -69,25 +90,11 @@ CREATE TABLE IF NOT EXISTS cluster_profiles (
 
 CREATE INDEX IF NOT EXISTS idx_cluster_profiles_name ON cluster_profiles (cluster_name, created_at DESC);
 
--- Raw envelopes (optional, retention-managed)
-CREATE TABLE IF NOT EXISTS raw_envelopes (
-    id            TEXT        PRIMARY KEY,
-    version_major INT         NOT NULL DEFAULT 1,
-    version_minor INT         NOT NULL DEFAULT 0,
-    source        TEXT        NOT NULL,
-    signal_type   TEXT        NOT NULL,
-    timestamp     TIMESTAMPTZ NOT NULL,
-    resource      JSONB       NOT NULL DEFAULT '{}',
-    payload       JSONB       NOT NULL,
-    received_at   TIMESTAMPTZ NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_raw_signal_type ON raw_envelopes (signal_type, timestamp);
-CREATE INDEX IF NOT EXISTS idx_raw_source ON raw_envelopes (source, timestamp);
 `
 
 // Migrate runs the schema DDL to create all required tables and indexes.
-// Uses CREATE IF NOT EXISTS so it is safe to call on every startup.
+// This materialized-snapshot model requires a fresh external schema; it does
+// not convert a prior accumulated-topology installation.
 func Migrate(ctx context.Context, conn *Conn) error {
 	if _, err := conn.pool.Exec(ctx, schemaDDL); err != nil {
 		return fmt.Errorf("postgresql migrate: %w", err)

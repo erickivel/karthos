@@ -22,7 +22,8 @@ func NewInMemoryMetadataStore() *InMemoryMetadataStore {
 func (s *InMemoryMetadataStore) PutDiscovery(_ context.Context, snapshot profile.ClusterProfile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.profile = &snapshot
+	cloned := cloneClusterProfile(snapshot)
+	s.profile = &cloned
 	return nil
 }
 
@@ -36,6 +37,6 @@ func (s *InMemoryMetadataStore) GetDiscovery(_ context.Context) (*profile.Cluste
 		return nil, nil
 	}
 
-	cp := *s.profile
+	cp := cloneClusterProfile(*s.profile)
 	return &cp, nil
 }

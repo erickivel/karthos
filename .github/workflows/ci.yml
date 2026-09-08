@@ -7,7 +7,7 @@ on:
     branches: [main, development]
 
 env:
-  GO_VERSION: "1.26.3"
+  GO_VERSION: "1.26.6"
   TASK_VERSION: "3.40.1"
   GOLANGCI_LINT_VERSION: "v2.11.3"
   GOVULNCHECK_VERSION: "v1.1.4"
@@ -107,8 +107,17 @@ jobs:
           govulncheck-version: ${{ env.GOVULNCHECK_VERSION }}
           gosec-version: ${{ env.GOSEC_VERSION }}
 
+      - name: Build Helm chart dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
+          helm repo add victoria-metrics https://victoriametrics.github.io/helm-charts --force-update
+          helm dependency build deploy/helm/oksg-otel
+
       - name: Run tests
         run: task test:race
+
+      - name: Run PostgreSQL integration tests
+        run: task test:postgres
 
       - name: Upload coverage
         uses: actions/upload-artifact@v6

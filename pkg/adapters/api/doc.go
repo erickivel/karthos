@@ -1,2 +1,2 @@
-// Package api provides the REST API adapter for query and control endpoints.
+// Package api provides the REST API adapter for query endpoints.
 package api

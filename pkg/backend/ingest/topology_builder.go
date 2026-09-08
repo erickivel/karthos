@@ -103,66 +103,10 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 	return edges, nil
 }
 
-// BuildNodes returns the service nodes referenced by the trace envelope so
-// graph snapshots include the endpoints referenced by calls edges.
-func (b *TraceTopologyBuilder) BuildNodes(ctx context.Context, envelope schema.RawEnvelope) []topology.Node {
-	var rs tracepb.ResourceSpans
-	if err := protojson.Unmarshal(envelope.Payload, &rs); err != nil {
-		return nil
-	}
-
-	namespace := envelope.Resource[semconv.ResourceK8sNamespaceName]
-	callerServiceName := envelope.Resource[semconv.ResourceServiceName]
-	if callerServiceName == "" {
-		return nil
-	}
-
-	seen := make(map[entities.EntityID]topology.Node)
-	b.addTraceServiceNode(ctx, seen, callerServiceName, namespace)
-
-	for _, ss := range rs.ScopeSpans {
-		for _, span := range ss.Spans {
-			calleeServiceName := kvString(span.Attributes, semconv.AttrPeerService)
-			if calleeServiceName == "" {
-				continue
-			}
-			b.addTraceServiceNode(ctx, seen, calleeServiceName, namespace)
-		}
-	}
-
-	nodes := make([]topology.Node, 0, len(seen))
-	for _, node := range seen {
-		nodes = append(nodes, node)
-	}
-	return nodes
-}
-
 func (b *TraceTopologyBuilder) resolveServiceID(ctx context.Context, serviceName, namespace string) (entities.EntityID, error) {
 	resource := map[string]string{semconv.ResourceServiceName: serviceName}
 	if namespace != "" {
 		resource[semconv.ResourceK8sNamespaceName] = namespace
 	}
 	return b.resolver.Resolve(ctx, resource)
-}
-
-func (b *TraceTopologyBuilder) addTraceServiceNode(ctx context.Context, seen map[entities.EntityID]topology.Node, serviceName, namespace string) {
-	if serviceName == "" {
-		return
-	}
-
-	id, err := b.resolveServiceID(ctx, serviceName, namespace)
-	if err != nil {
-		return
-	}
-
-	labels := map[string]string{"name": serviceName}
-	if namespace != "" {
-		labels["namespace"] = namespace
-	}
-
-	seen[id] = topology.Node{
-		ID:     id,
-		Kind:   entities.KindService,
-		Labels: labels,
-	}
 }

@@ -30,15 +30,15 @@ const DAGRE_SPEC: DagreLayoutSpec = {
 const CONTAINER_WIDTH = NODE_WIDTH
 const CONTAINER_HEIGHT = NODE_HEIGHT_SMALL
 
-const POD_PADDING_X = 22
-const POD_PADDING_TOP = 36
-const POD_PADDING_BOTTOM = 22
+const POD_PADDING_X = 28
+const POD_PADDING_TOP = 28
+const POD_PADDING_BOTTOM = 40
 const NODE_PADDING_X = 32
 const NODE_PADDING_TOP = 44
 const NODE_PADDING_BOTTOM = 32
 
-const CONTAINER_GAP_X = 16
-const CONTAINER_GAP_Y = 18
+const CONTAINER_GAP_X = 20
+const CONTAINER_GAP_Y = 32
 const POD_GAP_X = 28
 const POD_GAP_Y = 32
 const NODE_GAP_X = 80
@@ -89,11 +89,14 @@ function layoutPod(pod: GraphNode, containers: GraphNode[]): PodLayout {
       height: POD_PADDING_TOP + CONTAINER_HEIGHT + POD_PADDING_BOTTOM,
     }
   }
+  const width = cols * CONTAINER_WIDTH + (cols - 1) * CONTAINER_GAP_X + POD_PADDING_X * 2
   const positioned = sorted.map((node, index) => {
     const col = index % cols
     const row = Math.floor(index / cols)
     return {
       node,
+      // Containers align with the Pod's left inset. This makes a partial last
+      // row scan like the rows above it instead of introducing a false centre.
       x: POD_PADDING_X + col * (CONTAINER_WIDTH + CONTAINER_GAP_X),
       y: POD_PADDING_TOP + row * (CONTAINER_HEIGHT + CONTAINER_GAP_Y),
     }
@@ -101,7 +104,7 @@ function layoutPod(pod: GraphNode, containers: GraphNode[]): PodLayout {
   return {
     pod,
     containers: positioned,
-    width: cols * CONTAINER_WIDTH + (cols - 1) * CONTAINER_GAP_X + POD_PADDING_X * 2,
+    width,
     height:
       POD_PADDING_TOP +
       rows * CONTAINER_HEIGHT +

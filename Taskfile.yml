@@ -2,6 +2,9 @@ version: "3"
 
 dotenv: ['.env']
 
+vars:
+  GO_PACKAGE_PATHS: ./cmd/... ./pkg/... ./deploy/helm/oksg-otel ./test/e2e/apps/base/gateway-go
+
 includes:
   test:
     taskfile: ./Taskfile.test.yml
@@ -26,22 +29,46 @@ tasks:
   generate:
     desc: Generate JSON schemas
     cmds:
-      - go generate ./...
+      - go generate {{.GO_PACKAGE_PATHS}}
 
   vet:
     desc: Run go vet
     cmds:
-      - go vet ./...
+      - go vet {{.GO_PACKAGE_PATHS}}
 
   test:
     desc: Run unit tests
     cmds:
-      - go test ./...
+      - go test {{.GO_PACKAGE_PATHS}}
 
   test:race:
     desc: Run unit tests with race detection and coverage
     cmds:
-      - go test -race -coverprofile=coverage.out ./...
+      - go test -race -coverprofile=coverage.out {{.GO_PACKAGE_PATHS}}
+
+  test:postgres:
+    desc: Run PostgreSQL storage integration tests (requires Docker)
+    cmds:
+      - go test -tags=integration -count=1 -timeout=3m ./pkg/adapters/storage/postgresql
+
+  test:fixtures:
+    desc: Run repository-owned nested fixture test suites
+    cmds:
+      - bash test/e2e/cluster/image_test.sh
+      - bash test/e2e/cluster/registry_identity_test.sh
+      - bash test/e2e/cluster/istio_test.sh
+      - bash test/e2e/cluster/reset_all_test.sh
+      - bash test/e2e/apps/deploy_test.sh
+      - bash test/e2e/prepare_platform_images_test.sh
+      - bash test/e2e/scenarios/no-telemetry/run_test.sh
+      - bash test/e2e/scenarios/istio-available/run_test.sh
+      - bash test/e2e/scenarios/prometheus-available/run_test.sh
+      - bash test/e2e/scenarios/source-contract-rejection/run_test.sh
+      - go -C test/e2e/apps/instrumented/gateway-go test ./...
+      - go -C test/e2e/apps/mesh-protocol-go test ./...
+      - bash test/e2e/scripts/traffic_schedule_test.sh
+      - bash test/e2e/scripts/port_forward_cleanup_test.sh
+      - python3 test/e2e/scenarios/istio-available/verify_protocol_metrics_test.py
 
   build:
     desc: Build all binaries into bin/ (never write binaries to repo root)
@@ -50,7 +77,6 @@ tasks:
     cmds:
       - mkdir -p bin
       - go build -o ./bin/backend ./cmd/backend
-      - go build -o ./bin/controller ./cmd/controller
       - go build -o ./bin/discovery-job ./cmd/discovery-job
 
   build:check:
@@ -58,7 +84,6 @@ tasks:
     cmds:
       - mkdir -p bin
       - go build -o ./bin/backend ./cmd/backend
-      - go build -o ./bin/controller ./cmd/controller
       - go build -o ./bin/discovery-job ./cmd/discovery-job
 
   tidy:
@@ -69,12 +94,28 @@ tasks:
   lint:
     desc: Run golangci-lint (long timeout for CI package loading)
     cmds:
-      - golangci-lint run --timeout=5m ./...
+      - golangci-lint run --timeout=5m {{.GO_PACKAGE_PATHS}}
 
   security:
-    desc: Run security scanning (govulncheck + gosec)
+    desc: Run security scanning across root and nested Go modules
     cmds:
-      - govulncheck ./... || true
+      - govulncheck {{.GO_PACKAGE_PATHS}}
+      - gosec -quiet {{.GO_PACKAGE_PATHS}}
+      - task: security:fixture:instrumented-gateway
+      - task: security:fixture:mesh-protocol
+
+  security:fixture:instrumented-gateway:
+    internal: true
+    dir: ./test/e2e/apps/instrumented/gateway-go
+    cmds:
+      - govulncheck ./...
+      - gosec -quiet ./...
+
+  security:fixture:mesh-protocol:
+    internal: true
+    dir: ./test/e2e/apps/mesh-protocol-go
+    cmds:
+      - govulncheck ./...
       - gosec -quiet ./...
 
   ci:
@@ -84,6 +125,8 @@ tasks:
       - task: vet
       - task: lint
       - task: test:race
+      - task: test:postgres
+      - task: test:fixtures
       - task: build:check
       - task: web:build
 
@@ -91,4 +134,4 @@ tasks:
     desc: Remove generated artifacts and any binaries accidentally built in repo root
     cmds:
       - rm -rf bin coverage.out schemas
-      - rm -f discovery-job backend controller
+      - rm -f discovery-job backend

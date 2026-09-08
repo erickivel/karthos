@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Foreground SSH tunnel that makes localhost:${K3S_REGISTRY_PORT} on the dev
-# machine forward to localhost:${K3S_REGISTRY_PORT} on the k3s server.
+# Foreground SSH tunnel that makes localhost:5001 on the development machine
+# forward to localhost:5001 on the k3s server.
 #
-# This is what makes `docker push localhost:5001/...` reach the registry
-# container on the remote host. Ctrl-C to stop. Keep it in its own pane.
+# E2E image deploys stream images to the remote Docker daemon directly, so this
+# tunnel is optional and only useful for inspecting the remote registry locally.
+# Ctrl-C to stop. Keep it in its own pane when using it.
 
 set -euo pipefail
 
@@ -11,12 +12,10 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 : "${K3S_SSH_HOST:?K3S_SSH_HOST required (check .env.d/${CLUSTER_PROFILE}.env)}"
-: "${K3S_REGISTRY_PORT:=5001}"
-
-echo "tunnelling localhost:${K3S_REGISTRY_PORT} -> ${K3S_SSH_HOST}:${K3S_REGISTRY_PORT}"
+echo "tunnelling localhost:5001 -> ${K3S_SSH_HOST}:5001"
 echo "(Ctrl-C to stop)"
 exec ssh -N \
   -o ExitOnForwardFailure=yes \
   -o ServerAliveInterval=30 \
-  -L "${K3S_REGISTRY_PORT}:localhost:${K3S_REGISTRY_PORT}" \
+  -L "5001:localhost:5001" \
   "${K3S_SSH_HOST}"

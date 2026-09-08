@@ -1,67 +1,69 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/erickivel/oksg/pkg/adapters/api"
+	kubernetesadapter "github.com/erickivel/oksg/pkg/adapters/kubernetes"
 	"github.com/erickivel/oksg/pkg/adapters/otlp"
 	"github.com/erickivel/oksg/pkg/adapters/storage"
 	"github.com/erickivel/oksg/pkg/backend/ingest"
 	"github.com/erickivel/oksg/pkg/backend/persistence"
+	"github.com/erickivel/oksg/pkg/core/entities"
 	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/metrics"
 	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/oksg/pkg/core/topology"
 	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/oksg/pkg/sources/structure"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
 	defaultBackendGRPCListenAddr   = "0.0.0.0:4317"
-	defaultBackendHTTPListenAddr   = "0.0.0.0:4318"
 	defaultBackendHealthListenAddr = "0.0.0.0:13133"
 	defaultBackendAPIListenAddr    = "0.0.0.0:8080"
 	defaultBackendLogLevel         = "info"
 	defaultStorageBackend          = "memory"
 	defaultTopologyFlushInterval   = 60 * time.Second
-	defaultStatusStaleSeconds      = 300
+	defaultStatusStaleSeconds      = 360
 	defaultNodeTTL                 = 24 * time.Hour
-	// defaultDiscoveryRefreshInterval re-runs structural ingestion from the
-	// discovery profile on a timer so workload/ingress/configmap/secret/pvc
-	// nodes keep producing fresh snapshots and survive `nodeTTL` aging in the
-	// graph store. MUST stay strictly less than defaultNodeTTL — otherwise
-	// structural nodes age out between refreshes and disappear from the API.
-	defaultDiscoveryRefreshInterval = 10 * time.Minute
+	// defaultStructureRefreshInterval refreshes the live Kubernetes API
+	// topology. It must remain strictly below node TTL so structural-only
+	// entities (workloads, ingress, configmaps, secrets, PVCs) never age out.
+	defaultStructureRefreshInterval = 5 * time.Minute
 )
 
 type config struct {
 	GRPCListenAddress     string
-	HTTPListenAddress     string
 	HealthListenAddress   string
 	APIListenAddress      string
 	LogLevel              string
 	EnabledSignals        []string
 	ClusterName           string
-	DiscoveryProfile      string
+	CapabilityProfile     string
+	SourcePlan            string
 	StorageBackend        string
 	PostgresDSN           string
 	VMURL                 string
-	RawStoreEnabled       bool
 	TopologyFlushInterval time.Duration
 	StatusStaleSeconds    int
 	NodeTTL               time.Duration
-	// DiscoveryRefreshInterval re-runs structural ingestion from the
-	// discovery profile on a timer. Required because the graph store
-	// applies NodeTTL based on snapshot creation time; without periodic
-	// re-ingest, workload/ingress/configmap/secret/pvc nodes (which only
-	// the structural pipeline produces) age out and the API stops
-	// returning them. 0 disables the refresh — only do that for tests.
-	DiscoveryRefreshInterval time.Duration
+	PodLifecycleRequired  bool
+	// StructureRefreshInterval directly refreshes live Kubernetes structure.
+	// It must stay positive and, when node TTL is enabled, strictly less than it.
+	StructureRefreshInterval time.Duration
 }
 
 func main() {
@@ -92,7 +94,6 @@ func run(ctx context.Context, args []string) error {
 		Backend:     storage.StorageBackend(cfg.StorageBackend),
 		PostgresDSN: cfg.PostgresDSN,
 		VMURL:       cfg.VMURL,
-		RawEnabled:  cfg.RawStoreEnabled,
 		NodeTTL:     cfg.NodeTTL,
 	})
 	if err != nil {
@@ -108,53 +109,45 @@ func run(ctx context.Context, args []string) error {
 		logging.String("backend", cfg.StorageBackend),
 	)
 
+	capabilityProfile, sourcePlan, err := loadSourceContract(cfg)
+	if err != nil {
+		return err
+	}
+	if err := stores.MetadataStore.PutDiscovery(ctx, *capabilityProfile); err != nil {
+		return fmt.Errorf("persist capability profile: %w", err)
+	}
+
+	client, err := newInClusterClient()
+	if err != nil {
+		return err
+	}
+	structural := structure.New(client, cfg.ClusterName, stores.GraphStore, stores.EntityRegistry)
+	if err := refreshGraphSnapshot(ctx, structural, stores.GraphStore); err != nil {
+		return fmt.Errorf("materialize initial Kubernetes graph snapshot: %w", err)
+	}
+	go runStructureRefreshLoop(ctx, cfg.StructureRefreshInterval, structural, stores.GraphStore, logger)
+
 	resolver := ingest.NewOTLPEntityResolverWithRegistry(cfg.ClusterName, stores.EntityRegistry)
-	dialect := metrics.NewDialectRegistryFromSources(metrics.DefaultLogicalSources())
+	modules := sources.DefaultRegistry()
+	assignment := sourcePlan.MetricAssignments
+	logger.Info("mounted source plan loaded", logging.Any("metric_count", len(assignment)))
 
-	var loadedProfile *profile.ClusterProfile
-	if cfg.DiscoveryProfile != "" {
-		prof, err := ingestDiscoveryProfile(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger)
-		if err != nil {
-			return err
-		}
-		loadedProfile = prof
-
-		// Re-ingest the discovery profile periodically so structural nodes
-		// (workload/ingress/configmap/secret/pvc) get fresh snapshots and
-		// don't age out under NodeTTL. See `defaultDiscoveryRefreshInterval`
-		// for the rationale; without this, the structural snapshot is pushed
-		// once at startup and disappears after NodeTTL.
-		if cfg.DiscoveryRefreshInterval > 0 {
-			if cfg.NodeTTL > 0 && cfg.DiscoveryRefreshInterval >= cfg.NodeTTL {
-				logger.Warn("discovery refresh interval is not strictly less than node TTL; structural nodes will age out between refreshes",
-					logging.String("discovery_refresh_interval", cfg.DiscoveryRefreshInterval.String()),
-					logging.String("node_ttl", cfg.NodeTTL.String()),
-				)
-			}
-			go runDiscoveryRefreshLoop(ctx, cfg, stores.GraphStore, stores.MetadataStore, stores.EntityRegistry, logger)
-		}
-	}
-
-	var normalizerOpts []ingest.NormalizerOption
-	if loadedProfile != nil {
-		assignment, _, err := metrics.Resolve(metrics.DefaultCatalog(), metrics.DefaultLogicalSources(), loadedProfile)
-		if err != nil {
-			return fmt.Errorf("resolve metric source assignment: %w", err)
-		}
-		normalizerOpts = append(normalizerOpts, ingest.WithAssignment(assignment))
-		logger.Info("metric source assignment loaded",
-			logging.Any("metric_count", len(assignment)),
-		)
-	}
-
-	normalizer := ingest.NewOTLPNormalizer(resolver, dialect, normalizerOpts...)
+	sourcePolicy := ingest.NewMetricSourcePolicy(modules.MetricIDs(), assignment)
+	normalizer := ingest.NewOTLPNormalizer(resolver, modules, ingest.WithSourcePolicy(sourcePolicy))
 	traceTopoBuilder := ingest.NewTraceTopologyBuilder(resolver)
+	podLifecycle, err := startPodLifecycle(ctx, cfg, stores.GraphStore, logger, client)
+	if err != nil {
+		return err
+	}
 	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
-	meshMetricTopoBuilder := ingest.NewMeshMetricTopologyBuilder(dialect, cfg.ClusterName)
+	if podLifecycle != nil {
+		metricTopoBuilder = ingest.NewMetricTopologyBuilderWithLifecycle(cfg.ClusterName, podLifecycle)
+	}
+	metricCallsTopoBuilder := ingest.NewMetricCallsTopologyBuilder(cfg.ClusterName, sourcePolicy)
 
 	bufferedTopo := ingest.NewBufferedTopologyIngestor(
 		map[schema.SignalType]ingest.TopologyBuilder{
-			schema.SignalMetric: ingest.NewCompositeTopologyBuilder(metricTopoBuilder, meshMetricTopoBuilder),
+			schema.SignalMetric: ingest.NewCompositeTopologyBuilder(metricTopoBuilder, metricCallsTopoBuilder),
 			schema.SignalTrace:  traceTopoBuilder,
 		},
 		stores.GraphStore,
@@ -169,7 +162,6 @@ func run(ctx context.Context, args []string) error {
 			bufferedTopo,
 		),
 		bufferedTopo,
-		stores.RawStore,
 	)
 
 	logger.Info("normalization pipeline configured",
@@ -190,11 +182,8 @@ func run(ctx context.Context, args []string) error {
 
 	server, err := otlp.NewServer(otlp.Config{
 		GRPCListenAddress:   cfg.GRPCListenAddress,
-		HTTPListenAddress:   cfg.HTTPListenAddress,
 		HealthListenAddress: cfg.HealthListenAddress,
 		EnabledSignals:      cfg.EnabledSignals,
-		MetricStore:         stores.MetricStore,
-		GraphStore:          stores.GraphStore,
 	}, ingest.NewEnvelopeBuilder(contextNow), router, logger)
 	if err != nil {
 		return err
@@ -202,7 +191,6 @@ func run(ctx context.Context, args []string) error {
 
 	logger.Info("backend server configured",
 		logging.String("grpc_listen_address", server.GRPCAddress()),
-		logging.String("http_listen_address", server.HTTPAddress()),
 		logging.String("health_listen_address", server.HealthAddress()),
 		logging.String("api_listen_address", apiServer.Address()),
 		logging.Any("enabled_signals", cfg.EnabledSignals),
@@ -226,21 +214,21 @@ func run(ctx context.Context, args []string) error {
 func parseConfig(args []string) (config, error) {
 	fs := flag.NewFlagSet("backend", flag.ContinueOnError)
 	grpcListenAddress := fs.String("grpc-listen-address", envOrDefault("OKSG_BACKEND_GRPC_LISTEN_ADDRESS", defaultBackendGRPCListenAddr), "OTLP gRPC listen address")
-	httpListenAddress := fs.String("http-listen-address", envOrDefault("OKSG_BACKEND_HTTP_LISTEN_ADDRESS", defaultBackendHTTPListenAddr), "OTLP HTTP listen address")
 	healthListenAddress := fs.String("health-listen-address", envOrDefault("OKSG_BACKEND_HEALTH_LISTEN_ADDRESS", defaultBackendHealthListenAddr), "health listen address")
 	apiListenAddress := fs.String("api-listen-address", envOrDefault("OKSG_BACKEND_API_LISTEN_ADDRESS", defaultBackendAPIListenAddr), "REST API listen address")
 	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultBackendLogLevel), "structured log level")
 	enabledSignals := fs.String("enabled-signals", envOrDefault("OKSG_BACKEND_ENABLED_SIGNALS", "metric,trace"), "comma-separated enabled signals")
 	clusterName := fs.String("cluster-name", envOrDefault("OKSG_CLUSTER_NAME", "default"), "cluster name for entity resolution")
-	discoveryProfile := fs.String("discovery-profile", envOrDefault("OKSG_DISCOVERY_PROFILE", ""), "path to ClusterProfile JSON for structural topology")
+	capabilityProfile := fs.String("capability-profile", envOrDefault("OKSG_CAPABILITY_PROFILE", ""), "path to mounted capability profile JSON")
+	sourcePlan := fs.String("source-plan", envOrDefault("OKSG_SOURCE_PLAN", ""), "path to mounted resolved source plan JSON")
 	storageBackend := fs.String("storage-backend", envOrDefault("OKSG_STORAGE_BACKEND", defaultStorageBackend), "storage backend: memory or external")
 	postgresDSN := fs.String("postgres-dsn", envOrDefault("OKSG_POSTGRES_DSN", ""), "PostgreSQL connection string")
 	vmURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
-	rawStoreEnabled := fs.Bool("raw-store-enabled", envOrDefault("OKSG_RAW_STORE_ENABLED", "false") == "true", "enable raw envelope persistence")
 	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
 	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
 	nodeTTLStr := fs.String("node-ttl", envOrDefault("OKSG_NODE_TTL", defaultNodeTTL.String()), "topology node TTL; nodes absent from snapshots for longer than this age out (0 disables)")
-	discoveryRefreshStr := fs.String("discovery-refresh-interval", envOrDefault("OKSG_DISCOVERY_REFRESH_INTERVAL", defaultDiscoveryRefreshInterval.String()), "interval to re-ingest the discovery profile so structural topology nodes (workload/ingress/configmap/secret/pvc) refresh under node-ttl; 0 disables")
+	podLifecycleRequired := fs.Bool("pod-lifecycle-required", envOrDefault("OKSG_POD_LIFECYCLE_REQUIRED", "false") == "true", "require in-cluster pod lifecycle validation for metric runs_on edges")
+	structureRefreshStr := fs.String("structure-refresh-interval", envOrDefault("OKSG_STRUCTURE_REFRESH_INTERVAL", defaultStructureRefreshInterval.String()), "interval to refresh live Kubernetes structural topology; must be positive and strictly less than node TTL")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -266,32 +254,161 @@ func parseConfig(args []string) (config, error) {
 		nodeTTL = 0
 	}
 
-	discoveryRefresh, err := time.ParseDuration(*discoveryRefreshStr)
+	structureRefresh, err := time.ParseDuration(*structureRefreshStr)
 	if err != nil {
-		return config{}, fmt.Errorf("parse discovery refresh interval: %w", err)
+		return config{}, fmt.Errorf("parse structure refresh interval: %w", err)
 	}
-	if discoveryRefresh < 0 {
-		discoveryRefresh = 0
+	if err := validateStructureRefreshInterval(structureRefresh, nodeTTL); err != nil {
+		return config{}, err
 	}
 
 	return config{
 		GRPCListenAddress:        *grpcListenAddress,
-		HTTPListenAddress:        *httpListenAddress,
 		HealthListenAddress:      *healthListenAddress,
 		APIListenAddress:         *apiListenAddress,
 		LogLevel:                 *logLevel,
 		EnabledSignals:           signals,
 		ClusterName:              *clusterName,
-		DiscoveryProfile:         *discoveryProfile,
+		CapabilityProfile:        *capabilityProfile,
+		SourcePlan:               *sourcePlan,
 		StorageBackend:           *storageBackend,
 		PostgresDSN:              *postgresDSN,
 		VMURL:                    *vmURL,
-		RawStoreEnabled:          *rawStoreEnabled,
 		TopologyFlushInterval:    topologyFlushInterval,
 		StatusStaleSeconds:       *statusStaleSeconds,
 		NodeTTL:                  nodeTTL,
-		DiscoveryRefreshInterval: discoveryRefresh,
+		PodLifecycleRequired:     *podLifecycleRequired,
+		StructureRefreshInterval: structureRefresh,
 	}, nil
+}
+
+func validateStructureRefreshInterval(interval, nodeTTL time.Duration) error {
+	if interval <= 0 {
+		return fmt.Errorf("structure refresh interval must be greater than zero")
+	}
+	if nodeTTL > 0 && interval >= nodeTTL {
+		return fmt.Errorf("structure refresh interval must be strictly less than node TTL")
+	}
+	return nil
+}
+
+func newInClusterClient() (kubernetes.Interface, error) {
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("build in-cluster Kubernetes configuration for structural refresh: %w", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("create Kubernetes client for structural refresh: %w", err)
+	}
+	return client, nil
+}
+
+func startPodLifecycle(ctx context.Context, cfg config, graphStore persistence.GraphStore, logger *logging.Logger, client kubernetes.Interface) (ingest.PodLifecycle, error) {
+	if !cfg.PodLifecycleRequired {
+		return nil, nil
+	}
+
+	if client == nil {
+		return nil, fmt.Errorf("required pod lifecycle validation needs an in-cluster Kubernetes client")
+	}
+	retirer, ok := graphStore.(persistence.RunsOnRetirer)
+	if !ok {
+		return nil, fmt.Errorf("required pod lifecycle validation needs a graph store that retires runs_on edges")
+	}
+	reconciler, ok := graphStore.(persistence.RunsOnReconciler)
+	if !ok {
+		return nil, fmt.Errorf("required pod lifecycle validation needs a graph store that reconciles runs_on edges")
+	}
+	terminalMarker, ok := graphStore.(persistence.RunsOnTerminalMarker)
+	if !ok {
+		return nil, fmt.Errorf("required pod lifecycle validation needs a graph store that records terminal runs_on deadlines")
+	}
+
+	tracker := kubernetesadapter.NewPodLifecycleTracker(client,
+		kubernetesadapter.WithPodLifecycleStateObserver(func(state kubernetesadapter.PodLifecycleState) {
+			fields := []logging.Field{
+				logging.String("reason", state.Reason),
+				logging.Any("active_pod_count", state.ActivePodCount),
+			}
+			if state.Ready {
+				logger.Info("pod lifecycle validation synchronized", fields...)
+				return
+			}
+			logger.Warn("pod lifecycle validation unavailable; runs_on refreshes are fail-closed", fields...)
+		}),
+		kubernetesadapter.WithPodRunsOnTerminalObserver(func(terminalCtx context.Context, grace kubernetesadapter.PodRunsOnTerminalGrace) (kubernetesadapter.PodRunsOnTerminalState, error) {
+			state, err := terminalMarker.MarkRunsOnTerminal(terminalCtx, persistence.RunsOnTerminalGrace{
+				ClusterName: cfg.ClusterName,
+				Namespace:   grace.Namespace,
+				PodName:     grace.PodName,
+				PodUID:      grace.PodUID,
+				NodeName:    grace.NodeName,
+				PodID:       entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, grace.Namespace, grace.PodName),
+				NodeID:      entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, grace.NodeName),
+				ObservedAt:  grace.ObservedAt,
+				Deadline:    grace.Deadline,
+				Confirmed:   grace.Confirmed,
+			})
+			if state == persistence.RunsOnTerminalRetired {
+				return kubernetesadapter.PodRunsOnTerminalRetired, err
+			}
+			return kubernetesadapter.PodRunsOnTerminalPending, err
+		}),
+		kubernetesadapter.WithPodRunsOnReconciliationObserver(func(reconciliationCtx context.Context, observed []kubernetesadapter.PodRunsOnAssignment) ([]kubernetesadapter.PodRunsOnTerminalGrace, error) {
+			active := make([]persistence.RunsOnAssignment, 0, len(observed))
+			for _, assignment := range observed {
+				active = append(active, persistence.RunsOnAssignment{
+					PodID:  entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, assignment.Namespace, assignment.PodName),
+					NodeID: entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, assignment.NodeName),
+					PodUID: assignment.PodUID,
+				})
+			}
+			persisted, err := reconciler.ReconcileRunsOn(reconciliationCtx, cfg.ClusterName, active, time.Now().UTC())
+			if err != nil {
+				return nil, fmt.Errorf("reconcile persisted runs_on assignments: %w", err)
+			}
+			grace := make([]kubernetesadapter.PodRunsOnTerminalGrace, 0, len(persisted))
+			for _, item := range persisted {
+				grace = append(grace, kubernetesadapter.PodRunsOnTerminalGrace{
+					Namespace:  item.Namespace,
+					PodName:    item.PodName,
+					PodUID:     item.PodUID,
+					NodeName:   item.NodeName,
+					ObservedAt: item.ObservedAt,
+					Deadline:   item.Deadline,
+					Confirmed:  item.Confirmed,
+				})
+			}
+			return grace, nil
+		}),
+		kubernetesadapter.WithPodRunsOnRetirementObserver(func(retirementCtx context.Context, retirement kubernetesadapter.PodRunsOnRetirement) error {
+			podID := entities.ComputeEntityID(entities.KindPod, cfg.ClusterName, retirement.Namespace, retirement.PodName)
+			nodeID := entities.ComputeEntityID(entities.KindNode, cfg.ClusterName, retirement.NodeName)
+			if err := retirer.RetireRunsOn(retirementCtx, podID, nodeID, retirement.PodUID, retirement.RetiredAt); err != nil {
+				logger.Error("retire terminal pod runs_on edge failed",
+					logging.String("namespace", retirement.Namespace),
+					logging.String("pod", retirement.PodName),
+					logging.String("pod_uid", retirement.PodUID),
+					logging.String("node", retirement.NodeName),
+					logging.Error(err),
+				)
+				return err
+			}
+			logger.Info("retired terminal pod runs_on edge",
+				logging.String("namespace", retirement.Namespace),
+				logging.String("pod", retirement.PodName),
+				logging.String("pod_uid", retirement.PodUID),
+				logging.String("node", retirement.NodeName),
+				logging.String("retired_at", retirement.RetiredAt.Format(time.RFC3339Nano)),
+			)
+			return nil
+		}),
+	)
+	if err := tracker.Start(ctx); err != nil {
+		return nil, fmt.Errorf("start required pod lifecycle validation: %w", err)
+	}
+	return tracker, nil
 }
 
 func parseIntOrDefault(s string, def int) int {
@@ -339,69 +456,85 @@ func contextNow() time.Time {
 	return time.Now().UTC()
 }
 
-// runDiscoveryRefreshLoop re-runs structural ingestion on the configured
-// interval. Required because the graph store applies NodeTTL based on snapshot
-// creation time — without periodic re-ingest, workload/ingress/configmap/
-// secret/pvc nodes (only produced by the structural pipeline) age out and the
-// API stops returning them. Errors are logged and the loop continues; a
-// transient discovery-profile read failure shouldn't take the backend down.
-func runDiscoveryRefreshLoop(
-	ctx context.Context,
-	cfg config,
-	graphStore persistence.GraphStore,
-	metadataStore persistence.MetadataStore,
-	entityRegistry persistence.EntityRegistry,
-	logger *logging.Logger,
-) {
-	ticker := time.NewTicker(cfg.DiscoveryRefreshInterval)
+type structuralRefresher interface {
+	Refresh(context.Context) error
+}
+
+type graphMaterializer interface {
+	Materialize(context.Context, time.Time) (*topology.Snapshot, error)
+}
+
+func refreshGraphSnapshot(ctx context.Context, refresher structuralRefresher, materializer graphMaterializer) error {
+	if err := refresher.Refresh(ctx); err != nil {
+		return err
+	}
+	if _, err := materializer.Materialize(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runStructureRefreshLoop(ctx context.Context, interval time.Duration, refresher structuralRefresher, materializer graphMaterializer, logger *logging.Logger) {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	logger.Info("discovery refresh loop started",
-		logging.String("interval", cfg.DiscoveryRefreshInterval.String()),
-		logging.String("profile_path", cfg.DiscoveryProfile),
-	)
+	logger.Info("Kubernetes structure refresh loop started", logging.String("interval", interval.String()))
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("discovery refresh loop stopping")
+			logger.Info("Kubernetes structure refresh loop stopping")
 			return
 		case <-ticker.C:
-			if _, err := ingestDiscoveryProfile(ctx, cfg, graphStore, metadataStore, entityRegistry, logger); err != nil {
-				logger.Warn("discovery refresh ingest failed", logging.Error(err))
+			if err := refreshGraphSnapshot(ctx, refresher, materializer); err != nil {
+				logger.Warn("Kubernetes graph snapshot refresh failed", logging.Error(err))
 			}
 		}
 	}
 }
 
-func ingestDiscoveryProfile(
-	ctx context.Context,
-	cfg config,
-	graphStore persistence.GraphStore,
-	metadataStore persistence.MetadataStore,
-	entityRegistry persistence.EntityRegistry,
-	logger *logging.Logger,
-) (*profile.ClusterProfile, error) {
-	data, err := os.ReadFile(cfg.DiscoveryProfile)
+func loadSourceContract(cfg config) (*profile.ClusterProfile, contract.ResolvedSourcePlan, error) {
+	if cfg.CapabilityProfile == "" {
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("capability profile path is required")
+	}
+	if cfg.SourcePlan == "" {
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("source plan path is required")
+	}
+	profileData, err := os.ReadFile(cfg.CapabilityProfile)
 	if err != nil {
-		return nil, fmt.Errorf("read discovery profile: %w", err)
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("read capability profile: %w", err)
 	}
-	var prof profile.ClusterProfile
-	if err := json.Unmarshal(data, &prof); err != nil {
-		return nil, fmt.Errorf("unmarshal discovery profile: %w", err)
+	var capabilityProfile profile.ClusterProfile
+	if err := decodeStrictJSON(profileData, &capabilityProfile); err != nil {
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("decode capability profile: %w", err)
 	}
+	modules := sources.DefaultRegistry()
+	if err := modules.ValidateCapabilityProfile(&capabilityProfile); err != nil {
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("validate mounted capability profile: %w", err)
+	}
+	planData, err := os.ReadFile(cfg.SourcePlan)
+	if err != nil {
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("read source plan: %w", err)
+	}
+	var sourcePlan contract.ResolvedSourcePlan
+	if err := decodeStrictJSON(planData, &sourcePlan); err != nil {
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("decode source plan: %w", err)
+	}
+	if err := sourcePlan.Validate(&capabilityProfile, modules.ContractInventory()); err != nil {
+		return nil, contract.ResolvedSourcePlan{}, fmt.Errorf("validate mounted source plan: %w", err)
+	}
+	return &capabilityProfile, sourcePlan, nil
+}
 
-	if err := metadataStore.PutDiscovery(ctx, prof); err != nil {
-		return nil, fmt.Errorf("persist discovery profile: %w", err)
+func decodeStrictJSON(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
 	}
-
-	builder := ingest.NewK8sStructuralTopologyBuilder(cfg.ClusterName)
-	ingestor := ingest.NewStructuralTopologyIngestor(builder, graphStore, entityRegistry, logger)
-	if err := ingestor.IngestProfile(ctx, &prof); err != nil {
-		return nil, fmt.Errorf("ingest structural topology: %w", err)
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected additional JSON value")
+		}
+		return fmt.Errorf("decode trailing JSON value: %w", err)
 	}
-
-	logger.Info("structural topology ingested from discovery profile",
-		logging.String("profile_path", cfg.DiscoveryProfile),
-		logging.String("cluster_name", prof.ClusterName),
-	)
-	return &prof, nil
+	return nil
 }

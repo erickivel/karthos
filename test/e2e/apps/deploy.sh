@@ -10,6 +10,10 @@ cd "${REPO_ROOT}"
 
 VARIANT="${1:-base}"
 VARIANT_DIR="${SCRIPT_DIR}/${VARIANT}"
+APP_SOURCE_DIR="${VARIANT_DIR}"
+if [[ "${VARIANT}" == "with-prometheus" || "${VARIANT}" == "with-istio" ]]; then
+  APP_SOURCE_DIR="${SCRIPT_DIR}/instrumented"
+fi
 IMAGE_LOAD="${REPO_ROOT}/test/e2e/cluster/image.sh"
 RENDERED_DIR="$(mktemp -d -t oksg-e2e-apps.XXXXXX)"
 trap 'rm -rf "${RENDERED_DIR}"' EXIT
@@ -18,6 +22,8 @@ if [[ ! -d "${VARIANT_DIR}" ]]; then
   echo "unknown app variant: ${VARIANT}" >&2
   exit 1
 fi
+
+echo "deploying e2e app variant: ${VARIANT}"
 
 build_and_load() {
   local tag="$1"
@@ -38,14 +44,23 @@ build_and_load() {
   "${IMAGE_LOAD}" push_or_load "${tag}"
 }
 
-build_and_load "${REGISTRY_HOST}/gateway-go:${IMAGE_TAG}" "${VARIANT_DIR}/gateway-go"
-build_and_load "${REGISTRY_HOST}/service-a-python:${IMAGE_TAG}" "${VARIANT_DIR}/service-a-python"
-build_and_load "${REGISTRY_HOST}/service-b-node:${IMAGE_TAG}" "${VARIANT_DIR}/service-b-node"
-build_and_load "${REGISTRY_HOST}/oksg-backend:${IMAGE_TAG}" "${REPO_ROOT}" "${REPO_ROOT}/deploy/images/backend/Dockerfile"
-build_and_load "${REGISTRY_HOST}/oksg-frontend:${IMAGE_TAG}" "${REPO_ROOT}/web"
+build_and_load "${REGISTRY_HOST}/gateway-go:${IMAGE_TAG}" "${APP_SOURCE_DIR}/gateway-go"
+build_and_load "${REGISTRY_HOST}/service-a-python:${IMAGE_TAG}" "${APP_SOURCE_DIR}/service-a-python"
+build_and_load "${REGISTRY_HOST}/service-b-node:${IMAGE_TAG}" "${APP_SOURCE_DIR}/service-b-node"
+if [[ "${VARIANT}" == "with-istio" ]]; then
+  build_and_load "${REGISTRY_HOST}/mesh-protocol-go:${IMAGE_TAG}" "${SCRIPT_DIR}/mesh-protocol-go"
+fi
 
 RENDERED_APPS="${RENDERED_DIR}/apps.yaml"
 kubectl kustomize "${VARIANT_DIR}" >"${RENDERED_APPS}"
+REGISTRY_HOST_PATTERN="${REGISTRY_HOST//./\\.}"
+sed -i.bak \
+  -e "s|${REGISTRY_HOST_PATTERN}/gateway-go:latest|${REGISTRY_HOST}/gateway-go:${IMAGE_TAG}|g" \
+  -e "s|${REGISTRY_HOST_PATTERN}/service-a-python:latest|${REGISTRY_HOST}/service-a-python:${IMAGE_TAG}|g" \
+  -e "s|${REGISTRY_HOST_PATTERN}/service-b-node:latest|${REGISTRY_HOST}/service-b-node:${IMAGE_TAG}|g" \
+  -e "s|${REGISTRY_HOST_PATTERN}/mesh-protocol-go:latest|${REGISTRY_HOST}/mesh-protocol-go:${IMAGE_TAG}|g" \
+  "${RENDERED_APPS}"
+rm -f "${RENDERED_APPS}.bak"
 
 if [[ "${CLUSTER_ENGINE}" == "k3s" ]]; then
   REMOTE_NODE_NAME="${K3S_NODE_NAME:-$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')}"
@@ -63,13 +78,19 @@ if [[ "${CLUSTER_ENGINE}" == "k3s" ]]; then
 fi
 
 kubectl apply -f "${RENDERED_APPS}"
+active_deployments=()
 while IFS= read -r deployment; do
+  replicas="$(kubectl get "${deployment}" -n oksg-demo -o jsonpath='{.spec.replicas}')"
+  if [[ "${replicas:-1}" == "0" ]]; then
+    continue
+  fi
+  active_deployments+=("${deployment}")
   kubectl rollout restart -n oksg-demo "${deployment}"
 done < <(kubectl get deployments -n oksg-demo -o name)
 
-while IFS= read -r deployment; do
+for deployment in "${active_deployments[@]}"; do
   kubectl rollout status -n oksg-demo "${deployment}" --timeout=120s
-done < <(kubectl get deployments -n oksg-demo -o name)
+done
 
 if kubectl get pod ops-toolbox -n oksg-sparse >/dev/null 2>&1; then
   kubectl wait --for=condition=ready pod/ops-toolbox -n oksg-sparse --timeout=120s

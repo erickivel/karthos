@@ -1,8 +1,7 @@
-{{- if .Values.backend.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: oksg-backend
+  name: {{ include "oksg-otel.backendName" . }}
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
@@ -13,12 +12,8 @@ spec:
     app.kubernetes.io/component: backend
   ports:
     - name: otlp-grpc
-      port: {{ .Values.backend.service.grpcPort }}
+      port: {{ .Values.backend.grpcPort }}
       targetPort: otlp-grpc
-    - name: otlp-http
-      port: {{ .Values.backend.service.httpPort }}
-      targetPort: otlp-http
     - name: api
       port: {{ .Values.backend.service.apiPort }}
       targetPort: api
-{{- end }}

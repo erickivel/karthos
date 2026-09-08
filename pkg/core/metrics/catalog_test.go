@@ -15,119 +15,42 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	}
 
 	required := map[string]metricExpectation{
-		"k8s.pod.cpu.usage":                        {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.pod.memory.working_set":               {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.cpu.usage":                       {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.memory.working_set":              {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"system.cpu.utilization":                   {unit: UnitPercent, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.memory.usage":                      {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"k8s.deployment.desired":                   {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"system.disk.io.read":                      {},
-		"system.disk.io.write":                     {},
-		"servicegraph.request.count":               {},
-		"http.server.request.duration":             {},
-		"servicegraph.request.duration":            {},
-		"rpc.server.duration":                      {},
-		"rpc.server.request.count":                 {},
-		"servicegraph.request.error.count":         {},
-		"servicegraph.request.error.ratio":         {},
-		"servicegraph.request.body.size":           {},
-		"servicegraph.response.body.size":          {},
-		"servicegraph.grpc.request.message.count":  {},
-		"servicegraph.grpc.response.message.count": {},
-		"servicegraph.tcp.connection.open.count":   {},
-		"servicegraph.tcp.connection.close.count":  {},
-		"k8s.container.cpu.request":                {},
-		"k8s.container.cpu.limit":                  {},
-		"k8s.container.memory.request":             {},
-		"k8s.container.memory.limit":               {},
-		"k8s.container.cpu.usage":                  {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.container.memory.usage":               {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.container.ready":                      {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.container.restarts":                   {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.replicaset.desired":                   {},
-		"system.network.io.receive":                {},
-		"system.network.io.transmit":               {},
-		"system.network.errors":                    {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.network.dropped":                   {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.network.packets":                   {unit: UnitPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.disk.operations":                   {unit: UnitPerSecond, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.disk.operation_time":               {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"k8s.volume.available":                     {},
-		"k8s.volume.capacity":                      {},
-		"k8s.volume.inodes.free":                   {},
-		"k8s.volume.inodes.used":                   {},
-		"system.filesystem.usage":                  {},
-		"system.filesystem.utilization":            {},
-		"system.cpu.load_average.1m":               {},
-		"system.cpu.load_average.5m":               {},
-		"system.cpu.load_average.15m":              {},
-		"system.paging.usage":                      {},
-		"system.paging.operations":                 {},
-		"k8s.namespace.phase":                      {},
-		"k8s.pod.phase":                            {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.pod.status_reason":                    {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"oksg.pod.health.status":                   {unit: UnitCount, category: CategoryHealth, sources: nil},
-		"oksg.container.health.status":             {unit: UnitCount, category: CategoryHealth, sources: nil},
-		"k8s.node.condition.ready":                 {},
-		"k8s.node.condition.memory_pressure":       {},
-		"k8s.node.condition.disk_pressure":         {},
-		"k8s.node.allocatable_cpu":                 {},
-		"k8s.node.allocatable_memory":              {},
-		"k8s.deployment.available":                 {},
-		"k8s.daemonset.desired_scheduled_nodes":    {},
-		"k8s.daemonset.ready_nodes":                {},
-		"k8s.statefulset.desired_pods":             {},
-		"k8s.statefulset.ready_pods":               {},
-		"servicegraph.tcp.bytes.sent":              {unit: UnitBytesPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
-		"servicegraph.tcp.bytes.received":          {unit: UnitBytesPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceMeshIstio, Priority: 1}}},
-		"k8s.pod.network.io":                       {unit: UnitBytesPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.pod.network.errors":                   {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.network.io":                      {unit: UnitBytesPerSecond, category: CategoryTraffic, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.network.errors":                  {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.pod.filesystem.usage":                 {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.pod.filesystem.capacity":              {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.pod.filesystem.available":             {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.filesystem.usage":                {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.filesystem.capacity":             {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.filesystem.available":            {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.container.filesystem.usage":           {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.container.filesystem.capacity":        {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.container.filesystem.available":       {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.volume.inodes":                        {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.allocatable_ephemeral_storage":   {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.node.allocatable_pods":                {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.container.storage.request":            {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.container.storage.limit":              {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.container.ephemeral_storage.request":  {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.container.ephemeral_storage.limit":    {unit: UnitBytes, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.cronjob.active_jobs":                  {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.daemonset.current_scheduled_nodes":    {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.daemonset.misscheduled_nodes":         {unit: UnitCount, category: CategoryError, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.hpa.max_replicas":                     {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.hpa.min_replicas":                     {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.hpa.current_replicas":                 {unit: UnitCount, category: CategoryResource, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.hpa.desired_replicas":                 {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.job.active_pods":                      {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.job.desired_successful_pods":          {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.job.failed_pods":                      {unit: UnitCount, category: CategoryError, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.job.max_parallel_pods":                {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.job.successful_pods":                  {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.replicaset.available":                 {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.replication_controller.desired":       {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.replication_controller.available":     {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.resource_quota.hard_limit":            {unit: UnitResource, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.resource_quota.used":                  {unit: UnitResource, category: CategoryResource, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.statefulset.current_pods":             {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.statefulset.updated_pods":             {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"system.cpu.time":                          {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.disk.io_time":                      {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.disk.weighted_io_time":             {unit: UnitNanoseconds, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.disk.merged":                       {unit: UnitPerSecond, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.disk.pending_operations":           {unit: UnitCount, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.filesystem.inodes.usage":           {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.paging.faults":                     {unit: UnitPerSecond, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
-		"system.network.connections":               {unit: UnitCount, category: CategoryTraffic, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"k8s.pod.cpu.usage":                  {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.memory.working_set":         {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.cpu.usage":                 {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.memory.working_set":        {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"system.cpu.utilization":             {unit: UnitPercent, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.memory.usage":                {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.disk.io.read":                {},
+		"system.disk.io.write":               {},
+		"system.disk.operations":             {},
+		"system.filesystem.usage":            {},
+		"system.filesystem.utilization":      {},
+		"system.network.io.receive":          {},
+		"system.network.io.transmit":         {},
+		"system.network.errors":              {unit: UnitPerSecond, category: CategoryError, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"servicegraph.request.count":         {},
+		"http.server.request.duration":       {},
+		"servicegraph.request.duration":      {},
+		"servicegraph.request.error.count":   {},
+		"k8s.container.cpu.request":          {},
+		"k8s.container.cpu.limit":            {},
+		"k8s.container.memory.request":       {},
+		"k8s.container.memory.limit":         {},
+		"k8s.container.cpu.usage":            {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.container.memory.usage":         {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.container.ready":                {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.restarts":             {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.volume.available":               {},
+		"k8s.volume.capacity":                {},
+		"k8s.volume.inodes.free":             {},
+		"k8s.volume.inodes.used":             {},
+		"k8s.pod.phase":                      {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.pod.status_reason":              {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.node.condition.ready":           {},
+		"k8s.node.condition.memory_pressure": {},
+		"k8s.node.condition.disk_pressure":   {},
+		"k8s.volume.inodes":                  {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 	}
 
 	for _, metric := range DefaultCatalog() {
@@ -150,33 +73,32 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	require.Empty(t, required)
 }
 
-func TestDefaultCatalogExcludesUnsupportedMetrics(t *testing.T) {
-	unsupported := map[string]struct{}{
-		"k8s.node.cpu.capacity":               {},
-		"k8s.node.cpu.cores":                  {},
-		"k8s.node.cpu.frequency":              {},
-		"k8s.node.memory.capacity":            {},
-		"k8s.node.disk.capacity":              {},
-		"k8s.node.network.bandwidth.receive":  {},
-		"k8s.node.network.bandwidth.transmit": {},
-		"k8s.pod.network.io.receive":          {},
-		"k8s.pod.network.io.transmit":         {},
-	}
-
+func TestDefaultCatalogMetricsDeclareStorageSemantics(t *testing.T) {
 	for _, metric := range DefaultCatalog() {
-		_, exists := unsupported[metric.Name]
-		require.Falsef(t, exists, "unsupported metric should not be cataloged: %s", metric.Name)
+		require.NotEmptyf(t, metric.Instrument, "catalog metric %s has no storage instrument", metric.Name)
+		require.NotEmptyf(t, metric.StoredUnit, "catalog metric %s has no stored base unit", metric.Name)
 	}
 }
 
-func TestDefaultCatalogMetricsHaveIngestOrQuerySupport(t *testing.T) {
-	for _, metric := range DefaultCatalog() {
-		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
-			continue
-		}
-		_, mapped := OTLPSemconvMetrics[metric.Name]
-		require.Truef(t, mapped, "catalog metric %s has no OTLP mapping or query-derived exception", metric.Name)
-	}
+func TestDefaultCatalogDeclaresProviderNeutralStorageSemantics(t *testing.T) {
+	catalog := catalogByName(DefaultCatalog())
+
+	require.Equal(t, InstrumentGauge, catalog["system.memory.usage"].Instrument)
+	require.Equal(t, UnitBytes, catalog["system.memory.usage"].StoredUnit)
+	require.Equal(t, InstrumentCounter, catalog["servicegraph.request.count"].Instrument)
+	require.Equal(t, UnitCount, catalog["servicegraph.request.count"].StoredUnit)
+	require.Equal(t, InstrumentHistogram, catalog["servicegraph.request.duration"].Instrument)
+	require.Equal(t, UnitNanoseconds, catalog["servicegraph.request.duration"].StoredUnit)
+}
+
+func TestDefaultCatalogDeepCopiesEveryMutableField(t *testing.T) {
+	first := CatalogByName()["servicegraph.request.count"]
+	first.Scopes[0] = ScopeEdge
+	first.Sources[0].Priority = 99
+
+	second := CatalogByName()["servicegraph.request.count"]
+	require.Equal(t, ScopeEntity, second.Scopes[0])
+	require.Equal(t, 1, second.Sources[0].Priority)
 }
 
 func TestDefaultCatalogMetricNamesAreUnique(t *testing.T) {
@@ -210,43 +132,23 @@ func TestDefaultCatalogApplicabilityTargetsExpectedKinds(t *testing.T) {
 
 	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["k8s.container.cpu.usage"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["k8s.container.ready"].AppliesTo)
-	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["oksg.container.health.status"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindPod}, catalog["k8s.pod.cpu.usage"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindNode}, catalog["k8s.node.cpu.usage"].AppliesTo)
-	require.Equal(t, []entities.EntityKind{entities.KindPVC}, catalog["k8s.volume.inodes.used"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindPVC, entities.KindPod}, catalog["k8s.volume.inodes.used"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindService}, catalog["servicegraph.request.count"].AppliesTo)
-	require.Equal(t, []entities.EntityKind{entities.KindHPA}, catalog["k8s.hpa.current_replicas"].AppliesTo)
-	require.Equal(t, []entities.EntityKind{entities.KindResourceQuota}, catalog["k8s.resource_quota.used"].AppliesTo)
 	require.Empty(t, catalog["servicegraph.request.duration"].AppliesTo)
-}
-
-// Query-derived metrics — composed at query time from other catalog metrics
-// (see pkg/adapters/storage/victoriametrics/metric_store.go buildPromQL switch
-// arms, and the derivedHealthStatus helper for cross-entity composition).
-// They never arrive as OTLP samples, so they intentionally have no source.
-//
-// When adding a new derived metric here you MUST also add a buildPromQL case
-// (or extend derivedHealthStatus) before the metric is exposed via the
-// catalog test's `required` map — otherwise queries return empty silently.
-var catalogSourcelessExceptions = map[string]struct{}{
-	"servicegraph.request.error.ratio": {},
-	"oksg.pod.health.status":           {},
-	"oksg.container.health.status":     {},
 }
 
 func TestDefaultCatalogEntriesDeclareSources(t *testing.T) {
 	for _, metric := range DefaultCatalog() {
-		if _, ok := catalogSourcelessExceptions[metric.Name]; ok {
-			continue
-		}
 		require.NotEmptyf(t, metric.Sources, "metric %s declares no Sources", metric.Name)
 	}
 }
 
 func TestDefaultCatalogSourceRefsTargetKnownSources(t *testing.T) {
-	known := make(map[string]struct{}, len(DefaultLogicalSources()))
-	for _, source := range DefaultLogicalSources() {
-		known[source.ID] = struct{}{}
+	known := map[string]struct{}{
+		SourceKubelet: {}, SourceHostOS: {}, SourceKubeCluster: {}, SourcePrometheusApp: {},
+		SourceMeshIstio: {}, SourceTracesServicegraph: {},
 	}
 	for _, metric := range DefaultCatalog() {
 		for _, ref := range metric.Sources {

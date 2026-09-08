@@ -16,7 +16,6 @@ type Stores struct {
 	MetricStore    persistence.MetricStore
 	GraphStore     persistence.GraphStore
 	MetadataStore  persistence.MetadataStore
-	RawStore       persistence.RawStore // nil when raw storage is disabled
 	EntityRegistry persistence.EntityRegistry
 	closers        []io.Closer
 }
@@ -35,7 +34,7 @@ func (s *Stores) Close() error {
 // NewStores creates the appropriate store implementations based on config.
 func NewStores(ctx context.Context, cfg StorageConfig) (*Stores, error) {
 	switch cfg.Backend {
-	case BackendMemory, "":
+	case BackendMemory:
 		return newMemoryStores(cfg), nil
 	case BackendExternal:
 		return newExternalStores(ctx, cfg)
@@ -50,13 +49,10 @@ func newMemoryStores(cfg StorageConfig) *Stores {
 		graphOpts = append(graphOpts, persistence.WithInMemoryNodeTTL(cfg.NodeTTL))
 	}
 	s := &Stores{
-		MetricStore:    persistence.NewInMemoryMetricStore(),
+		MetricStore:    persistence.DecorateMetricStore(persistence.NewInMemoryMetricStore()),
 		GraphStore:     persistence.NewInMemoryGraphStore(graphOpts...),
 		MetadataStore:  persistence.NewInMemoryMetadataStore(),
 		EntityRegistry: persistence.NewInMemoryEntityRegistry(),
-	}
-	if cfg.RawEnabled {
-		s.RawStore = persistence.NewInMemoryRawStore()
 	}
 	return s
 }
@@ -95,14 +91,11 @@ func newExternalStores(ctx context.Context, cfg StorageConfig) (*Stores, error) 
 		pgGraphOpts = append(pgGraphOpts, postgresql.WithPostgresNodeTTL(cfg.NodeTTL))
 	}
 	s := &Stores{
-		MetricStore:    vmStore,
+		MetricStore:    persistence.DecorateMetricStore(vmStore),
 		GraphStore:     postgresql.NewPostgresGraphStore(pgConn, pgGraphOpts...),
 		MetadataStore:  postgresql.NewPostgresMetadataStore(pgConn),
 		EntityRegistry: postgresql.NewPostgresEntityRegistry(pgConn),
 		closers:        []io.Closer{pgConn, vmStore},
-	}
-	if cfg.RawEnabled {
-		s.RawStore = postgresql.NewPostgresRawStore(pgConn)
 	}
 	return s, nil
 }

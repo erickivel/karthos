@@ -53,10 +53,10 @@ else
   fail "oksg-registry container not running (run: task test:e2e:setup)"
 fi
 
-if curl -fsS --max-time 5 "http://${REGISTRY_HOST}/v2/" >/dev/null 2>&1; then
-  pass "${REGISTRY_HOST} reachable from this host (tunnel up)"
+if ${SSH} "curl -fsS --max-time 5 http://127.0.0.1:5001/v2/" >/dev/null 2>&1; then
+  pass "remote registry reachable from the k3s server at 127.0.0.1:5001"
 else
-  fail "${REGISTRY_HOST} not reachable; start the tunnel: task test:cluster:tunnel"
+  fail "remote registry is not reachable from the k3s server at 127.0.0.1:5001 (run: task test:e2e:setup)"
 fi
 
 if kubectl --kubeconfig "${KUBECONFIG}" get --raw=/readyz >/dev/null 2>&1; then

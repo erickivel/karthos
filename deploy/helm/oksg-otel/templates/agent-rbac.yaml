@@ -1,8 +1,7 @@
-{{- if .Values.agent.enabled }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: otel-collector-agent
+  name: {{ include "oksg-otel.agentName" . }}
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
@@ -36,6 +35,5 @@ roleRef:
   name: {{ printf "%s-agent" (include "oksg-otel.name" .) }}
 subjects:
   - kind: ServiceAccount
-    name: otel-collector-agent
+    name: {{ include "oksg-otel.agentName" . }}
     namespace: {{ include "oksg-otel.namespace" . }}
-{{- end }}

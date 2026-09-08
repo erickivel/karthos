@@ -26,6 +26,16 @@
   color: var(--color-text-muted);
 }
 
+.apiError {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid color-mix(in srgb, var(--color-alert) 60%, transparent);
+  border-radius: var(--radius);
+  color: var(--color-alert);
+  background: color-mix(in srgb, var(--color-alert) 10%, transparent);
+  font-size: var(--text-body);
+}
+
 .kpiRow {
   display: grid;
   grid-template-columns: repeat(5, 1fr);

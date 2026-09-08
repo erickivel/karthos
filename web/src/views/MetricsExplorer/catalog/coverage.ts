@@ -1,6 +1,6 @@
-import type { CanonicalMetric, CatalogStatEntry } from '@/types/metrics'
+import type { CatalogStatEntry } from '@/types/metrics'
 
-export type CoverageState = 'live' | 'stale' | 'no-data' | 'derived'
+export type CoverageState = 'live' | 'stale' | 'no-data'
 
 // LIVE_THRESHOLD_MS gates 'live' vs 'stale'. 5 minutes lines up with the
 // catalogStatsLookback floor where a healthy scrape is expected to land at
@@ -14,12 +14,7 @@ export interface CatalogRowStats {
 }
 
 // computeRowStats folds the per-source breakdown into a single row summary.
-// 'derived' takes priority over 'no-data' for catalog entries that have no
-// declared Sources (query-composed at fetch time, e.g. health status); we
-// don't want those to show up as red 'no data' even though no raw samples
-// exist for the canonical name.
 export function computeRowStats(
-  metric: CanonicalMetric,
   entry: CatalogStatEntry | undefined,
   nowMs: number,
 ): CatalogRowStats {
@@ -35,10 +30,9 @@ export function computeRowStats(
     }
   }
 
-  const isDerived = !metric.sources || metric.sources.length === 0
   let coverage: CoverageState
   if (totalCount === 0 && !lastSeenAt) {
-    coverage = isDerived ? 'derived' : 'no-data'
+    coverage = 'no-data'
   } else if (lastSeenAt && nowMs - lastSeenAt.getTime() <= LIVE_THRESHOLD_MS) {
     coverage = 'live'
   } else {

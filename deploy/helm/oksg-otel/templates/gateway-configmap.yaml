@@ -1,12 +1,10 @@
-{{- if .Values.gateway.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: otel-collector-gateway-config
+  name: {{ include "oksg-otel.gatewayName" . }}-config
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
 data:
   config.yaml: |
-{{ .Values.gateway.collectorConfig | indent 4 }}
-{{- end }}
+{{ required "gateway.collectorConfig must be supplied by generated collector-plan values" .Values.gateway.collectorConfig | indent 4 }}

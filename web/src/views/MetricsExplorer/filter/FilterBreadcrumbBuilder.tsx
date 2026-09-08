@@ -32,7 +32,6 @@ const KIND_COLOR: Record<EntityKind, string> = {
   secret: 'var(--kind-secret)',
   pvc: 'var(--kind-pvc)',
   hpa: 'var(--kind-workload)',
-  resourcequota: 'var(--kind-namespace)',
 }
 
 type PickerId = 'namespace' | 'kind' | 'entity' | 'status' | null

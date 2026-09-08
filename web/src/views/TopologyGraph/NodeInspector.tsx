@@ -8,123 +8,16 @@ import {
   Tags,
   X,
 } from "lucide-react";
-import { useNodeDetail } from "@/hooks/useNodeDetail";
-import { useEdgeMetrics } from "@/hooks/useEdgeMetrics";
 import { useGraphSnapshot } from "@/hooks/useGraphSnapshot";
 import { useAppStore } from "@/stores/useAppStore";
-import { DataChip } from "@/components/shared/DataChip";
 import type { GraphNode } from "@/types/graph";
-import { formatBytes } from "../../utils/formatters";
 import { EdgeMetricButton } from "./EdgeMetricButton";
-import { buildEdgeMetricKey, type EdgeMetricSnapshot } from "./edgeMetrics";
 import { edgeMetricsUrl, entityMetricsUrl } from "@/lib/links";
 import styles from "./NodeInspector.module.css";
-
-interface NodeMetricSummaryItem {
-  label: string;
-  value: string;
-  tone?: "signal" | "info" | "alert" | "muted";
-}
 
 interface InfoItem {
   label: string;
   value: string;
-}
-
-function parseLabelNumber(
-  labels: Record<string, string>,
-  key: string,
-): number | null {
-  const raw = labels[key];
-  if (raw === undefined) return null;
-  const v = Number(raw);
-  return Number.isFinite(v) ? v : null;
-}
-
-// Reads only metric labels already attached by the backend or graph layout.
-function buildMetricSummary(node: GraphNode): NodeMetricSummaryItem[] {
-  const labels = node.labels ?? {};
-  const items: NodeMetricSummaryItem[] = [];
-
-  const cpu = parseLabelNumber(labels, "k8s.pod.cpu.usage");
-  if (cpu !== null) {
-    items.push({ label: "CPU", value: `${Math.round(cpu)} m`, tone: "info" });
-  }
-  const mem = parseLabelNumber(labels, "k8s.pod.memory.working_set");
-  if (mem !== null) {
-    items.push({ label: "Memory", value: formatBytes(mem), tone: "info" });
-  }
-
-  const phase = parseLabelNumber(labels, "k8s.pod.phase");
-  if (phase !== null) {
-    // OTel k8sclusterreceiver encoding: 1=Pending, 2=Running, 3=Succeeded, 4=Failed, 5=Unknown.
-    const name =
-      phase === 1
-        ? "Pending"
-        : phase === 2
-          ? "Running"
-          : phase === 3
-            ? "Succeeded"
-            : phase === 4
-              ? "Failed"
-              : "Unknown";
-    const tone: NodeMetricSummaryItem["tone"] =
-      name === "Running"
-        ? "signal"
-        : name === "Pending"
-          ? "info"
-          : name === "Failed"
-            ? "alert"
-            : "muted";
-    items.push({ label: "Phase", value: name, tone });
-  }
-
-  const ready = parseLabelNumber(labels, "k8s.node.condition.ready");
-  if (ready !== null) {
-    items.push({
-      label: "Ready",
-      value: ready >= 1 ? "Ready" : "Not Ready",
-      tone: ready >= 1 ? "signal" : "alert",
-    });
-  }
-  const memPressure = parseLabelNumber(
-    labels,
-    "k8s.node.condition.memory_pressure",
-  );
-  if (memPressure !== null) {
-    items.push({
-      label: "Memory Pressure",
-      value: memPressure >= 1 ? "Detected" : "Clear",
-      tone: memPressure >= 1 ? "alert" : "signal",
-    });
-  }
-  const diskPressure = parseLabelNumber(labels, "k8s.node.condition.disk_pressure");
-  if (diskPressure !== null) {
-    items.push({
-      label: "Disk Pressure",
-      value: diskPressure >= 1 ? "Detected" : "Clear",
-      tone: diskPressure >= 1 ? "alert" : "signal",
-    });
-  }
-
-  return items;
-}
-
-function MeshEdgeChips({ snapshot }: { snapshot: EdgeMetricSnapshot | undefined }) {
-  if (!snapshot) return null;
-  const hasMesh = snapshot.mtls !== undefined || snapshot.protocol;
-  if (!hasMesh) return null;
-  const tooltipParts: string[] = [];
-  if (snapshot.peerSource) tooltipParts.push(`source: ${snapshot.peerSource}`);
-  if (snapshot.peerDestination) tooltipParts.push(`destination: ${snapshot.peerDestination}`);
-  if (snapshot.source) tooltipParts.push(`from ${snapshot.source}`);
-  const title = tooltipParts.join("\n") || undefined;
-  return (
-    <span className={styles.edgeMeshChips} title={title}>
-      {snapshot.mtls && <DataChip label="mTLS" variant="signal" />}
-      {snapshot.protocol && <DataChip label={snapshot.protocol} variant="info" />}
-    </span>
-  );
 }
 
 function InspectorDataCard({
@@ -165,31 +58,6 @@ function DataRow({ item }: { item: InfoItem }) {
       <strong className={styles.dataValue} title={item.value}>
         {item.value}
       </strong>
-    </div>
-  );
-}
-
-function SkeletonEdgeRows({ count = 3 }: { count?: number }) {
-  return (
-    <div className={styles.edgeList} aria-busy="true">
-      {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className={styles.skeletonRow}>
-          <span className={styles.skeletonDot} />
-          <span className={styles.skeletonBar} />
-          <span className={`${styles.skeletonBar} ${styles.skeletonBarShort}`} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function EdgeCardError({ onRetry }: { onRetry: () => void }) {
-  return (
-    <div className={styles.errorState}>
-      <span className={styles.errorMessage}>Couldn't load edge details</span>
-      <button type="button" className={styles.retryBtn} onClick={onRetry}>
-        Retry
-      </button>
     </div>
   );
 }
@@ -240,24 +108,30 @@ export function NodeInspector() {
   const navigate = useNavigate();
   const selectedEntityId = useAppStore((s) => s.selectedEntityId);
   const setSelectedEntityId = useAppStore((s) => s.setSelectedEntityId);
-  const { data, isPending, isError, refetch } = useNodeDetail(selectedEntityId);
-  const edgeMetrics = useEdgeMetrics();
   const { data: graphSnapshot } = useGraphSnapshot();
 
-  const snapshotNode = useMemo(() => {
+  const snapshotDetail = useMemo(() => {
     if (!selectedEntityId || !graphSnapshot) return undefined;
-    return graphSnapshot.graph.nodes.find((n) => n.id === selectedEntityId);
+    const nodeById = new Map(graphSnapshot.graph.nodes.map((node) => [node.id, node]));
+    const node = nodeById.get(selectedEntityId);
+    if (!node) return undefined;
+    return {
+      node,
+      inbound: graphSnapshot.graph.edges
+        .filter((edge) => edge.target === selectedEntityId)
+        .map((edge) => ({ edge, relatedNode: nodeById.get(edge.source) })),
+      outbound: graphSnapshot.graph.edges
+        .filter((edge) => edge.source === selectedEntityId)
+        .map((edge) => ({ edge, relatedNode: nodeById.get(edge.target) })),
+    };
   }, [selectedEntityId, graphSnapshot]);
 
   if (!selectedEntityId) return null;
 
-  const node = data?.node ?? snapshotNode;
-  if (!node) return null;
+  if (!snapshotDetail) return null;
 
-  const edges = data?.edges;
-  const detailLoading = isPending && !data;
-  const detailFailed = isError && !data;
-  const metricSummary = buildMetricSummary(node);
+  const { node, inbound, outbound } = snapshotDetail;
+
   const labels = node.labels ?? {};
   const detailItems = getDetailItems(node);
   const specItems = getSpecItems(node);
@@ -288,9 +162,6 @@ export function NodeInspector() {
             <BarChart3 size={13} strokeWidth={2} />
             <span>Detailed metrics</span>
           </button>
-          {detailLoading && (
-            <span className={styles.loadingSubtitle}>Loading details…</span>
-          )}
         </div>
         <button
           className={styles.closeBtn}
@@ -315,28 +186,6 @@ export function NodeInspector() {
           </div>
         </section>
       )}
-
-      <section className={styles.section}>
-        <h3 className={styles.sectionTitle}>Live Telemetry</h3>
-        <div className={styles.telemetryPanel}>
-          {metricSummary.length > 0 ? (
-            <div className={styles.telemetryList}>
-              {metricSummary.map((item) => (
-                <div
-                  key={item.label}
-                  className={styles.telemetryRow}
-                  data-tone={item.tone ?? "muted"}
-                >
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <span className={styles.emptyState}>No live telemetry for this entity</span>
-          )}
-        </div>
-      </section>
 
       <div className={styles.dataCardStack}>
         <InspectorDataCard
@@ -373,24 +222,16 @@ export function NodeInspector() {
           title="Inbound"
           tone="inbound"
         >
-          {detailLoading ? (
-            <SkeletonEdgeRows />
-          ) : detailFailed ? (
-            <EdgeCardError onRetry={() => refetch()} />
-          ) : edges && edges.inbound.length > 0 ? (
+          {inbound.length > 0 ? (
             <div className={styles.edgeList}>
-              {edges.inbound.map((e) => {
-                const snapshot =
-                  e.relation === "calls" && e.related_node?.name
-                    ? edgeMetrics.get(buildEdgeMetricKey(e.related_node.name, node.name))
-                    : undefined;
-                const relatedName = e.related_node?.name || String(e.source);
+              {inbound.map(({ edge, relatedNode }) => {
+                const relatedName = relatedNode?.name || String(edge.source);
                 return (
-                  <div key={e.id} className={styles.edgeItem}>
+                  <div key={edge.id} className={styles.edgeItem}>
                     <button
                       className={styles.edgePrimary}
                       onClick={() =>
-                        e.related_node && setSelectedEntityId(e.related_node.id)
+                        relatedNode && setSelectedEntityId(relatedNode.id)
                       }
                       aria-label={`Select inbound ${relatedName}`}
                     >
@@ -398,10 +239,9 @@ export function NodeInspector() {
                         <ArrowDown size={14} strokeWidth={2} />
                       </span>
                       <span className={styles.edgeEntity}>{relatedName}</span>
-                      <span className={styles.edgeRelation}>{e.relation}</span>
-                      <MeshEdgeChips snapshot={snapshot} />
+                      <span className={styles.edgeRelation}>{edge.relation}</span>
                     </button>
-                    <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
+                    <EdgeMetricButton edge={edge} onNavigate={openEdgeMetrics} />
                   </div>
                 );
               })}
@@ -417,24 +257,16 @@ export function NodeInspector() {
           title="Outbound"
           tone="outbound"
         >
-          {detailLoading ? (
-            <SkeletonEdgeRows />
-          ) : detailFailed ? (
-            <EdgeCardError onRetry={() => refetch()} />
-          ) : edges && edges.outbound.length > 0 ? (
+          {outbound.length > 0 ? (
             <div className={styles.edgeList}>
-              {edges.outbound.map((e) => {
-                const snapshot =
-                  e.relation === "calls" && e.related_node?.name
-                    ? edgeMetrics.get(buildEdgeMetricKey(node.name, e.related_node.name))
-                    : undefined;
-                const relatedName = e.related_node?.name || String(e.target);
+              {outbound.map(({ edge, relatedNode }) => {
+                const relatedName = relatedNode?.name || String(edge.target);
                 return (
-                  <div key={e.id} className={styles.edgeItem}>
+                  <div key={edge.id} className={styles.edgeItem}>
                     <button
                       className={styles.edgePrimary}
                       onClick={() =>
-                        e.related_node && setSelectedEntityId(e.related_node.id)
+                        relatedNode && setSelectedEntityId(relatedNode.id)
                       }
                       aria-label={`Select outbound ${relatedName}`}
                     >
@@ -442,10 +274,9 @@ export function NodeInspector() {
                         <ArrowUp size={14} strokeWidth={2} />
                       </span>
                       <span className={styles.edgeEntity}>{relatedName}</span>
-                      <span className={styles.edgeRelation}>{e.relation}</span>
-                      <MeshEdgeChips snapshot={snapshot} />
+                      <span className={styles.edgeRelation}>{edge.relation}</span>
                     </button>
-                    <EdgeMetricButton edge={e} onNavigate={openEdgeMetrics} />
+                    <EdgeMetricButton edge={edge} onNavigate={openEdgeMetrics} />
                   </div>
                 );
               })}

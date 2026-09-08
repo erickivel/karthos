@@ -47,12 +47,3 @@
 .badge[data-state='no-data'] .dot {
   background: var(--color-alert);
 }
-
-.badge[data-state='derived'] {
-  color: var(--color-info);
-  border-color: rgba(62, 154, 223, 0.35);
-  background: rgba(62, 154, 223, 0.08);
-}
-.badge[data-state='derived'] .dot {
-  background: var(--color-info);
-}

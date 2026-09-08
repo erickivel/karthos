@@ -1,9 +1,9 @@
 import { DataChip } from '@/components/shared/DataChip'
-import type { DiscoverySummary } from '@/types/status'
+import type { CapabilityProfile } from '@/api/schemas'
 import styles from './DiscoverySources.module.css'
 
 interface DiscoverySourcesProps {
-  discovery: DiscoverySummary | undefined
+  discovery: CapabilityProfile | undefined
   snapshotCreatedAt: string | undefined
   snapshotVersion: { major: number; minor: number } | undefined
 }
@@ -23,14 +23,28 @@ export function DiscoverySources({ discovery, snapshotCreatedAt, snapshotVersion
       <div className={styles.section}>
         <h3 className={styles.heading}>Discovery Sources</h3>
         <div className={styles.chips}>
-          {discovery?.sources.map((src) => (
-            <DataChip key={src.name} label={src.name} variant="info" />
+          {discovery?.capabilities.map((capability) => (
+            <DataChip
+              key={capability.source_id}
+              label={`${capability.source_id} · ${capability.kind} · ${capability.status}`}
+              variant={capability.status === 'available' ? 'signal' : 'info'}
+            />
           ))}
-          {(!discovery?.sources || discovery.sources.length === 0) && (
+          {(!discovery?.capabilities || discovery.capabilities.length === 0) && (
             <span className={styles.empty}>No sources</span>
           )}
         </div>
       </div>
+      {discovery?.capabilities && (
+        <div className={styles.section}>
+          <h3 className={styles.heading}>Detected Signals</h3>
+          <div className={styles.chips}>
+            {discovery.capabilities.flatMap((capability) => capability.signals.map((signal) => (
+              <DataChip key={`${capability.source_id}:${signal}`} label={`${capability.source_id}: ${signal}`} />
+            )))}
+          </div>
+        </div>
+      )}
 
       <div className={styles.section}>
         <h3 className={styles.heading}>Graph Snapshot</h3>

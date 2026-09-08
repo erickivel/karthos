@@ -34,11 +34,18 @@ set -a
 . "${__OKSG_PROFILE_FILE}"
 set +a
 
+# A caller-selected tag must win over a profile's convenient default. This is
+# used for uncommitted or otherwise non-default images that must not reuse a
+# mutable evaluation tag on a remote registry.
+if [ -n "${OKSG_IMAGE_TAG_OVERRIDE:-}" ]; then
+  IMAGE_TAG="${OKSG_IMAGE_TAG_OVERRIDE}"
+fi
+
 : "${CLUSTER_ENGINE:=kind}"
 : "${CLUSTER_LOCATION:=local}"
-: "${REGISTRY_HOST:=localhost:${KIND_REGISTRY_PORT:-5001}}"
+REGISTRY_HOST="localhost:5001"
 : "${IMAGE_TAG:=latest}"
 : "${IMAGE_PLATFORM:=}"
 : "${KUBECONFIG:=${HOME}/.kube/config}"
 
-export CLUSTER_PROFILE CLUSTER_ENGINE CLUSTER_LOCATION REGISTRY_HOST IMAGE_TAG IMAGE_PLATFORM KUBECONFIG
+export CLUSTER_PROFILE CLUSTER_ENGINE CLUSTER_LOCATION REGISTRY_HOST IMAGE_TAG IMAGE_PLATFORM KUBECONFIG OKSG_IMAGE_TAG_OVERRIDE

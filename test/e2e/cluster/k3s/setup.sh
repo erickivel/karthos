@@ -5,7 +5,7 @@
 # This script:
 #   1. Verifies SSH + kubectl access on the server.
 #   2. Ensures an "oksg-registry" container is running on the server,
-#      bound to 127.0.0.1:${K3S_REGISTRY_PORT}.
+#      bound to 127.0.0.1:5001.
 #   3. Installs /etc/rancher/k3s/registries.yaml mirroring localhost:5001
 #      to that container, and restarts k3s only if the file changed.
 #   4. Fetches /etc/rancher/k3s/k3s.yaml, rewrites the server URL to
@@ -28,7 +28,6 @@ require() {
 require K3S_SSH_HOST
 require K3S_SERVER_IP
 : "${K3S_API_PORT:=6443}"
-: "${K3S_REGISTRY_PORT:=5001}"
 
 SSH="ssh -o BatchMode=yes ${K3S_SSH_HOST}"
 
@@ -46,7 +45,7 @@ if docker inspect -f '{{.State.Running}}' oksg-registry 2>/dev/null | grep -qx t
 else
   docker rm -f oksg-registry 2>/dev/null || true
   docker run -d --restart=always \
-    -p 127.0.0.1:${K3S_REGISTRY_PORT}:5000 \
+    -p 127.0.0.1:5001:5000 \
     --name oksg-registry \
     registry:2
 fi
@@ -60,7 +59,7 @@ cat >"${TMP}" <<EOF
 mirrors:
   "localhost:5001":
     endpoint:
-      - "http://127.0.0.1:${K3S_REGISTRY_PORT}"
+      - "http://127.0.0.1:5001"
 EOF
 
 # Allocate a per-run tmpdir on the server so concurrent invocations from
@@ -114,7 +113,7 @@ k3s+ssh cell ready.
 
 Next steps:
   export KUBECONFIG=${KUBECONFIG}
-  task test:cluster:tunnel    # in a separate pane; keeps localhost:${K3S_REGISTRY_PORT} live
   task test:cluster:doctor    # validate the cell
+  # Optional: task test:cluster:tunnel  # inspect the remote registry from the laptop
 
 EOF

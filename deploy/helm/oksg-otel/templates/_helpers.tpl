@@ -1,9 +1,29 @@
 {{- define "oksg-otel.name" -}}
-{{- default .Chart.Name .Values.global.releaseName | trunc 63 | trimSuffix "-" -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "oksg-otel.namespace" -}}
-{{- default .Release.Namespace .Values.namespace.name -}}
+{{- .Release.Namespace -}}
+{{- end -}}
+
+{{- define "oksg-otel.agentName" -}}
+{{- printf "%s-agent" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "oksg-otel.gatewayName" -}}
+{{- printf "%s-gateway" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "oksg-otel.backendName" -}}
+{{- printf "%s-backend" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "oksg-otel.frontendName" -}}
+{{- printf "%s-frontend" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "oksg-otel.frontendConfigName" -}}
+{{- printf "%s-frontend-nginx" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "oksg-otel.labels" -}}
@@ -27,16 +47,20 @@ app.kubernetes.io/component: {{ .component }}
 {{ printf "%s:%s" .Values.backend.image.repository .Values.backend.image.tag }}
 {{- end -}}
 
+{{- define "oksg-otel.sourceContractName" -}}
+{{- printf "%s-source-contract" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "oksg-otel.frontendImage" -}}
 {{ printf "%s:%s" .Values.frontend.image.repository .Values.frontend.image.tag }}
 {{- end -}}
 
-{{- define "oksg-otel.agentChecksum" -}}
-{{- .Values.agent.collectorConfig | sha256sum -}}
-{{- end -}}
-
 {{- define "oksg-otel.gatewayChecksum" -}}
 {{- .Values.gateway.collectorConfig | sha256sum -}}
+{{- end -}}
+
+{{- define "oksg-otel.agentChecksum" -}}
+{{- .Values.agent.collectorConfig | sha256sum -}}
 {{- end -}}
 
 {{/*

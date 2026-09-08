@@ -2,26 +2,12 @@ package configgen
 
 import (
 	"fmt"
-	"net"
-	"strconv"
 
 	"sigs.k8s.io/yaml"
 
 	"github.com/erickivel/oksg/pkg/adapters/otel"
-)
-
-const (
-	DefaultReleaseName         = "oksg-otel"
-	DefaultChartPath           = "./deploy/helm/oksg-otel"
-	DefaultLogLevel            = "info"
-	DefaultLogFormat           = "json"
-	DefaultCollectorRepository = "otel/opentelemetry-collector-contrib"
-	DefaultCollectorTag        = "0.111.0"
-	DefaultCollectorPullPolicy = "IfNotPresent"
-	DefaultBackendRepository   = "oksg-backend"
-	DefaultBackendTag          = "latest"
-	DefaultBackendPullPolicy   = "IfNotPresent"
-	DefaultBackendHealthPort   = 13133
+	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources/contract"
 )
 
 type Generator struct {
@@ -29,120 +15,120 @@ type Generator struct {
 }
 
 type GeneratorOptions struct {
-	CollectorImage ImageValues
-	BackendImage   ImageValues
-	ReleaseName    string
-	ChartPath      string
+	Runtime RuntimeSettings
 }
 
+// RuntimeSettings contains the explicit deployment inputs that may override
+// chart defaults. Collector configuration and the source contract are always
+// generated, never accepted through this type.
+type RuntimeSettings struct {
+	CollectorImage ImageValues
+	BackendImage   ImageValues
+	FrontendImage  ImageValues
+	Storage        StorageSettings
+}
+
+type StorageBackend string
+
+const (
+	StorageBackendMemory   StorageBackend = "memory"
+	StorageBackendExternal StorageBackend = "external"
+)
+
+type StoreMode string
+
+const (
+	StoreModeBundled StoreMode = "bundled"
+	StoreModeRemote  StoreMode = "remote"
+)
+
+// StorageSettings selects the supported external dependency combinations.
+// Empty settings intentionally leave the chart's memory default unchanged.
+type StorageSettings struct {
+	Backend         StorageBackend
+	PostgreSQL      StoreSettings
+	VictoriaMetrics StoreSettings
+}
+
+type StoreSettings struct {
+	Mode     StoreMode
+	Endpoint string
+}
+
+// Values is a Helm values overlay. It contains discovery-derived configuration
+// and explicitly requested runtime overrides; static deployment policy stays
+// in the chart's values.yaml.
 type Values struct {
-	Global         GlobalValues  `json:"global" yaml:"global"`
-	EnabledSignals []string      `json:"enabledSignals,omitempty" yaml:"enabledSignals,omitempty"`
-	Agent          AgentValues   `json:"agent" yaml:"agent"`
-	Gateway        GatewayValues `json:"gateway" yaml:"gateway"`
-	Backend        BackendValues `json:"backend" yaml:"backend"`
-	Secrets        SecretsValues `json:"secrets" yaml:"secrets"`
-	Rollout        RolloutValues `json:"rollout" yaml:"rollout"`
-	Namespace      NamespaceSpec `json:"namespace" yaml:"namespace"`
+	Global         GlobalValues    `json:"global" yaml:"global"`
+	EnabledSignals []string        `json:"enabledSignals,omitempty" yaml:"enabledSignals,omitempty"`
+	Agent          AgentValues     `json:"agent" yaml:"agent"`
+	Gateway        GatewayValues   `json:"gateway" yaml:"gateway"`
+	Backend        BackendValues   `json:"backend" yaml:"backend"`
+	Frontend       *FrontendValues `json:"frontend,omitempty" yaml:"frontend,omitempty"`
+	Storage        *StorageValues  `json:"storage,omitempty" yaml:"storage,omitempty"`
+}
+
+type StorageValues struct {
+	Backend         string                       `json:"backend" yaml:"backend"`
+	PostgreSQL      StoragePostgreSQLValues      `json:"postgresql" yaml:"postgresql"`
+	VictoriaMetrics StorageVictoriaMetricsValues `json:"victoriametrics" yaml:"victoriametrics"`
+}
+
+type StoragePostgreSQLValues struct {
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	DSN     string `json:"dsn" yaml:"dsn"`
+}
+
+type StorageVictoriaMetricsValues struct {
+	Enabled bool   `json:"enabled" yaml:"enabled"`
+	URL     string `json:"url" yaml:"url"`
 }
 
 type GlobalValues struct {
-	ClusterName string      `json:"clusterName" yaml:"clusterName"`
-	Namespace   string      `json:"namespace" yaml:"namespace"`
-	ReleaseName string      `json:"releaseName" yaml:"releaseName"`
-	ChartPath   string      `json:"chartPath" yaml:"chartPath"`
-	Image       ImageValues `json:"image" yaml:"image"`
-	Logging     LoggingSpec `json:"logging" yaml:"logging"`
+	ClusterName string       `json:"clusterName" yaml:"clusterName"`
+	Image       *ImageValues `json:"image,omitempty" yaml:"image,omitempty"`
 }
 
 type ImageValues struct {
-	Repository string `json:"repository" yaml:"repository"`
-	Tag        string `json:"tag" yaml:"tag"`
-	PullPolicy string `json:"pullPolicy" yaml:"pullPolicy"`
-}
-
-type LoggingSpec struct {
-	Format string `json:"format" yaml:"format"`
-	Level  string `json:"level" yaml:"level"`
-}
-
-type NamespaceSpec struct {
-	Create bool   `json:"create" yaml:"create"`
-	Name   string `json:"name" yaml:"name"`
+	Repository string `json:"repository,omitempty" yaml:"repository,omitempty"`
+	Tag        string `json:"tag,omitempty" yaml:"tag,omitempty"`
+	PullPolicy string `json:"pullPolicy,omitempty" yaml:"pullPolicy,omitempty"`
 }
 
 type ComponentValues struct {
-	Enabled       bool              `json:"enabled" yaml:"enabled"`
-	Logging       LoggingSpec       `json:"logging" yaml:"logging"`
-	FeatureGates  []string          `json:"featureGates,omitempty" yaml:"featureGates,omitempty"`
-	RuntimeEnv    map[string]string `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
-	CollectorYAML string            `json:"collectorConfig" yaml:"collectorConfig"`
+	CollectorYAML string `json:"collectorConfig" yaml:"collectorConfig"`
 }
 
 type AgentValues struct {
 	ComponentValues `json:",inline" yaml:",inline"`
-	Resources       map[string]any    `json:"resources,omitempty" yaml:"resources,omitempty"`
-	Tolerations     []map[string]any  `json:"tolerations,omitempty" yaml:"tolerations,omitempty"`
-	NodeSelector    map[string]string `json:"nodeSelector,omitempty" yaml:"nodeSelector,omitempty"`
 }
 
 type GatewayValues struct {
 	ComponentValues `json:",inline" yaml:",inline"`
-	Replicas        int            `json:"replicas" yaml:"replicas"`
-	Service         ServiceValues  `json:"service" yaml:"service"`
-	Resources       map[string]any `json:"resources,omitempty" yaml:"resources,omitempty"`
-}
-
-type ServiceValues struct {
-	Type     string `json:"type" yaml:"type"`
-	Port     int    `json:"port" yaml:"port"`
-	HTTPPort int    `json:"httpPort" yaml:"httpPort"`
 }
 
 type BackendValues struct {
-	Enabled          bool                   `json:"enabled" yaml:"enabled"`
-	GRPCEndpoint     string                 `json:"grpcEndpoint,omitempty" yaml:"grpcEndpoint,omitempty"`
-	HTTPEndpoint     string                 `json:"httpEndpoint,omitempty" yaml:"httpEndpoint,omitempty"`
-	Image            ImageValues            `json:"image" yaml:"image"`
-	Service          BackendService         `json:"service" yaml:"service"`
-	RuntimeEnv       map[string]string      `json:"runtimeEnv,omitempty" yaml:"runtimeEnv,omitempty"`
-	DiscoveryProfile DiscoveryProfileValues `json:"discoveryProfile,omitempty" yaml:"discoveryProfile,omitempty"`
-	Resources        map[string]any         `json:"resources,omitempty" yaml:"resources,omitempty"`
+	SourceContract SourceContractValues `json:"sourceContract" yaml:"sourceContract"`
+	Image          *ImageValues         `json:"image,omitempty" yaml:"image,omitempty"`
 }
 
-type DiscoveryProfileValues struct {
-	Enabled       bool   `json:"enabled" yaml:"enabled"`
-	ConfigMapName string `json:"configMapName,omitempty" yaml:"configMapName,omitempty"`
+type SourceContractValues struct {
+	CapabilityProfile profile.ClusterProfile      `json:"capabilityProfile" yaml:"capabilityProfile"`
+	SourcePlan        contract.ResolvedSourcePlan `json:"sourcePlan" yaml:"sourcePlan"`
 }
 
-type BackendService struct {
-	GRPCPort   int `json:"grpcPort" yaml:"grpcPort"`
-	HTTPPort   int `json:"httpPort" yaml:"httpPort"`
-	HealthPort int `json:"healthPort" yaml:"healthPort"`
+type FrontendValues struct {
+	Image ImageValues `json:"image" yaml:"image"`
 }
 
-type SecretsValues struct {
-	ExistingSecretName string `json:"existingSecretName,omitempty" yaml:"existingSecretName,omitempty"`
-}
-
-type RolloutValues struct {
-	UseConfigChecksum bool `json:"useConfigChecksum" yaml:"useConfigChecksum"`
-}
-
-func NewGenerator() *Generator {
-	return &Generator{
-		options: defaultGeneratorOptions(),
-	}
-}
+func NewGenerator() *Generator { return &Generator{} }
 
 func NewGeneratorWithOptions(options GeneratorOptions) *Generator {
-	return &Generator{
-		options: withDefaultGeneratorOptions(options),
-	}
+	return &Generator{options: options}
 }
 
-func (g *Generator) Generate(plan otel.Plan) ([]byte, error) {
-	values, err := g.Build(plan)
+func (g *Generator) Generate(deployment otel.Deployment, capabilityProfile profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) ([]byte, error) {
+	values, err := g.Build(deployment, capabilityProfile, sourcePlan)
 	if err != nil {
 		return nil, err
 	}
@@ -154,134 +140,113 @@ func (g *Generator) Generate(plan otel.Plan) ([]byte, error) {
 	return payload, nil
 }
 
-func (g *Generator) Build(plan otel.Plan) (*Values, error) {
-	agentConfig, err := yaml.Marshal(plan.AgentConfig)
+func (g *Generator) Build(deployment otel.Deployment, capabilityProfile profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) (*Values, error) {
+	agentConfig, err := yaml.Marshal(deployment.AgentConfig)
 	if err != nil {
 		return nil, fmt.Errorf("marshal agent config: %w", err)
 	}
 
-	gatewayConfig, err := yaml.Marshal(plan.GatewayConfig)
+	gatewayConfig, err := yaml.Marshal(deployment.GatewayConfig)
 	if err != nil {
 		return nil, fmt.Errorf("marshal gateway config: %w", err)
 	}
 
-	logging := LoggingSpec{
-		Format: DefaultLogFormat,
-		Level:  DefaultLogLevel,
-	}
-
-	return &Values{
-		Global: GlobalValues{
-			ClusterName: plan.ClusterName,
-			Namespace:   plan.Namespace,
-			ReleaseName: g.options.ReleaseName,
-			ChartPath:   g.options.ChartPath,
-			Image:       g.options.CollectorImage,
-			Logging:     logging,
-		},
-		EnabledSignals: plan.EnabledSignals,
-		Namespace: NamespaceSpec{
-			Create: true,
-			Name:   plan.Namespace,
-		},
-		Agent: AgentValues{
-			ComponentValues: ComponentValues{
-				Enabled:       true,
-				Logging:       logging,
-				FeatureGates:  []string{"receiver.kubeletstats.enableCPUUsageMetrics"},
-				CollectorYAML: string(agentConfig),
-			},
-		},
-		Gateway: GatewayValues{
-			ComponentValues: ComponentValues{
-				Enabled:       true,
-				Logging:       logging,
-				FeatureGates:  []string{},
-				CollectorYAML: string(gatewayConfig),
-			},
-			Replicas: 1,
-			Service: ServiceValues{
-				Type:     "ClusterIP",
-				Port:     4317,
-				HTTPPort: 4318,
-			},
-		},
-		Backend: BackendValues{
-			Enabled:      plan.Backend.Enabled,
-			GRPCEndpoint: plan.Backend.GRPCEndpoint,
-			HTTPEndpoint: plan.Backend.HTTPEndpoint,
-			Image:        g.options.BackendImage,
-			Service: BackendService{
-				GRPCPort:   endpointPort(plan.Backend.GRPCEndpoint, 4317),
-				HTTPPort:   endpointPort(plan.Backend.HTTPEndpoint, 4318),
-				HealthPort: DefaultBackendHealthPort,
-			},
-			DiscoveryProfile: DiscoveryProfileValues{
-				Enabled:       true,
-				ConfigMapName: "oksg-discovery-profile",
-			},
-		},
-		Secrets: SecretsValues{},
-		Rollout: RolloutValues{
-			UseConfigChecksum: true,
-		},
-	}, nil
-}
-
-func defaultGeneratorOptions() GeneratorOptions {
-	return GeneratorOptions{
-		CollectorImage: ImageValues{
-			Repository: DefaultCollectorRepository,
-			Tag:        DefaultCollectorTag,
-			PullPolicy: DefaultCollectorPullPolicy,
-		},
-		BackendImage: ImageValues{
-			Repository: DefaultBackendRepository,
-			Tag:        DefaultBackendTag,
-			PullPolicy: DefaultBackendPullPolicy,
-		},
-		ReleaseName: DefaultReleaseName,
-		ChartPath:   DefaultChartPath,
-	}
-}
-
-func withDefaultGeneratorOptions(options GeneratorOptions) GeneratorOptions {
-	defaults := defaultGeneratorOptions()
-	if options.CollectorImage.Repository == "" {
-		options.CollectorImage.Repository = defaults.CollectorImage.Repository
-	}
-	if options.CollectorImage.Tag == "" {
-		options.CollectorImage.Tag = defaults.CollectorImage.Tag
-	}
-	if options.CollectorImage.PullPolicy == "" {
-		options.CollectorImage.PullPolicy = defaults.CollectorImage.PullPolicy
-	}
-	if options.BackendImage.Repository == "" {
-		options.BackendImage.Repository = defaults.BackendImage.Repository
-	}
-	if options.BackendImage.Tag == "" {
-		options.BackendImage.Tag = defaults.BackendImage.Tag
-	}
-	if options.BackendImage.PullPolicy == "" {
-		options.BackendImage.PullPolicy = defaults.BackendImage.PullPolicy
-	}
-	if options.ReleaseName == "" {
-		options.ReleaseName = defaults.ReleaseName
-	}
-	if options.ChartPath == "" {
-		options.ChartPath = defaults.ChartPath
-	}
-	return options
-}
-
-func endpointPort(endpoint string, fallback int) int {
-	_, port, err := net.SplitHostPort(endpoint)
+	storage, err := g.options.Runtime.Storage.values()
 	if err != nil {
-		return fallback
+		return nil, err
 	}
-	value, err := strconv.Atoi(port)
+
+	values := &Values{
+		Global:         GlobalValues{ClusterName: deployment.ClusterName},
+		EnabledSignals: deployment.EnabledSignals,
+		Agent:          AgentValues{ComponentValues: ComponentValues{CollectorYAML: string(agentConfig)}},
+		Gateway:        GatewayValues{ComponentValues: ComponentValues{CollectorYAML: string(gatewayConfig)}},
+		Backend: BackendValues{SourceContract: SourceContractValues{
+			CapabilityProfile: capabilityProfile,
+			SourcePlan:        sourcePlan,
+		}},
+		Storage: storage,
+	}
+	if image := optionalImage(g.options.Runtime.CollectorImage); image != nil {
+		values.Global.Image = image
+	}
+	if image := optionalImage(g.options.Runtime.BackendImage); image != nil {
+		values.Backend.Image = image
+	}
+	if image := optionalImage(g.options.Runtime.FrontendImage); image != nil {
+		values.Frontend = &FrontendValues{Image: *image}
+	}
+	return values, nil
+}
+
+func optionalImage(image ImageValues) *ImageValues {
+	if image.Repository == "" && image.Tag == "" && image.PullPolicy == "" {
+		return nil
+	}
+	return &image
+}
+
+func (s StorageSettings) values() (*StorageValues, error) {
+	if s.Backend == "" {
+		if s.PostgreSQL.Mode != "" || s.PostgreSQL.Endpoint != "" || s.VictoriaMetrics.Mode != "" || s.VictoriaMetrics.Endpoint != "" {
+			return nil, fmt.Errorf("storage backend is required when store settings are supplied")
+		}
+		return nil, nil
+	}
+	if s.Backend == StorageBackendMemory {
+		if s.PostgreSQL.Mode != "" || s.PostgreSQL.Endpoint != "" || s.VictoriaMetrics.Mode != "" || s.VictoriaMetrics.Endpoint != "" {
+			return nil, fmt.Errorf("store settings are only supported for external storage")
+		}
+		return &StorageValues{Backend: string(StorageBackendMemory)}, nil
+	}
+	if s.Backend != StorageBackendExternal {
+		return nil, fmt.Errorf("storage backend must be memory or external")
+	}
+	postgres, err := postgresValues(s.PostgreSQL)
 	if err != nil {
-		return fallback
+		return nil, err
 	}
-	return value
+	victoria, err := victoriaMetricsValues(s.VictoriaMetrics)
+	if err != nil {
+		return nil, err
+	}
+	return &StorageValues{Backend: string(StorageBackendExternal), PostgreSQL: postgres, VictoriaMetrics: victoria}, nil
+}
+
+func postgresValues(settings StoreSettings) (StoragePostgreSQLValues, error) {
+	switch settings.Mode {
+	case StoreModeBundled:
+		if settings.Endpoint != "" {
+			return StoragePostgreSQLValues{}, fmt.Errorf("postgresql bundled mode does not accept a DSN")
+		}
+		return StoragePostgreSQLValues{Enabled: true}, nil
+	case StoreModeRemote:
+		if settings.Endpoint == "" {
+			return StoragePostgreSQLValues{}, fmt.Errorf("postgresql remote mode requires a DSN")
+		}
+		return StoragePostgreSQLValues{DSN: settings.Endpoint}, nil
+	case "":
+		return StoragePostgreSQLValues{}, fmt.Errorf("postgresql mode is required for external storage")
+	default:
+		return StoragePostgreSQLValues{}, fmt.Errorf("postgresql mode must be bundled or remote")
+	}
+}
+
+func victoriaMetricsValues(settings StoreSettings) (StorageVictoriaMetricsValues, error) {
+	switch settings.Mode {
+	case StoreModeBundled:
+		if settings.Endpoint != "" {
+			return StorageVictoriaMetricsValues{}, fmt.Errorf("victoriametrics bundled mode does not accept a URL")
+		}
+		return StorageVictoriaMetricsValues{Enabled: true}, nil
+	case StoreModeRemote:
+		if settings.Endpoint == "" {
+			return StorageVictoriaMetricsValues{}, fmt.Errorf("victoriametrics remote mode requires a URL")
+		}
+		return StorageVictoriaMetricsValues{URL: settings.Endpoint}, nil
+	case "":
+		return StorageVictoriaMetricsValues{}, fmt.Errorf("victoriametrics mode is required for external storage")
+	default:
+		return StorageVictoriaMetricsValues{}, fmt.Errorf("victoriametrics mode must be bundled or remote")
+	}
 }

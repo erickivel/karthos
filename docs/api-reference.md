@@ -58,36 +58,41 @@ Response:
     "snapshot_freshness_seconds": 12.5,
     "data_stale": false,
     "health_summary": {
-      "nodes": {"healthy": 3, "unhealthy": 0},
-      "pods": {"healthy": 12, "running_not_ready": 0, "restarting": 0, "pending": 0, "succeeded": 0, "failed": 0, "unknown": 2}
+      "status": "complete",
+      "nodes": {"status": "complete", "healthy": 3, "unhealthy": 0, "unknown": 0},
+      "pods": {"status": "complete", "healthy": 12, "pending": 0, "succeeded": 0, "failed": 0, "unknown": 2}
     }
   }
 }
 ```
 
-`health_summary` is present when a MetricStore is configured. Node health uses the latest `k8s.node.condition.ready` samples from the last 5 minutes. Pod buckets are derived from the `oksg.pod.health.status` derived enum metric (the integer value is translated server-side via `pkg/core/metrics/health_status.go`); pods without a recent sample fall through to the `unknown` bucket.
+`health_summary` is present whenever a graph snapshot exists. Node health uses `k8s.node.condition.ready`; pod buckets derive directly from `k8s.pod.phase`; entities without a recent sample fall through to `unknown`.
 
-The `unknown` bucket can include pod entities that no longer exist in the cluster but have not yet aged out of the entity registry. Structural ingestion only re-emits pods that the discovery refresh observes, while `oksg.pod.health.status` is derived from `k8s.pod.phase` and disappears as soon as the pod is gone — so during the window between deletion and TTL eviction (`OKSG_NODE_TTL`, default 24h), the topology still lists the pod with `status: "unknown"`.
+Each branch and the aggregate carry a quality value: `complete`, `partial`, or `unavailable`. A successful metric query remains `complete` even when samples are missing. A failed branch becomes `unavailable`, all applicable current entities in that branch become unknown, and `system_status` becomes `degraded` with a generic branch reason. If no MetricStore is configured, the snapshot still produces an `unavailable` summary populated with current graph entity counts. Graph and capability-profile read failures likewise produce a degraded status with a safe reason while component availability remains unchanged. Detailed store errors are logged but not returned, and these enrichment failures keep HTTP 200.
 
-Pod bucket keys match the public health-status string set used elsewhere in the API: `healthy`, `running_not_ready`, `restarting`, `pending`, `succeeded`, `failed`, `unknown`. The pod-scope composition currently only emits `healthy / pending / succeeded / failed / unknown`; `running_not_ready` and `restarting` are observable today at container scope (`oksg.container.health.status`) and roll up to pod scope only after a future `pod_id` labelling change to container metrics.
+Snapshot-wide health lookups deliberately omit entity-ID filters, so query size stays constant as the graph grows; the API intersects recent results with current graph IDs in Go. The single-node endpoint retains an exact one-entity filter.
+
+The `unknown` bucket can include pod entities that no longer exist in the cluster but have not yet aged out of the entity registry.
+
+Pod bucket keys are `healthy`, `pending`, `succeeded`, `failed`, and `unknown`. Container graph status derives from `k8s.container.ready` plus the five-minute `k8s.container.restarts` rate.
 
 Status values:
 
 | Value | Meaning |
 |-------|---------|
 | `nominal` | All stores available AND snapshot fresh |
-| `degraded` | Stores available but snapshot stale (> `--status-stale-seconds`), non-critical stores unavailable, or unhealthy nodes detected |
+| `degraded` | Stores available but snapshot stale (> `--status-stale-seconds`), a graph or capability-profile read failed, non-critical stores are unavailable, unhealthy nodes are detected, or a health-summary branch query failed |
 | `disconnected` | GraphStore or EntityRegistry unavailable |
 
 Configuration:
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `300` | Snapshot staleness threshold in seconds |
+| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `360` | Snapshot staleness threshold in seconds |
 
 ### GET /api/v1/discovery
 
-Discovery profile summary. Returns 404 if no profile has been loaded.
+Capability profile summary. Returns 404 if no capability profile has been loaded.
 
 ```bash
 curl -s http://localhost:18081/api/v1/discovery | jq .
@@ -101,23 +106,35 @@ Response:
     "cluster_id": "...",
     "cluster_name": "oksg-test",
     "discovered_at": "2026-03-30T10:00:00Z",
-    "node_count": 3,
-    "namespace_count": 5,
-    "workload_count": 12,
-    "service_count": 8,
-    "ingress_count": 2,
-    "sources": [...],
-    "collection_paths": [...],
-    "recommended_receivers": [...]
+    "capabilities": [
+      {
+        "source_id": "kubernetes.structure",
+        "kind": "direct",
+        "status": "available",
+        "signals": ["structure"]
+      },
+      {
+        "source_id": "prometheus.app",
+        "kind": "direct",
+        "status": "unavailable"
+      }
+    ]
   }
 }
 ```
+
+Unavailable sources may serialize `signals` as `null`; clients should treat
+that as an empty signal list.
 
 ## Graph
 
 ### GET /api/v1/graph
 
-Full latest topology snapshot with expanded summary.
+The newest complete materialized topology snapshot with expanded summary.
+Every materialization is an immutable point-in-time graph: the direct
+Kubernetes structure is authoritative for membership, and only fresh active
+telemetry/lifecycle edges whose endpoints still exist in that structure are
+included. Materialized snapshots are retained for 24 hours.
 
 ```bash
 curl -s http://localhost:18081/api/v1/graph | jq .data.summary
@@ -128,10 +145,12 @@ Response shape:
 ```json
 {
   "data": {
+    "snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
     "version": {"major": 1, "minor": 0},
-    "from": "2026-04-02T15:11:12Z",
+    "from": "2026-04-02T15:22:12Z",
     "to": "2026-04-02T15:22:12Z",
     "created_at": "2026-04-02T15:22:12Z",
+    "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
     "graph": {"timestamp": "...", "nodes": [...], "edges": [...]},
     "summary": {
       "node_count": 47,
@@ -149,7 +168,12 @@ Response shape:
 }
 ```
 
-Returns 404 if no snapshot exists.
+Pass `at=<RFC3339 timestamp>` to select the newest retained materialized
+snapshot at or before that instant from the public 24-hour retention window.
+It does not reconstruct arbitrary historical graph state. The timestamp cannot
+be in the future.
+Returns 400 for an invalid or future `at`, and 404 if no current snapshot (or
+no retained snapshot at the requested time) exists.
 
 ### GET /api/v1/graph/nodes
 
@@ -159,8 +183,9 @@ List enriched graph nodes with optional filtering and pagination.
 |-------|------|-------------|
 | `kind` | string | Filter by entity kind (`pod`, `service`, `node`, etc.) |
 | `namespace` | string | Filter by namespace |
+| `at` | RFC3339 timestamp | Select the newest retained snapshot at or before this instant |
 | `page_size` | int | Items per page (default 100) |
-| `next_token` | string | Pagination cursor |
+| `next_token` | string | Opaque pagination cursor bound to the selected snapshot |
 
 ```bash
 curl -s "http://localhost:18081/api/v1/graph/nodes?kind=pod&page_size=10" | jq .
@@ -171,6 +196,8 @@ Response:
 ```json
 {
   "data": {
+	"snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
+    "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
     "nodes": [
       {"id": "...", "kind": "pod", "name": "pod-a", "namespace": "default", "cluster": "oksg-test", "status": "unknown", "labels": {...}}
     ],
@@ -180,11 +207,17 @@ Response:
 }
 ```
 
-Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is one of the public health-status string set: `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. For Pod and Container nodes the value is the latest sample of `oksg.pod.health.status` / `oksg.container.health.status` translated to its string label by the API (see `pkg/core/metrics/health_status.go`); for kinds without a derived health metric (Service, Node, etc.) the field is `"unknown"`. Aggregate runtime health is exposed through `/api/v1/status.health_summary` (see above).
+Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
+
+The `data.snapshot` object identifies the exact graph that produced the page.
+Repeat both `at` and `next_token` when paging a historical result. A cursor
+from another snapshot is rejected rather than mixing graph versions.
 
 ### GET /api/v1/graph/nodes/{id}
 
 Single node with enriched inbound/outbound edges including related entity summaries.
+Accepts the same optional `at=<RFC3339 timestamp>` selection as the graph list
+endpoints and returns `data.snapshot` for the selected materialized graph.
 
 ```bash
 curl -s http://localhost:18081/api/v1/graph/nodes/<entity-id> | jq .
@@ -195,6 +228,8 @@ Response:
 ```json
 {
   "data": {
+	"snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
+    "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
     "node": {"id": "...", "kind": "service", "name": "svc-a", "namespace": "default", "cluster": "oksg-test", "status": "unknown", "labels": {...}},
     "edges": {
       "outbound": [
@@ -214,15 +249,18 @@ Returns 404 if node not found.
 
 ### GET /api/v1/graph/edges
 
-List topology edges with optional filtering and pagination.
+List edges from one selected materialized graph with optional filtering and
+pagination. By default this is the latest snapshot; `at` selects the newest
+retained snapshot at or before a requested RFC3339 instant.
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `source` | string | Filter by source entity ID |
-| `target` | string | Filter by target entity ID |
+| `source` | canonical entity ID | Filter by source entity ID |
+| `target` | canonical entity ID | Filter by target entity ID |
 | `relation` | string | Filter by relation type (`calls`, `runs_on`, `contains`, `exposes`, `routes_to`, `uses`, `mounts`) |
+| `at` | RFC3339 timestamp | Select the newest retained snapshot at or before this instant |
 | `page_size` | int | Items per page (default 100) |
-| `next_token` | string | Pagination cursor |
+| `next_token` | string | Opaque pagination cursor bound to the selected snapshot |
 
 ```bash
 curl -s "http://localhost:18081/api/v1/graph/edges?relation=calls" | jq .
@@ -232,8 +270,7 @@ Response:
 
 ```json
 {
-  "data": {"edges": [...], "total": 12},
-  "next_token": ""
+  "data": {"snapshot": {"id": 481, "created_at": "..."}, "edges": [...], "total": 12}
 }
 ```
 
@@ -241,19 +278,37 @@ Response:
 
 ### GET /api/v1/metrics
 
-Query metric samples with unit from catalog. Sorted by timestamp descending.
+Query metric samples with a mode-aware unit. Sorted by timestamp descending.
 
-Semconv metric names are the API contract. Query-time derivations currently include:
+Semconv metric names are the API contract. Canonical counter samples use base
+units (`count`, `bytes`, or `nanoseconds`), while rate units are created only by
+query aggregation. Cumulative samples retain their running base total and delta
+samples retain their reported interval increment. Every catalog counter declares
+its supported/default aggregation and base/rate units. `latest` is the raw-value
+aggregation mode: it evaluates the raw selector on the API's fixed 15-second
+provider-neutral trend grid, returning evaluation points rather than every
+producer sample. Each point retains its cumulative-total or
+delta-increment temporality. `increase` is the query-time event/resource change
+in its base unit; `window_rate` divides that exact change by the full window
+duration; and `active_rate` is available only for cumulative series. Cumulative
+`increase` and `window_rate` emit no sample until at least two current-window
+samples exist and stored history spans the requested window. Delta series use
+`sum_over_time()` for exact increases and return no data for `active_rate`.
 
-- `http.server.request.count` / `rpc.server.request.count` / `servicegraph.request.count` -> `rate(...[1m])`
-- `servicegraph.request.error.count`, `servicegraph.grpc.request.message.count`, `servicegraph.grpc.response.message.count`, `servicegraph.tcp.connection.open.count`, `servicegraph.tcp.connection.close.count`, `servicegraph.tcp.bytes.sent`, and `servicegraph.tcp.bytes.received` -> `rate(...[1m])`
-- Cumulative kubelet/host counters served as rates: `k8s.pod.network.io`, `k8s.pod.network.errors`, `k8s.node.network.io`, `k8s.node.network.errors`, `system.cpu.time`, `system.disk.io_time`, `system.disk.weighted_io_time`, `system.disk.merged`, and `system.paging.faults` -> `rate(...[1m])`
-- `servicegraph.request.error.ratio` -> `rate(servicegraph.request.error.count[1m]) / clamp_min(rate(servicegraph.request.count[1m]), 1e-9)`
-- `oksg.container.health.status` -> integer-encoded enum (1=healthy, 2=running_not_ready, 3=restarting) derived from `k8s.container.ready` and `rate(k8s.container.restarts[5m])`. Priority order: restarting > not_ready > healthy. Empty result means no recent sample (treat as unknown).
-- `oksg.pod.health.status` -> integer-encoded enum (1=healthy, 4=pending, 5=succeeded, 6=failed, 7=unknown) derived from `k8s.pod.phase`. running_not_ready and restarting at pod scope are a follow-up — see `oksg.container.health.status` for those today.
-- `http.server.request.duration` / `rpc.server.duration` / `servicegraph.request.duration` / `servicegraph.request.body.size` / `servicegraph.response.body.size` -> `rate(<metric>_sum[1m]) / clamp_min(rate(<metric>_count[1m]), 1)`
+For cardinality control, normalized Prometheus application metrics drop raw
+`path` and volatile target `pod` / `instance` labels. They retain a
+bounded `http_route` only when the application or collector supplied
+`http.route` / `http_route`; the normalizer never derives it from a raw path.
+Without that route, the canonical application metric is service-level
+aggregation rather than per-path data.
 
-The integer→label mapping for any enum metric is documented in the catalog row's `Description` field (see `GET /api/v1/metrics/catalog`); UIs should read it from the catalog rather than hard-coding.
+- `k8s.pod.phase` -> receiver enum translated at the API boundary: `1=pending`, `2=running`, `3=succeeded`, `4=failed`, `5=unknown`.
+- `k8s.pod.status_reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
+- `http.server.request.duration` / `servicegraph.request.duration` -> temporality-aware `<metric>_sum` rate divided by the corresponding `<metric>_count` rate
+
+For enum metrics, consumers use the API `value_label` display field. This API
+reference documents the numeric mappings; the catalog remains the metric
+inventory and semantics contract rather than an enum-mapping surface.
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -261,13 +316,15 @@ The integer→label mapping for any enum metric is documented in the catalog row
 | `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
 | `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
 | `metric_name` | string | **Required.** Semconv metric name |
-| `from` | string (RFC3339) | Start of time range |
-| `to` | string (RFC3339) | End of time range |
+| `from` | string (RFC3339) | Start of time range; omitted uses one hour before the resolved end |
+| `to` | string (RFC3339) | End of time range; omitted uses the current time |
+| `aggregation` | `latest \| window_rate \| active_rate \| increase` | Counter aggregation; omitted uses the metric's catalog default |
+| `window` | Go duration, `1m` through `1h` | Required lookbehind for windowed modes; omitted uses the catalog default |
 | `page_size` | int | Items per page (default 100) |
 | `next_token` | string | Pagination cursor |
 
 ```bash
-curl -s "http://localhost:18081/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=5" | jq .data.samples[:3]
+curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=window_rate&window=1m&page_size=5" | jq .data.samples[:3]
 ```
 
 Response:
@@ -275,6 +332,7 @@ Response:
 ```json
 {
   "data": {
+    "query": {"aggregation": "window_rate", "window": "1m", "from": "2026-03-30T09:00:00Z", "to": "2026-03-30T10:00:00Z", "step": "15s", "timestamp_semantics": "evaluation"},
     "samples": [
       {
         "metric_name": "servicegraph.request.count",
@@ -282,7 +340,7 @@ Response:
         "value": 7.5,
         "timestamp": "2026-03-30T10:00:00Z",
         "unit": "per_second",
-        "labels": {"edge_client": "service-a", "edge_server": "service-b", "source": "otlp"}
+        "labels": {"edge_client": "service-a", "edge_server": "service-b", "source": "traces.servicegraph", "connection_type": "database", "virtual_node": "server", "client_http_method": "GET", "server_http_method": "GET", "failed": "false"}
       }
     ],
     "total": 100
@@ -291,21 +349,9 @@ Response:
 }
 ```
 
-For the derived health-status enum metrics (`oksg.pod.health.status`, `oksg.container.health.status`), every sample additionally carries a `value_label` field with the public string label translated from the integer `value` by the backend. Frontends should render `value_label`; the integer encoding is internal to storage and PromQL composition only.
+For `k8s.pod.phase` and `k8s.pod.status_reason`, samples carry a `value_label` translated from the integer value. The phase label reports Kubernetes lifecycle state; graph/status health remains a separate derived view and is not a queryable metric.
 
-```json
-{
-  "metric_name": "oksg.container.health.status",
-  "entity_id": "...",
-  "value": 3,
-  "value_label": "restarting",
-  "timestamp": "2026-05-08T10:00:00Z",
-  "unit": "count",
-  "labels": {"source": ""}
-}
-```
-
-The closed value-label set is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown` and is the same set used by `enrichedNode.status` and `health_summary.pods.*`. Canonical mapping lives in `pkg/core/metrics/health_status.go`. The `value_label` field is omitted on samples for any other metric.
+Health composites use `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`; Pod phases use `pending | running | succeeded | failed | unknown`; pod status reasons use `evicted | node_affinity | node_lost | shutdown | unexpected_admission_error | unknown`. Canonical mappings live in `pkg/core/metrics/health_status.go`. The `value_label` field is omitted on non-enum metrics.
 
 For edge-oriented metrics, samples include an optional `edge` object plus the original edge labels:
 
@@ -324,18 +370,23 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
     "edge_client": "svc-a",
     "edge_server": "svc-b",
     "edge_client_id": "svc-a-id",
-    "edge_server_id": "svc-b-id"
+    "edge_server_id": "svc-b-id",
+    "connection_type": "messaging_system",
+    "virtual_node": "server",
+    "client_http_method": "POST",
+    "server_http_method": "GET",
+    "failed": "false"
   }
 }
 ```
 
-Samples preserve the raw normalized `labels` map. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so the frontend can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
+Samples preserve the public normalized `labels` map. Host network samples expose `direction` and `network_interface_name`; volume samples expose `volume_name`, `volume_type`, and `persistentvolumeclaim_name` when PVC-backed. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so consumers can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Bounded source provenance also includes boolean `failed` as the strings `"true"` / `"false"`, `connection_type` (absent, `messaging_system`, or `database`), separate `virtual_node` (`client` or `server`), and distinct client/server HTTP methods when the collector emits them; these labels define separate raw series. True incremental samples carry `temporality=delta`; collector v0.156 servicegraph series are cumulative and therefore do not carry that label. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
 
-Returns 400 if `from` or `to` is not valid RFC3339.
+Range-result timestamps are fixed-grid evaluation times, not claims about the producer's original observation instant. The precise `from` and `to` bounds are preserved; `to` is included as an evaluation point even when it is not aligned to the 15-second grid. A value is omitted when its newest raw observation is over five minutes old. Rates, increases, and histogram means are computed from raw observations before their results are placed on the grid. Results are ordered by timestamp descending, then stable public sample fields before pagination. Returns 400 for invalid/inverted time ranges, invalid duration syntax, windows outside `1m..1h`, unknown modes, or controls unsupported by the selected metric. Histogram means accept `window` only; gauges and enum metrics reject both controls.
 
 ### GET /api/v1/metrics/series
 
-Metric samples grouped by metric name with catalog metadata (unit, category, description). Pagination applies at the series level.
+Metric samples grouped by metric, entity, edge, complete public label set, and resolved unit, with catalog metadata (unit, category, description). Pagination applies at the series level.
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -343,8 +394,10 @@ Metric samples grouped by metric name with catalog metadata (unit, category, des
 | `edge_source_id` | string | Filter by edge source entity ID for servicegraph-derived metrics |
 | `edge_target_id` | string | Filter by edge target entity ID for servicegraph-derived metrics |
 | `metric_name` | string | **Required.** Semconv metric name |
-| `from` | string (RFC3339) | Start of time range |
-| `to` | string (RFC3339) | End of time range |
+| `from` | string (RFC3339) | Start of evaluated range; omitted uses one hour before the resolved end |
+| `to` | string (RFC3339) | End of evaluated range; omitted uses the current time |
+| `aggregation` | `latest \| window_rate \| active_rate \| increase` | Counter aggregation; omitted uses the metric's catalog default |
+| `window` | Go duration, `1m` through `1h` | Lookbehind for windowed modes |
 | `page_size` | int | Series per page (default 100) |
 | `next_token` | string | Pagination cursor |
 
@@ -370,7 +423,7 @@ Response:
             "value": 250,
             "timestamp": "2026-03-30T10:00:00Z",
             "unit": "millicores",
-            "labels": {"source": "kubeletstats"}
+            "labels": {"source": "kubelet"}
           }
         ]
       }
@@ -380,7 +433,7 @@ Response:
 }
 ```
 
-When edge filters are used, series are grouped by metric name and edge identity, so two different service-to-service links produce two separate series entries even if they share the same semconv metric name.
+Different entities, edges, dimension labels, or units produce separate series. The response `query` object exposes the effective range, `15s` step, and `timestamp_semantics: "evaluation"` for both metric endpoints.
 
 ### GET /api/v1/metrics/catalog
 
@@ -392,11 +445,9 @@ List semconv-native metric definitions.
 
 Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both; an `applies_to` array describing the graph entity kinds an entity-scoped metric is valid for; and a `sources` array describing which logical sources can produce the metric and at what priority. Edge-only metrics omit `applies_to`.
 
-The `sources` array drives runtime arbitration: at backend startup the resolver (`pkg/core/metrics/resolver.go`) picks the highest-priority (smallest `priority` value) source whose detector returns true for the cluster's discovery profile. The planner only deploys receivers for selected sources; the ingester drops samples whose `oksg_source` attribute disagrees with the assigned source. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
+The `sources` array drives runtime arbitration: the generic resolver picks the highest-priority (smallest `priority` value) source whose compiled capability is available. The source plan records that result; the generic collector composer includes selected semantic requirements and the OTel adapter renders them, while the ingester drops samples whose `oksg_source` attribute disagrees with the mounted assignment. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
 
 The array is exposed in priority order (lower number = higher priority); UIs that need a single "primary source" label should render `sources[0].id`. The full array is informational — lower-priority entries are fallbacks the resolver did not pick. The currently-active source per metric is not exposed on the catalog endpoint today; consumers that need it should read the `source` label on actual sample responses from `/api/v1/metrics/series`.
-
-`selection_policy` defaults to `"priority"` (omitted from the response when default). The values `"disjoint"` and `"all"` are reserved for future per-scope routing and multi-source aggregation; the resolver returns an error if it encounters them.
 
 Example:
 
@@ -452,7 +503,7 @@ curl -s http://localhost:18081/api/v1/metrics/catalog/stats | jq '.data.stats[] 
 }
 ```
 
-The endpoint backs the **Catalog** tab in the Metrics Explorer (`/metrics?mode=catalog`), which surfaces coverage badges (live / stale / no-data / derived) so silent advertised-but-not-flowing metrics become visible.
+The endpoint backs the **Catalog** tab in the Metrics Explorer (`/metrics?mode=catalog`), which surfaces coverage badges (live / stale / no-data) so silent advertised-but-not-flowing metrics become visible.
 
 ## Entities
 
@@ -480,8 +531,7 @@ Response:
       {"id": "...", "kind": "pod", "cluster": "...", "namespace": "default", "name": "pod-a", "labels": {...}}
     ],
     "total": 42
-  },
-  "next_token": ""
+  }
 }
 ```
 
@@ -517,11 +567,12 @@ When modifying or adding API endpoints, update these files:
 | `pkg/adapters/api/server.go` | Server struct, config, mux wiring, lifecycle |
 | `pkg/adapters/api/response.go` | JSON response envelope, pagination, and shared helpers |
 | `pkg/adapters/api/handler_status.go` | Status and discovery handlers |
+| `pkg/adapters/api/health_resolver.go` | Shared graph and status health derivation |
 | `pkg/adapters/api/handler_graph.go` | Graph query handlers with entity enrichment |
 | `pkg/adapters/api/handler_metrics.go` | Metrics query, catalog, and series handlers |
 | `pkg/adapters/api/handler_entities.go` | Entity query handlers |
 | `cmd/backend/main.go` | API server wiring into the backend binary |
-| `deploy/helm/oksg-otel/values.yaml` | `backend.service.apiPort` and `backend.statusStaleSeconds` values |
+| `deploy/helm/oksg-otel/values.yaml` | `backend.service.apiPort`, `backend.statusStaleSeconds`, and `backend.structureRefreshInterval` values |
 | `deploy/helm/oksg-otel/templates/backend-deployment.yaml` | API port arg and containerPort |
 | `deploy/helm/oksg-otel/templates/backend-service.yaml` | API service port entry |
 | `docs/api-reference.md` | **This file** -- update when endpoints change |

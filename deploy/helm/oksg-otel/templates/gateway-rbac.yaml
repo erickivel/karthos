@@ -1,4 +1,3 @@
-{{- if .Values.gateway.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -7,6 +6,8 @@ metadata:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
 rules:
   - apiGroups: [""]
+    # The pinned k8s_cluster receiver watches resourcequotas even though OKSG
+    # explicitly disables the unsupported ResourceQuota metric family.
     resources: ["nodes", "pods", "namespaces", "services", "endpoints", "resourcequotas", "replicationcontrollers"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
@@ -31,6 +32,5 @@ roleRef:
   name: {{ printf "%s-gateway" (include "oksg-otel.name" .) }}
 subjects:
   - kind: ServiceAccount
-    name: otel-collector-gateway
+    name: {{ include "oksg-otel.gatewayName" . }}
     namespace: {{ include "oksg-otel.namespace" . }}
-{{- end }}

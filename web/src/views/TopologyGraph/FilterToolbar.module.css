@@ -162,25 +162,6 @@
   border-top: 1px solid var(--surface-nav);
 }
 
-.select {
-  appearance: none;
-  background: var(--surface-module);
-  color: var(--color-text-primary);
-  border: none;
-  border-radius: var(--radius);
-  padding: var(--space-xs) var(--space-sm);
-  font-family: var(--font-family);
-  font-size: var(--text-label);
-  letter-spacing: var(--letter-wide);
-  text-transform: uppercase;
-  cursor: pointer;
-  outline: none;
-}
-
-.select:focus {
-  background: var(--surface-active);
-}
-
 .group {
   display: inline-flex;
   background: var(--surface-module);

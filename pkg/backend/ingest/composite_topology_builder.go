@@ -26,15 +26,3 @@ func (b *CompositeTopologyBuilder) Build(ctx context.Context, envelope schema.Ra
 	}
 	return edges, nil
 }
-
-func (b *CompositeTopologyBuilder) BuildNodes(ctx context.Context, envelope schema.RawEnvelope) []topology.Node {
-	var nodes []topology.Node
-	for _, builder := range b.builders {
-		nodeBuilder, ok := builder.(NodeBuilder)
-		if !ok {
-			continue
-		}
-		nodes = append(nodes, nodeBuilder.BuildNodes(ctx, envelope)...)
-	}
-	return nodes
-}

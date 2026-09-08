@@ -1,27 +1,19 @@
 package entities
 
-type IngressBackend struct {
-	ServiceName string `json:"service_name"`
-	ServicePort int32  `json:"service_port,omitempty"`
-}
-
 type Ingress struct {
-	EntityID        EntityID          `json:"id"`
-	ClusterName     string            `json:"cluster_name"`
-	Namespace       string            `json:"namespace"`
-	Name            string            `json:"name"`
-	Host            string            `json:"host,omitempty"`
-	Metadata        map[string]string `json:"labels,omitempty"`
-	BackendServices []IngressBackend  `json:"backend_services,omitempty"`
+	EntityID    EntityID          `json:"id"`
+	ClusterName string            `json:"cluster_name"`
+	Namespace   string            `json:"namespace"`
+	Name        string            `json:"name"`
+	Metadata    map[string]string `json:"labels,omitempty"`
 }
 
-func NewIngress(clusterName, namespace, name, host string, labels map[string]string) Ingress {
+func NewIngress(clusterName, namespace, name string, labels map[string]string) Ingress {
 	return Ingress{
-		EntityID:    ComputeEntityID(KindIngress, clusterName, namespace, name, host),
+		EntityID:    ComputeEntityID(KindIngress, clusterName, namespace, name),
 		ClusterName: clusterName,
 		Namespace:   namespace,
 		Name:        name,
-		Host:        host,
 		Metadata:    cloneLabels(labels),
 	}
 }

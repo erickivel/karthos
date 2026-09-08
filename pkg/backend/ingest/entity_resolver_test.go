@@ -311,20 +311,6 @@ func TestOTLPEntityResolver_ReplicationController(t *testing.T) {
 	assert.Equal(t, expected, id)
 }
 
-func TestOTLPEntityResolver_ResourceQuota(t *testing.T) {
-	resolver := NewOTLPEntityResolver(testCluster)
-	resource := map[string]string{
-		"k8s.resourcequota.name": "my-quota",
-		"k8s.namespace.name":     "my-namespace",
-	}
-
-	expected := entities.ComputeEntityID(entities.KindResourceQuota, testCluster, "my-namespace", "my-quota")
-
-	id, err := resolver.Resolve(context.Background(), resource)
-	require.NoError(t, err)
-	assert.Equal(t, expected, id)
-}
-
 func TestOTLPEntityResolver_NamespaceOnly(t *testing.T) {
 	resolver := NewOTLPEntityResolver(testCluster)
 	resource := map[string]string{

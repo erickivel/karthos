@@ -11,19 +11,16 @@ import (
 	"github.com/erickivel/oksg/pkg/core/topology"
 )
 
-// BufferedTopologyIngestor accumulates topology edges and nodes in memory
-// and flushes one consolidated snapshot to GraphStore on a configurable interval.
+// BufferedTopologyIngestor accumulates observed topology edges in memory and
+// flushes them to current observation state on a configurable interval.
 // It implements the Ingestor interface.
 type BufferedTopologyIngestor struct {
 	builders map[schema.SignalType]TopologyBuilder
-	store    persistence.GraphStore
+	store    persistence.ObservationEdgeStore
 	logger   *logging.Logger
 
 	mu    sync.Mutex
 	edges map[string]topology.Edge
-	nodes map[string]topology.Node
-	from  time.Time
-	to    time.Time
 	dirty bool
 
 	interval time.Duration
@@ -35,7 +32,7 @@ type BufferedTopologyIngestor struct {
 // the background flush goroutine.
 func NewBufferedTopologyIngestor(
 	builders map[schema.SignalType]TopologyBuilder,
-	store persistence.GraphStore,
+	store persistence.ObservationEdgeStore,
 	logger *logging.Logger,
 	interval time.Duration,
 ) *BufferedTopologyIngestor {
@@ -44,7 +41,6 @@ func NewBufferedTopologyIngestor(
 		store:    store,
 		logger:   logger,
 		edges:    make(map[string]topology.Edge),
-		nodes:    make(map[string]topology.Node),
 		interval: interval,
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
@@ -53,7 +49,7 @@ func NewBufferedTopologyIngestor(
 	return b
 }
 
-// Ingest builds edges and nodes from the envelope using the registered builder
+// Ingest builds observed edges from the envelope using the registered builder
 // for the envelope's signal type, then merges them into the in-memory buffer.
 func (b *BufferedTopologyIngestor) Ingest(ctx context.Context, envelope schema.RawEnvelope) error {
 	builder, ok := b.builders[envelope.SignalType]
@@ -66,54 +62,17 @@ func (b *BufferedTopologyIngestor) Ingest(ctx context.Context, envelope schema.R
 		return err
 	}
 
-	var nodes []topology.Node
-	if nb, ok := builder.(NodeBuilder); ok {
-		nodes = nb.BuildNodes(ctx, envelope)
-	}
-
-	if len(edges) == 0 && len(nodes) == 0 {
+	if len(edges) == 0 {
 		return nil
 	}
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	for _, e := range edges {
-		if existing, ok := b.edges[e.ID]; ok {
-			if e.LastSeen.After(existing.LastSeen) {
-				existing.LastSeen = e.LastSeen
-			}
-			existing.Confidence = e.Confidence
-			existing.Provenance = mergeStringSlices(existing.Provenance, e.Provenance)
-			existing.Metadata = mergeStringMaps(existing.Metadata, e.Metadata)
-			b.edges[e.ID] = existing
-		} else {
-			b.edges[e.ID] = e
-		}
-	}
-
-	for _, n := range nodes {
-		b.nodes[string(n.ID)] = n
-	}
-
-	ts := envelope.Timestamp
-	if b.from.IsZero() || ts.Before(b.from) {
-		b.from = ts
-	}
-	if ts.After(b.to) {
-		b.to = ts
-	}
-	for _, e := range edges {
-		if e.LastSeen.After(b.to) {
-			b.to = e.LastSeen
-		}
-	}
-
-	b.dirty = true
+	b.mergeLocked(edges)
+	b.mu.Unlock()
 	return nil
 }
 
-// Flush writes the accumulated buffer as a single consolidated snapshot.
+// Flush writes the accumulated observed edges as one consolidated batch.
 // Safe to call from any goroutine.
 func (b *BufferedTopologyIngestor) Flush() {
 	b.mu.Lock()
@@ -123,14 +82,7 @@ func (b *BufferedTopologyIngestor) Flush() {
 	}
 
 	edges := b.edges
-	nodes := b.nodes
-	from := b.from
-	to := b.to
-
 	b.edges = make(map[string]topology.Edge)
-	b.nodes = make(map[string]topology.Node)
-	b.from = time.Time{}
-	b.to = time.Time{}
 	b.dirty = false
 	b.mu.Unlock()
 
@@ -138,33 +90,40 @@ func (b *BufferedTopologyIngestor) Flush() {
 	for _, e := range edges {
 		edgeSlice = append(edgeSlice, e)
 	}
-	nodeSlice := make([]topology.Node, 0, len(nodes))
-	for _, n := range nodes {
-		nodeSlice = append(nodeSlice, n)
-	}
-
-	snapshot := topology.Snapshot{
-		Version: schema.CurrentVersion,
-		Graph: topology.Graph{
-			Nodes:     nodeSlice,
-			Edges:     edgeSlice,
-			Timestamp: to,
-		},
-		From:      from,
-		To:        to,
-		CreatedAt: time.Now().UTC(),
-	}
-
-	if err := b.store.PutSnapshot(context.Background(), snapshot); err != nil {
+	if err := b.store.PutObservedEdges(context.Background(), edgeSlice); err != nil {
+		b.mu.Lock()
+		b.mergeLocked(edgeSlice)
+		b.mu.Unlock()
 		if b.logger != nil {
-			b.logger.Error("flush topology snapshot failed", logging.Error(err))
+			b.logger.Error("flush observed topology edges failed", logging.Error(err))
 		}
 	} else if b.logger != nil {
-		b.logger.Info("flushed topology snapshot",
+		b.logger.Info("flushed observed topology edges",
 			logging.Any("edges", len(edgeSlice)),
-			logging.Any("nodes", len(nodeSlice)),
 		)
 	}
+}
+
+func (b *BufferedTopologyIngestor) mergeLocked(edges []topology.Edge) {
+	for _, edge := range edges {
+		if existing, ok := b.edges[edge.ID]; ok {
+			if existing.FirstSeen.IsZero() || (!edge.FirstSeen.IsZero() && edge.FirstSeen.Before(existing.FirstSeen)) {
+				existing.FirstSeen = edge.FirstSeen
+			}
+			if !edge.LastSeen.Before(existing.LastSeen) {
+				existing.LastSeen = edge.LastSeen
+				existing.Confidence = edge.Confidence
+				existing.Metadata = mergeStringMaps(existing.Metadata, edge.Metadata)
+			} else {
+				existing.Metadata = mergeStringMaps(edge.Metadata, existing.Metadata)
+			}
+			existing.Provenance = mergeStringSlices(existing.Provenance, edge.Provenance)
+			b.edges[edge.ID] = existing
+			continue
+		}
+		b.edges[edge.ID] = edge
+	}
+	b.dirty = true
 }
 
 // Close stops the background flush goroutine and performs a final flush.

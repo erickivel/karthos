@@ -6,12 +6,15 @@ import { EntityBreakdown } from './EntityBreakdown'
 import { RelationTypes } from './RelationTypes'
 import { DiscoverySources } from './DiscoverySources'
 import { HealthSummary } from './HealthSummary'
+import { overviewKpis } from './overviewModel'
+import { ApiContractError } from '@/api/client'
 import styles from './ClusterOverview.module.css'
 
 export function ClusterOverview() {
-  const { data: discovery } = useDiscovery()
-  const { data: snapshot } = useGraphSnapshot()
-  const { data: status } = useSystemStatus()
+  const { data: discovery, error: discoveryError } = useDiscovery()
+  const { data: snapshot, error: snapshotError } = useGraphSnapshot()
+  const { data: status, error: statusError } = useSystemStatus()
+  const errors = [discoveryError, snapshotError, statusError].filter((error): error is Error => error instanceof Error)
 
   return (
     <div className={styles.container}>
@@ -26,12 +29,18 @@ export function ClusterOverview() {
         )}
       </header>
 
+      {errors.map((error) => (
+        <p key={error.message} className={styles.apiError} role="alert">
+          {error instanceof ApiContractError
+            ? `API contract mismatch: ${error.message}`
+            : `Unable to load current cluster data: ${error.message}`}
+        </p>
+      ))}
+
       <div className={styles.kpiRow}>
-        <KpiCard label="Nodes" value={discovery?.node_count ?? 0} />
-        <KpiCard label="Namespaces" value={discovery?.namespace_count ?? 0} />
-        <KpiCard label="Workloads" value={discovery?.workload_count ?? 0} />
-        <KpiCard label="Services" value={discovery?.service_count ?? 0} />
-        <KpiCard label="Graph Edges" value={snapshot?.summary.edge_count ?? 0} />
+        {overviewKpis(snapshot?.summary).map(([label, value]) => (
+          <KpiCard key={label} label={label} value={value} />
+        ))}
       </div>
 
       <HealthSummary healthSummary={status?.health_summary} />

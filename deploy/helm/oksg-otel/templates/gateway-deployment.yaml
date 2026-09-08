@@ -1,8 +1,7 @@
-{{- if .Values.gateway.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: otel-collector-gateway
+  name: {{ include "oksg-otel.gatewayName" . }}
   namespace: {{ include "oksg-otel.namespace" . }}
   labels:
     {{- include "oksg-otel.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
@@ -18,27 +17,18 @@ spec:
         app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
         app.kubernetes.io/component: gateway
       annotations:
-        {{- if .Values.rollout.useConfigChecksum }}
         checksum/config: {{ include "oksg-otel.gatewayChecksum" . }}
-        {{- end }}
     spec:
-      serviceAccountName: otel-collector-gateway
+      serviceAccountName: {{ include "oksg-otel.gatewayName" . }}
       containers:
-        - name: otel-collector-gateway
+        - name: gateway
           image: {{ include "oksg-otel.image" . }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           args:
             - --config=/conf/config.yaml
-            {{- if .Values.gateway.featureGates }}
-            - --feature-gates={{ join "," .Values.gateway.featureGates }}
-            {{- end }}
           env:
-            - name: OTEL_LOG_LEVEL
-              value: {{ .Values.gateway.logging.level | quote }}
-          {{- range $key, $value := .Values.gateway.runtimeEnv }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-          {{- end }}
+            - name: OKSG_BACKEND_GRPC_ENDPOINT
+              value: {{ printf "%s:%d" (include "oksg-otel.backendName" .) (int .Values.backend.grpcPort) | quote }}
           ports:
             - containerPort: {{ .Values.gateway.service.port }}
               name: otlp-grpc
@@ -66,5 +56,4 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: otel-collector-gateway-config
-{{- end }}
+            name: {{ include "oksg-otel.gatewayName" . }}-config
