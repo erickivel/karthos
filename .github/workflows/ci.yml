@@ -107,6 +107,9 @@ jobs:
           govulncheck-version: ${{ env.GOVULNCHECK_VERSION }}
           gosec-version: ${{ env.GOSEC_VERSION }}
 
+      - name: Build Helm chart dependencies
+        run: helm dependency build deploy/helm/oksg-otel
+
       - name: Run tests
         run: task test:race
 
