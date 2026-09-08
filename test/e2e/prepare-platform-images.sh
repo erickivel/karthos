@@ -24,5 +24,5 @@ build_and_load() {
   "${REPO_ROOT}/test/e2e/cluster/image.sh" push_or_load "${tag}"
 }
 
-build_and_load "${REGISTRY_HOST}/oksg-backend:${IMAGE_TAG}" "${REPO_ROOT}" "${REPO_ROOT}/deploy/images/backend/Dockerfile"
-build_and_load "${REGISTRY_HOST}/oksg-frontend:${IMAGE_TAG}" "${REPO_ROOT}/web"
+build_and_load "${REGISTRY_HOST}/karthos-backend:${IMAGE_TAG}" "${REPO_ROOT}" "${REPO_ROOT}/deploy/images/backend/Dockerfile"
+build_and_load "${REGISTRY_HOST}/karthos-frontend:${IMAGE_TAG}" "${REPO_ROOT}/web"

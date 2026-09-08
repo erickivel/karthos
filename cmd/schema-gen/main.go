@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/schema"
 )
 
 func main() {

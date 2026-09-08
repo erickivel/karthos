@@ -7,9 +7,9 @@ import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources/detection"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources/detection"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 	istioSidecarWebhook          = "istio-sidecar-injector"
 	istioMetricsPort             = int32(15020)
 	istioMetricsPath             = "/stats/prometheus"
-	oksgSystemNamespace          = "oksg-system"
+	karthosSystemNamespace       = "karthos-system"
 	istioProxyContainer          = "istio-proxy"
 	istioSidecarInjectAnnotation = "sidecar.istio.io/inject"
 )
@@ -80,7 +80,7 @@ func terminatingPod(pod corev1.Pod) bool {
 }
 
 func systemNamespace(namespace string) bool {
-	return namespace == istioSystemNamespace || namespace == oksgSystemNamespace || strings.HasPrefix(namespace, "kube-")
+	return namespace == istioSystemNamespace || namespace == karthosSystemNamespace || strings.HasPrefix(namespace, "kube-")
 }
 
 func controllerOwned(pod corev1.Pod) bool {

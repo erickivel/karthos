@@ -22,9 +22,9 @@ func TestDeployUsesHelmLintTemplateAndUpgrade(t *testing.T) {
 	})
 
 	err := deployer.Apply(context.Background(), []byte("compiled-values"), Options{
-		ReleaseName:  "oksg-otel",
-		ChartPath:    "./deploy/helm/oksg-otel",
-		Namespace:    "oksg-system",
+		ReleaseName:  "karthos",
+		ChartPath:    "./deploy/helm/karthos",
+		Namespace:    "karthos-system",
 		Timeout:      30 * time.Second,
 		DryRun:       true,
 		RenderedPath: renderedPath,
@@ -32,9 +32,9 @@ func TestDeployUsesHelmLintTemplateAndUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, commands, 3)
 	require.Equal(t, "helm", commands[0][0])
-	require.Equal(t, []string{"helm", "lint", "./deploy/helm/oksg-otel"}, commands[0][:3])
-	require.Equal(t, []string{"helm", "template", "oksg-otel", "./deploy/helm/oksg-otel"}, commands[1][:4])
-	require.Equal(t, []string{"helm", "upgrade", "--install", "oksg-otel", "./deploy/helm/oksg-otel"}, commands[2][:5])
+	require.Equal(t, []string{"helm", "lint", "./deploy/helm/karthos"}, commands[0][:3])
+	require.Equal(t, []string{"helm", "template", "karthos", "./deploy/helm/karthos"}, commands[1][:4])
+	require.Equal(t, []string{"helm", "upgrade", "--install", "karthos", "./deploy/helm/karthos"}, commands[2][:5])
 	require.True(t, contains(commands[2], "--force-conflicts"))
 	require.True(t, contains(commands[2], "--dry-run"))
 }

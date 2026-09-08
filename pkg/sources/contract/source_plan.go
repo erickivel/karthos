@@ -3,8 +3,8 @@ package contract
 import (
 	"fmt"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 // StaticSourceInventory is the compiled source inventory used to validate a

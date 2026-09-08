@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 // InMemoryMetadataStore is a thread-safe in-memory implementation of MetadataStore.

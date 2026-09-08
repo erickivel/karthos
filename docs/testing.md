@@ -147,12 +147,12 @@ Expected:
 
 Expected:
 
-- the task installs a minimal Istio control plane if needed, deploys the `with-istio` fixture, generates normal plus intentional error gateway traffic, and applies the OKSG collector plan
-- `oksg-demo` has sidecar injection enabled, while the sparse orphan pod explicitly disables injection
+- the task installs a minimal Istio control plane if needed, deploys the `with-istio` fixture, generates normal plus intentional error gateway traffic, and applies the Karthos collector plan
+- `karthos-demo` has sidecar injection enabled, while the sparse orphan pod explicitly disables injection
 - discovery emits an `istio` source with `mesh.flavor=istio`, `mesh.mode=sidecar`, `mesh.partial=false`, and `/stats/prometheus` on port `15020`; complete sidecar meshes may use either a classic regular `istio-proxy` container or a Kubernetes native `initContainer` with `restartPolicy: Always`
 - ambient mode remains unsupported because it has no per-Pod proxy scrape contract
-- generated Helm values include a dedicated 15-second `mesh-istio` Prometheus scrape job that selects `istio-proxy` containers and stamps Prometheus-safe `oksg_source=mesh.istio`; the cadence keeps multiple cumulative samples inside the default one-minute aggregation window
-- generated Helm values place discovered application Prometheus Service-DNS jobs on the singleton gateway and stamp them with `oksg_source=prometheus.app`; agent Prometheus remains reserved for Istio pod discovery
+- generated Helm values include a dedicated 15-second `mesh-istio` Prometheus scrape job that selects `istio-proxy` containers and stamps Prometheus-safe `karthos_source=mesh.istio`; the cadence keeps multiple cumulative samples inside the default one-minute aggregation window
+- generated Helm values place discovered application Prometheus Service-DNS jobs on the singleton gateway and stamp them with `karthos_source=prometheus.app`; agent Prometheus remains reserved for Istio pod discovery
 - application Prometheus annotations are not required for mesh metrics
 - mesh-derived samples normalize to servicegraph edge metrics: HTTP request count/duration/error plus gRPC request/response messages and TCP opened/closed/sent/received counters
 - the next materialized graph includes fresh mesh `calls` edges with
@@ -248,7 +248,7 @@ Prerequisites:
 - `task test:e2e:scenario:prometheus`
 - `task web:e2e:install`
 - `task web:dev`
-- `kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080`
+- `kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080`
 
 Run the suite:
 
@@ -302,10 +302,10 @@ Collector debug-exporter output is transient diagnostics rather than structured
 application logging. For operational debugging:
 
 ```bash
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=agent --tail=30
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=gateway --tail=30
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=backend --tail=30
-helm status oksg-otel -n oksg-system
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=agent --tail=30
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=gateway --tail=30
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=backend --tail=30
+helm status karthos -n karthos-system
 ```
 
 When changing the e2e flow, keep log inspection and rendered Helm artifacts easy to collect from `bin/e2e/`.
@@ -314,7 +314,7 @@ When changing the e2e flow, keep log inspection and rendered Helm artifacts easy
 
 ```bash
 task test:e2e:reset       # remove the Helm-owned OTel release and its E2E PostgreSQL PVC
-task test:e2e:reset-apps  # remove demo fixtures from oksg-demo and oksg-sparse
+task test:e2e:reset-apps  # remove demo fixtures from karthos-demo and karthos-sparse
 task test:e2e:reset-all   # remove release, fixtures, and E2E-owned Istio
 task test:e2e:teardown    # destroy the kind cluster and local registry
 ```

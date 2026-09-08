@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-source-contract-rejection-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-source-contract-rejection-test.XXXXXX)"
 cleanup() {
   local status=$?
   if [[ "${status}" -ne 0 && -f "${SOURCE_CONTRACT_TEST_LOG:-}" ]]; then
@@ -69,7 +69,7 @@ export KIND_NAMESPACE="contract-check"
 bash "${REPO_ROOT}/test/e2e/scenarios/source-contract-rejection/run.sh"
 
 restart_line="$(grep -n 'kubectl rollout restart deployment/release-check-backend -n contract-check' "${SOURCE_CONTRACT_TEST_LOG}" | cut -d: -f1)"
-mounted_contract_line="$(grep -n 'kubectl exec deployment/release-check-backend -n contract-check -- cat /etc/oksg/source-plan.json' "${SOURCE_CONTRACT_TEST_LOG}" | head -n1 | cut -d: -f1)"
+mounted_contract_line="$(grep -n 'kubectl exec deployment/release-check-backend -n contract-check -- cat /etc/karthos/source-plan.json' "${SOURCE_CONTRACT_TEST_LOG}" | head -n1 | cut -d: -f1)"
 wait_line="$(grep -n 'kubectl wait --for=jsonpath=' "${SOURCE_CONTRACT_TEST_LOG}" | head -n1 | cut -d: -f1)"
 status_line="$(grep -n 'kubectl rollout status deployment/release-check-backend -n contract-check' "${SOURCE_CONTRACT_TEST_LOG}" | head -n1 | cut -d: -f1)"
 cleanup_patch_line="$(grep -n 'kubectl patch deployment/release-check-backend -n contract-check --type=json' "${SOURCE_CONTRACT_TEST_LOG}" | tail -n1 | cut -d: -f1)"

@@ -111,7 +111,7 @@ jobs:
         run: |
           helm repo add bitnami https://charts.bitnami.com/bitnami --force-update
           helm repo add victoria-metrics https://victoriametrics.github.io/helm-charts --force-update
-          helm dependency build deploy/helm/oksg-otel
+          helm dependency build deploy/helm/karthos
 
       - name: Run tests
         run: task test:race

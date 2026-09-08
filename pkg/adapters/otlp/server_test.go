@@ -21,9 +21,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	backendingest "github.com/erickivel/oksg/pkg/backend/ingest"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/schema"
+	backendingest "github.com/erickivel/karthos/pkg/backend/ingest"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/core/schema"
 )
 
 func TestServerAcceptsMetricsOverGRPC(t *testing.T) {

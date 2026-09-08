@@ -1,6 +1,6 @@
 package metrics
 
-import "github.com/erickivel/oksg/pkg/core/entities"
+import "github.com/erickivel/karthos/pkg/core/entities"
 
 var defaultCatalog = withStorageSemantics([]CanonicalMetric{
 	{Name: "k8s.pod.cpu.usage", DisplayName: "Pod CPU Usage", Unit: UnitMillicores, Category: CategoryResource, Scopes: []MetricScope{ScopeEntity}, Description: "Observed pod CPU usage.", Sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},

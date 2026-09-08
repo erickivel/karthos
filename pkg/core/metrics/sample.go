@@ -3,14 +3,14 @@ package metrics
 import (
 	"time"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/entities"
 )
 
 // MetricSample is the wire and storage form of a single metric datapoint.
 //
 // Value carries the numeric form: a regular gauge/counter value for most
 // metrics, or an integer-encoded enum (rounded float) for the
-// enum metrics such as `oksg.{pod,container}.health.status` and
+// enum metrics such as `karthos.{pod,container}.health.status` and
 // `k8s.pod.phase` and `k8s.pod.status_reason`. ValueLabel is the public
 // plain-text translation of an integer-enum value and is set ONLY by the
 // API/store boundary for metrics where IsHealthStatusMetric reports true.

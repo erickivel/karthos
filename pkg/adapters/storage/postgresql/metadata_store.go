@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 // PostgresMetadataStore implements persistence.MetadataStore using PostgreSQL.

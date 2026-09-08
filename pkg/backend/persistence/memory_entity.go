@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/entities"
 )
 
 // InMemoryEntityRegistry is a thread-safe in-memory implementation of EntityRegistry.

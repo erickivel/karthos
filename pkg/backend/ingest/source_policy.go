@@ -5,8 +5,8 @@ import (
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/semconv"
 )
 
 // SourceRejectionReason identifies why a recognized canonical metric
@@ -54,7 +54,7 @@ func (p *MetricSourcePolicy) Validate(canonicalName string, attrs []*commonpb.Ke
 	if p == nil {
 		return SourceValidation{Reason: SourceRejectionMissing}
 	}
-	source := firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm)
+	source := firstKVString(attrs, semconv.AttrKarthosSource, semconv.AttrKarthosSourceProm)
 	if source == "" {
 		return SourceValidation{Reason: SourceRejectionMissing}
 	}

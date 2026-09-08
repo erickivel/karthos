@@ -18,16 +18,16 @@ vars:
   K3S_SSH_HOST:
     sh: . test/e2e/cluster/profile.sh && echo "${K3S_SSH_HOST:-}"
   KIND_CLUSTER_NAME:
-    sh: . test/e2e/cluster/profile.sh && echo "${KIND_CLUSTER_NAME:-oksg-test}"
-  KIND_NAMESPACE: oksg-system
-  HELM_RELEASE_NAME: oksg-otel
-  HELM_CHART_PATH: ./deploy/helm/oksg-otel
-  TARGET_NAMESPACE: oksg-demo
-  SPARSE_NAMESPACE: oksg-sparse
-  BACKEND_IMAGE_REPOSITORY: '{{.REGISTRY_HOST}}/oksg-backend'
+    sh: . test/e2e/cluster/profile.sh && echo "${KIND_CLUSTER_NAME:-karthos-test}"
+  KIND_NAMESPACE: karthos-system
+  HELM_RELEASE_NAME: karthos
+  HELM_CHART_PATH: ./deploy/helm/karthos
+  TARGET_NAMESPACE: karthos-demo
+  SPARSE_NAMESPACE: karthos-sparse
+  BACKEND_IMAGE_REPOSITORY: '{{.REGISTRY_HOST}}/karthos-backend'
   BACKEND_IMAGE_TAG: '{{.IMAGE_TAG}}'
   BACKEND_IMAGE_PULL_POLICY: Always
-  FRONTEND_IMAGE_REPOSITORY: '{{.REGISTRY_HOST}}/oksg-frontend'
+  FRONTEND_IMAGE_REPOSITORY: '{{.REGISTRY_HOST}}/karthos-frontend'
   FRONTEND_IMAGE_TAG: '{{.IMAGE_TAG}}'
   FRONTEND_IMAGE_PULL_POLICY: Always
   E2E_OUTPUT_DIR: ./bin/e2e
@@ -60,7 +60,7 @@ tasks:
         esac
 
   e2e:teardown:
-    desc: Tear down the cluster (kind) or OKSG resources on it (k3s)
+    desc: Tear down the cluster (kind) or Karthos resources on it (k3s)
     cmds:
       - |
         case "{{.CLUSTER_ENGINE}}" in
@@ -167,7 +167,7 @@ tasks:
               echo "Cluster not found. Run 'task test:e2e:setup' first."
               exit 1
             fi
-            if ! docker inspect -f '{{`{{.State.Running}}`}}' oksg-kind-registry 2>/dev/null | grep -q true; then
+            if ! docker inspect -f '{{`{{.State.Running}}`}}' karthos-kind-registry 2>/dev/null | grep -q true; then
               echo "Registry not running. Run 'task test:e2e:setup' first."
               exit 1
             fi
@@ -201,7 +201,7 @@ tasks:
   e2e:scenario:prometheus:
     desc: Run Prometheus discovery scenario with gateway traffic (full pipeline including servicegraph)
     cmds:
-      - HELM_RELEASE_NAME=oksg-otel KIND_NAMESPACE=oksg-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/prometheus-available/run.sh
+      - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/prometheus-available/run.sh
 
   e2e:scenario:istio:prepare:
     desc: Prepare the Istio mesh telemetry scenario and generate gateway traffic
@@ -221,7 +221,7 @@ tasks:
   e2e:scenario:istio:
     desc: Run the full Istio mesh accuracy scenario, including deterministic gRPC and TCP verification
     cmds:
-      - HELM_RELEASE_NAME=oksg-otel KIND_NAMESPACE=oksg-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/istio-available/run.sh
+      - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/istio-available/run.sh
 
   e2e:scenario:fallback:
     desc: Run no-telemetry fallback scenario (full pipeline)
@@ -247,7 +247,7 @@ tasks:
   e2e:scenario:source-contract-rejection:
     desc: Verify backend rejects a mismatched source plan and restores the valid contract
     cmds:
-      - HELM_RELEASE_NAME=oksg-otel KIND_NAMESPACE=oksg-system ./test/e2e/scenarios/source-contract-rejection/run.sh
+      - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system ./test/e2e/scenarios/source-contract-rejection/run.sh
 
   e2e:debug:api:
     desc: Query the backend REST API status endpoint via a dedicated local port-forward
@@ -314,7 +314,7 @@ tasks:
               echo "Cluster not found. Run 'task test:e2e:setup' first." >&2
               exit 1
             fi
-            if ! docker inspect -f '{{`{{.State.Running}}`}}' oksg-kind-registry 2>/dev/null | grep -q true; then
+            if ! docker inspect -f '{{`{{.State.Running}}`}}' karthos-kind-registry 2>/dev/null | grep -q true; then
               echo "Registry not running. Run 'task test:e2e:setup' first." >&2
               exit 1
             fi

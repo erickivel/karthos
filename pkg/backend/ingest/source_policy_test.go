@@ -10,9 +10,9 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 
-	"github.com/erickivel/oksg/pkg/backend/ingest"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/karthos/pkg/backend/ingest"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/sources"
 )
 
 func makeNumberDataPoint(value float64, attrs map[string]string) *metricspb.NumberDataPoint {
@@ -32,7 +32,7 @@ func TestOTLPNormalizerRequiresRegisteredMetricSource(t *testing.T) {
 		attrs map[string]string
 	}{
 		{name: "missing", attrs: nil},
-		{name: "unknown", attrs: map[string]string{"oksg.source": "not-registered"}},
+		{name: "unknown", attrs: map[string]string{"karthos.source": "not-registered"}},
 	}
 
 	for _, tt := range tests {
@@ -57,11 +57,11 @@ func TestOTLPNormalizerSourceAssignmentAndMixedBatch(t *testing.T) {
 	)
 
 	rm := makeGaugeRMWithAttrs("k8s.pod.cpu.usage", 1, uint64(time.Now().UnixNano()), map[string]string{
-		"oksg.source": metrics.SourceKubelet,
+		"karthos.source": metrics.SourceKubelet,
 	})
 	metric := rm.ScopeMetrics[0].Metrics[0]
 	metric.GetGauge().DataPoints = append(metric.GetGauge().DataPoints,
-		makeNumberDataPoint(2, map[string]string{"oksg_source": metrics.SourceMeshIstio}),
+		makeNumberDataPoint(2, map[string]string{"karthos_source": metrics.SourceMeshIstio}),
 		makeNumberDataPoint(3, nil),
 	)
 
@@ -90,8 +90,8 @@ func TestOTLPNormalizerRejectsWrongSourceForSpecializedCanonicalMetrics(t *testi
 			name:       "directional disk counter",
 			metricName: "system.disk.io",
 			attrs: map[string]string{
-				"direction":   "read",
-				"oksg.source": metrics.SourceKubelet,
+				"direction":      "read",
+				"karthos.source": metrics.SourceKubelet,
 			},
 			assignment: metrics.Assignment{
 				"system.disk.io.read":  metrics.SourceHostOS,
@@ -102,8 +102,8 @@ func TestOTLPNormalizerRejectsWrongSourceForSpecializedCanonicalMetrics(t *testi
 			name:       "node condition",
 			metricName: "k8s.node.condition",
 			attrs: map[string]string{
-				"condition":   "Ready",
-				"oksg.source": metrics.SourceKubelet,
+				"condition":      "Ready",
+				"karthos.source": metrics.SourceKubelet,
 			},
 			assignment: metrics.Assignment{
 				"k8s.node.condition.ready":           metrics.SourceKubeCluster,
@@ -155,7 +155,7 @@ func TestMetricSourcePolicyRejectsAmbiguousDescendantAssignments(t *testing.T) {
 		"system.disk.io.read":  metrics.SourceHostOS,
 		"system.disk.io.write": metrics.SourceKubelet,
 	})
-	attrs := makeNumberDataPoint(1, map[string]string{"oksg.source": metrics.SourceHostOS}).Attributes
+	attrs := makeNumberDataPoint(1, map[string]string{"karthos.source": metrics.SourceHostOS}).Attributes
 
 	validation := policy.Validate("system.disk.io", attrs)
 	assert.False(t, validation.Accepted())
@@ -168,8 +168,8 @@ func TestMetricSourcePolicyExactAssignmentPrecedesConflictingDescendants(t *test
 		"system.disk.io.read":  metrics.SourceHostOS,
 		"system.disk.io.write": metrics.SourceKubelet,
 	})
-	hostAttrs := makeNumberDataPoint(1, map[string]string{"oksg.source": metrics.SourceHostOS}).Attributes
-	kubeletAttrs := makeNumberDataPoint(1, map[string]string{"oksg.source": metrics.SourceKubelet}).Attributes
+	hostAttrs := makeNumberDataPoint(1, map[string]string{"karthos.source": metrics.SourceHostOS}).Attributes
+	kubeletAttrs := makeNumberDataPoint(1, map[string]string{"karthos.source": metrics.SourceKubelet}).Attributes
 
 	assert.True(t, policy.Validate("system.disk.io", hostAttrs).Accepted())
 	assert.Equal(t, ingest.SourceRejectionAssignmentMismatch, policy.Validate("system.disk.io", kubeletAttrs).Reason)

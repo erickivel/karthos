@@ -11,9 +11,9 @@ cd "${REPO_ROOT}"
 # shellcheck disable=SC1091
 . "${REPO_ROOT}/test/e2e/cluster/profile.sh"
 
-NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
-BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"
-VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"
+NAMESPACE="${KIND_NAMESPACE:-karthos-system}"
+BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-karthos}-backend"
+VM_SERVICE="${HELM_RELEASE_NAME:-karthos}-victoria-metrics-single-server"
 GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT:-18080}"
 
 require_open_port() {
@@ -70,8 +70,8 @@ from pathlib import Path
 values = Path("bin/e2e/otel-values.yaml").read_text()
 assert "service_graph:" in values, "generated Helm values should include the service_graph connector"
 assert "otlp_grpc:" in values, "generated Helm values should use the OTLP gRPC exporter ID"
-assert 'set(datapoint.attributes["oksg_source"]' in values, "source tagging must use explicit datapoint context"
-assert 'set(attributes["oksg_source"]' not in values, "ambiguous OTTL attribute paths must not be generated"
+assert 'set(datapoint.attributes["karthos_source"]' in values, "source tagging must use explicit datapoint context"
+assert 'set(attributes["karthos_source"]' not in values, "ambiguous OTTL attribute paths must not be generated"
 assert "metrics_flush_interval: 15s" in values, "servicegraph should flush on the configured 15s ticker"
 print("✓ Generated collector values include service_graph wiring")
 PY
@@ -111,7 +111,7 @@ expected_edges = {
 
 def query(metric):
     selectors = " or ".join(
-        f'{metric}{{source="traces.servicegraph",temporality!="delta",oksg_unit="count",edge_client="{client}",edge_server="{server}"}}'
+        f'{metric}{{source="traces.servicegraph",temporality!="delta",karthos_unit="count",edge_client="{client}",edge_server="{server}"}}'
         for client, server in sorted(expected_edges)
     )
     promql = (
@@ -165,14 +165,14 @@ import time
 import urllib.request
 
 controlled_participants = {
-    ("oksg-demo", "gateway-go"),
-    ("oksg-demo", "service-a-python"),
-    ("oksg-demo", "service-b-node"),
+    ("karthos-demo", "gateway-go"),
+    ("karthos-demo", "service-a-python"),
+    ("karthos-demo", "service-b-node"),
 }
 expected_calls = [
-    (("oksg-demo", "gateway-go"), ("oksg-demo", "service-a-python")),
-    (("oksg-demo", "gateway-go"), ("oksg-demo", "service-b-node")),
-    (("oksg-demo", "service-a-python"), ("oksg-demo", "service-b-node")),
+    (("karthos-demo", "gateway-go"), ("karthos-demo", "service-a-python")),
+    (("karthos-demo", "gateway-go"), ("karthos-demo", "service-b-node")),
+    (("karthos-demo", "service-a-python"), ("karthos-demo", "service-b-node")),
 ]
 deadline = time.time() + 330
 graph = {}
@@ -218,11 +218,11 @@ fixture_nodes = {
     (node.get("kind"), node.get("labels", {}).get("namespace"), node.get("labels", {}).get("name")): node["id"]
     for node in nodes
 }
-namespace = fixture_nodes[("namespace", "oksg-demo", "oksg-demo")]
-workload = fixture_nodes[("workload", "oksg-demo", "config-bundle")]
-config_map = fixture_nodes[("configmap", "oksg-demo", "bundle-config")]
-secret = fixture_nodes[("secret", "oksg-demo", "bundle-secret")]
-pvc = fixture_nodes[("pvc", "oksg-demo", "bundle-cache")]
+namespace = fixture_nodes[("namespace", "karthos-demo", "karthos-demo")]
+workload = fixture_nodes[("workload", "karthos-demo", "config-bundle")]
+config_map = fixture_nodes[("configmap", "karthos-demo", "bundle-config")]
+secret = fixture_nodes[("secret", "karthos-demo", "bundle-secret")]
+pvc = fixture_nodes[("pvc", "karthos-demo", "bundle-cache")]
 relations = {(edge.get("source"), edge.get("target"), edge.get("relation")) for edge in edges}
 assert (namespace, workload, "contains") in relations
 assert (workload, config_map, "uses") in relations
@@ -266,7 +266,7 @@ def edge_values(result):
 
 def exact_edge_query(metric):
     selectors = " or ".join(
-        f'{metric}{{source="traces.servicegraph",temporality!="delta",oksg_unit="count",edge_client="{client}",edge_server="{server}"}}'
+        f'{metric}{{source="traces.servicegraph",temporality!="delta",karthos_unit="count",edge_client="{client}",edge_server="{server}"}}'
         for client, server in sorted(expected_edges)
     )
     return f"sum by (edge_client,edge_server) ({selectors})"

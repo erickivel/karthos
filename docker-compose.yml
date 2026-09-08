@@ -1,5 +1,5 @@
 services:
-  oksg-frontend:
+  karthos-frontend:
     build:
       context: ./web
       dockerfile: Dockerfile.dev
@@ -15,7 +15,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  oksg-playwright:
+  karthos-playwright:
     image: mcr.microsoft.com/playwright:v1.59.1-noble
     working_dir: /app
     volumes:

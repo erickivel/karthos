@@ -21,7 +21,7 @@ sequenceDiagram
     participant Workload as Workload / Kubelet
     participant Agent as Agent Collector
     participant Gateway as Gateway Collector
-    participant Backend as OKSG Backend
+    participant Backend as Karthos Backend
     participant Builder as EnvelopeBuilder
     participant Router as SignalRouter
     participant NI as NormalizingIngestor
@@ -263,7 +263,7 @@ Operational notes:
 
 ### 3. Backend OTLP Ingest
 
-The OKSG backend is the OKSG-owned runtime that accepts forwarded telemetry and drives the normalization pipeline.
+The Karthos backend is the Karthos-owned runtime that accepts forwarded telemetry and drives the normalization pipeline.
 
 What it does today:
 
@@ -276,9 +276,9 @@ What it does today:
 
 `backend.grpcPort` is the single Helm value for this path. It defaults to
 `4317`, configures the backend listener and Service, and is propagated to the
-gateway as `OKSG_BACKEND_GRPC_ENDPOINT` for Collector configuration expansion.
+gateway as `KARTHOS_BACKEND_GRPC_ENDPOINT` for Collector configuration expansion.
 
-The `--cluster-name` flag (or `OKSG_CLUSTER_NAME` env var) controls the cluster name used for entity ID computation. It defaults to `default`.
+The `--cluster-name` flag (or `KARTHOS_CLUSTER_NAME` env var) controls the cluster name used for entity ID computation. It defaults to `default`.
 
 Operational notes:
 
@@ -292,7 +292,7 @@ Operational notes:
 The backend serves a scalar metrics API, so OTLP metrics are normalized into canonical samples before storage and query:
 
 - Gauge and Sum datapoints are copied as scalar samples, then multiplied by the configured conversion factor. Delta-valued datapoints remain incremental and carry `temporality=delta`; VictoriaMetrics deduplicates exact retry replays, and query construction derives their rates with `sum_over_time()/window_seconds`.
-- Histogram datapoints are stored as raw `_sum` / `_count` samples. Delta histograms keep their incremental sum/count values and the same `temporality=delta` label on both series. Datapoints with `count == 0` are skipped. Query-time means match the two branches on every semantic dimension while ignoring only the internal `oksg_unit` storage label: `_sum` is measured in the metric's physical unit while `_count` is necessarily measured in `count`.
+- Histogram datapoints are stored as raw `_sum` / `_count` samples. Delta histograms keep their incremental sum/count values and the same `temporality=delta` label on both series. Datapoints with `count == 0` are skipped. Query-time means match the two branches on every semantic dimension while ignoring only the internal `karthos_unit` storage label: `_sum` is measured in the metric's physical unit while `_count` is necessarily measured in `count`.
 - Application Prometheus HTTP metrics are scraped once by the singleton gateway through static Kubernetes Service DNS targets and attach to the canonical Service entity. Discovery requires `prometheus.io/port` to identify a declared Service port. Samples preserve that port, metrics path, namespace, service, and HTTP labels; Kubernetes performs the Service-port to `targetPort` translation.
 - Servicegraph-derived metrics preserve `edge_client`, `edge_server`, `edge_client_id`, `edge_server_id`, `failed`, valid `connection_type`, separate `virtual_node`, generic method/status when emitted, distinct `client_http_method` / `server_http_method`, and namespace labels so edge queries can join runtime telemetry back onto topology edges without collapsing request contexts.
 - The gateway servicegraph connector flushes metrics every 15 seconds and retains unmatched spans for 30 seconds so independently batched client/server exports can be paired before an edge expires.
@@ -364,7 +364,7 @@ catalog assignment projection without rerunning arbitration. It then constructs
 one `MetricSourcePolicy` from that plan and shares it with the normalizer and
 metric calls topology builder.
 
-Before entity resolution, the shared `MetricSourcePolicy` requires every recognized canonical datapoint to carry a registered `oksg.source` or `oksg_source` and enforces its assigned winner. Invalid datapoints are dropped while valid siblings continue in the acknowledged batch. Metric calls topology uses the same decision, so invalid servicegraph datapoints cannot create edges. See [metrics-pipeline.md](metrics-pipeline.md) for the full contract.
+Before entity resolution, the shared `MetricSourcePolicy` requires every recognized canonical datapoint to carry a registered `karthos.source` or `karthos_source` and enforces its assigned winner. Invalid datapoints are dropped while valid siblings continue in the acknowledged batch. Metric calls topology uses the same decision, so invalid servicegraph datapoints cannot create edges. See [metrics-pipeline.md](metrics-pipeline.md) for the full contract.
 
 ## Runtime View
 
@@ -388,7 +388,7 @@ Gateway Collector
   - batch
         |
         v
-OKSG Backend
+Karthos Backend
   - OTLP gRPC ingest
   - Raw envelope build
   - Signal routing
@@ -424,8 +424,8 @@ REST API Server (:8080) — all list endpoints support cursor-based pagination
 ## Debugging Commands
 
 ```bash
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=agent --tail=50
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=gateway --tail=50
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=backend --tail=50
-kubectl get pods,svc,endpoints -n oksg-system
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=agent --tail=50
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=gateway --tail=50
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=backend --tail=50
+kubectl get pods,svc,endpoints -n karthos-system
 ```

@@ -7,7 +7,7 @@ function node(overrides: Partial<GraphNode> = {}): GraphNode {
     id: 'workload-gateway',
     kind: 'workload',
     name: 'gateway-go',
-    namespace: 'oksg-demo',
+    namespace: 'karthos-demo',
     cluster: 'remote-k3s',
     status: 'unknown',
     labels: { 'k8s.workload.type': 'deployment' },
@@ -30,7 +30,7 @@ describe('presentEntityNode', () => {
   it('keeps the namespace signal in ungrouped views', () => {
     expect(presentEntityNode(node(), 'traffic').signal).toEqual({
       label: 'Namespace',
-      value: 'oksg-demo',
+      value: 'karthos-demo',
       tone: 'info',
     })
   })

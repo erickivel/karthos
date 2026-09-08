@@ -124,7 +124,7 @@ Each telemetry-capable static module exposes one parser:
 Parse(rawMetricName string, attributes map[string]string) (contract.ParsedMetric, bool)
 ```
 
-The parser is selected only by the datapoint's `oksg_source` / `oksg.source`
+The parser is selected only by the datapoint's `karthos_source` / `karthos.source`
 stamp. It recognizes its own raw names, expands source facts such as host
 disk/network direction and Kubernetes node conditions, and returns the final
 canonical name plus any raw-unit conversion. It rejects names outside that
@@ -188,14 +188,14 @@ adapter renders the resulting receivers and connectors. When an active sidecar
 Istio source wins all `servicegraph.*` metrics, the generic plan keeps trace
 intake requested by the available servicegraph module but omits the derived
 servicegraph requirement, so the OTel adapter omits the `service_graph`
-connector. The adapter installs `transform/oksg-source` only on
-collector-owned receiver/connector pipelines, where it stamps `oksg_source`
+connector. The adapter installs `transform/karthos-source` only on
+collector-owned receiver/connector pipelines, where it stamps `karthos_source`
 from the receiver-determined wire-name namespace. OTLP metrics use separate
 `metrics/otlp` pipelines without inferred stamping: already-stamped agent
 metrics pass through, while direct external producers must supply a registered
 source or the backend rejects them. Application
-Prometheus and Istio scrape jobs also stamp `oksg_source` at scrape time via
-`relabel_configs`, using the Prometheus-safe `oksg_source` label that the
+Prometheus and Istio scrape jobs also stamp `karthos_source` at scrape time via
+`relabel_configs`, using the Prometheus-safe `karthos_source` label that the
 backend later normalizes to the `source` attribute. Application Prometheus jobs
 run on the singleton gateway, require an annotation naming a declared Service
 port, use static `<service>.<namespace>.svc.cluster.local:<service-port>` targets, and
@@ -211,7 +211,7 @@ a classic regular container or a Kubernetes native sidecar init container with
 `restartPolicy: Always`. A partial mesh is detected when a non-system
 controller-owned workload Pod is outside an injected namespace, explicitly sets
 `sidecar.istio.io/inject: "false"`, or lacks one of those supported proxy
-layouts. Kubernetes, Istio control-plane, and OKSG namespaces are excluded from
+layouts. Kubernetes, Istio control-plane, and Karthos namespaces are excluded from
 that comparison. Ambient mode remains unsupported because it has no per-Pod
 proxy scrape contract. Partial meshes globally disable `mesh.istio` and its
 scrape job.
@@ -362,8 +362,8 @@ counter rate/increase behavior. API-facing output remains unchanged.
 
 `pkg/core/semconv/keys.go` centralizes the OTLP attribute keys used across
 ingest and topology builders (`k8s.pod.name`, `peer.service`,
-`k8s.persistentvolumeclaim.name`, mesh-specific keys, the `oksg.source` and
-`oksg_source` attribute names, etc.). Updating an attribute key happens in
+`k8s.persistentvolumeclaim.name`, mesh-specific keys, the `karthos.source` and
+`karthos_source` attribute names, etc.). Updating an attribute key happens in
 one place and any code that imports `pkg/core/semconv` benefits.
 
 ## 6. End-to-End Example: `servicegraph.request.count`
@@ -386,14 +386,14 @@ Pipeline for a complete active sidecar Istio mesh:
 3. **Planner** does **not** wire the `service_graph` connector because
    `traces.servicegraph` is absent from `SelectedSources`. It configures the
    `mesh-istio` Prometheus scrape job and
-   the `transform/oksg-source` processor.
+   the `transform/karthos-source` processor.
 4. **Agent** scrapes `istio-proxy:15020/stats/prometheus` only when the target
    Pod is on that agent's `K8S_NODE_NAME`. The relabel rule stamps
-   `oksg_source=mesh.istio`. The agent forwards OTLP to the gateway, the
+   `karthos_source=mesh.istio`. The agent forwards OTLP to the gateway, the
    gateway to the backend.
 5. **Backend OTLPNormalizer** runs. The Istio parser rewrites
    `istio_requests_total` to `servicegraph.request.count`. The assignment
-   filter accepts the sample because `oksg_source` matches the assigned
+   filter accepts the sample because `karthos_source` matches the assigned
    source. The unit map applies the duration ms→ns conversion when the
    companion `servicegraph.request.duration` arrives.
 6. **MetricCallsTopologyBuilder** parses the same envelope after source-policy
@@ -428,7 +428,7 @@ For each upstream OTel receiver (kubeletstats, hostmetrics, k8s_cluster,
 prometheus, servicegraph connector, istio scrape):
 
 - Open the receiver's `metadata.yaml` at the contrib version pinned in
-  `deploy/helm/oksg-otel/values.yaml` (search the file for `tag:`) and
+  `deploy/helm/karthos/values.yaml` (search the file for `tag:`) and
   confirm the metric appears under `metrics:` with `enabled: true`.
 - If `enabled: false` (common — e.g. `system.cpu.utilization` in the
   hostmetrics cpu scraper), add the semantic requirement in its source
@@ -454,7 +454,7 @@ If the wire name and the catalog canonical differ:
   round-trip normalizer test that feeds the stamped raw OTLP name and asserts
   the canonical sample.
 
-### Step 3 — OTTL source tagger: stamp `oksg_source` correctly
+### Step 3 — OTTL source tagger: stamp `karthos_source` correctly
 
 `sourceTagger` in `pkg/adapters/otel/compiler.go` renders the generic source
 stamp selectors on
@@ -467,7 +467,7 @@ Two consequences:
   are dead code. `^k8s\.container\.` at the gateway only matches
   k8s_cluster output (kubeletstats container metrics arrive as raw
   `container.*`, not `k8s.container.*`).
-- The first matching rule wins (`datapoint.attributes["oksg_source"] == nil`
+- The first matching rule wins (`datapoint.attributes["karthos_source"] == nil`
   guard). Rule ordering matters when prefixes overlap. Place specific
   rules before broad ones.
 
@@ -513,7 +513,7 @@ merging, redeploy to kind and verify both layers:
 - VictoriaMetrics has the Prometheus-translated name. Port-forward
   is not needed; exec into the VM pod:
   ```
-  kubectl exec -n oksg-system oksg-otel-victoria-metrics-single-server-0 -- \
+  kubectl exec -n karthos-system karthos-victoria-metrics-single-server-0 -- \
     wget -qO- 'http://127.0.0.1:8428/api/v1/label/__name__/values' \
     | python3 -c "import json,sys; print('<your_metric_underscore_form>' in json.load(sys.stdin)['data'])"
   ```

@@ -3,9 +3,9 @@ package persistence
 import (
 	"sort"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/topology"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 func cloneStringMap(values map[string]string) map[string]string {

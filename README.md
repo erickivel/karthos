@@ -1,6 +1,6 @@
-# OKSG — Observability-Driven Kubernetes System Graph
+# Karthos - Kubernetes Data Foundation
 
-OKSG turns OpenTelemetry-driven cluster discovery and runtime telemetry into a
+Karthos turns OpenTelemetry-driven cluster discovery and runtime telemetry into a
 live, queryable system graph: services, workloads, pods, nodes, and the
 relations between them, with metrics attached to nodes and edges.
 
@@ -34,7 +34,7 @@ relations between them, with metrics attached to nodes and edges.
 | `pkg/core/{entities,topology,schema}` | Canonical entity / topology / envelope types |
 | `pkg/discovery/profile` | Capability-only ClusterProfile contract and bounded evidence types |
 | `web/` | React frontend (Vite + TypeScript) |
-| `deploy/helm/oksg-otel` | Helm chart packaging agent, gateway, backend, frontend, and optional storage subcharts |
+| `deploy/helm/karthos` | Helm chart packaging agent, gateway, backend, frontend, and optional storage subcharts |
 | `test/e2e/{apps,scenarios,kind}` | Demo fixtures (`base`, `with-prometheus`, `with-istio`) and scenario scripts |
 
 ## Prerequisites
@@ -73,7 +73,7 @@ task test:e2e:scenario:fallback           # strict direct-source baseline
 ```
 
 Targeting a remote k3s cluster (or any other supported cell) is a
-`CLUSTER_PROFILE` switch in `.env` — see [docs/remote-cluster.md](docs/remote-cluster.md).
+`CLUSTER_PROFILE` switch in `.env`; see [docs/remote-cluster.md](docs/remote-cluster.md).
 
 Step-by-step (`fixture deploy → discover → apply-otel → verify`) is documented
 in [docs/testing.md](docs/testing.md).
@@ -96,7 +96,7 @@ Local port convention:
 ```bash
 task web:e2e:install
 task web:dev
-kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080
+kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080
 task web:e2e
 task web:e2e:update          # refresh committed screenshot baselines
 ```

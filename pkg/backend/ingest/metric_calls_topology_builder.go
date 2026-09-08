@@ -9,13 +9,13 @@ import (
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/core/semconv"
-	"github.com/erickivel/oksg/pkg/core/topology"
-	"github.com/erickivel/oksg/pkg/sources"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 // MetricCallsTopologyBuilder derives calls edges from metrics classified by
@@ -141,7 +141,7 @@ func metricAttributeSets(metric *metricspb.Metric) []metricAttributeSet {
 }
 
 func sourceFromAttrs(attrs []*commonpb.KeyValue) string {
-	return firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm)
+	return firstKVString(attrs, semconv.AttrKarthosSource, semconv.AttrKarthosSourceProm)
 }
 
 func mergeStringMaps(left, right map[string]string) map[string]string {

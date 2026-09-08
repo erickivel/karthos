@@ -4,8 +4,8 @@ import (
 	"context"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 
-	"github.com/erickivel/oksg/pkg/sources"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 func applySourceNormalization(ctx context.Context, modules sources.Registry, resolver EntityResolver, plan *contract.Plan) error {

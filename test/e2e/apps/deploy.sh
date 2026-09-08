@@ -15,7 +15,7 @@ if [[ "${VARIANT}" == "with-prometheus" || "${VARIANT}" == "with-istio" ]]; then
   APP_SOURCE_DIR="${SCRIPT_DIR}/instrumented"
 fi
 IMAGE_LOAD="${REPO_ROOT}/test/e2e/cluster/image.sh"
-RENDERED_DIR="$(mktemp -d -t oksg-e2e-apps.XXXXXX)"
+RENDERED_DIR="$(mktemp -d -t karthos-e2e-apps.XXXXXX)"
 trap 'rm -rf "${RENDERED_DIR}"' EXIT
 
 if [[ ! -d "${VARIANT_DIR}" ]]; then
@@ -70,28 +70,28 @@ if [[ "${CLUSTER_ENGINE}" == "k3s" ]]; then
   fi
   echo "remote k3s profile: mapping kind fixture node selectors to ${REMOTE_NODE_NAME}"
   sed -i.bak \
-    -e "s/oksg-test-control-plane/${REMOTE_NODE_NAME}/g" \
-    -e "s/oksg-test-worker/${REMOTE_NODE_NAME}/g" \
+    -e "s/karthos-test-control-plane/${REMOTE_NODE_NAME}/g" \
+    -e "s/karthos-test-worker/${REMOTE_NODE_NAME}/g" \
     "${RENDERED_APPS}"
   rm -f "${RENDERED_APPS}.bak"
-  kubectl delete pod ops-toolbox -n oksg-sparse --ignore-not-found
+  kubectl delete pod ops-toolbox -n karthos-sparse --ignore-not-found
 fi
 
 kubectl apply -f "${RENDERED_APPS}"
 active_deployments=()
 while IFS= read -r deployment; do
-  replicas="$(kubectl get "${deployment}" -n oksg-demo -o jsonpath='{.spec.replicas}')"
+  replicas="$(kubectl get "${deployment}" -n karthos-demo -o jsonpath='{.spec.replicas}')"
   if [[ "${replicas:-1}" == "0" ]]; then
     continue
   fi
   active_deployments+=("${deployment}")
-  kubectl rollout restart -n oksg-demo "${deployment}"
-done < <(kubectl get deployments -n oksg-demo -o name)
+  kubectl rollout restart -n karthos-demo "${deployment}"
+done < <(kubectl get deployments -n karthos-demo -o name)
 
 for deployment in "${active_deployments[@]}"; do
-  kubectl rollout status -n oksg-demo "${deployment}" --timeout=120s
+  kubectl rollout status -n karthos-demo "${deployment}" --timeout=120s
 done
 
-if kubectl get pod ops-toolbox -n oksg-sparse >/dev/null 2>&1; then
-  kubectl wait --for=condition=ready pod/ops-toolbox -n oksg-sparse --timeout=120s
+if kubectl get pod ops-toolbox -n karthos-sparse >/dev/null 2>&1; then
+  kubectl wait --for=condition=ready pod/ops-toolbox -n karthos-sparse --timeout=120s
 fi

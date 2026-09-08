@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-prometheus-run-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-prometheus-run-test.XXXXXX)"
 cleanup() {
   local status=$?
   rm -rf "${TMPDIR_TEST}"

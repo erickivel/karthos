@@ -2,10 +2,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "oksg-otel.frontendConfigName" . }}
-  namespace: {{ include "oksg-otel.namespace" . }}
+  name: {{ include "karthos.frontendConfigName" . }}
+  namespace: {{ include "karthos.namespace" . }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "frontend") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "frontend") | nindent 4 }}
 data:
   default.conf: |
     server {
@@ -16,7 +16,7 @@ data:
         index index.html;
 
         location /api/ {
-            proxy_pass http://{{ include "oksg-otel.backendName" . }}:{{ .Values.backend.service.apiPort }};
+            proxy_pass http://{{ include "karthos.backendName" . }}:{{ .Values.backend.service.apiPort }};
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-reset-all-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-reset-all-test.XXXXXX)"
 cleanup() {
   local status=$?
   rm -rf "${TMPDIR_TEST}"
@@ -45,7 +45,7 @@ if RESET_ALL_ISTIO_STATE=external task test:e2e:reset-all >"${TMPDIR_TEST}/reset
   exit 1
 fi
 
-if ! grep -Fq 'not owned by the OKSG E2E harness' "${TMPDIR_TEST}/reset-all.out"; then
+if ! grep -Fq 'not owned by the Karthos E2E harness' "${TMPDIR_TEST}/reset-all.out"; then
   cat "${TMPDIR_TEST}/reset-all.out" >&2
   exit 1
 fi
@@ -64,8 +64,8 @@ first_action="$(head -n1 "${RESET_ALL_ACTION_LOG}")"
   exit 1
 }
 grep -Fx 'kubectl delete namespace istio-system --ignore-not-found' "${RESET_ALL_ACTION_LOG}"
-grep -Fx 'helm uninstall oksg-otel --namespace oksg-system' "${RESET_ALL_ACTION_LOG}"
-grep -Fx 'kubectl delete pvc data-oksg-otel-postgresql-0 --namespace oksg-system --ignore-not-found' "${RESET_ALL_ACTION_LOG}"
-grep -Fx 'kubectl delete namespace oksg-demo --ignore-not-found' "${RESET_ALL_ACTION_LOG}"
+grep -Fx 'helm uninstall karthos --namespace karthos-system' "${RESET_ALL_ACTION_LOG}"
+grep -Fx 'kubectl delete pvc data-karthos-postgresql-0 --namespace karthos-system --ignore-not-found' "${RESET_ALL_ACTION_LOG}"
+grep -Fx 'kubectl delete namespace karthos-demo --ignore-not-found' "${RESET_ALL_ACTION_LOG}"
 
 echo "strict fallback rejects external Istio and resets E2E-owned Istio first: PASS"

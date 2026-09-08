@@ -1,8 +1,8 @@
 package kubecluster
 
 import (
-	"github.com/erickivel/oksg/pkg/core/semconv"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 func Parse(rawMetricName string, attributes map[string]string) (contract.ParsedMetric, bool) {

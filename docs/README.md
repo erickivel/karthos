@@ -1,6 +1,6 @@
-# OKSG Documentation
+# Karthos Documentation
 
-Implementation documentation for OKSG. Treat these files as the source of
+Implementation documentation for Karthos. Treat these files as the source of
 truth: when code changes invalidate text, commands, diagrams, or examples,
 update them in the same change.
 
@@ -17,7 +17,7 @@ update them in the same change.
 | [Testing](testing.md) | Unit tests, kind-based e2e tasks, scenario validation |
 | [Development](development.md) | Project structure, common commands, frontend dev loop |
 | [Remote Cluster](remote-cluster.md) | Cluster profiles and supported kind/local and k3s/ssh cells |
-| [Postman Collection](postman/oksg-api-v1.postman_collection.json) | Importable `/api/v1` request collection |
+| [Postman Collection](postman/karthos-api-v1.postman_collection.json) | Importable `/api/v1` request collection |
 
 ## Quick Links
 

@@ -1,12 +1,12 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ printf "%s-gateway" (include "oksg-otel.name" .) }}
+  name: {{ printf "%s-gateway" (include "karthos.name" .) }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
 rules:
   - apiGroups: [""]
-    # The pinned k8s_cluster receiver watches resourcequotas even though OKSG
+    # The pinned k8s_cluster receiver watches resourcequotas even though Karthos
     # explicitly disables the unsupported ResourceQuota metric family.
     resources: ["nodes", "pods", "namespaces", "services", "endpoints", "resourcequotas", "replicationcontrollers"]
     verbs: ["get", "list", "watch"]
@@ -23,14 +23,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ printf "%s-gateway" (include "oksg-otel.name" .) }}
+  name: {{ printf "%s-gateway" (include "karthos.name" .) }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ printf "%s-gateway" (include "oksg-otel.name" .) }}
+  name: {{ printf "%s-gateway" (include "karthos.name" .) }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "oksg-otel.gatewayName" . }}
-    namespace: {{ include "oksg-otel.namespace" . }}
+    name: {{ include "karthos.gatewayName" . }}
+    namespace: {{ include "karthos.namespace" . }}

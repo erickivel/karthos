@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-fallback-run-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-fallback-run-test.XXXXXX)"
 cleanup() {
   local status=$?
   rm -rf "${TMPDIR_TEST}"
@@ -44,7 +44,7 @@ EOF
 
 export PATH="${TMPDIR_TEST}/bin:${PATH}"
 export FALLBACK_TEST_TASK_LOG="${TMPDIR_TEST}/task.log"
-export OKSG_E2E_OUTPUT_DIR="${TMPDIR_TEST}"
+export KARTHOS_E2E_OUTPUT_DIR="${TMPDIR_TEST}"
 
 cd "${TMPDIR_TEST}/work"
 bash "${REPO_ROOT}/test/e2e/scenarios/no-telemetry/run.sh"

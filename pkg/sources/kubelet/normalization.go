@@ -2,9 +2,9 @@ package kubelet
 
 import (
 	"context"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/semconv"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 	"strings"
 )
 

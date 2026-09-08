@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-platform-images-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-platform-images-test.XXXXXX)"
 cleanup() {
   local status=$?
   rm -rf "${TMPDIR_TEST}"
@@ -11,7 +11,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export OKSG_IMAGE_TAG_OVERRIDE=run-tag
+export KARTHOS_IMAGE_TAG_OVERRIDE=run-tag
 cd "${REPO_ROOT}"
 # shellcheck disable=SC1091
 . "${REPO_ROOT}/test/e2e/cluster/profile.sh"
@@ -60,8 +60,8 @@ bash "${REPO_ROOT}/test/e2e/prepare-platform-images.sh"
 
 actual_pushes="$(grep '^remote docker push ' "${PLATFORM_TEST_LOG}" | sort)"
 expected_pushes="$(printf '%s\n' \
-  "remote docker push ${PLATFORM_TEST_REGISTRY}/oksg-backend:run-tag" \
-  "remote docker push ${PLATFORM_TEST_REGISTRY}/oksg-frontend:run-tag" | sort)"
+  "remote docker push ${PLATFORM_TEST_REGISTRY}/karthos-backend:run-tag" \
+  "remote docker push ${PLATFORM_TEST_REGISTRY}/karthos-frontend:run-tag" | sort)"
 [[ "${actual_pushes}" == "${expected_pushes}" ]]
 
 echo "platform image preparation uses only platform images: PASS"

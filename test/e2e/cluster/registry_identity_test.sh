@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-registry-identity-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-registry-identity-test.XXXXXX)"
 cleanup() {
   local status=$?
   rm -rf "${TMPDIR_TEST}"
@@ -59,7 +59,7 @@ export REGISTRY_TEST_LOG="${TMPDIR_TEST}/commands.log"
 export REGISTRY_TEST_MANIFEST="${TMPDIR_TEST}/registry-config.yaml"
 
 bash "${TMPDIR_TEST}/kind/setup.sh" fixture-cluster
-grep -Fx 'docker run -d --restart=always -p 127.0.0.1:5001:5000 --name oksg-kind-registry registry:2' "${REGISTRY_TEST_LOG}"
+grep -Fx 'docker run -d --restart=always -p 127.0.0.1:5001:5000 --name karthos-kind-registry registry:2' "${REGISTRY_TEST_LOG}"
 grep -Fqx '    host: "localhost:5001"' "${REGISTRY_TEST_MANIFEST}"
 
 printf '%s\n' 'CLUSTER_PROFILE=fixture' >"${TMPDIR_TEST}/k3s/.env"

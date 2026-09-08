@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-image-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-image-test.XXXXXX)"
 cleanup() {
   local status=$?
   if [[ "$status" -ne 0 && -f "${IMAGE_TEST_LOG:-}" ]]; then

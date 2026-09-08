@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: mesh-protocol-client
-  namespace: oksg-demo
+  namespace: karthos-demo
 spec:
   backoffLimit: 0
   template:

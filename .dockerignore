@@ -20,4 +20,4 @@ docs/
 test/
 web/
 schemas/
-deploy/helm/oksg-otel/charts/
+deploy/helm/karthos/charts/

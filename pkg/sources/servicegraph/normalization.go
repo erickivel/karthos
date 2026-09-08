@@ -6,8 +6,8 @@ import (
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 
-	"github.com/erickivel/oksg/pkg/core/semconv"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 func Normalize(ctx context.Context, resolver contract.EntityResolver, plan *contract.Plan) error {

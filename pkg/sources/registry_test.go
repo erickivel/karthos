@@ -9,11 +9,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/collector/spec"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/semconv"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources/detection"
+	"github.com/erickivel/karthos/pkg/collector/spec"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources/detection"
 )
 
 func TestDefaultRegistryContainsEveryCompiledModuleExactlyOnce(t *testing.T) {
@@ -142,9 +142,9 @@ func TestDefaultRegistryDetectsEveryCompiledModuleFromOneInventory(t *testing.T)
 		Nodes:            []corev1.Node{{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}},
 		Services: []corev1.Service{{
 			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo", Annotations: map[string]string{
-				"prometheus.io/scrape": "true",
-				"prometheus.io/port":   "8080",
-				"oksg.io/otlp-traces":  "true",
+				"prometheus.io/scrape":   "true",
+				"prometheus.io/port":     "8080",
+				"karthos.io/otlp-traces": "true",
 			}},
 			Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}, {Port: 4317}}},
 		}},

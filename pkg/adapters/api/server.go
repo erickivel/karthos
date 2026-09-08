@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/logging"
 )
 
 // Config holds the API server configuration. All store fields are interfaces;

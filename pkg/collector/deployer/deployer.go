@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	DefaultReleaseName = "oksg-otel"
-	DefaultChartPath   = "./deploy/helm/oksg-otel"
+	DefaultReleaseName = "karthos"
+	DefaultChartPath   = "./deploy/helm/karthos"
 	DefaultTimeout     = 5 * time.Minute
 )
 
@@ -51,7 +51,7 @@ func (d *Deployer) Apply(ctx context.Context, values []byte, options Options) (e
 
 	options = withDefaults(options)
 
-	valuesFile, err := writeTempFile("oksg-values-*.yaml", values)
+	valuesFile, err := writeTempFile("karthos-values-*.yaml", values)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (d *Deployer) Template(ctx context.Context, values []byte, options Options)
 	}
 
 	options = withDefaults(options)
-	valuesFile, err := writeTempFile("oksg-values-*.yaml", values)
+	valuesFile, err := writeTempFile("karthos-values-*.yaml", values)
 	if err != nil {
 		return err
 	}

@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "oksg-otel.frontendName" . }}
-  namespace: {{ include "oksg-otel.namespace" . }}
+  name: {{ include "karthos.frontendName" . }}
+  namespace: {{ include "karthos.namespace" . }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "frontend") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "frontend") | nindent 4 }}
 spec:
   type: {{ .Values.frontend.service.type }}
   selector:
     app.kubernetes.io/component: frontend
-    app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
+    app.kubernetes.io/name: {{ include "karthos.name" . }}
   ports:
     - port: {{ .Values.frontend.service.port }}
       targetPort: http

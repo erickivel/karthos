@@ -1,17 +1,17 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "oksg-otel.agentName" . }}
-  namespace: {{ include "oksg-otel.namespace" . }}
+  name: {{ include "karthos.agentName" . }}
+  namespace: {{ include "karthos.namespace" . }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ printf "%s-agent" (include "oksg-otel.name" .) }}
+  name: {{ printf "%s-agent" (include "karthos.name" .) }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
 rules:
   - apiGroups: [""]
     resources: ["nodes", "nodes/proxy", "nodes/stats", "pods", "namespaces", "services", "endpoints"]
@@ -26,14 +26,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ printf "%s-agent" (include "oksg-otel.name" .) }}
+  name: {{ printf "%s-agent" (include "karthos.name" .) }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ printf "%s-agent" (include "oksg-otel.name" .) }}
+  name: {{ printf "%s-agent" (include "karthos.name" .) }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "oksg-otel.agentName" . }}
-    namespace: {{ include "oksg-otel.namespace" . }}
+    name: {{ include "karthos.agentName" . }}
+    namespace: {{ include "karthos.namespace" . }}

@@ -10,12 +10,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/topology"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 func TestParseConfigAppliesDefaults(t *testing.T) {
@@ -47,12 +47,12 @@ func TestParseConfigRejectsUnknownSignal(t *testing.T) {
 func TestParseConfigStorageFlags(t *testing.T) {
 	cfg, err := parseConfig([]string{
 		"--storage-backend=external",
-		"--postgres-dsn=postgres://localhost/oksg",
+		"--postgres-dsn=postgres://localhost/karthos",
 		"--victoriametrics-url=http://localhost:8428",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "external", cfg.StorageBackend)
-	require.Equal(t, "postgres://localhost/oksg", cfg.PostgresDSN)
+	require.Equal(t, "postgres://localhost/karthos", cfg.PostgresDSN)
 	require.Equal(t, "http://localhost:8428", cfg.VMURL)
 }
 

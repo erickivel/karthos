@@ -6,7 +6,7 @@ import requests
 app = Flask(__name__)
 SERVICE_B_URL = os.getenv(
     "SERVICE_B_URL",
-    "http://service-b-node.oksg-demo.svc.cluster.local:8082/compute",
+    "http://service-b-node.karthos-demo.svc.cluster.local:8082/compute",
 )
 
 

@@ -4,7 +4,7 @@ The dev/test loop is profile-driven. Switching clusters is one variable in
 `.env`:
 
 ```
-CLUSTER_PROFILE=oksg-test      # kind+local (default)
+CLUSTER_PROFILE=karthos-test      # kind+local (default)
 CLUSTER_PROFILE=<your-name>    # k3s on a remote Ubuntu host over SSH
                                # (after copying .env.d/remote-k3s.example.env)
 ```
@@ -104,17 +104,17 @@ containerd mirrors `localhost:5001` to it.
 │            │                                                  │
 │            ▼                                                  │
 │   ┌─────────────────────────┐                                 │
-│   │ registry:2              │   "oksg-kind-registry"          │
+│   │ registry:2              │   "karthos-kind-registry"          │
 │   │ 127.0.0.1:5001 → :5000  │◄──┐                             │
 │   └─────────────────────────┘   │ image pulls                 │
 │            ▲                    │                             │
 │            │ kubectl/helm       │                             │
 │            │                    │                             │
 │   ┌────────┴────────────────────┴──────────────┐              │
-│   │ kind cluster "oksg-test"                   │              │
+│   │ kind cluster "karthos-test"                   │              │
 │   │   control-plane node + worker node         │              │
 │   │   containerd mirrors localhost:5001 →      │              │
-│   │     http://oksg-kind-registry:5000         │              │
+│   │     http://karthos-kind-registry:5000         │              │
 │   └────────────────────────────────────────────┘              │
 │            ▲                                                  │
 │            │ kubectl port-forward 18081:8080                  │
@@ -126,7 +126,7 @@ containerd mirrors `localhost:5001` to it.
 ╰───────────────────────────────────────────────────────────────╯
 ```
 
-Nothing to configure — `.env.d/oksg-test.env` is committed and selected by
+Nothing to configure — `.env.d/karthos-test.env` is committed and selected by
 default. The standard flow is unchanged:
 
 ```bash
@@ -140,7 +140,7 @@ task web:dev
 | Component                   | Where it runs            | Responsibility                      |
 |-----------------------------|--------------------------|-------------------------------------|
 | Docker daemon               | Laptop                   | Builds images, runs the registry container, runs kind nodes |
-| `registry:2` container      | Laptop (Docker)          | Holds the OKSG/demo images          |
+| `registry:2` container      | Laptop (Docker)          | Holds the Karthos/demo images          |
 | kind cluster (1 cp + 1 wk)  | Laptop (Docker containers)| Hosts the workloads under test     |
 | backend, otel, demo apps    | Laptop (kind cluster)    | The system under test               |
 | Vite dev server             | Laptop (Docker)          | Frontend HMR, proxies `/api` to backend port-forward |
@@ -162,7 +162,7 @@ pulls through its `registries.yaml` mirror.
 │                                       │          │   ┌──────────────────────────┐           │
 │  optional ssh -L (inspection only)   │          │   │ registry:2 container     │◄──┐       │
 │                                       │          │   │ 127.0.0.1:5001 → :5000   │   │       │
-│  kubectl (via                         │          │   │ "oksg-registry"          │   │       │
+│  kubectl (via                         │          │   │ "karthos-registry"          │   │       │
 │  ~/.kube/configs/                     │          │   └──────────────────────────┘   │       │
 │  remote-k3s.yaml)                     │          │           ▲ image pulls             │       │
 │                                       │          │   ┌───────┴──────────────────────┴───┐   │
@@ -196,7 +196,7 @@ The required image and API paths, plus the optional inspection path:
 | kubectl / helm              | Laptop              | Talks directly to k3s API on `K3S_SERVER_IP:6443`|
 | Vite dev server             | Laptop (Docker)     | Frontend HMR; `/api` → port-forward → API server |
 | Docker daemon (runtime)     | Server              | Loads streamed images, pushes them, and runs the in-cluster registry container |
-| `registry:2` ("oksg-registry") | Server (Docker)  | Holds the OKSG/demo images                    |
+| `registry:2` ("karthos-registry") | Server (Docker)  | Holds the Karthos/demo images                    |
 | k3s (single-node)           | Server              | Hosts the workloads under test                |
 | backend, otel, demo apps    | Server (k3s)        | The system under test                         |
 
@@ -250,7 +250,7 @@ exists on the laptop and an idempotent registry runs on the server.
    │ ssh <host> "systemctl is-active k3s"           ▶ (k3s alive)
    │
    │ ssh <host> "docker run -d ...                  ▶ ┌────────────┐
-   │              --name oksg-registry              ▶ │ registry:2 │
+   │              --name karthos-registry              ▶ │ registry:2 │
    │              -p 127.0.0.1:5001:5000            ▶ │ on :5001   │
    │              registry:2"                         └────────────┘
    │
@@ -308,7 +308,7 @@ VARIANT=base task test:e2e:deploy
 # apply-otel publishes the backend/frontend images through this cell first.
 task test:e2e:apply-otel
 task test:e2e:verify
-kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080 &
+kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080 &
 task web:dev                  # frontend hits the remote cluster
 
 # Optional: expose the remote registry locally for manual inspection.
@@ -317,7 +317,7 @@ task test:cluster:tunnel
 
 ### How it works (in words)
 
-- Image tags stay `localhost:5001/oksg-*`. For k3s, `image.sh` streams each
+- Image tags stay `localhost:5001/karthos-*`. For k3s, `image.sh` streams each
   local image to the remote Docker daemon, pushes it from that daemon, and
   verifies the pushed digest against the remote registry's
   `Docker-Content-Digest` response. No laptop registry tunnel is involved.
@@ -349,7 +349,7 @@ Common failures and what `doctor` says:
 - `ssh <host> not reachable` — check `~/.ssh/config` and your key.
 - `k3s service not active` — `ssh <host> sudo systemctl status k3s`.
 - `registries.yaml missing` — re-run `task test:e2e:setup`.
-- `oksg-registry container not running` — re-run `task test:e2e:setup`.
+- `karthos-registry container not running` — re-run `task test:e2e:setup`.
 - `remote registry not reachable from the k3s server` — re-run
   `task test:e2e:setup`; a laptop tunnel does not repair this condition.
 - `kubectl unreachable` — usually a TLS SAN mismatch. The doctor prints
@@ -361,6 +361,6 @@ Common failures and what `doctor` says:
 task test:e2e:teardown        # removes Helm release + demo namespaces (k3s),
                               # or destroys the kind cluster (kind)
 ./test/e2e/cluster/k3s/teardown.sh --full
-                              # (k3s only) also removes the oksg-registry container.
+                              # (k3s only) also removes the karthos-registry container.
                               # k3s itself is never touched by these scripts.
 ```

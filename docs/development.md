@@ -138,12 +138,12 @@ to the matching backend Service. Running that image by itself is unsupported.
 ## Discovery And Deployment Workflow
 
 ```bash
-./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=oksg-test --output=profile.json
-./bin/discovery-job --mode=plan --capability-profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest --frontend-image-repository=localhost:5001/oksg-frontend --frontend-image-tag=latest --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled
-./bin/discovery-job --mode=deploy --capability-profile=profile.json --values-output=otel-values.yaml --release-name=oksg-otel --chart-path=./deploy/helm/oksg-otel --namespace=oksg-system --backend-image-repository=localhost:5001/oksg-backend --backend-image-tag=latest --frontend-image-repository=localhost:5001/oksg-frontend --frontend-image-tag=latest --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled
+./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=karthos-test --output=profile.json
+./bin/discovery-job --mode=plan --capability-profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/karthos-backend --backend-image-tag=latest --frontend-image-repository=localhost:5001/karthos-frontend --frontend-image-tag=latest --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled
+./bin/discovery-job --mode=deploy --capability-profile=profile.json --values-output=otel-values.yaml --release-name=karthos --chart-path=./deploy/helm/karthos --namespace=karthos-system --backend-image-repository=localhost:5001/karthos-backend --backend-image-tag=latest --frontend-image-repository=localhost:5001/karthos-frontend --frontend-image-tag=latest --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled
 
 # Diagnose the Helm-deployed backend; it requires an in-cluster source contract.
-kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080
+kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080
 curl http://localhost:18081/api/v1/status
 ```
 
@@ -156,23 +156,23 @@ Notes:
 - `deploy` is the only supported deployment executor: it compiles, validates,
   writes the dynamic values overlay, and applies the release through Helm. It
   needs no post-deployment ConfigMap or rollout step.
-- `--collector-debug` (or `OKSG_COLLECTOR_DEBUG=true`) adds the fixed,
-  development-only `debug/oksg` exporter to every enabled agent and gateway
+- `--collector-debug` (or `KARTHOS_COLLECTOR_DEBUG=true`) adds the fixed,
+  development-only `debug/karthos` exporter to every enabled agent and gateway
   pipeline. It writes detailed batches to Collector stdout only; both planes
   intentionally produce duplicate diagnostic output. The exporter is alpha,
   so treat its log format as transient rather than an API contract.
 - Without `--storage-backend`, the chart's `memory` storage default remains in
   effect. `--storage-backend=external` requires both `--postgresql-mode` and
   `--victoriametrics-mode` (`bundled` or `remote`). Remote endpoints come from
-  the corresponding flags or `OKSG_POSTGRES_DSN` and `OKSG_VICTORIAMETRICS_URL`.
+  the corresponding flags or `KARTHOS_POSTGRES_DSN` and `KARTHOS_VICTORIAMETRICS_URL`.
 - Image flags are typed partial overrides. Omitted repository, tag, or
   pull-policy fields retain the chart's static defaults; this includes the
   optional frontend image override.
 - the backend is supported only as a Helm workload because it requires the mounted,
   chart-owned capability profile and resolved source plan.
 - collector runtime flags are generated from the collector plan; Collector Contrib is pinned to `0.156.0`
-- `--node-ttl` / `OKSG_NODE_TTL` is the structural freshness guard (default `24h`). The backend refuses to materialize from a direct Kubernetes structure snapshot older than this value. Set `0` to disable the guard. Materialized API snapshots have an independent fixed 24-hour retention window.
-- `backend.structureRefreshInterval` controls the in-cluster structural refresh cadence (default `5m`). It is passed as `--structure-refresh-interval` and must remain strictly below `OKSG_NODE_TTL`.
+- `--node-ttl` / `KARTHOS_NODE_TTL` is the structural freshness guard (default `24h`). The backend refuses to materialize from a direct Kubernetes structure snapshot older than this value. Set `0` to disable the guard. Materialized API snapshots have an independent fixed 24-hour retention window.
+- `backend.structureRefreshInterval` controls the in-cluster structural refresh cadence (default `5m`). It is passed as `--structure-refresh-interval` and must remain strictly below `KARTHOS_NODE_TTL`.
 - `backend.statusStaleSeconds` controls when the status endpoint calls a graph snapshot stale (default `360`). It intentionally exceeds the five-minute structural refresh interval to tolerate normal scheduling delay.
 
 ## Helm Ownership
@@ -193,8 +193,8 @@ without an imperative restart.
 
 `backend.grpcPort` is the sole backend OTLP transport setting. It defaults to
 `4317`; the chart uses it for the backend listener and Service, then injects
-the gateway's reserved `OKSG_BACKEND_GRPC_ENDPOINT` environment variable. The
-chart likewise injects the agent's `OKSG_GATEWAY_GRPC_ENDPOINT` from the
+the gateway's reserved `KARTHOS_BACKEND_GRPC_ENDPOINT` environment variable. The
+chart likewise injects the agent's `KARTHOS_GATEWAY_GRPC_ENDPOINT` from the
 release-scoped gateway Service. These endpoints are not general user overrides.
 
 Do not reintroduce ad hoc manifest rendering in Go.
@@ -203,7 +203,7 @@ Do not reintroduce ad hoc manifest rendering in Go.
 
 The backend logs structured JSON to stdout. Configure a Helm deployment through
 `backend.logLevel` (`info`, `warn`, or `error`); direct commands retain their
-`--log-level` and `OKSG_LOG_LEVEL` inputs. The OTel adapter fixes agent and
+`--log-level` and `KARTHOS_LOG_LEVEL` inputs. The OTel adapter fixes agent and
 gateway Collector self-telemetry to JSON at `info` on stdout, without a Helm
 override. Development-only Collector debug-exporter output is transient
 diagnostic output, not structured application logging.
@@ -231,7 +231,7 @@ When you remove a feature or code path, sweep for phantom references in the same
 `task web:dev` starts the Vite container with HMR, but the frontend still needs the backend API. In a separate terminal, port-forward the in-cluster backend so the dev server's `/api` proxy can reach it:
 
 ```bash
-kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080
+kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080
 ```
 
 The dev server reads the API base URL at startup. After you change `.env`, Vite config, or anything the container reads only on boot, stop `task web:dev` and re-run it so the changes take effect. Source file edits continue to hot-reload without a restart.
@@ -270,11 +270,11 @@ Both should return `nominal`, and the app footer should say `BACKEND_OK`. Do not
 ## Debugging
 
 ```bash
-helm lint ./deploy/helm/oksg-otel -f bin/e2e/otel-values.yaml
-helm template oksg-otel ./deploy/helm/oksg-otel --namespace oksg-system -f bin/e2e/otel-values.yaml
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=agent --tail=30
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=gateway --tail=30
-kubectl logs -n oksg-system -l app.kubernetes.io/name=oksg-otel,app.kubernetes.io/component=backend --tail=30
+helm lint ./deploy/helm/karthos -f bin/e2e/otel-values.yaml
+helm template karthos ./deploy/helm/karthos --namespace karthos-system -f bin/e2e/otel-values.yaml
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=agent --tail=30
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=gateway --tail=30
+kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=backend --tail=30
 ```
 
 ## Inspecting Backend Data
@@ -296,7 +296,7 @@ task test:e2e:debug:logs
 Or run the steps manually:
 
 ```bash
-kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080 &
+kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080 &
 curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.count" | jq '.data.samples[0:10]'
 curl -s http://localhost:18081/api/v1/graph | jq '.data.edges[0:5]'
 kill %1
@@ -376,7 +376,7 @@ curl -s "http://localhost:18081/api/v1/entities?kind=pod&page_size=10" | jq .
 In a cluster, port-forward to the backend API port:
 
 ```bash
-kubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080 &
+kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080 &
 curl -s http://localhost:18081/api/v1/status | jq '.data.system_status'
 kill %1
 ```

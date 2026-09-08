@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/backend/query"
+	"github.com/erickivel/karthos/pkg/core/metrics"
 )
 
 func TestDecorateMetricStoreAddsEnumLabelsWithoutChangingStoredValues(t *testing.T) {

@@ -126,7 +126,7 @@ describe('topology projection', () => {
   it('infrastructure detailed nests containers under pods under host nodes', () => {
     const result = project(
       [
-        node('host', 'node', 'oksg-test-worker'),
+        node('host', 'node', 'karthos-test-worker'),
         node('pod-a', 'pod', 'gateway-a'),
         node('container-a', 'container', 'gateway'),
       ],
@@ -151,7 +151,7 @@ describe('topology projection', () => {
   it('infrastructure overview shows only host nodes', () => {
     const result = project(
       [
-        node('host', 'node', 'oksg-test-worker'),
+        node('host', 'node', 'karthos-test-worker'),
         node('pod-a', 'pod', 'gateway-a'),
       ],
       [edge('runs-on', 'pod-a', 'host', 'runs_on')],
@@ -166,7 +166,7 @@ describe('topology projection', () => {
   it('infrastructure runtime shows pods nested under nodes (no containers)', () => {
     const result = project(
       [
-        node('host', 'node', 'oksg-test-worker'),
+        node('host', 'node', 'karthos-test-worker'),
         node('pod-a', 'pod', 'gateway-a'),
         node('container-a', 'container', 'gateway'),
       ],
@@ -186,7 +186,7 @@ describe('topology projection', () => {
   it('infrastructure drops PVC entirely', () => {
     const result = project(
       [
-        node('host', 'node', 'oksg-test-worker'),
+        node('host', 'node', 'karthos-test-worker'),
         node('pod-a', 'pod', 'gateway-a'),
         node('vol-a', 'pvc', 'data'),
       ],

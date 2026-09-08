@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/backend/query"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/metrics"
 )
 
 func TestSamplesToPrometheusText(t *testing.T) {
@@ -38,7 +38,7 @@ func TestSamplesToPrometheusText(t *testing.T) {
 	assert.Contains(t, got, "k8s_pod_cpu_usage{")
 	assert.Contains(t, got, `entity_id="abc123"`)
 	assert.Contains(t, got, `source="otlp"`)
-	assert.Contains(t, got, `oksg_unit="millicores"`)
+	assert.Contains(t, got, `karthos_unit="millicores"`)
 	assert.Contains(t, got, "42.5")
 	// Verify timestamp is present as milliseconds.
 	expectedTsMs := strconv.FormatInt(ts.UnixMilli(), 10)
@@ -55,10 +55,10 @@ func TestSamplesToPrometheusText_PersistsHistogramComponentUnits(t *testing.T) {
 	}
 
 	got := string(samplesToPrometheusText(samples))
-	assert.Contains(t, got, `http_server_request_duration_sum{entity_id="svc1",oksg_unit="nanoseconds"}`)
-	assert.Contains(t, got, `http_server_request_duration_count{entity_id="svc1",oksg_unit="count"}`)
-	assert.Contains(t, got, `servicegraph_request_body_size_sum{entity_id="edge1",oksg_unit="bytes"}`)
-	assert.Contains(t, got, `servicegraph_request_body_size_count{entity_id="edge1",oksg_unit="count"}`)
+	assert.Contains(t, got, `http_server_request_duration_sum{entity_id="svc1",karthos_unit="nanoseconds"}`)
+	assert.Contains(t, got, `http_server_request_duration_count{entity_id="svc1",karthos_unit="count"}`)
+	assert.Contains(t, got, `servicegraph_request_body_size_sum{entity_id="edge1",karthos_unit="bytes"}`)
+	assert.Contains(t, got, `servicegraph_request_body_size_count{entity_id="edge1",karthos_unit="count"}`)
 }
 
 func TestSamplesToPrometheusText_EscapesLabelValues(t *testing.T) {
@@ -87,7 +87,7 @@ func TestSamplesToPrometheusText_PreservesSourceDimensions(t *testing.T) {
 			Timestamp:  ts,
 			Labels: map[string]string{
 				"source":           "prometheus.app",
-				"namespace":        "oksg-demo",
+				"namespace":        "karthos-demo",
 				"service":          "gateway-go",
 				"pod":              "gateway-go-abc123",
 				"method":           "GET",
@@ -99,7 +99,7 @@ func TestSamplesToPrometheusText_PreservesSourceDimensions(t *testing.T) {
 	got := string(samplesToPrometheusText(samples))
 
 	assert.Contains(t, got, `source="prometheus.app"`)
-	assert.Contains(t, got, `namespace="oksg-demo"`)
+	assert.Contains(t, got, `namespace="karthos-demo"`)
 	assert.Contains(t, got, `service="gateway-go"`)
 	assert.Contains(t, got, `pod="gateway-go-abc123"`)
 	assert.Contains(t, got, `method="GET"`)
@@ -264,7 +264,7 @@ func TestBuildPromQLWindowMeanRequiresPositiveCountIncrease(t *testing.T) {
 
 	assert.Contains(t, got, "http_server_request_duration_sum")
 	assert.Contains(t, got, "http_server_request_duration_count")
-	assert.Contains(t, got, "ignoring(oksg_unit)")
+	assert.Contains(t, got, "ignoring(karthos_unit)")
 	assert.Contains(t, got, "> 0")
 	assert.NotContains(t, got, "clamp_min")
 }
@@ -279,7 +279,7 @@ func TestParseQueryRangeResponse(t *testing.T) {
 					"__name__": "k8s_pod_cpu_usage",
 					"entity_id": "abc123",
 					"source": "otlp",
-					"oksg_unit": "millicores"
+					"karthos_unit": "millicores"
 				},
 				"values": [
 					[1742644800, "42.5"],
@@ -300,7 +300,7 @@ func TestParseQueryRangeResponse(t *testing.T) {
 	assert.Equal(t, metrics.UnitMillicores, samples[0].Unit)
 	assert.NotContains(t, samples[0].Labels, "__name__")
 	assert.NotContains(t, samples[0].Labels, "entity_id")
-	assert.NotContains(t, samples[0].Labels, "oksg_unit")
+	assert.NotContains(t, samples[0].Labels, "karthos_unit")
 }
 
 func TestParseQueryRangeResponse_HidesInvalidOrMissingStoredUnit(t *testing.T) {
@@ -309,7 +309,7 @@ func TestParseQueryRangeResponse_HidesInvalidOrMissingStoredUnit(t *testing.T) {
 		"data": {
 			"resultType": "matrix",
 			"result": [
-				{"metric": {"__name__": "unknown_metric", "entity_id": "entity-a", "dimension": "cpu", "oksg_unit": "cores"}, "values": [[1742644800, "2"]]},
+				{"metric": {"__name__": "unknown_metric", "entity_id": "entity-a", "dimension": "cpu", "karthos_unit": "cores"}, "values": [[1742644800, "2"]]},
 				{"metric": {"__name__": "unknown_metric", "entity_id": "entity-b", "dimension": "pods"}, "values": [[1742644800, "3"]]}
 			]
 		}
@@ -320,7 +320,7 @@ func TestParseQueryRangeResponse_HidesInvalidOrMissingStoredUnit(t *testing.T) {
 	require.Len(t, samples, 2)
 	for _, sample := range samples {
 		assert.Empty(t, sample.Unit)
-		assert.NotContains(t, sample.Labels, "oksg_unit")
+		assert.NotContains(t, sample.Labels, "karthos_unit")
 	}
 }
 
@@ -532,7 +532,7 @@ func TestBuildPromQLFreshnessForWindowedMeanIgnoresStoredUnit(t *testing.T) {
 		MaxSampleAge: 5 * time.Minute,
 	})
 
-	assert.Contains(t, got, "and ignoring(oksg_unit) last_over_time")
+	assert.Contains(t, got, "and ignoring(karthos_unit) last_over_time")
 }
 
 func TestVMMetricStore_QueryEmptyMetricName(t *testing.T) {

@@ -16,8 +16,8 @@ type downstreamResponse struct {
 }
 
 func main() {
-	serviceAURL := envOrDefault("SERVICE_A_URL", "http://service-a-python.oksg-demo.svc.cluster.local:8081/process")
-	serviceBURL := envOrDefault("SERVICE_B_URL", "http://service-b-node.oksg-demo.svc.cluster.local:8082/compute")
+	serviceAURL := envOrDefault("SERVICE_A_URL", "http://service-a-python.karthos-demo.svc.cluster.local:8081/process")
+	serviceBURL := envOrDefault("SERVICE_B_URL", "http://service-b-node.karthos-demo.svc.cluster.local:8082/compute")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

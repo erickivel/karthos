@@ -14,14 +14,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/backend/ingest"
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/backend/ingest"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/backend/query"
+	"github.com/erickivel/karthos/pkg/core/entities"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/sources"
 )
 
 const testCluster = "test-cluster"
@@ -63,10 +63,10 @@ func stampMetricSource(rm *metricspb.ResourceMetrics, source string) {
 	for _, scope := range rm.ScopeMetrics {
 		for _, metric := range scope.Metrics {
 			for _, dp := range metricAttributeSetsForTest(metric) {
-				if testAttr(dp, "oksg.source") != "" || testAttr(dp, "oksg_source") != "" {
+				if testAttr(dp, "karthos.source") != "" || testAttr(dp, "karthos_source") != "" {
 					continue
 				}
-				*dp = append(*dp, &commonpb.KeyValue{Key: "oksg.source", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: source}}})
+				*dp = append(*dp, &commonpb.KeyValue{Key: "karthos.source", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: source}}})
 			}
 		}
 	}
@@ -345,13 +345,13 @@ func TestOTLPNormalizer_SourceMismatchDropped(t *testing.T) {
 
 	tsNano := uint64(time.Now().UnixNano())
 
-	rmPrometheus := makeGaugeRMWithAttr("container_cpu_usage_seconds_total", 0.5, tsNano, "oksg_source", metrics.SourcePrometheusApp)
+	rmPrometheus := makeGaugeRMWithAttr("container_cpu_usage_seconds_total", 0.5, tsNano, "karthos_source", metrics.SourcePrometheusApp)
 	envPrometheus := makeEnvelope(t, metrics.SourcePrometheusApp, podResource(), rmPrometheus)
 	samples, err := normalizer.Normalize(context.Background(), envPrometheus)
 	require.NoError(t, err)
 	require.Empty(t, samples, "Prometheus sample must be dropped when kubelet is the assigned source")
 
-	rmKubelet := makeGaugeRMWithAttr("k8s.container.cpu.usage", 0.75, tsNano, "oksg_source", metrics.SourceKubelet)
+	rmKubelet := makeGaugeRMWithAttr("k8s.container.cpu.usage", 0.75, tsNano, "karthos_source", metrics.SourceKubelet)
 	envKubelet := makeEnvelope(t, metrics.SourceKubelet, podResource(), rmKubelet)
 	samples, err = normalizer.Normalize(context.Background(), envKubelet)
 	require.NoError(t, err)

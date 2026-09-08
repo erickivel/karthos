@@ -1,4 +1,4 @@
-package oksgotel_test
+package karthosotel_test
 
 import (
 	"os"
@@ -9,11 +9,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/adapters/otel"
-	"github.com/erickivel/oksg/pkg/collector"
-	"github.com/erickivel/oksg/pkg/collector/configgen"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/karthos/pkg/adapters/otel"
+	"github.com/erickivel/karthos/pkg/collector"
+	"github.com/erickivel/karthos/pkg/collector/configgen"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources"
 )
 
 func TestRenderedChartUsesHelmReleaseIdentityAndRequiredCollectionPlane(t *testing.T) {
@@ -35,9 +35,9 @@ func TestRenderedChartUsesHelmReleaseIdentityAndRequiredCollectionPlane(t *testi
 		"checksum/config:",
 		"checksum/source-contract:",
 		"hostNetwork: true",
-		"OKSG_GATEWAY_GRPC_ENDPOINT",
+		"KARTHOS_GATEWAY_GRPC_ENDPOINT",
 		"project-observe-gateway:4317",
-		"OKSG_BACKEND_GRPC_ENDPOINT",
+		"KARTHOS_BACKEND_GRPC_ENDPOINT",
 		"project-observe-backend:4317",
 		"project-observe-victoria-metrics-single-server:8428",
 	} {
@@ -46,10 +46,10 @@ func TestRenderedChartUsesHelmReleaseIdentityAndRequiredCollectionPlane(t *testi
 }
 
 func TestRenderedChartUsesTypedFrontendImageOverride(t *testing.T) {
-	rendered := renderChartWithRuntime(t, "oksg-otel", "oksg-system", "frontend-test", configgen.RuntimeSettings{
-		FrontendImage: configgen.ImageValues{Repository: "registry.example/oksg-frontend", Tag: "e2e", PullPolicy: "Always"},
+	rendered := renderChartWithRuntime(t, "karthos", "karthos-system", "frontend-test", configgen.RuntimeSettings{
+		FrontendImage: configgen.ImageValues{Repository: "registry.example/karthos-frontend", Tag: "e2e", PullPolicy: "Always"},
 	})
-	require.Contains(t, rendered, "image: registry.example/oksg-frontend:e2e")
+	require.Contains(t, rendered, "image: registry.example/karthos-frontend:e2e")
 	require.Contains(t, rendered, "imagePullPolicy: Always")
 }
 
@@ -66,22 +66,22 @@ func TestRenderedChartMountsHelmOwnedFrontendProxy(t *testing.T) {
 }
 
 func TestRenderedChartPreservesAdapterOwnedCollectorDebugConfiguration(t *testing.T) {
-	rendered := renderChartWithCompilerOptions(t, "oksg-otel", "oksg-system", "debug-test", configgen.RuntimeSettings{}, otel.CompilerOptions{DebugEnabled: true})
+	rendered := renderChartWithCompilerOptions(t, "karthos", "karthos-system", "debug-test", configgen.RuntimeSettings{}, otel.CompilerOptions{DebugEnabled: true})
 	for _, expected := range []string{
-		"debug/oksg:",
+		"debug/karthos:",
 		"verbosity: detailed",
 		"use_internal_logger: false",
 		"- stdout",
 	} {
 		require.Contains(t, rendered, expected)
 	}
-	require.Equal(t, 2, strings.Count(rendered, "debug/oksg:"), "both generated Collector ConfigMaps must retain the adapter-owned exporter")
+	require.Equal(t, 2, strings.Count(rendered, "debug/karthos:"), "both generated Collector ConfigMaps must retain the adapter-owned exporter")
 }
 
 func TestRenderedChartUsesFixedCollectorTelemetryAndBackendLogLevel(t *testing.T) {
-	rendered := renderChartWithRuntime(t, "oksg-otel", "oksg-system", "logging-test", configgen.RuntimeSettings{}, "--set", "backend.logLevel=warn")
+	rendered := renderChartWithRuntime(t, "karthos", "karthos-system", "logging-test", configgen.RuntimeSettings{}, "--set", "backend.logLevel=warn")
 	require.Equal(t, 2, strings.Count(rendered, "      telemetry:\n        logs:\n          encoding: json\n          level: info\n          output_paths:\n          - stdout"), "both generated Collector ConfigMaps must retain adapter-owned logging")
-	require.Contains(t, rendered, "name: OKSG_LOG_LEVEL\n              value: \"warn\"")
+	require.Contains(t, rendered, "name: KARTHOS_LOG_LEVEL\n              value: \"warn\"")
 }
 
 func TestRenderedChartRejectsUnknownComponentSetting(t *testing.T) {
@@ -91,7 +91,7 @@ func TestRenderedChartRejectsUnknownComponentSetting(t *testing.T) {
 	}
 
 	valuesPath := generatedValuesPath(t, "schema-test")
-	command := exec.CommandContext(t.Context(), helm, "template", "oksg-otel", chartPath(t), "--namespace", "oksg-system", "-f", valuesPath, "--set", "gateway.unknownSetting=true")
+	command := exec.CommandContext(t.Context(), helm, "template", "karthos", chartPath(t), "--namespace", "karthos-system", "-f", valuesPath, "--set", "gateway.unknownSetting=true")
 	output, err := command.CombinedOutput()
 	require.Errorf(t, err, "chart accepted an unsupported component setting: %s", output)
 	require.Contains(t, string(output), "additional properties 'unknownSetting' not allowed")
@@ -112,7 +112,7 @@ func TestRenderedChartRejectsUnsupportedRootAndFrontendSettings(t *testing.T) {
 		{name: "unsupported frontend setting", value: "frontend.unexpectedSetting=true"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			command := exec.CommandContext(t.Context(), helm, "template", "oksg-otel", chartPath(t), "--namespace", "oksg-system", "-f", valuesPath, "--set", testCase.value)
+			command := exec.CommandContext(t.Context(), helm, "template", "karthos", chartPath(t), "--namespace", "karthos-system", "-f", valuesPath, "--set", testCase.value)
 			output, err := command.CombinedOutput()
 			require.Errorf(t, err, "chart accepted unsupported setting %q: %s", testCase.value, output)
 			require.Contains(t, string(output), "additional properties")
@@ -121,8 +121,8 @@ func TestRenderedChartRejectsUnsupportedRootAndFrontendSettings(t *testing.T) {
 }
 
 func TestSourceContractChangeRollsBackend(t *testing.T) {
-	initial := renderChart(t, "oksg-otel", "oksg-system", "contract-test")
-	updated := renderChart(t, "oksg-otel", "oksg-system", "contract-test-updated")
+	initial := renderChart(t, "karthos", "karthos-system", "contract-test")
+	updated := renderChart(t, "karthos", "karthos-system", "contract-test-updated")
 	require.NotEqual(t, checksum(t, initial, "checksum/source-contract:"), checksum(t, updated, "checksum/source-contract:"))
 }
 
@@ -174,7 +174,7 @@ func generatedValuesPathWithRuntimeAndCompilerOptions(t *testing.T, clusterName 
 	registry := sources.DefaultRegistry()
 	sourcePlan, err := registry.ResolveSourcePlan(&capabilityProfile)
 	require.NoError(t, err)
-	collectionPlan, err := collector.NewComposer("oksg-system").Compose(&capabilityProfile, sourcePlan)
+	collectionPlan, err := collector.NewComposer("karthos-system").Compose(&capabilityProfile, sourcePlan)
 	require.NoError(t, err)
 	deployment, err := otel.NewCompilerWithOptions(compilerOptions).Compile(collectionPlan)
 	require.NoError(t, err)

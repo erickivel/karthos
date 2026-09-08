@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 func TestResolveSingleSourcePicksOnlyAvailable(t *testing.T) {

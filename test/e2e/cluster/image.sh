@@ -10,7 +10,7 @@ set -euo pipefail
 usage() {
   cat >&2 <<EOF
 usage: image.sh push_or_load <fully-qualified-tag>
-example: image.sh push_or_load localhost:5001/oksg-backend:latest
+example: image.sh push_or_load localhost:5001/karthos-backend:latest
 EOF
   exit 2
 }

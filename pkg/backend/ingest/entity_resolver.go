@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/semconv"
 )
 
 // ErrUnresolvableEntity is returned by EntityResolver when no known OTLP semantic convention

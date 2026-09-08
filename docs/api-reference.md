@@ -1,6 +1,6 @@
 # API Reference
 
-REST API served by the backend on port **8080** (configurable via `--api-listen-address` / `OKSG_BACKEND_API_LISTEN_ADDRESS`).
+REST API served by the backend on port **8080** (configurable via `--api-listen-address` / `KARTHOS_BACKEND_API_LISTEN_ADDRESS`).
 
 For local e2e verification, prefer a dedicated local port-forward such as `18081:8080` so the backend API does not collide with the `gateway-go` traffic port-forward on `18080`.
 
@@ -88,7 +88,7 @@ Configuration:
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `360` | Snapshot staleness threshold in seconds |
+| `--status-stale-seconds` | `KARTHOS_BACKEND_STATUS_STALE_SECONDS` | `360` | Snapshot staleness threshold in seconds |
 
 ### GET /api/v1/discovery
 
@@ -104,7 +104,7 @@ Response:
 {
   "data": {
     "cluster_id": "...",
-    "cluster_name": "oksg-test",
+    "cluster_name": "karthos-test",
     "discovered_at": "2026-03-30T10:00:00Z",
     "capabilities": [
       {
@@ -160,7 +160,7 @@ Response shape:
       "snapshot_age_seconds": 12.5,
       "available_filters": {
         "kinds": ["container", "namespace", "node", "pod"],
-        "namespaces": ["default", "oksg-demo", "oksg-system"],
+        "namespaces": ["default", "karthos-demo", "karthos-system"],
         "relations": ["calls", "contains", "runs_on"]
       }
     }
@@ -199,7 +199,7 @@ Response:
 	"snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
     "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
     "nodes": [
-      {"id": "...", "kind": "pod", "name": "pod-a", "namespace": "default", "cluster": "oksg-test", "status": "unknown", "labels": {...}}
+      {"id": "...", "kind": "pod", "name": "pod-a", "namespace": "default", "cluster": "karthos-test", "status": "unknown", "labels": {...}}
     ],
     "total": 18
   },
@@ -230,13 +230,13 @@ Response:
   "data": {
 	"snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
     "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
-    "node": {"id": "...", "kind": "service", "name": "svc-a", "namespace": "default", "cluster": "oksg-test", "status": "unknown", "labels": {...}},
+    "node": {"id": "...", "kind": "service", "name": "svc-a", "namespace": "default", "cluster": "karthos-test", "status": "unknown", "labels": {...}},
     "edges": {
       "outbound": [
         {
           "id": "...", "source": "...", "target": "...", "relation": "calls",
           "confidence": 1.0, "provenance": ["otlp"], "first_seen": "...", "last_seen": "...",
-          "related_node": {"id": "...", "kind": "service", "name": "svc-b", "namespace": "default", "cluster": "oksg-test", "labels": {...}}
+          "related_node": {"id": "...", "kind": "service", "name": "svc-b", "namespace": "default", "cluster": "karthos-test", "labels": {...}}
         }
       ],
       "inbound": [...]
@@ -445,7 +445,7 @@ List semconv-native metric definitions.
 
 Response entries include a `scopes` array describing whether each semconv metric supports entity queries, edge queries, or both; an `applies_to` array describing the graph entity kinds an entity-scoped metric is valid for; and a `sources` array describing which logical sources can produce the metric and at what priority. Edge-only metrics omit `applies_to`.
 
-The `sources` array drives runtime arbitration: the generic resolver picks the highest-priority (smallest `priority` value) source whose compiled capability is available. The source plan records that result; the generic collector composer includes selected semantic requirements and the OTel adapter renders them, while the ingester drops samples whose `oksg_source` attribute disagrees with the mounted assignment. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
+The `sources` array drives runtime arbitration: the generic resolver picks the highest-priority (smallest `priority` value) source whose compiled capability is available. The source plan records that result; the generic collector composer includes selected semantic requirements and the OTel adapter renders them, while the ingester drops samples whose `karthos_source` attribute disagrees with the mounted assignment. See [metrics-pipeline.md](metrics-pipeline.md) for the full pipeline.
 
 The array is exposed in priority order (lower number = higher priority); UIs that need a single "primary source" label should render `sources[0].id`. The full array is informational — lower-priority entries are fallbacks the resolver did not pick. The currently-active source per metric is not exposed on the catalog endpoint today; consumers that need it should read the `source` label on actual sample responses from `/api/v1/metrics/series`.
 
@@ -550,8 +550,8 @@ Response:
   "data": {
     "id": "...",
     "kind": "service",
-    "cluster": "oksg-test",
-    "namespace": "oksg-demo",
+    "cluster": "karthos-test",
+    "namespace": "karthos-demo",
     "name": "service-a-python",
     "labels": {"service.name": "service-a-python"}
   }
@@ -572,7 +572,7 @@ When modifying or adding API endpoints, update these files:
 | `pkg/adapters/api/handler_metrics.go` | Metrics query, catalog, and series handlers |
 | `pkg/adapters/api/handler_entities.go` | Entity query handlers |
 | `cmd/backend/main.go` | API server wiring into the backend binary |
-| `deploy/helm/oksg-otel/values.yaml` | `backend.service.apiPort`, `backend.statusStaleSeconds`, and `backend.structureRefreshInterval` values |
-| `deploy/helm/oksg-otel/templates/backend-deployment.yaml` | API port arg and containerPort |
-| `deploy/helm/oksg-otel/templates/backend-service.yaml` | API service port entry |
+| `deploy/helm/karthos/values.yaml` | `backend.service.apiPort`, `backend.statusStaleSeconds`, and `backend.structureRefreshInterval` values |
+| `deploy/helm/karthos/templates/backend-deployment.yaml` | API port arg and containerPort |
+| `deploy/helm/karthos/templates/backend-service.yaml` | API service port entry |
 | `docs/api-reference.md` | **This file** -- update when endpoints change |

@@ -5,47 +5,47 @@ tasks:
     desc: Start frontend dev container with HMR
     dir: '{{.ROOT_DIR}}'
     cmds:
-      - docker compose up oksg-frontend --build
+      - docker compose up karthos-frontend --build
 
   e2e:install:
     desc: Install frontend npm deps and Playwright browser support inside the e2e container
     dir: '{{.ROOT_DIR}}'
     cmds:
-      - docker compose run --rm oksg-playwright npm install
-      - docker compose run --rm oksg-playwright npm run e2e:install
+      - docker compose run --rm karthos-playwright npm install
+      - docker compose run --rm karthos-playwright npm run e2e:install
 
   build:
     desc: Build production frontend Docker image
     dir: '{{.ROOT_DIR}}/web'
     cmds:
-      - docker build -t oksg-frontend:latest .
+      - docker build -t karthos-frontend:latest .
 
   install:
     desc: Install npm dependencies (in container)
     dir: '{{.ROOT_DIR}}'
     cmds:
-      - docker compose run --rm --no-deps oksg-frontend npm install
+      - docker compose run --rm --no-deps karthos-frontend npm install
 
   typecheck:
     desc: Run TypeScript type checking (in container)
     dir: '{{.ROOT_DIR}}'
     cmds:
-      - docker compose run --rm --no-deps oksg-frontend npx tsc --noEmit
+      - docker compose run --rm --no-deps karthos-frontend npx tsc --noEmit
 
   lint:
     desc: Run ESLint (in container)
     dir: '{{.ROOT_DIR}}'
     cmds:
-      - docker compose run --rm --no-deps oksg-frontend npm run lint
+      - docker compose run --rm --no-deps karthos-frontend npm run lint
 
   e2e:
     desc: Run Playwright topology e2e tests against the live frontend/backend
     dir: '{{.ROOT_DIR}}'
     cmds:
-      - docker compose run --rm oksg-playwright npm run e2e
+      - docker compose run --rm karthos-playwright npm run e2e
 
   e2e:update:
     desc: Update Playwright topology screenshot baselines
     dir: '{{.ROOT_DIR}}'
     cmds:
-      - docker compose run --rm oksg-playwright npm run e2e:update
+      - docker compose run --rm karthos-playwright npm run e2e:update

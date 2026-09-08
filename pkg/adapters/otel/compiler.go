@@ -7,17 +7,17 @@ import (
 	"sort"
 	"strings"
 
-	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
+	collectorspec "github.com/erickivel/karthos/pkg/collector/spec"
 )
 
 const (
-	DefaultGatewayHTTPEndpoint = "0.0.0.0:4318"
-	DefaultHealthEndpoint      = "0.0.0.0:13133"
-	backendGRPCEndpointEnv     = "${env:OKSG_BACKEND_GRPC_ENDPOINT}"
-	gatewayGRPCEndpointEnv     = "${env:OKSG_GATEWAY_GRPC_ENDPOINT}"
-	otlpGRPCExporter           = "otlp_grpc"
-	oksgSourceTaggerProcessor  = "transform/oksg-source"
-	collectorDebugExporter     = "debug/oksg"
+	DefaultGatewayHTTPEndpoint   = "0.0.0.0:4318"
+	DefaultHealthEndpoint        = "0.0.0.0:13133"
+	backendGRPCEndpointEnv       = "${env:KARTHOS_BACKEND_GRPC_ENDPOINT}"
+	gatewayGRPCEndpointEnv       = "${env:KARTHOS_GATEWAY_GRPC_ENDPOINT}"
+	otlpGRPCExporter             = "otlp_grpc"
+	karthosSourceTaggerProcessor = "transform/karthos-source"
+	collectorDebugExporter       = "debug/karthos"
 )
 
 // kubeClusterV0156MetricDefaults is the complete metric inventory exposed by
@@ -176,13 +176,13 @@ func compileAgent(requirements collectorspec.AgentRequirements) CollectorConfig 
 		Extensions: map[string]any{"health_check": map[string]any{"endpoint": DefaultHealthEndpoint}},
 		Receivers:  receivers,
 		Processors: map[string]any{
-			"resource":                map[string]any{"attributes": []map[string]any{{"key": "k8s.node.name", "value": "${env:K8S_NODE_NAME}", "action": "insert"}}},
-			"k8s_attributes":          map[string]any{"auth_type": "serviceAccount", "passthrough": false},
-			oksgSourceTaggerProcessor: sourceTagger(requirements.SourceStamps), "batch": map[string]any{},
+			"resource":                   map[string]any{"attributes": []map[string]any{{"key": "k8s.node.name", "value": "${env:K8S_NODE_NAME}", "action": "insert"}}},
+			"k8s_attributes":             map[string]any{"auth_type": "serviceAccount", "passthrough": false},
+			karthosSourceTaggerProcessor: sourceTagger(requirements.SourceStamps), "batch": map[string]any{},
 		},
 		Exporters: map[string]any{otlpGRPCExporter: agentExporter()},
 		Service: ServiceConfig{Extensions: []string{"health_check"}, Telemetry: fixedServiceTelemetry(), Pipelines: map[string]PipelineConfig{
-			"metrics": {Receivers: metricReceivers, Processors: []string{"resource", "k8s_attributes", oksgSourceTaggerProcessor, "batch"}, Exporters: []string{otlpGRPCExporter}},
+			"metrics": {Receivers: metricReceivers, Processors: []string{"resource", "k8s_attributes", karthosSourceTaggerProcessor, "batch"}, Exporters: []string{otlpGRPCExporter}},
 		}},
 	}
 	if requirements.OTLP.Metrics {
@@ -223,10 +223,10 @@ func compileGateway(requirements collectorspec.GatewayRequirements) CollectorCon
 	sort.Strings(metricReceivers)
 	config := CollectorConfig{
 		Extensions: map[string]any{"health_check": map[string]any{"endpoint": DefaultHealthEndpoint}}, Receivers: receivers,
-		Processors: map[string]any{"memory_limiter": map[string]any{"check_interval": "1s", "limit_percentage": 75, "spike_limit_percentage": 15}, oksgSourceTaggerProcessor: sourceTagger(requirements.SourceStamps), "batch": map[string]any{}},
+		Processors: map[string]any{"memory_limiter": map[string]any{"check_interval": "1s", "limit_percentage": 75, "spike_limit_percentage": 15}, karthosSourceTaggerProcessor: sourceTagger(requirements.SourceStamps), "batch": map[string]any{}},
 		Connectors: connectors, Exporters: map[string]any{otlpGRPCExporter: gatewayExporter()},
 		Service: ServiceConfig{Extensions: []string{"health_check"}, Telemetry: fixedServiceTelemetry(), Pipelines: map[string]PipelineConfig{
-			"metrics":      {Receivers: metricReceivers, Processors: []string{"memory_limiter", oksgSourceTaggerProcessor, "batch"}, Exporters: []string{otlpGRPCExporter}},
+			"metrics":      {Receivers: metricReceivers, Processors: []string{"memory_limiter", karthosSourceTaggerProcessor, "batch"}, Exporters: []string{otlpGRPCExporter}},
 			"metrics/otlp": {Receivers: []string{"otlp"}, Processors: []string{"memory_limiter", "batch"}, Exporters: []string{otlpGRPCExporter}},
 		}},
 	}
@@ -253,7 +253,7 @@ func gatewayExporter() map[string]any {
 func prometheusReceiver(requirement *collectorspec.Prometheus) map[string]any {
 	scrapes := make([]map[string]any, 0, len(requirement.Targets))
 	for _, target := range requirement.Targets {
-		scrapes = append(scrapes, map[string]any{"job_name": fmt.Sprintf("prometheus-app:%s:%s:%d", target.Namespace, target.ServiceName, target.Port), "metrics_path": target.Path, "static_configs": []map[string]any{{"targets": []string{fmt.Sprintf("%s.%s.svc.cluster.local:%d", target.ServiceName, target.Namespace, target.Port)}, "labels": map[string]string{"service": target.ServiceName, "namespace": target.Namespace, "metrics_path": target.Path, "service_port": fmt.Sprintf("%d", target.Port)}}}, "metric_relabel_configs": []map[string]any{{"target_label": "oksg_source", "replacement": requirement.SourceID}}})
+		scrapes = append(scrapes, map[string]any{"job_name": fmt.Sprintf("prometheus-app:%s:%s:%d", target.Namespace, target.ServiceName, target.Port), "metrics_path": target.Path, "static_configs": []map[string]any{{"targets": []string{fmt.Sprintf("%s.%s.svc.cluster.local:%d", target.ServiceName, target.Namespace, target.Port)}, "labels": map[string]string{"service": target.ServiceName, "namespace": target.Namespace, "metrics_path": target.Path, "service_port": fmt.Sprintf("%d", target.Port)}}}, "metric_relabel_configs": []map[string]any{{"target_label": "karthos_source", "replacement": requirement.SourceID}}})
 	}
 	return map[string]any{"config": map[string]any{"scrape_configs": scrapes}}
 }
@@ -267,7 +267,7 @@ func istioReceiver(requirement *collectorspec.Istio) map[string]any {
 	if len(requirement.InjectedNamespaces) > 0 {
 		relabel = append(relabel, map[string]any{"source_labels": []string{"__meta_kubernetes_namespace"}, "action": "keep", "regex": strings.Join(requirement.InjectedNamespaces, "|")})
 	}
-	return map[string]any{"config": map[string]any{"scrape_configs": []map[string]any{{"job_name": "mesh-" + flavor, "scrape_interval": "15s", "kubernetes_sd_configs": []map[string]any{{"role": "pod"}}, "metrics_path": requirement.MetricsPath, "relabel_configs": relabel, "metric_relabel_configs": []map[string]any{{"source_labels": []string{"__name__"}, "action": "keep", "regex": "istio_(requests_total|request_duration_milliseconds(_bucket|_sum|_count)?|request_messages_total|response_messages_total|tcp_connections_(opened|closed)_total|tcp_(sent|received)_bytes_total)"}, {"source_labels": []string{"reporter"}, "action": "keep", "regex": "destination"}, {"target_label": "oksg_source", "replacement": requirement.SourceID}, {"source_labels": []string{"source_canonical_service"}, "target_label": "client"}, {"source_labels": []string{"source_workload_namespace"}, "target_label": "client_namespace"}, {"source_labels": []string{"destination_canonical_service"}, "target_label": "server"}, {"source_labels": []string{"destination_service_namespace"}, "target_label": "server_namespace"}, {"source_labels": []string{"request_protocol"}, "target_label": "network_protocol_name"}, {"source_labels": []string{"response_code"}, "target_label": "http_response_status_code"}, {"source_labels": []string{"grpc_response_status"}, "target_label": "rpc_grpc_status_code"}, {"source_labels": []string{"connection_security_policy"}, "target_label": "mesh_security_policy"}, {"source_labels": []string{"source_principal"}, "target_label": "mesh_peer_source_principal"}, {"source_labels": []string{"destination_principal"}, "target_label": "mesh_peer_destination_principal"}, {"source_labels": []string{"response_flags"}, "target_label": "mesh_envoy_response_flags"}}}}}}
+	return map[string]any{"config": map[string]any{"scrape_configs": []map[string]any{{"job_name": "mesh-" + flavor, "scrape_interval": "15s", "kubernetes_sd_configs": []map[string]any{{"role": "pod"}}, "metrics_path": requirement.MetricsPath, "relabel_configs": relabel, "metric_relabel_configs": []map[string]any{{"source_labels": []string{"__name__"}, "action": "keep", "regex": "istio_(requests_total|request_duration_milliseconds(_bucket|_sum|_count)?|request_messages_total|response_messages_total|tcp_connections_(opened|closed)_total|tcp_(sent|received)_bytes_total)"}, {"source_labels": []string{"reporter"}, "action": "keep", "regex": "destination"}, {"target_label": "karthos_source", "replacement": requirement.SourceID}, {"source_labels": []string{"source_canonical_service"}, "target_label": "client"}, {"source_labels": []string{"source_workload_namespace"}, "target_label": "client_namespace"}, {"source_labels": []string{"destination_canonical_service"}, "target_label": "server"}, {"source_labels": []string{"destination_service_namespace"}, "target_label": "server_namespace"}, {"source_labels": []string{"request_protocol"}, "target_label": "network_protocol_name"}, {"source_labels": []string{"response_code"}, "target_label": "http_response_status_code"}, {"source_labels": []string{"grpc_response_status"}, "target_label": "rpc_grpc_status_code"}, {"source_labels": []string{"connection_security_policy"}, "target_label": "mesh_security_policy"}, {"source_labels": []string{"source_principal"}, "target_label": "mesh_peer_source_principal"}, {"source_labels": []string{"destination_principal"}, "target_label": "mesh_peer_destination_principal"}, {"source_labels": []string{"response_flags"}, "target_label": "mesh_envoy_response_flags"}}}}}}
 }
 
 func sourceTagger(stamps []collectorspec.SourceStamp) map[string]any {
@@ -291,7 +291,7 @@ func sourceStampStatement(stamp collectorspec.SourceStamp) string {
 		condition = "(" + strings.Join(conditions, " or ") + ")"
 	}
 	if stamp.OnlyIfUnset {
-		condition += ` and datapoint.attributes["oksg_source"] == nil`
+		condition += ` and datapoint.attributes["karthos_source"] == nil`
 	}
-	return fmt.Sprintf(`set(datapoint.attributes["oksg_source"], %q) where %s`, stamp.SourceID, condition)
+	return fmt.Sprintf(`set(datapoint.attributes["karthos_source"], %q) where %s`, stamp.SourceID, condition)
 }

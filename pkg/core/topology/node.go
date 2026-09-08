@@ -1,6 +1,6 @@
 package topology
 
-import "github.com/erickivel/oksg/pkg/core/entities"
+import "github.com/erickivel/karthos/pkg/core/entities"
 
 // Node is the generic graph projection of a canonical entity. Construction is
 // explicit at each boundary so topology does not duplicate entity wrappers.

@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "oksg-otel.agentName" . }}-config
-  namespace: {{ include "oksg-otel.namespace" . }}
+  name: {{ include "karthos.agentName" . }}-config
+  namespace: {{ include "karthos.namespace" . }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
 data:
   config.yaml: |
 {{ required "agent.collectorConfig must be supplied by generated collector-plan values" .Values.agent.collectorConfig | indent 4 }}
