@@ -32,11 +32,10 @@ The visual language follows the "Graphic Retro-Futurism / The Analog Superintend
 
 ### Theming Architecture
 
-**All colors are consumed exclusively via CSS custom properties (`var(--*)`).** No component or CSS module may reference a hex value directly. This enables light mode support later by swapping the theme file.
+**All colors are consumed exclusively via CSS custom properties (`var(--*)`).** No component or CSS module may reference a hex value directly.
 
-Theme files live in `src/styles/themes/`:
+The active theme file lives in `src/styles/themes/`:
 - `dark.css` — default theme, applied via `[data-theme="dark"]` on `<html>`
-- `light.css` — future, same variable names with light-mode values
 
 Components reference only semantic tokens like `var(--color-signal)`, `var(--surface-base)`, `var(--text-muted)`, etc.
 
@@ -235,7 +234,10 @@ Appears when a node is clicked. Contents:
 
 **Data sources:**
 - `GET /api/v1/graph` → full topology snapshot (nodes + edges)
-- `GET /api/v1/graph/nodes/{id}` → selected node detail with inbound/outbound edges
+
+The Node Inspector derives the selected node and its inbound/outbound edges
+from the latest graph snapshot. `GET /api/v1/graph/nodes/{id}` remains a public
+endpoint for external consumers, but the frontend does not call it.
 
 **Interactions:**
 - Pan, zoom, scroll on canvas
@@ -339,9 +341,11 @@ Persistent bottom bar across all routes. Shows both cluster system status and OK
 
 ## 6. Data Layer Architecture
 
-### Principle: Polling Now, WebSocket-Ready
+### Principle: REST Polling
 
-The backend has REST-only endpoints. Topology snapshots flush every 60s. The frontend polls on intervals. The data layer is structured so a WebSocket upgrade later is a transport swap, not a rewrite.
+The backend exposes REST endpoints. It materializes the graph after startup and
+each five-minute structure refresh. The frontend polls the latest graph
+snapshot every 30 seconds.
 
 ### HTTP Client: Native `fetch`
 
@@ -369,25 +373,15 @@ src/
   types/
     graph.ts              — Snapshot, Node, Edge, EntityKind, RelationType
     metrics.ts            — MetricSample, MetricCategory, CanonicalMetric
-    api.ts                — API response envelopes, error types
   styles/
     themes/
       dark.css           — dark theme variables ([data-theme="dark"])
-      light.css          — light theme variables (future, same var names)
     tokens.css           — semantic aliases, spacing scale, typography tokens
     global.css           — base styles, font import, theme loading
 ```
 
-Each layer is independently replaceable: swap `api/client.ts` to change HTTP transport, swap `themes/dark.css` to change visual theme, swap a `hooks/` file to change data fetching strategy.
-
-### WebSocket-Ready Pattern
-
-TanStack Query hooks are the **only** data consumers. Components never fetch directly. To upgrade to WebSocket:
-
-1. Add a WS connection manager
-2. On WS message, call `queryClient.setQueryData('graph', newSnapshot)`
-3. Remove `refetchInterval` from the graph query
-4. Zero component changes needed
+Each layer has one current responsibility: `api/client.ts` owns HTTP transport,
+`themes/dark.css` owns the dark theme, and hooks own polling and query caching.
 
 ### Polling Intervals
 
@@ -397,7 +391,6 @@ TanStack Query hooks are the **only** data consumers. Components never fetch dir
 | System status | 30s | `GET /api/v1/status` |
 | Discovery | 120s | `GET /api/v1/discovery` |
 | Metrics (when visible) | 30s | `GET /api/v1/metrics/series` |
-| Node detail | On demand | `GET /api/v1/graph/nodes/{id}` |
 | Metric catalog | Once (stale: Infinity) | `GET /api/v1/metrics/catalog` |
 | Metric catalog stats | 30s | `GET /api/v1/metrics/catalog/stats` |
 
@@ -466,7 +459,6 @@ web/
     styles/
       themes/
         dark.css           — [data-theme="dark"] CSS custom property definitions
-        light.css          — [data-theme="light"] (future, same variable names)
       tokens.css           — semantic aliases, spacing scale, typography tokens
       global.css           — base styles, font import, dotted canvas background
 ```
