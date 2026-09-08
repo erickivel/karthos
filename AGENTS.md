@@ -182,7 +182,7 @@ never re-emit them. So:
   after the TTL window. This is the regression that produced "ownership is
   missing Ingress / ConfigMap / Workload" reports.
 - `cmd/backend/main.go:runStructureRefreshLoop` does this on
-  `OKSG_STRUCTURE_REFRESH_INTERVAL` (default 10m). DO NOT remove the loop or
+  `OKSG_STRUCTURE_REFRESH_INTERVAL` (default 5m). DO NOT remove the loop or
   raise the interval to ≥ NodeTTL.
 - If you change `defaultNodeTTL` or `defaultStructureRefreshInterval`,
   preserve the strict inequality `discovery_refresh_interval < node_ttl`.
