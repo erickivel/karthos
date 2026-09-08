@@ -20,7 +20,7 @@ Key coverage areas:
 - Helm values generation
 - backend OTLP envelope conversion and routing
 - OTLP gRPC ingest integration
-- `MetricTopologyBuilder`: structural edge and node extraction from resource attributes
+- `MetricTopologyBuilder`: observed `runs_on` edge extraction from resource attributes
 - Pod lifecycle validation: UID/node matching, synchronous immutable `terminal_deadline` persistence before grace activation, fail-closed terminal refreshes on an initial marker-write failure with retry of the original deadline, confirmed-initial versus retry-only marker provenance (an absent/replaced retry-only UID retires immediately at restart), atomic active→pending→retired storage transitions that prevent delayed marker resurrection across delete/replace/crash/restart interleavings, cluster-scoped startup reconciliation and re-arming across same-UID/deleted/replaced restart states, deadline exclusion from current graph reads, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
 - storage/query parity: append-only structural writes, 24-hour retained
@@ -171,7 +171,7 @@ The agent always uses `hostNetwork: true` with
 `dnsPolicy: ClusterFirstWithHostNet`, so the hostmetrics network scraper observes
 node interfaces rather than pod-network interfaces. Live host verification is a
 synchronized comparison of `/proc/stat`, `/proc/diskstats`, `/proc/net/dev`,
-`/proc/vmstat`, filesystem truth, raw OTLP, VictoriaMetrics, and API results. No
+filesystem truth, raw OTLP, VictoriaMetrics, and API results. No
 privileged host fixture or historical-series deletion code belongs in the repo.
 
 ## Generating Traffic

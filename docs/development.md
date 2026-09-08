@@ -317,8 +317,8 @@ Notes:
 
 Expected graph edge relations after telemetry flows:
 - `runs_on`: pod → node (from kubeletstats resource attributes)
-- `contains`: namespace → pod, pod → container (from kubeletstats resource attributes)
-- `calls`: service → service (from OTLP trace `peer.service` attributes, when traces are enabled)
+- `contains`: namespace → pod, pod → container (from direct Kubernetes structure refresh)
+- `calls`: service → service (from OTLP trace `peer.service` attributes or source-classified metric evidence)
 
 ### Reading the output
 

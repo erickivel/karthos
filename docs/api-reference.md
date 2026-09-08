@@ -169,7 +169,9 @@ Response shape:
 ```
 
 Pass `at=<RFC3339 timestamp>` to select the newest retained materialized
-snapshot at or before that instant. The timestamp cannot be in the future.
+snapshot at or before that instant from the public 24-hour retention window.
+It does not reconstruct arbitrary historical graph state. The timestamp cannot
+be in the future.
 Returns 400 for an invalid or future `at`, and 404 if no current snapshot (or
 no retained snapshot at the requested time) exists.
 
@@ -268,8 +270,7 @@ Response:
 
 ```json
 {
-  "data": {"snapshot": {"id": 481, "created_at": "..."}, "edges": [...], "total": 12},
-  "next_token": ""
+  "data": {"snapshot": {"id": 481, "created_at": "..."}, "edges": [...], "total": 12}
 }
 ```
 
@@ -295,7 +296,7 @@ samples exist and stored history spans the requested window. Delta series use
 `sum_over_time()` for exact increases and return no data for `active_rate`.
 
 For cardinality control, normalized Prometheus application metrics drop raw
-raw `path` and volatile target `pod` / `instance` labels. They retain a
+`path` and volatile target `pod` / `instance` labels. They retain a
 bounded `http_route` only when the application or collector supplied
 `http.route` / `http_route`; the normalizer never derives it from a raw path.
 Without that route, the canonical application metric is service-level
@@ -305,7 +306,9 @@ aggregation rather than per-path data.
 - `k8s.pod.status_reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
 - `http.server.request.duration` / `servicegraph.request.duration` -> temporality-aware `<metric>_sum` rate divided by the corresponding `<metric>_count` rate
 
-The integer→label mapping for any enum metric is documented in the catalog row's `Description` field (see `GET /api/v1/metrics/catalog`); UIs should read it from the catalog rather than hard-coding.
+For enum metrics, consumers use the API `value_label` display field. This API
+reference documents the numeric mappings; the catalog remains the metric
+inventory and semantics contract rather than an enum-mapping surface.
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -377,7 +380,7 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 }
 ```
 
-Samples preserve the public normalized `labels` map. Kubelet network samples expose `direction` and `network_interface_name`; volume samples expose `volume_name`, `volume_type`, and `persistentvolumeclaim_name` when PVC-backed. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so consumers can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Bounded source provenance also includes boolean `failed` as the strings `"true"` / `"false"`, `connection_type` (absent, `messaging_system`, or `database`), separate `virtual_node` (`client` or `server`), and distinct client/server HTTP methods when the collector emits them; these labels define separate raw series. True incremental samples carry `temporality=delta`; collector v0.156 servicegraph series are cumulative and therefore do not carry that label. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
+Samples preserve the public normalized `labels` map. Host network samples expose `direction` and `network_interface_name`; volume samples expose `volume_name`, `volume_type`, and `persistentvolumeclaim_name` when PVC-backed. Servicegraph-derived edge metrics include both the human-readable `edge_client` / `edge_server` labels and the stable `edge_client_id` / `edge_server_id` labels so consumers can join runtime traffic, latency, and error signals onto topology edges without a separate edge-metrics endpoint. Bounded source provenance also includes boolean `failed` as the strings `"true"` / `"false"`, `connection_type` (absent, `messaging_system`, or `database`), separate `virtual_node` (`client` or `server`), and distinct client/server HTTP methods when the collector emits them; these labels define separate raw series. True incremental samples carry `temporality=delta`; collector v0.156 servicegraph series are cumulative and therefore do not carry that label. Istio mesh-derived samples use the same edge labels and set `source=mesh.istio`; mesh labels such as `network.protocol.name`, `mesh.security.policy`, `mesh.peer.source.principal`, and `mesh.peer.destination.principal` are preserved when present.
 
 Range-result timestamps are fixed-grid evaluation times, not claims about the producer's original observation instant. The precise `from` and `to` bounds are preserved; `to` is included as an evaluation point even when it is not aligned to the 15-second grid. A value is omitted when its newest raw observation is over five minutes old. Rates, increases, and histogram means are computed from raw observations before their results are placed on the grid. Results are ordered by timestamp descending, then stable public sample fields before pagination. Returns 400 for invalid/inverted time ranges, invalid duration syntax, windows outside `1m..1h`, unknown modes, or controls unsupported by the selected metric. Histogram means accept `window` only; gauges and enum metrics reject both controls.
 
@@ -500,7 +503,7 @@ curl -s http://localhost:18081/api/v1/metrics/catalog/stats | jq '.data.stats[] 
 }
 ```
 
-The endpoint backs the **Catalog** tab in the Metrics Explorer (`/metrics?mode=catalog`), which surfaces coverage badges (live / stale / no-data / derived) so silent advertised-but-not-flowing metrics become visible.
+The endpoint backs the **Catalog** tab in the Metrics Explorer (`/metrics?mode=catalog`), which surfaces coverage badges (live / stale / no-data) so silent advertised-but-not-flowing metrics become visible.
 
 ## Entities
 
@@ -528,8 +531,7 @@ Response:
       {"id": "...", "kind": "pod", "cluster": "...", "namespace": "default", "name": "pod-a", "labels": {...}}
     ],
     "total": 42
-  },
-  "next_token": ""
+  }
 }
 ```
 

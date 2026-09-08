@@ -16,6 +16,8 @@ update them in the same change.
 | [Frontend Design Spec](frontend-design-spec.md) | Frontend stack, design system, projection modes |
 | [Testing](testing.md) | Unit tests, kind-based e2e tasks, scenario validation |
 | [Development](development.md) | Project structure, common commands, frontend dev loop |
+| [Remote Cluster](remote-cluster.md) | Cluster profiles and supported kind/local and k3s/ssh cells |
+| [Postman Collection](postman/oksg-api-v1.postman_collection.json) | Importable `/api/v1` request collection |
 
 ## Quick Links
 

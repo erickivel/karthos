@@ -85,7 +85,7 @@ directory + new case in those branches; nothing else moves.
 | Cell                          | Status                          |
 |-------------------------------|---------------------------------|
 | `kind` + `local`              | **Tested** (default; current behaviour) |
-| `k3s` + `ssh` (single-node)   | **Tested** by this change       |
+| `k3s` + `ssh` (single-node)   | **Supported and tested**        |
 | Anything else (k3d, minikube, kubeadm, EKS/GKE, multi-node k3s, etc.) | Out of scope — provider hooks are open, scripts are not |
 
 The two supported cells use the fixed registry URL `localhost:5001`; profiles

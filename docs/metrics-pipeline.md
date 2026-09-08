@@ -92,7 +92,7 @@ broader Kubernetes entity catalog independently of metric collection. Object
 snapshots/events from the OTel `k8s_objects` receiver are intentionally out of
 scope because that receiver emits logs, not metric samples.
 
-Kubelet network dimensions use the public labels `direction` and
+Host OS network dimensions use the public labels `direction` and
 `network_interface_name`. Volume dimensions use `volume_name`, `volume_type`,
 and optional `persistentvolumeclaim_name`; standard OTLP resource attributes
 and supported datapoint attributes normalize to those names. PVC-backed
@@ -234,9 +234,9 @@ The shared `MetricSourcePolicy` validates every recognized canonical datapoint
 before entity resolution. It requires a registered source stamp and enforces
 the exact assigned winner (or a consistently assigned specialization).
 Missing, unknown, and mismatched datapoints are dropped while valid siblings in
-the acknowledged batch continue. Three atomic reason counters back the total
-and reason-specific accessors. Mesh topology consumes the same pure decision
-without recording it again, preventing invalid edges and double counting.
+the acknowledged batch continue. The policy is a pure accepted/dropped
+validation decision. Metric calls topology reuses that same decision without
+recording it again, preventing invalid edges and double counting.
 
 This is the mechanism that prevents double-counting when the same canonical
 metric has two installed producers.
@@ -588,8 +588,9 @@ Storage enforces the one-way UID assignment transition from active to pending
 terminal to retired. A delayed terminal-marker retry receives the retired state
 after a deletion/replacement has won and must not recreate pending grace.
 The retirement marker applies only to `runs_on`, not to another relation that
-happens to carry a metadata key of the same name. This POC does not offer
-historical `graph?at=` reconstruction.
+happens to carry a metadata key of the same name. `graph?at=` selects a
+retained materialized snapshot from the public 24-hour window; it does not
+reconstruct arbitrary historical graph state or provide unbounded history.
 
 ## 8. Adding a New Source
 

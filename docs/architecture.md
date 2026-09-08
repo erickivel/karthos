@@ -76,7 +76,7 @@ The backend ingest pipeline:
 | `MetricCallsTopologyBuilder` | `pkg/backend/ingest/metric_calls_topology_builder.go` | Generic `calls` edge assembly from source-classified metrics. The source module owns recognition and bounded metadata; the builder validates provenance, uses datapoint timestamps for `FirstSeen`/`LastSeen`, and deduplicates edges. |
 | `TraceTopologyBuilder` | `pkg/backend/ingest/topology_builder.go` | `calls` edges from OTLP spans where `peer.service` is set; deduplicated within a batch by edge ID. |
 | `kubernetes.structure` | `pkg/sources/structure` | Direct Kubernetes API refresh of `exposes`, `routes_to`, `uses`, `mounts`, and containment with `k8s-api` provenance. |
-| `CompositeTopologyBuilder` | `pkg/backend/ingest/composite_topology_builder.go` | Chains topology builders so the metric path runs structural and source-classified metric calls together. |
+| `CompositeTopologyBuilder` | `pkg/backend/ingest/composite_topology_builder.go` | Chains metric-derived observed `runs_on` and source-classified `calls` builders. Direct Kubernetes structure refresh remains separate. |
 | `MultiIngestor` | `pkg/backend/ingest/normalizing_ingestor.go` | Fans an envelope to `NormalizingIngestor → MetricStore` and `BufferedTopologyIngestor → GraphStore`. |
 | `BufferedTopologyIngestor` | `pkg/backend/ingest/buffered_topology_ingestor.go` | Accumulates only observed `runs_on` and `calls` edges from metric and trace builders; flushes one consolidated edge batch per window (default `OKSG_TOPOLOGY_FLUSH_INTERVAL=60s`) and requeues a failed in-process write for the next flush. Direct Kubernetes refresh owns all structural nodes and relations. |
 
@@ -117,9 +117,9 @@ Edge model (Standard tier):
 | Source | Relation | Target | Data Source |
 |--------|----------|--------|-------------|
 | pod | `runs_on` | node | kubeletstats resource attributes |
-| namespace | `contains` | pod | kubeletstats resource attributes |
-| pod | `contains` | container | kubeletstats resource attributes |
-| service | `calls` | service | OTLP trace spans (`peer.service`) or Istio mesh metrics |
+| namespace | `contains` | pod | Direct Kubernetes structure refresh |
+| pod | `contains` | container | Direct Kubernetes structure refresh |
+| service | `calls` | service | OTLP trace spans (`peer.service`) or source-classified metric evidence |
 | service | `exposes` | workload | K8s API (service selector matching) |
 | ingress | `routes_to` | service | K8s API (ingress rules) |
 | workload | `uses` | configmap/secret | K8s API (pod spec references) |

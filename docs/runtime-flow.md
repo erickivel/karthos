@@ -30,7 +30,12 @@ sequenceDiagram
     participant GS as GraphStore
 
     loop Running cluster telemetry
-        Workload->>Agent: Prometheus scrape targets and kubelet stats
+        Workload->>Agent: kubelet stats
+        Agent->>Agent: scrape host CPU/memory/disk/filesystem/network metrics
+        opt Complete Istio mesh
+            Workload->>Agent: Istio proxy Prometheus scrape targets
+        end
+        Workload->>Gateway: application Prometheus scrape targets
         opt OTLP-capable workloads
             Workload->>Agent: OTLP metrics and traces
         end
@@ -47,7 +52,7 @@ sequenceDiagram
             MS-->>NI: nil
             NI-->>MI: nil
             MI->>BTI: BufferedTopologyIngestor.Ingest(ctx, envelope)
-            BTI->>BTI: MetricTopologyBuilder.Build → []Edge + []Node
+            BTI->>BTI: MetricTopologyBuilder.Build → []Edge
             BTI->>BTI: Merge into in-memory buffer
             BTI-->>MI: nil
             MI-->>Router: nil
@@ -193,7 +198,7 @@ Gateway
                               │ ┌─────────────────┐│   │ (nodes + edges)     │
                               │ │BufferedTopology ││   │ (pkg/backend/       │
                               │ │Ingestor (shared)││   │  persistence)       │
-                              │ │ → []Edge + Node ││   └─────────────────────┘
+                              │ │ → []Edge        ││   └─────────────────────┘
                               │ │ → in-memory buf ││
                               │ └─────────────────┘│
                               └────────────────────┘
@@ -233,7 +238,7 @@ Operational notes:
   no automatic reconciliation
 - startup retries against the gateway are expected if the gateway pod is not ready yet
 - the chart pins Collector Contrib `0.156.0`; the deleted `receiver.kubeletstats.enableCPUUsageMetrics` feature gate is not configured
-- kubelet collection enables every node interface but retains the receiver's default pod-interface collection, and requests `k8s.volume.type` metadata without configuring `k8s_api_config` or adding PV/PVC RBAC
+- hostmetrics collects CPU, memory, disk, filesystem, and node network metrics through the chart's fixed host-network policy; kubeletstats covers pod, container, and volume metrics and requests `k8s.volume.type` metadata without configuring `k8s_api_config` or adding PV/PVC RBAC
 
 ### 2. Gateway Routing
 
@@ -291,7 +296,7 @@ The backend serves a scalar metrics API, so OTLP metrics are normalized into can
 - Application Prometheus HTTP metrics are scraped once by the singleton gateway through static Kubernetes Service DNS targets and attach to the canonical Service entity. Discovery requires `prometheus.io/port` to identify a declared Service port. Samples preserve that port, metrics path, namespace, service, and HTTP labels; Kubernetes performs the Service-port to `targetPort` translation.
 - Servicegraph-derived metrics preserve `edge_client`, `edge_server`, `edge_client_id`, `edge_server_id`, `failed`, valid `connection_type`, separate `virtual_node`, generic method/status when emitted, distinct `client_http_method` / `server_http_method`, and namespace labels so edge queries can join runtime telemetry back onto topology edges without collapsing request contexts.
 - The gateway servicegraph connector flushes metrics every 15 seconds and retains unmatched spans for 30 seconds so independently batched client/server exports can be paired before an edge expires.
-- Kubelet network metrics preserve `direction` and `network_interface_name`, keeping receive/transmit and separate node interfaces as distinct raw series.
+- Host network metrics preserve `direction` and `network_interface_name`, keeping receive/transmit and separate node interfaces as distinct raw series.
 - Pod-volume metrics normalize resource/datapoint attributes to `volume_name`, `volume_type`, and optional `persistentvolumeclaim_name`. When a volume datapoint carries a resolvable PVC identity, the normalizer stores the sample against the PVC entity. Otherwise it remains pod-scoped and stays distinct by volume name/type.
 
 ### Request, Error, and Duration Semantics
@@ -311,7 +316,7 @@ After the backend receives OTLP payloads, `pkg/backend/ingest` converts them int
 What the envelope builder currently captures:
 
 - signal type such as `metric` or `trace`
-- source transport such as `otlp/grpc` or `otlp/http`
+- source transport `otlp/grpc`
 - backend receipt timestamp (`RawEnvelope.Timestamp`)
 - resource attributes attached to the OTLP payload
 - raw payload bytes for the immediate normalization/topology path
@@ -369,15 +374,14 @@ Workloads / Kubelet
         v
 Agent Collector
   - kubeletstats (pod, container, volume)
-  - hostmetrics (CPU, memory, disk, filesystem, network)
-    - agent host networking defaults on with `ClusterFirstWithHostNet`
-    - opting out removes the network scraper; it does not substitute pod-network counters
-  - prometheus (when discovered)
+  - hostmetrics (CPU, memory, disk, filesystem, network) through fixed `hostNetwork: true` and `ClusterFirstWithHostNet`
+  - prometheus (complete-Istio proxy targets only)
   - otlp (when discovered)
         |
         v
 Gateway Collector
   - otlp receive
+  - prometheus (discovered application Service targets)
   - k8s_cluster (container configuration/status, pod phases, node conditions)
   - servicegraph connector (when OTLP traces present)
   - memory_limiter
