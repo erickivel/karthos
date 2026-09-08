@@ -78,7 +78,12 @@ func (r *HealthResolver) Resolve(ctx context.Context, nodes []topology.Node, exa
 				result.Statuses[id] = metrics.HealthRestarting
 				continue
 			}
-			switch readyValues[id] {
+			readyValue, observed := readyValues[id]
+			if !observed {
+				result.Statuses[id] = metrics.HealthUnknown
+				continue
+			}
+			switch readyValue {
 			case 1:
 				result.Statuses[id] = metrics.HealthHealthy
 			case 0:
@@ -154,20 +159,23 @@ func queryHealthSamplesWithAggregation(ctx context.Context, store persistence.Me
 
 func combineHealthQuality(qualities ...healthQuality) healthQuality {
 	complete := 0
+	partial := 0
 	unavailable := 0
 	for _, quality := range qualities {
 		switch quality {
 		case healthQualityComplete:
 			complete++
+		case healthQualityPartial:
+			partial++
 		case healthQualityUnavailable:
 			unavailable++
 		}
 	}
-	if unavailable == 0 {
-		return healthQualityComplete
+	if partial > 0 || (complete > 0 && unavailable > 0) {
+		return healthQualityPartial
 	}
-	if complete == 0 {
+	if unavailable > 0 {
 		return healthQualityUnavailable
 	}
-	return healthQualityPartial
+	return healthQualityComplete
 }
