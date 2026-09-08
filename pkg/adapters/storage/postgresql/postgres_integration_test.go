@@ -122,7 +122,9 @@ func TestPostgresObservedEdgeMergeUsesNewestPayloadAndRetainsProvenance(t *testi
 	require.NoError(t, Migrate(ctx, conn))
 	require.NoError(t, resetTopology(ctx, conn))
 	store := NewPostgresGraphStore(conn)
-	base := time.Now().UTC().Add(-time.Minute)
+	// PostgreSQL TIMESTAMPTZ retains microsecond precision, so use a timestamp
+	// that survives the persistence round trip exactly.
+	base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
 	first := topology.NewEdge(
 		entities.ComputeEntityID(entities.KindService, "cluster", "demo", "a"),
 		entities.ComputeEntityID(entities.KindService, "cluster", "demo", "b"),
@@ -163,7 +165,9 @@ func TestPostgresObservedEdgeMergeDoesNotLetDelayedPayloadOverwriteNewerState(t 
 	require.NoError(t, Migrate(ctx, conn))
 	require.NoError(t, resetTopology(ctx, conn))
 	store := NewPostgresGraphStore(conn)
-	base := time.Now().UTC().Add(-time.Minute)
+	// PostgreSQL TIMESTAMPTZ retains microsecond precision, so use a timestamp
+	// that survives the persistence round trip exactly.
+	base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
 	newer := topology.NewEdge(
 		entities.ComputeEntityID(entities.KindService, "cluster", "demo", "a"),
 		entities.ComputeEntityID(entities.KindService, "cluster", "demo", "b"),
