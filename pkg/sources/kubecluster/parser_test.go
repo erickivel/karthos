@@ -5,8 +5,21 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
 	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/oksg/pkg/discovery/profile"
 )
+
+func TestContributeStampsRawNodeCondition(t *testing.T) {
+	plan := collectorspec.CollectionPlan{}
+	Contribute(&plan, profile.SourceCapability{}, true)
+
+	require.Len(t, plan.Gateway.SourceStamps, 1)
+	stamp := plan.Gateway.SourceStamps[0]
+	require.Equal(t, metrics.SourceKubeCluster, stamp.SourceID)
+	require.Contains(t, stamp.ExactMetricNames, "k8s.node.condition")
+	require.True(t, stamp.OnlyIfUnset)
+}
 
 func TestParseTranslatesKubeClusterContainerSpecs(t *testing.T) {
 	for raw, canonical := range map[string]string{

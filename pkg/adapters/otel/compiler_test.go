@@ -2,6 +2,7 @@ package otel
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -9,7 +10,28 @@ import (
 
 	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
 	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/oksg/pkg/sources/kubecluster"
 )
+
+func TestCompileGatewayStampsRawKubeClusterNodeConditions(t *testing.T) {
+	plan := collectorspec.CollectionPlan{ClusterName: "kind-test", Namespace: "oksg-system"}
+	kubecluster.Contribute(&plan, profile.SourceCapability{}, true)
+
+	deployment, err := NewCompiler().Compile(plan)
+	require.NoError(t, err)
+	processor := deployment.GatewayConfig.Processors[oksgSourceTaggerProcessor].(map[string]any)
+	statements := processor["metric_statements"].([]map[string]any)[0]["statements"].([]string)
+	matched := false
+	for _, statement := range statements {
+		if strings.Contains(statement, `metric.name == "k8s.node.condition"`) {
+			matched = true
+			require.Contains(t, statement, `set(datapoint.attributes["oksg_source"], "kube-cluster")`)
+			require.Contains(t, statement, `datapoint.attributes["oksg_source"] == nil`)
+		}
+	}
+	require.True(t, matched, "expected the raw node-condition metric to receive a kube-cluster source stamp")
+}
 
 func TestCompileAddsFixedJSONStdoutServiceTelemetry(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{

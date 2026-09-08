@@ -129,6 +129,27 @@ func TestOTLPNormalizerRejectsWrongSourceForSpecializedCanonicalMetrics(t *testi
 	}
 }
 
+func TestOTLPNormalizerAcceptsAssignedStampedNodeCondition(t *testing.T) {
+	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
+		"k8s.node.condition.ready":           metrics.SourceKubeCluster,
+		"k8s.node.condition.memory_pressure": metrics.SourceKubeCluster,
+		"k8s.node.condition.disk_pressure":   metrics.SourceKubeCluster,
+	})
+	normalizer := ingest.NewOTLPNormalizer(
+		ingest.NewOTLPEntityResolver(testCluster),
+		sources.DefaultRegistry(),
+		ingest.WithSourcePolicy(policy),
+	)
+	rm := makeGaugeRMWithAttrs("k8s.node.condition", 1, uint64(time.Now().UnixNano()), map[string]string{"condition": "Ready"})
+	stampMetricSource(rm, metrics.SourceKubeCluster)
+
+	samples, err := normalizer.Normalize(context.Background(), makeEnvelopeWithoutSourceStamp(t, podResource(), rm))
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	require.Equal(t, "k8s.node.condition.ready", samples[0].MetricName)
+	require.Equal(t, metrics.SourceKubeCluster, samples[0].Labels["source"])
+}
+
 func TestMetricSourcePolicyRejectsAmbiguousDescendantAssignments(t *testing.T) {
 	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), metrics.Assignment{
 		"system.disk.io.read":  metrics.SourceHostOS,
