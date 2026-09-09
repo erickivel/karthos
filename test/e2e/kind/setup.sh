@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-CLUSTER_NAME="${1:-oksg-test}"
-REGISTRY_NAME="oksg-kind-registry"
+CLUSTER_NAME="${1:-karthos-test}"
+REGISTRY_NAME="karthos-kind-registry"
 REGISTRY_PORT="5001"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/cluster-config.yaml"

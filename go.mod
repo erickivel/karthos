@@ -1,4 +1,4 @@
-module github.com/erickivel/oksg
+module github.com/erickivel/karthos
 
 go 1.26.6
 

@@ -1,9 +1,9 @@
 package servicegraph
 
 import (
-	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	collectorspec "github.com/erickivel/karthos/pkg/collector/spec"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 func Contribute(plan *collectorspec.CollectionPlan, capability profile.SourceCapability, selected bool) {

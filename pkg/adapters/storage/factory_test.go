@@ -38,7 +38,7 @@ func TestNewStores_ExternalRequiresPostgresDSN(t *testing.T) {
 func TestNewStores_ExternalRequiresVMURL(t *testing.T) {
 	_, err := NewStores(context.Background(), StorageConfig{
 		Backend:     BackendExternal,
-		PostgresDSN: "postgres://localhost/oksg",
+		PostgresDSN: "postgres://localhost/karthos",
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "victoriametrics-url")

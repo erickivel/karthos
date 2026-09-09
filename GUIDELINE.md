@@ -96,7 +96,7 @@ adapter := NewDiscoveryAdapter(client, clusterName)
 
 ```bash
 # E2E transport contract: both supported cells use this fixed registry.
-docker inspect oksg-kind-registry
+docker inspect karthos-kind-registry
 # Images are published through localhost:5001; no registry override is supported.
 ```
 

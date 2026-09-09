@@ -25,11 +25,11 @@ test.describe('topology projection structure', () => {
     await setGranularity(page, 'runtime')
     await setMode(page, 'infrastructure')
 
-    await expect(groupCard(page, 'node', 'oksg-test-control-plane')).toBeVisible()
+    await expect(groupCard(page, 'node', 'karthos-test-control-plane')).toBeVisible()
     await expect(
       entityCardsByAttributes(page, {
         kind: 'pod',
-        namespace: 'oksg-demo',
+        namespace: 'karthos-demo',
         namePrefix: 'gateway-go-',
       }),
     ).toHaveCount(1)
@@ -48,22 +48,22 @@ test.describe('topology projection structure', () => {
     await setGranularity(page, 'runtime')
     await setMode(page, 'infrastructure')
 
-    const group = groupCard(page, 'node', 'oksg-test-control-plane')
+    const group = groupCard(page, 'node', 'karthos-test-control-plane')
     await expect(group).toBeVisible()
     const box = await group.boundingBox()
     expect(box?.width).toBeLessThan(1_250)
   })
 
   test('groups same-namespace pods across nodes in ownership mode', async ({ page }) => {
-    await selectNamespace(page, 'oksg-demo')
+    await selectNamespace(page, 'karthos-demo')
     await setGranularity(page, 'runtime')
     await setMode(page, 'ownership')
 
-    await expect(groupCard(page, 'namespace', 'oksg-demo')).toBeVisible()
+    await expect(groupCard(page, 'namespace', 'karthos-demo')).toBeVisible()
     await expect(
       entityCardsByAttributes(page, {
         kind: 'pod',
-        namespace: 'oksg-demo',
+        namespace: 'karthos-demo',
         namePrefix: 'service-b-node-',
       }),
     ).toHaveCount(3)
@@ -101,14 +101,14 @@ test.describe('topology projection structure', () => {
     await expect(
       entityCardsByAttributes(page, {
         kind: 'pod',
-        namespace: 'oksg-demo',
+        namespace: 'karthos-demo',
         namePrefix: 'service-b-node-',
       }),
     ).toHaveCount(3)
   })
 
   test('adds container detail in detailed mode without losing pod context', async ({ page }) => {
-    await selectNamespace(page, 'oksg-demo')
+    await selectNamespace(page, 'karthos-demo')
     await setGranularity(page, 'runtime')
     await expect(entityCardsByAttributes(page, { kind: 'container' })).toHaveCount(0)
 
@@ -117,21 +117,21 @@ test.describe('topology projection structure', () => {
     await expect(
       entityCardsByAttributes(page, {
         kind: 'container',
-        namespace: 'oksg-demo',
+        namespace: 'karthos-demo',
         namePrefix: 'service-b-node',
       }),
     ).toHaveCount(3)
     await expect(
       entityCardsByAttributes(page, {
         kind: 'pod',
-        namespace: 'oksg-demo',
+        namespace: 'karthos-demo',
         namePrefix: 'service-b-node-',
       }),
     ).toHaveCount(3)
   })
 
   test('degrades gracefully for sparse namespaces without workloads or services', async ({ page }) => {
-    await selectNamespace(page, 'oksg-sparse')
+    await selectNamespace(page, 'karthos-sparse')
     await setGranularity(page, 'runtime')
     await setMode(page, 'ownership')
 
@@ -153,7 +153,7 @@ test.describe('topology projection structure', () => {
   test('preserves selection across mode switches and avoids duplicates across granularity switches', async ({
     page,
   }) => {
-    await selectNamespace(page, 'oksg-sparse')
+    await selectNamespace(page, 'karthos-sparse')
     await setGranularity(page, 'runtime')
 
     await selectEntity(page, 'pod', 'ops-toolbox')
@@ -169,7 +169,7 @@ test.describe('topology projection structure', () => {
     await expect(
       entityCardsByAttributes(page, {
         kind: 'container',
-        namespace: 'oksg-sparse',
+        namespace: 'karthos-sparse',
         namePrefix: 'toolbox',
       }),
     ).toHaveCount(0)
@@ -178,7 +178,7 @@ test.describe('topology projection structure', () => {
   })
 
   test('renders selected node with streamlined inspector sections', async ({ page }) => {
-    await selectNamespace(page, 'oksg-sparse')
+    await selectNamespace(page, 'karthos-sparse')
     await setGranularity(page, 'runtime')
 
     await selectEntity(page, 'pod', 'ops-toolbox')

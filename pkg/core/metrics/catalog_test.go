@@ -3,7 +3,7 @@ package metrics
 import (
 	"testing"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/entities"
 	"github.com/stretchr/testify/require"
 )
 

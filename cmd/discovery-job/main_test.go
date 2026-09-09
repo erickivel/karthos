@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/adapters/otel"
-	"github.com/erickivel/oksg/pkg/collector/configgen"
-	"github.com/erickivel/oksg/pkg/collector/deployer"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/adapters/otel"
+	"github.com/erickivel/karthos/pkg/collector/configgen"
+	"github.com/erickivel/karthos/pkg/collector/deployer"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 func TestRunPlanWritesResolvedSourcePlanBesideValues(t *testing.T) {
@@ -25,7 +25,7 @@ func TestRunPlanWritesResolvedSourcePlanBesideValues(t *testing.T) {
 		"--mode=plan",
 		"--capability-profile=" + profilePath,
 		"--values-output=" + valuesPath,
-	}, dependencies{planner: newCommandPlanner("oksg-system", false), generator: defaultGenerator(configgen.GeneratorOptions{})})
+	}, dependencies{planner: newCommandPlanner("karthos-system", false), generator: defaultGenerator(configgen.GeneratorOptions{})})
 	require.NoError(t, err)
 
 	values, err := os.ReadFile(valuesPath)
@@ -56,14 +56,14 @@ func TestRunPlanCollectorDebugCompilesFixedDebugExporter(t *testing.T) {
 
 	values, err := os.ReadFile(valuesPath)
 	require.NoError(t, err)
-	require.Contains(t, string(values), "debug/oksg:")
+	require.Contains(t, string(values), "debug/karthos:")
 	require.Contains(t, string(values), "verbosity: detailed")
 	require.Contains(t, string(values), "use_internal_logger: false")
 	require.Contains(t, string(values), "- stdout")
 }
 
 func TestRunPlanCollectorDebugEnvironmentCompilesFixedDebugExporter(t *testing.T) {
-	t.Setenv("OKSG_COLLECTOR_DEBUG", "true")
+	t.Setenv("KARTHOS_COLLECTOR_DEBUG", "true")
 	tempDir := t.TempDir()
 	profilePath := filepath.Join(tempDir, "profile.json")
 	valuesPath := filepath.Join(tempDir, "otel-values.yaml")
@@ -78,13 +78,13 @@ func TestRunPlanCollectorDebugEnvironmentCompilesFixedDebugExporter(t *testing.T
 
 	values, err := os.ReadFile(valuesPath)
 	require.NoError(t, err)
-	require.Contains(t, string(values), "debug/oksg:")
+	require.Contains(t, string(values), "debug/karthos:")
 }
 
 func TestRunRejectsInvalidCollectorDebugEnvironment(t *testing.T) {
-	t.Setenv("OKSG_COLLECTOR_DEBUG", "not-a-boolean")
+	t.Setenv("KARTHOS_COLLECTOR_DEBUG", "not-a-boolean")
 	err := run(context.Background(), []string{"--mode=discover"}, dependencies{})
-	require.ErrorContains(t, err, "OKSG_COLLECTOR_DEBUG must be a boolean")
+	require.ErrorContains(t, err, "KARTHOS_COLLECTOR_DEBUG must be a boolean")
 }
 
 func TestRunDiscoverWritesCapabilityProfile(t *testing.T) {
@@ -140,7 +140,7 @@ func TestRunDeployCompilesTypedExternalStorageAndFrontendImageSettings(t *testin
 		"--storage-backend=external",
 		"--postgresql-mode=bundled",
 		"--victoriametrics-mode=bundled",
-		"--frontend-image-repository=registry.example/oksg-frontend",
+		"--frontend-image-repository=registry.example/karthos-frontend",
 		"--frontend-image-tag=e2e",
 		"--frontend-image-pull-policy=Always",
 	}, dependencies{deployer: deployer})
@@ -148,7 +148,7 @@ func TestRunDeployCompilesTypedExternalStorageAndFrontendImageSettings(t *testin
 	require.Contains(t, string(deployer.appliedValues), "backend: external")
 	require.Contains(t, string(deployer.appliedValues), "postgresql:")
 	require.Contains(t, string(deployer.appliedValues), "enabled: true")
-	require.Contains(t, string(deployer.appliedValues), "repository: registry.example/oksg-frontend")
+	require.Contains(t, string(deployer.appliedValues), "repository: registry.example/karthos-frontend")
 	require.Contains(t, string(deployer.appliedValues), "tag: e2e")
 }
 

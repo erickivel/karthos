@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/backend/query"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/metrics"
 )
 
 // VMMetricStore implements persistence.MetricStore using VictoriaMetrics HTTP API.
@@ -401,7 +401,7 @@ func catalogPromNameLookup() map[string]string {
 // format suitable for /api/v1/import/prometheus.
 //
 // Format: metric_name{label1="val1",label2="val2"} value timestamp_ms
-const storedUnitLabel = "oksg_unit"
+const storedUnitLabel = "karthos_unit"
 
 func samplesToPrometheusText(samples []metrics.MetricSample) []byte {
 	var buf bytes.Buffer

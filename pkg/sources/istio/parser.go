@@ -1,6 +1,6 @@
 package istio
 
-import "github.com/erickivel/oksg/pkg/sources/contract"
+import "github.com/erickivel/karthos/pkg/sources/contract"
 
 func Parse(rawMetricName string, _ map[string]string) (contract.ParsedMetric, bool) {
 	canonical, ok := rawMetricNames[rawMetricName]

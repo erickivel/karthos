@@ -2,8 +2,8 @@ package istio
 
 import (
 	"context"
-	"github.com/erickivel/oksg/pkg/core/semconv"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	"strings"
 )

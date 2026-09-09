@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: config-bundle
-  namespace: oksg-demo
+  namespace: karthos-demo
 spec:
   replicas: 0
   selector:

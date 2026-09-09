@@ -102,5 +102,5 @@ ingestion policy and never resolves sources again at runtime.
 
 The backend independently creates an in-cluster Kubernetes client for
 `kubernetes.structure`. That module refreshes the canonical structural graph
-at startup and on `OKSG_STRUCTURE_REFRESH_INTERVAL`; the interval must be
-positive and strictly shorter than `OKSG_NODE_TTL` whenever TTL is enabled.
+at startup and on `KARTHOS_STRUCTURE_REFRESH_INTERVAL`; the interval must be
+positive and strictly shorter than `KARTHOS_NODE_TTL` whenever TTL is enabled.

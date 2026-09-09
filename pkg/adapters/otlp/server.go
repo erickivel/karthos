@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	backendingest "github.com/erickivel/oksg/pkg/backend/ingest"
-	"github.com/erickivel/oksg/pkg/core/logging"
+	backendingest "github.com/erickivel/karthos/pkg/backend/ingest"
+	"github.com/erickivel/karthos/pkg/core/logging"
 	colmetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"

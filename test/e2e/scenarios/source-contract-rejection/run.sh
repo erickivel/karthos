@@ -5,12 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 cd "${REPO_ROOT}"
 
-NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
-CONTRACT_NAME="${HELM_RELEASE_NAME:-oksg-otel}-source-contract"
-TMPDIR_TEST="$(mktemp -d -t oksg-source-contract-rejection.XXXXXX)"
+NAMESPACE="${KIND_NAMESPACE:-karthos-system}"
+CONTRACT_NAME="${HELM_RELEASE_NAME:-karthos}-source-contract"
+TMPDIR_TEST="$(mktemp -d -t karthos-source-contract-rejection.XXXXXX)"
 BACKUP="${TMPDIR_TEST}/source-contract.json"
 RESTORE="${TMPDIR_TEST}/restore-source-contract.json"
-BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"
+BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-karthos}-backend"
 
 wait_for_observed_generation() {
   local timeout="${1:-45s}"
@@ -27,7 +27,7 @@ wait_for_mounted_contract() {
   local expected_fingerprint="intentionally-mismatched-fingerprint"
   local attempt
   for attempt in {1..90}; do
-    if kubectl exec "deployment/${BACKEND_DEPLOYMENT}" -n "${NAMESPACE}" -- cat /etc/oksg/source-plan.json 2>/dev/null | grep -Fq "${expected_fingerprint}"; then
+    if kubectl exec "deployment/${BACKEND_DEPLOYMENT}" -n "${NAMESPACE}" -- cat /etc/karthos/source-plan.json 2>/dev/null | grep -Fq "${expected_fingerprint}"; then
       return 0
     fi
     sleep 1

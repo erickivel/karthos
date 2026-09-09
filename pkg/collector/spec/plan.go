@@ -5,7 +5,7 @@ package spec
 import (
 	"sort"
 
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 type CollectionPlan struct {

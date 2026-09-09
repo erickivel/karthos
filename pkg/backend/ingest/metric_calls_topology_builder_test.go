@@ -12,11 +12,11 @@ import (
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/core/topology"
-	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/sources"
 )
 
 func TestMetricCallsTopologyBuilderBuildsCallsEdgeFromIstioMetric(t *testing.T) {
@@ -24,27 +24,27 @@ func TestMetricCallsTopologyBuilderBuildsCallsEdgeFromIstioMetric(t *testing.T) 
 	env := makeCallsMetricEnvelope(t, "istio_requests_total", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":                          "gateway-go",
 		"server":                          "service-a-python",
-		"client_namespace":                "oksg-demo",
-		"server_namespace":                "oksg-demo",
+		"client_namespace":                "karthos-demo",
+		"server_namespace":                "karthos-demo",
 		"network.protocol.name":           "http",
 		"mesh.security.policy":            "mutual_tls",
-		"mesh.peer.destination.principal": "spiffe://cluster.local/ns/oksg-demo/sa/service-a",
-		"oksg.source":                     "mesh.istio",
+		"mesh.peer.destination.principal": "spiffe://cluster.local/ns/karthos-demo/sa/service-a",
+		"karthos.source":                  "mesh.istio",
 	})
 
 	edges, err := builder.Build(context.Background(), env)
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 
-	sourceID := entities.ComputeEntityID(entities.KindService, "kind-test", "oksg-demo", "gateway-go")
-	targetID := entities.ComputeEntityID(entities.KindService, "kind-test", "oksg-demo", "service-a-python")
+	sourceID := entities.ComputeEntityID(entities.KindService, "kind-test", "karthos-demo", "gateway-go")
+	targetID := entities.ComputeEntityID(entities.KindService, "kind-test", "karthos-demo", "service-a-python")
 	assert.Equal(t, sourceID, edges[0].Source)
 	assert.Equal(t, targetID, edges[0].Target)
 	assert.Equal(t, topology.RelCalls, edges[0].Relation)
 	assert.Equal(t, []string{"mesh.istio"}, edges[0].Provenance)
 	assert.Equal(t, "http", edges[0].Metadata["network.protocol.name"])
 	assert.Equal(t, "mutual_tls", edges[0].Metadata["mesh.security.policy"])
-	assert.Equal(t, "spiffe://cluster.local/ns/oksg-demo/sa/service-a", edges[0].Metadata["mesh.peer.destination.principal"])
+	assert.Equal(t, "spiffe://cluster.local/ns/karthos-demo/sa/service-a", edges[0].Metadata["mesh.peer.destination.principal"])
 }
 
 func TestMetricCallsTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing.T) {
@@ -54,9 +54,9 @@ func TestMetricCallsTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing
 	env := makeCallsMetricEnvelope(t, "istio_requests_total", envelopeTimestamp, dataPointTimestamp, map[string]string{
 		"client":           "gateway-go",
 		"server":           "service-a-python",
-		"client_namespace": "oksg-demo",
-		"server_namespace": "oksg-demo",
-		"oksg.source":      "mesh.istio",
+		"client_namespace": "karthos-demo",
+		"server_namespace": "karthos-demo",
+		"karthos.source":   "mesh.istio",
 	})
 
 	edges, err := builder.Build(context.Background(), env)
@@ -72,9 +72,9 @@ func TestMetricCallsTopologyBuilderDropsTimestamplessMetricEvidence(t *testing.T
 	env := makeCallsMetricEnvelope(t, "istio_requests_total", time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC), time.Time{}, map[string]string{
 		"client":           "gateway-go",
 		"server":           "service-a-python",
-		"client_namespace": "oksg-demo",
-		"server_namespace": "oksg-demo",
-		"oksg.source":      "mesh.istio",
+		"client_namespace": "karthos-demo",
+		"server_namespace": "karthos-demo",
+		"karthos.source":   "mesh.istio",
 	})
 
 	edges, err := builder.Build(context.Background(), env)
@@ -87,8 +87,8 @@ func TestMetricCallsTopologyBuilderIgnoresMetricsWithoutCallsSemantics(t *testin
 	env := makeCallsMetricEnvelope(t, "k8s.pod.cpu.usage", time.Date(2026, 3, 14, 12, 1, 0, 0, time.UTC), time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC), map[string]string{
 		"client":           "gateway-go",
 		"server":           "service-a-python",
-		"client_namespace": "oksg-demo",
-		"server_namespace": "oksg-demo",
+		"client_namespace": "karthos-demo",
+		"server_namespace": "karthos-demo",
 	})
 
 	edges, err := builder.Build(context.Background(), env)
@@ -113,10 +113,10 @@ func TestMetricCallsTopologyBuilderRejectsInvalidSource(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			attrs := map[string]string{
 				"client": "gateway-go", "server": "service-a-python",
-				"client_namespace": "oksg-demo", "server_namespace": "oksg-demo",
+				"client_namespace": "karthos-demo", "server_namespace": "karthos-demo",
 			}
 			if tt.source != "" {
-				attrs["oksg.source"] = tt.source
+				attrs["karthos.source"] = tt.source
 			}
 			env := makeCallsMetricEnvelope(t, "istio_requests_total", time.Now(), time.Now(), attrs)
 			edges, err := builder.Build(context.Background(), env)

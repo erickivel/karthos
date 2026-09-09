@@ -3,7 +3,7 @@
 #
 # Resolution order:
 #   1. Load .env (if present) so CLUSTER_PROFILE can be set there.
-#   2. Default CLUSTER_PROFILE to "oksg-test".
+#   2. Default CLUSTER_PROFILE to "karthos-test".
 #   3. Load .env.d/${CLUSTER_PROFILE}.env (required).
 #   4. Apply final defaults.
 #
@@ -11,34 +11,34 @@
 # run there; standalone scripts source this only after `cd` to repo root or
 # via an absolute path).
 
-__OKSG_REPO_ROOT="${PWD}"
+__KARTHOS_REPO_ROOT="${PWD}"
 
-if [ -f "${__OKSG_REPO_ROOT}/.env" ]; then
+if [ -f "${__KARTHOS_REPO_ROOT}/.env" ]; then
   set -a
   # shellcheck disable=SC1091
-  . "${__OKSG_REPO_ROOT}/.env"
+  . "${__KARTHOS_REPO_ROOT}/.env"
   set +a
 fi
 
-: "${CLUSTER_PROFILE:=oksg-test}"
-__OKSG_PROFILE_FILE="${__OKSG_REPO_ROOT}/.env.d/${CLUSTER_PROFILE}.env"
+: "${CLUSTER_PROFILE:=karthos-test}"
+__KARTHOS_PROFILE_FILE="${__KARTHOS_REPO_ROOT}/.env.d/${CLUSTER_PROFILE}.env"
 
-if [ ! -f "${__OKSG_PROFILE_FILE}" ]; then
-  echo "cluster profile not found: ${__OKSG_PROFILE_FILE}" >&2
-  echo "set CLUSTER_PROFILE in .env (default: oksg-test) and create the matching .env.d/<name>.env" >&2
+if [ ! -f "${__KARTHOS_PROFILE_FILE}" ]; then
+  echo "cluster profile not found: ${__KARTHOS_PROFILE_FILE}" >&2
+  echo "set CLUSTER_PROFILE in .env (default: karthos-test) and create the matching .env.d/<name>.env" >&2
   return 1 2>/dev/null || exit 1
 fi
 
 set -a
 # shellcheck disable=SC1090
-. "${__OKSG_PROFILE_FILE}"
+. "${__KARTHOS_PROFILE_FILE}"
 set +a
 
 # A caller-selected tag must win over a profile's convenient default. This is
 # used for uncommitted or otherwise non-default images that must not reuse a
 # mutable evaluation tag on a remote registry.
-if [ -n "${OKSG_IMAGE_TAG_OVERRIDE:-}" ]; then
-  IMAGE_TAG="${OKSG_IMAGE_TAG_OVERRIDE}"
+if [ -n "${KARTHOS_IMAGE_TAG_OVERRIDE:-}" ]; then
+  IMAGE_TAG="${KARTHOS_IMAGE_TAG_OVERRIDE}"
 fi
 
 : "${CLUSTER_ENGINE:=kind}"
@@ -48,4 +48,4 @@ REGISTRY_HOST="localhost:5001"
 : "${IMAGE_PLATFORM:=}"
 : "${KUBECONFIG:=${HOME}/.kube/config}"
 
-export CLUSTER_PROFILE CLUSTER_ENGINE CLUSTER_LOCATION REGISTRY_HOST IMAGE_TAG IMAGE_PLATFORM KUBECONFIG OKSG_IMAGE_TAG_OVERRIDE
+export CLUSTER_PROFILE CLUSTER_ENGINE CLUSTER_LOCATION REGISTRY_HOST IMAGE_TAG IMAGE_PLATFORM KUBECONFIG KARTHOS_IMAGE_TAG_OVERRIDE

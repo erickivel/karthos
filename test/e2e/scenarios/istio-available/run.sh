@@ -11,9 +11,9 @@ cd "${REPO_ROOT}"
 # shellcheck disable=SC1091
 . "${REPO_ROOT}/test/e2e/cluster/profile.sh"
 
-NAMESPACE="${KIND_NAMESPACE:-oksg-system}"
-BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-oksg-otel}-backend"
-VM_SERVICE="${HELM_RELEASE_NAME:-oksg-otel}-victoria-metrics-single-server"
+NAMESPACE="${KIND_NAMESPACE:-karthos-system}"
+BACKEND_DEPLOYMENT="${HELM_RELEASE_NAME:-karthos}-backend"
+VM_SERVICE="${HELM_RELEASE_NAME:-karthos}-victoria-metrics-single-server"
 GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT:-18080}"
 
 require_open_port() {
@@ -59,7 +59,7 @@ assert mesh["status"] == "available", "Istio capability should be available"
 evidence = mesh["evidence"]["mesh"]
 assert evidence["flavor"] == "istio"
 assert evidence["mode"] == "sidecar"
-assert "oksg-demo" in evidence.get("injected_namespaces", [])
+assert "karthos-demo" in evidence.get("injected_namespaces", [])
 print("✓ Capability profile includes Istio mesh")
 PY
 
@@ -69,12 +69,12 @@ from pathlib import Path
 values = Path("bin/e2e/otel-values.yaml").read_text()
 assert "job_name: mesh-istio" in values, "generated values should include mesh-istio scrape job"
 assert "istio-proxy" in values, "mesh-istio scrape job should keep istio-proxy containers"
-assert "oksg_source" in values, "mesh scrape should stamp normalized source"
+assert "karthos_source" in values, "mesh scrape should stamp normalized source"
 print("✓ Generated collector values include Istio scrape wiring")
 PY
 
-kubectl delete job mesh-protocol-client -n oksg-demo --ignore-not-found
-RENDERED_PROTOCOL_CLIENT_JOB="$(mktemp -t oksg-mesh-protocol-client.XXXXXX)"
+kubectl delete job mesh-protocol-client -n karthos-demo --ignore-not-found
+RENDERED_PROTOCOL_CLIENT_JOB="$(mktemp -t karthos-mesh-protocol-client.XXXXXX)"
 REGISTRY_HOST_PATTERN="${REGISTRY_HOST//./\\.}"
 sed "s|${REGISTRY_HOST_PATTERN}/mesh-protocol-go:latest|${REGISTRY_HOST}/mesh-protocol-go:${IMAGE_TAG}|g" \
   test/e2e/apps/with-istio/mesh-protocol-client-job.yaml >"${RENDERED_PROTOCOL_CLIENT_JOB}"
@@ -87,14 +87,14 @@ rm -f "${RENDERED_PROTOCOL_CLIENT_JOB}"
 echo "Waiting for deterministic protocol warm-up..."
 warmup_ready=false
 for _ in {1..60}; do
-  if kubectl logs -n oksg-demo job/mesh-protocol-client -c mesh-protocol-client 2>/dev/null | grep -q WARMUP_TRAFFIC_COMPLETE; then
+  if kubectl logs -n karthos-demo job/mesh-protocol-client -c mesh-protocol-client 2>/dev/null | grep -q WARMUP_TRAFFIC_COMPLETE; then
     warmup_ready=true
     break
   fi
   sleep 2
 done
 if [[ "${warmup_ready}" != "true" ]]; then
-  kubectl logs -n oksg-demo job/mesh-protocol-client -c mesh-protocol-client || true
+  kubectl logs -n karthos-demo job/mesh-protocol-client -c mesh-protocol-client || true
   echo "protocol warm-up did not complete" >&2
   exit 1
 fi
@@ -103,14 +103,14 @@ require_open_port 13133
 require_open_port 18081
 require_open_port 18428
 require_open_port 19020
-MESH_SERVER_POD="$(kubectl get pods -n oksg-demo -l app=mesh-protocol-server -o jsonpath='{.items[0].metadata.name}')"
+MESH_SERVER_POD="$(kubectl get pods -n karthos-demo -l app=mesh-protocol-server -o jsonpath='{.items[0].metadata.name}')"
 kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 13133:13133 &
 PF_HEALTH_PID=$!
 kubectl port-forward -n "${NAMESPACE}" deployment/${BACKEND_DEPLOYMENT} 18081:8080 &
 PF_API_PID=$!
 kubectl port-forward -n "${NAMESPACE}" svc/${VM_SERVICE} 18428:8428 &
 PF_VM_PID=$!
-kubectl port-forward -n oksg-demo "pod/${MESH_SERVER_POD}" 19020:15020 &
+kubectl port-forward -n karthos-demo "pod/${MESH_SERVER_POD}" 19020:15020 &
 PF_MESH_PID=$!
 trap 'cleanup_port_forwards "${PF_HEALTH_PID}" "${PF_API_PID}" "${PF_VM_PID}" "${PF_MESH_PID}"' EXIT
 trap 'exit 130' INT TERM
@@ -121,14 +121,14 @@ python3 test/e2e/scenarios/istio-available/verify_protocol_metrics.py capture-ba
 echo "Waiting for deterministic measured gRPC/TCP traffic..."
 measured_ready=false
 for _ in {1..90}; do
-  if kubectl logs -n oksg-demo job/mesh-protocol-client -c mesh-protocol-client 2>/dev/null | grep -q MEASURED_TRAFFIC_COMPLETE; then
+  if kubectl logs -n karthos-demo job/mesh-protocol-client -c mesh-protocol-client 2>/dev/null | grep -q MEASURED_TRAFFIC_COMPLETE; then
     measured_ready=true
     break
   fi
   sleep 2
 done
 if [[ "${measured_ready}" != "true" ]]; then
-  kubectl logs -n oksg-demo job/mesh-protocol-client -c mesh-protocol-client || true
+  kubectl logs -n karthos-demo job/mesh-protocol-client -c mesh-protocol-client || true
   echo "measured protocol traffic did not complete" >&2
   exit 1
 fi

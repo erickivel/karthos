@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/schema"
 )
 
 type EnvelopeBuilder struct {

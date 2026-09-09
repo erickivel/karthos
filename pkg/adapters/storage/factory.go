@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/erickivel/oksg/pkg/adapters/storage/postgresql"
-	"github.com/erickivel/oksg/pkg/adapters/storage/victoriametrics"
-	"github.com/erickivel/oksg/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/adapters/storage/postgresql"
+	"github.com/erickivel/karthos/pkg/adapters/storage/victoriametrics"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
 )
 
 // Stores bundles all store implementations created by the factory.

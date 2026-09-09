@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/core/schema"
 )
 
 // NormalizingIngestor implements Ingestor by normalizing metric envelopes and writing to MetricStore.

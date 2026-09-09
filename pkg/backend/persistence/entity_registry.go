@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/entities"
 )
 
 // ErrEntityNotFound is returned when an entity lookup finds no matching record.

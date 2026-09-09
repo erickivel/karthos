@@ -18,7 +18,7 @@ function series(
 }
 
 const dataLabels = {
-  persistentvolumeclaim_name: 'data-oksg-otel-postgresql-0',
+  persistentvolumeclaim_name: 'data-karthos-postgresql-0',
   volume_name: 'data',
   volume_type: 'persistentVolumeClaim',
   source: 'kubelet',

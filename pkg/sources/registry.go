@@ -10,18 +10,18 @@ import (
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 
-	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources/contract"
-	"github.com/erickivel/oksg/pkg/sources/detection"
-	"github.com/erickivel/oksg/pkg/sources/hostos"
-	"github.com/erickivel/oksg/pkg/sources/istio"
-	"github.com/erickivel/oksg/pkg/sources/kubecluster"
-	"github.com/erickivel/oksg/pkg/sources/kubelet"
-	"github.com/erickivel/oksg/pkg/sources/prometheusapp"
-	"github.com/erickivel/oksg/pkg/sources/servicegraph"
-	"github.com/erickivel/oksg/pkg/sources/structure"
+	collectorspec "github.com/erickivel/karthos/pkg/collector/spec"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/sources/detection"
+	"github.com/erickivel/karthos/pkg/sources/hostos"
+	"github.com/erickivel/karthos/pkg/sources/istio"
+	"github.com/erickivel/karthos/pkg/sources/kubecluster"
+	"github.com/erickivel/karthos/pkg/sources/kubelet"
+	"github.com/erickivel/karthos/pkg/sources/prometheusapp"
+	"github.com/erickivel/karthos/pkg/sources/servicegraph"
+	"github.com/erickivel/karthos/pkg/sources/structure"
 )
 
 const (

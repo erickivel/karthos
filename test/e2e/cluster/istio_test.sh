@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-istio-owner-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-istio-owner-test.XXXXXX)"
 cleanup() {
   local status=$?
   rm -rf "${TMPDIR_TEST}"
@@ -37,7 +37,7 @@ export ISTIO_TEST_LOG="${TMPDIR_TEST}/commands.log"
 
 ISTIO_TEST_STATE=missing bash "${REPO_ROOT}/test/e2e/cluster/istio.sh" install
 grep -Fx 'istioctl install --set profile=minimal -y' "${ISTIO_TEST_LOG}"
-grep -Fx 'kubectl create configmap oksg-e2e-istio-owner -n istio-system --from-literal=owner=oksg-e2e --from-literal=purpose=live-e2e' "${ISTIO_TEST_LOG}"
+grep -Fx 'kubectl create configmap karthos-e2e-istio-owner -n istio-system --from-literal=owner=karthos-e2e --from-literal=purpose=live-e2e' "${ISTIO_TEST_LOG}"
 
 : >"${ISTIO_TEST_LOG}"
 ISTIO_TEST_STATE=owned bash "${REPO_ROOT}/test/e2e/cluster/istio.sh" reset
@@ -50,7 +50,7 @@ if ISTIO_TEST_STATE=external bash "${REPO_ROOT}/test/e2e/cluster/istio.sh" reset
   echo "external Istio reset should fail" >&2
   exit 1
 fi
-grep -Fq 'not owned by the OKSG E2E harness' "${TMPDIR_TEST}/external.out"
+grep -Fq 'not owned by the Karthos E2E harness' "${TMPDIR_TEST}/external.out"
 [[ ! -s "${ISTIO_TEST_LOG}" ]]
 
 echo "Istio ownership cleanup is strict and safe: PASS"

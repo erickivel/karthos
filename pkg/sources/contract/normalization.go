@@ -9,9 +9,9 @@ import (
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/semconv"
 )
 
 type EntityResolver interface {

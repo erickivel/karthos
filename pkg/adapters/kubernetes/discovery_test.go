@@ -13,12 +13,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 func TestDiscoverProducesDeterministicCapabilityProfile(t *testing.T) {
-	client := fake.NewClientset(&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo", Annotations: map[string]string{"prometheus.io/scrape": "true", "prometheus.io/port": "8080", "oksg.io/otlp-traces": "true"}}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}, {Port: 4317}}}})
+	client := fake.NewClientset(&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo", Annotations: map[string]string{"prometheus.io/scrape": "true", "prometheus.io/port": "8080", "karthos.io/otlp-traces": "true"}}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}, {Port: 4317}}}})
 	adapter := NewDiscoveryAdapter(client, "test")
 
 	result, err := adapter.Discover(context.Background())

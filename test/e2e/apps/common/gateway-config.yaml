@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gateway-config
-  namespace: oksg-demo
+  namespace: karthos-demo
 data:
   SERVICE_A_URL: "http://service-a-python:8081/process"
   SERVICE_B_URL: "http://service-b-node:8082/compute"
@@ -11,7 +11,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: gateway-secret
-  namespace: oksg-demo
+  namespace: karthos-demo
 type: Opaque
 stringData:
   API_KEY: "demo-key-for-testing"
@@ -20,7 +20,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gateway-ingress
-  namespace: oksg-demo
+  namespace: karthos-demo
 spec:
   rules:
     - host: gateway.local
@@ -38,7 +38,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: bundle-config
-  namespace: oksg-demo
+  namespace: karthos-demo
 data:
   FEATURE_MODE: "topology-qa"
 ---
@@ -46,7 +46,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: bundle-secret
-  namespace: oksg-demo
+  namespace: karthos-demo
 type: Opaque
 stringData:
   TOKEN: "topology-qa-secret"
@@ -55,7 +55,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: bundle-cache
-  namespace: oksg-demo
+  namespace: karthos-demo
 spec:
   accessModes:
     - ReadWriteOnce

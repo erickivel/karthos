@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-istio-run-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-istio-run-test.XXXXXX)"
 cleanup() {
   local status=$?
   if [[ "${status}" -ne 0 && -f "${ISTIO_RUN_TEST_APPLY_MANIFEST:-}" ]]; then
@@ -14,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export OKSG_IMAGE_TAG_OVERRIDE=run-tag
+export KARTHOS_IMAGE_TAG_OVERRIDE=run-tag
 cd "${REPO_ROOT}"
 # shellcheck disable=SC1091
 . "${REPO_ROOT}/test/e2e/cluster/profile.sh"

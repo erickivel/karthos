@@ -5,13 +5,13 @@ package collector
 import (
 	"fmt"
 
-	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	collectorspec "github.com/erickivel/karthos/pkg/collector/spec"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
-const DefaultNamespace = "oksg-system"
+const DefaultNamespace = "karthos-system"
 
 type Composer struct {
 	namespace string

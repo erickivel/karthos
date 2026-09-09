@@ -19,7 +19,7 @@ func ComputeEntityID(kind EntityKind, parts ...string) EntityID {
 	return EntityID(hex.EncodeToString(sum[:]))
 }
 
-// IsCanonicalID reports whether id is an OKSG canonical SHA-256 entity ID.
+// IsCanonicalID reports whether id is an Karthos canonical SHA-256 entity ID.
 // Public query boundaries use this to reject arbitrary label values before
 // they reach a storage adapter.
 func IsCanonicalID(id EntityID) bool {

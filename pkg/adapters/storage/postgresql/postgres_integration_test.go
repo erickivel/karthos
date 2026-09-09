@@ -17,8 +17,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/topology"
 )
 
 var integrationDSN string
@@ -26,9 +26,9 @@ var integrationDSN string
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 	container, err := postgres.Run(ctx, "postgres:16.6-alpine",
-		postgres.WithDatabase("oksg_test"),
-		postgres.WithUsername("oksg_test"),
-		postgres.WithPassword("oksg_test"),
+		postgres.WithDatabase("karthos_test"),
+		postgres.WithUsername("karthos_test"),
+		postgres.WithPassword("karthos_test"),
 		testcontainers.WithAdditionalWaitStrategy(wait.ForSQL("5432/tcp", "pgx", postgresTestURL)),
 	)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 }
 
 func postgresTestURL(host string, port network.Port) string {
-	return fmt.Sprintf("postgres://oksg_test:oksg_test@%s:%s/oksg_test?sslmode=disable", host, port.Port())
+	return fmt.Sprintf("postgres://karthos_test:karthos_test@%s:%s/karthos_test?sslmode=disable", host, port.Port())
 }
 
 func TestPostgresMaterializedSnapshotsRetainStructureAndFreshObservations(t *testing.T) {

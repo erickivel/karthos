@@ -9,10 +9,10 @@ import (
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/sources"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 // OTLPNormalizer normalizes OTLP metric envelopes into semconv MetricSamples.

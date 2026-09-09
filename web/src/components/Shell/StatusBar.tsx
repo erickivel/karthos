@@ -27,7 +27,7 @@ export function StatusBar() {
       </div>
 
       <div className={styles.segment}>
-        <span className={styles.tag}>[OKSG]</span>
+        <span className={styles.tag}>[Karthos]</span>
         <span className={styles.label}>
           {connectionStatus !== 'disconnected' ? 'BACKEND STATUS' : 'BACKEND UNREACHABLE'}
         </span>

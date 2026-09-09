@@ -12,15 +12,15 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	k8sadapter "github.com/erickivel/oksg/pkg/adapters/kubernetes"
-	"github.com/erickivel/oksg/pkg/adapters/otel"
-	"github.com/erickivel/oksg/pkg/collector"
-	"github.com/erickivel/oksg/pkg/collector/configgen"
-	"github.com/erickivel/oksg/pkg/collector/deployer"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	k8sadapter "github.com/erickivel/karthos/pkg/adapters/kubernetes"
+	"github.com/erickivel/karthos/pkg/adapters/otel"
+	"github.com/erickivel/karthos/pkg/collector"
+	"github.com/erickivel/karthos/pkg/collector/configgen"
+	"github.com/erickivel/karthos/pkg/collector/deployer"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 type planner interface {
@@ -90,7 +90,7 @@ const defaultClusterName = "default-cluster"
 const defaultLogLevel = "info"
 
 func run(ctx context.Context, args []string, deps dependencies) error {
-	collectorDebugDefault, err := envBool("OKSG_COLLECTOR_DEBUG", false)
+	collectorDebugDefault, err := envBool("KARTHOS_COLLECTOR_DEBUG", false)
 	if err != nil {
 		return err
 	}
@@ -108,22 +108,22 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	chartPath := fs.String("chart-path", deployer.DefaultChartPath, "path to the Helm chart")
 	helmTimeout := fs.Duration("helm-timeout", deployer.DefaultTimeout, "timeout for helm operations")
 	helmDryRun := fs.Bool("helm-dry-run", false, "run helm upgrade with --dry-run")
-	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultLogLevel), "structured log level: info, warn, error")
+	logLevel := fs.String("log-level", envOrDefault("KARTHOS_LOG_LEVEL", defaultLogLevel), "structured log level: info, warn, error")
 	targetNamespace := fs.String("target-namespace", "", "filter Prometheus discovery to this namespace (empty = all namespaces)")
-	collectorImageRepository := fs.String("collector-image-repository", envOrDefault("OKSG_COLLECTOR_IMAGE_REPOSITORY", ""), "collector image repository override")
-	collectorImageTag := fs.String("collector-image-tag", envOrDefault("OKSG_COLLECTOR_IMAGE_TAG", ""), "collector image tag override")
-	collectorImagePullPolicy := fs.String("collector-image-pull-policy", envOrDefault("OKSG_COLLECTOR_IMAGE_PULL_POLICY", ""), "collector image pull policy override")
-	backendImageRepository := fs.String("backend-image-repository", envOrDefault("OKSG_BACKEND_IMAGE_REPOSITORY", ""), "backend image repository override")
-	backendImageTag := fs.String("backend-image-tag", envOrDefault("OKSG_BACKEND_IMAGE_TAG", ""), "backend image tag override")
-	backendImagePullPolicy := fs.String("backend-image-pull-policy", envOrDefault("OKSG_BACKEND_IMAGE_PULL_POLICY", ""), "backend image pull policy override")
-	frontendImageRepository := fs.String("frontend-image-repository", envOrDefault("OKSG_FRONTEND_IMAGE_REPOSITORY", ""), "frontend image repository override")
-	frontendImageTag := fs.String("frontend-image-tag", envOrDefault("OKSG_FRONTEND_IMAGE_TAG", ""), "frontend image tag override")
-	frontendImagePullPolicy := fs.String("frontend-image-pull-policy", envOrDefault("OKSG_FRONTEND_IMAGE_PULL_POLICY", ""), "frontend image pull policy override")
-	storageBackend := fs.String("storage-backend", envOrDefault("OKSG_DEPLOY_STORAGE_BACKEND", ""), "storage backend override: memory or external")
-	postgresqlMode := fs.String("postgresql-mode", envOrDefault("OKSG_DEPLOY_POSTGRESQL_MODE", ""), "external PostgreSQL mode: bundled or remote")
-	postgresqlDSN := fs.String("postgresql-dsn", envOrDefault("OKSG_POSTGRES_DSN", ""), "remote PostgreSQL DSN override")
-	victoriaMetricsMode := fs.String("victoriametrics-mode", envOrDefault("OKSG_DEPLOY_VICTORIAMETRICS_MODE", ""), "external VictoriaMetrics mode: bundled or remote")
-	victoriaMetricsURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "remote VictoriaMetrics URL override")
+	collectorImageRepository := fs.String("collector-image-repository", envOrDefault("KARTHOS_COLLECTOR_IMAGE_REPOSITORY", ""), "collector image repository override")
+	collectorImageTag := fs.String("collector-image-tag", envOrDefault("KARTHOS_COLLECTOR_IMAGE_TAG", ""), "collector image tag override")
+	collectorImagePullPolicy := fs.String("collector-image-pull-policy", envOrDefault("KARTHOS_COLLECTOR_IMAGE_PULL_POLICY", ""), "collector image pull policy override")
+	backendImageRepository := fs.String("backend-image-repository", envOrDefault("KARTHOS_BACKEND_IMAGE_REPOSITORY", ""), "backend image repository override")
+	backendImageTag := fs.String("backend-image-tag", envOrDefault("KARTHOS_BACKEND_IMAGE_TAG", ""), "backend image tag override")
+	backendImagePullPolicy := fs.String("backend-image-pull-policy", envOrDefault("KARTHOS_BACKEND_IMAGE_PULL_POLICY", ""), "backend image pull policy override")
+	frontendImageRepository := fs.String("frontend-image-repository", envOrDefault("KARTHOS_FRONTEND_IMAGE_REPOSITORY", ""), "frontend image repository override")
+	frontendImageTag := fs.String("frontend-image-tag", envOrDefault("KARTHOS_FRONTEND_IMAGE_TAG", ""), "frontend image tag override")
+	frontendImagePullPolicy := fs.String("frontend-image-pull-policy", envOrDefault("KARTHOS_FRONTEND_IMAGE_PULL_POLICY", ""), "frontend image pull policy override")
+	storageBackend := fs.String("storage-backend", envOrDefault("KARTHOS_DEPLOY_STORAGE_BACKEND", ""), "storage backend override: memory or external")
+	postgresqlMode := fs.String("postgresql-mode", envOrDefault("KARTHOS_DEPLOY_POSTGRESQL_MODE", ""), "external PostgreSQL mode: bundled or remote")
+	postgresqlDSN := fs.String("postgresql-dsn", envOrDefault("KARTHOS_POSTGRES_DSN", ""), "remote PostgreSQL DSN override")
+	victoriaMetricsMode := fs.String("victoriametrics-mode", envOrDefault("KARTHOS_DEPLOY_VICTORIAMETRICS_MODE", ""), "external VictoriaMetrics mode: bundled or remote")
+	victoriaMetricsURL := fs.String("victoriametrics-url", envOrDefault("KARTHOS_VICTORIAMETRICS_URL", ""), "remote VictoriaMetrics URL override")
 	collectorDebug := fs.Bool("collector-debug", collectorDebugDefault, "enable development-only Collector debug output")
 	if err := fs.Parse(args); err != nil {
 		return err

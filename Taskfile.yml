@@ -3,7 +3,7 @@ version: "3"
 dotenv: ['.env']
 
 vars:
-  GO_PACKAGE_PATHS: ./cmd/... ./pkg/... ./deploy/helm/oksg-otel ./test/e2e/apps/base/gateway-go
+  GO_PACKAGE_PATHS: ./cmd/... ./pkg/... ./deploy/helm/karthos ./test/e2e/apps/base/gateway-go
 
 includes:
   test:
@@ -39,7 +39,13 @@ tasks:
   test:
     desc: Run unit tests
     cmds:
+      - task: test:branding
       - go test {{.GO_PACKAGE_PATHS}}
+
+  test:branding:
+    desc: Verify tracked source has no legacy product identity
+    cmds:
+      - bash test/branding_contract_test.sh
 
   test:race:
     desc: Run unit tests with race detection and coverage
@@ -121,6 +127,7 @@ tasks:
   ci:
     desc: Run all CI checks locally
     cmds:
+      - task: test:branding
       - task: fmt:check
       - task: vet
       - task: lint

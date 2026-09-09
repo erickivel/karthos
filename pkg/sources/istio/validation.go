@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 // ValidateCapability owns the supported Istio coverage and evidence contract.

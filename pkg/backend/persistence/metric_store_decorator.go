@@ -3,8 +3,8 @@ package persistence
 import (
 	"context"
 
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/backend/query"
+	"github.com/erickivel/karthos/pkg/core/metrics"
 )
 
 // DecorateMetricStore applies provider-neutral public output derivations to a

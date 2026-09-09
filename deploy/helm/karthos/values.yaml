@@ -29,7 +29,7 @@ backend:
   grpcPort: 4317
   logLevel: info
   image:
-    repository: oksg-backend
+    repository: karthos-backend
     tag: latest
     pullPolicy: IfNotPresent
   service:
@@ -54,9 +54,9 @@ storage:
 
 postgresql:
   auth:
-    database: oksg
-    username: oksg
-    password: oksg
+    database: karthos
+    username: karthos
+    password: karthos
 
 victoria-metrics-single:
   server:
@@ -69,7 +69,7 @@ victoria-metrics-single:
 frontend:
   enabled: true
   image:
-    repository: oksg-frontend
+    repository: karthos-frontend
     tag: latest
     pullPolicy: IfNotPresent
   replicas: 1

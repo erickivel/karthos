@@ -1,6 +1,6 @@
 package persistence
 
-import "github.com/erickivel/oksg/pkg/core/entities"
+import "github.com/erickivel/karthos/pkg/core/entities"
 
 // MaterializeEntity converts any canonical entity into the one storage record
 // shared by memory and PostgreSQL registries. Explicit StoredEntity fields win;

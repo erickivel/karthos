@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 func Normalize(_ context.Context, _ contract.EntityResolver, plan *contract.Plan) error {

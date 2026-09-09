@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ISTIO_NAMESPACE="istio-system"
-OWNERSHIP_MARKER="oksg-e2e-istio-owner"
+OWNERSHIP_MARKER="karthos-e2e-istio-owner"
 
 usage() {
   echo "usage: istio.sh <install|reset>" >&2
@@ -30,7 +30,7 @@ install() {
 
   istioctl install --set profile=minimal -y
   kubectl create configmap "${OWNERSHIP_MARKER}" -n "${ISTIO_NAMESPACE}" \
-    --from-literal=owner=oksg-e2e \
+    --from-literal=owner=karthos-e2e \
     --from-literal=purpose=live-e2e
 }
 
@@ -39,7 +39,7 @@ reset() {
     return
   fi
   if ! harness_owns_istio; then
-    echo "Istio exists but is not owned by the OKSG E2E harness. Remove it manually or use a clean cluster before running strict fallback." >&2
+    echo "Istio exists but is not owned by the Karthos E2E harness. Remove it manually or use a clean cluster before running strict fallback." >&2
     return 1
   fi
 

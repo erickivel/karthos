@@ -5,17 +5,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/adapters/otel"
-	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/adapters/otel"
+	collectorspec "github.com/erickivel/karthos/pkg/collector/spec"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 func TestGenerateEmitsDynamicValuesAndExplicitRuntimeOverrides(t *testing.T) {
 	renderer := NewGeneratorWithOptions(GeneratorOptions{Runtime: RuntimeSettings{
 		CollectorImage: ImageValues{Tag: "0.156.1"},
-		BackendImage:   ImageValues{Repository: "registry.example/oksg-backend", Tag: "test", PullPolicy: "Always"},
-		FrontendImage:  ImageValues{Repository: "registry.example/oksg-frontend", Tag: "test", PullPolicy: "Always"},
+		BackendImage:   ImageValues{Repository: "registry.example/karthos-backend", Tag: "test", PullPolicy: "Always"},
+		FrontendImage:  ImageValues{Repository: "registry.example/karthos-frontend", Tag: "test", PullPolicy: "Always"},
 		Storage: StorageSettings{
 			Backend:         StorageBackendExternal,
 			PostgreSQL:      StoreSettings{Mode: StoreModeBundled},
@@ -32,7 +32,7 @@ func TestGenerateEmitsDynamicValuesAndExplicitRuntimeOverrides(t *testing.T) {
 	require.Contains(t, generated, "      telemetry:\n        logs:\n          encoding: json\n          level: info\n          output_paths:\n          - stdout")
 	require.Contains(t, generated, "sourceContract:")
 	require.Contains(t, generated, "tag: 0.156.1")
-	require.Contains(t, generated, "repository: registry.example/oksg-frontend")
+	require.Contains(t, generated, "repository: registry.example/karthos-frontend")
 	require.Contains(t, generated, "backend: external")
 	require.Contains(t, generated, "url: https://vm.example")
 }
@@ -68,7 +68,7 @@ func testDeployment(t *testing.T) otel.Deployment {
 
 	deployment, err := otel.NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
-		Namespace:   "oksg-system",
+		Namespace:   "karthos-system",
 		Agent:       collectorspec.AgentRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true}},
 		Gateway:     collectorspec.GatewayRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true}},
 	})

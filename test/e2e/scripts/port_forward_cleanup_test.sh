@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-TMPDIR_TEST="$(mktemp -d -t oksg-port-forward-cleanup-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-port-forward-cleanup-test.XXXXXX)"
 cleanup() {
   local status=$?
   if [[ -f "${TMPDIR_TEST}/port-forward.pid" ]]; then
@@ -50,7 +50,7 @@ if kill -0 "${port_forward_pid}" 2>/dev/null; then
   exit 1
 fi
 
-BACKEND_API_LOCAL_PORT=18084 KIND_NAMESPACE=oksg-system HELM_RELEASE_NAME=oksg-otel ./test/e2e/scripts/debug-api.sh
+BACKEND_API_LOCAL_PORT=18084 KIND_NAMESPACE=karthos-system HELM_RELEASE_NAME=karthos ./test/e2e/scripts/debug-api.sh
 
 debug_port_forward_pid="$(cat "${TMPDIR_TEST}/port-forward.pid")"
 if kill -0 "${debug_port_forward_pid}" 2>/dev/null; then

@@ -10,11 +10,11 @@ import (
 	"slices"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/topology"
 )
 
 // GraphHandler serves topology graph query endpoints.

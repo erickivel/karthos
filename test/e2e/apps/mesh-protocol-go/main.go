@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	protocolServiceName = "oksg.mesh.Protocol"
+	protocolServiceName = "karthos.mesh.Protocol"
 	protocolUnaryMethod = "/" + protocolServiceName + "/Unary"
 	protocolBidiMethod  = "/" + protocolServiceName + "/Bidi"
 )
@@ -134,7 +134,7 @@ func runTraffic(ctx context.Context, config trafficConfig) (trafficResult, error
 	}
 	defer func() { _ = connection.Close() }()
 
-	payload := wrapperspb.Bytes([]byte("oksg-mesh-message"))
+	payload := wrapperspb.Bytes([]byte("karthos-mesh-message"))
 	for i := 0; i < config.unaryCalls; i++ {
 		response := new(wrapperspb.BytesValue)
 		if err := connection.Invoke(ctx, protocolUnaryMethod, payload, response); err != nil {

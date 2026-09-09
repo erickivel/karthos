@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TMPDIR_TEST="$(mktemp -d -t oksg-deploy-test.XXXXXX)"
+TMPDIR_TEST="$(mktemp -d -t karthos-deploy-test.XXXXXX)"
 cleanup() {
   local status=$?
   if [[ "${status}" -ne 0 && -f "${DEPLOY_TEST_LOG:-}" ]]; then
@@ -14,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export OKSG_IMAGE_TAG_OVERRIDE=run-tag
+export KARTHOS_IMAGE_TAG_OVERRIDE=run-tag
 cd "${REPO_ROOT}"
 # shellcheck disable=SC1091
 . "${REPO_ROOT}/test/e2e/cluster/profile.sh"
@@ -127,7 +127,7 @@ for image in "${expected_images[@]}"; do
   grep -Fqx "remote docker push ${DEPLOY_TEST_REGISTRY}/${image}:run-tag" "${DEPLOY_TEST_LOG}"
 done
 grep -Fqx '        - image: registry.k8s.io/pause:3.10' "${DEPLOY_TEST_APPLY_MANIFEST}"
-grep -Fqx 'kubectl rollout restart -n oksg-demo deployment/gateway' "${DEPLOY_TEST_LOG}"
+grep -Fqx 'kubectl rollout restart -n karthos-demo deployment/gateway' "${DEPLOY_TEST_LOG}"
 actual_pushes="$(grep '^remote docker push ' "${DEPLOY_TEST_LOG}" | sort)"
 expected_pushes="$(for image in "${expected_images[@]}"; do echo "remote docker push ${DEPLOY_TEST_REGISTRY}/${image}:run-tag"; done | sort)"
 [[ "${actual_pushes}" == "${expected_pushes}" ]]
@@ -139,6 +139,6 @@ expected_builds="$(printf '%s\n' \
   "${REPO_ROOT}/test/e2e/apps/mesh-protocol-go")"
 [[ "${actual_builds}" == "${expected_builds}" ]]
 actual_restarts="$(grep '^kubectl rollout restart ' "${DEPLOY_TEST_LOG}" || true)"
-[[ "${actual_restarts}" == 'kubectl rollout restart -n oksg-demo deployment/gateway' ]]
+[[ "${actual_restarts}" == 'kubectl rollout restart -n karthos-demo deployment/gateway' ]]
 
 echo "deploy uses built fixture image tags: PASS"

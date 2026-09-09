@@ -8,26 +8,26 @@ import (
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/yaml"
 
-	collectorspec "github.com/erickivel/oksg/pkg/collector/spec"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources/kubecluster"
+	collectorspec "github.com/erickivel/karthos/pkg/collector/spec"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources/kubecluster"
 )
 
 func TestCompileGatewayStampsRawKubeClusterNodeConditions(t *testing.T) {
-	plan := collectorspec.CollectionPlan{ClusterName: "kind-test", Namespace: "oksg-system"}
+	plan := collectorspec.CollectionPlan{ClusterName: "kind-test", Namespace: "karthos-system"}
 	kubecluster.Contribute(&plan, profile.SourceCapability{}, true)
 
 	deployment, err := NewCompiler().Compile(plan)
 	require.NoError(t, err)
-	processor := deployment.GatewayConfig.Processors[oksgSourceTaggerProcessor].(map[string]any)
+	processor := deployment.GatewayConfig.Processors[karthosSourceTaggerProcessor].(map[string]any)
 	statements := processor["metric_statements"].([]map[string]any)[0]["statements"].([]string)
 	matched := false
 	for _, statement := range statements {
 		if strings.Contains(statement, `metric.name == "k8s.node.condition"`) {
 			matched = true
-			require.Contains(t, statement, `set(datapoint.attributes["oksg_source"], "kube-cluster")`)
-			require.Contains(t, statement, `datapoint.attributes["oksg_source"] == nil`)
+			require.Contains(t, statement, `set(datapoint.attributes["karthos_source"], "kube-cluster")`)
+			require.Contains(t, statement, `datapoint.attributes["karthos_source"] == nil`)
 		}
 	}
 	require.True(t, matched, "expected the raw node-condition metric to receive a kube-cluster source stamp")
@@ -36,7 +36,7 @@ func TestCompileGatewayStampsRawKubeClusterNodeConditions(t *testing.T) {
 func TestCompileAddsFixedJSONStdoutServiceTelemetry(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
-		Namespace:   "oksg-system",
+		Namespace:   "karthos-system",
 	})
 	require.NoError(t, err)
 
@@ -50,7 +50,7 @@ func TestCompileAddsFixedJSONStdoutServiceTelemetry(t *testing.T) {
 func TestCompileUsesDerivedServiceGraphOnlyWhenRequested(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
-		Namespace:   "oksg-system",
+		Namespace:   "karthos-system",
 		Agent:       collectorspec.AgentRequirements{OTLP: collectorspec.OTLPReceiver{Traces: true}},
 		Gateway: collectorspec.GatewayRequirements{
 			OTLP:         collectorspec.OTLPReceiver{Traces: true},
@@ -65,19 +65,19 @@ func TestCompileUsesDerivedServiceGraphOnlyWhenRequested(t *testing.T) {
 func TestCompileOmitsCollectorDebugByDefault(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
-		Namespace:   "oksg-system",
+		Namespace:   "karthos-system",
 		Agent:       collectorspec.AgentRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true, Traces: true}},
 		Gateway:     collectorspec.GatewayRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true, Traces: true}},
 	})
 	require.NoError(t, err)
-	require.NotContains(t, deployment.AgentConfig.Exporters, "debug/oksg")
-	require.NotContains(t, deployment.GatewayConfig.Exporters, "debug/oksg")
+	require.NotContains(t, deployment.AgentConfig.Exporters, "debug/karthos")
+	require.NotContains(t, deployment.GatewayConfig.Exporters, "debug/karthos")
 }
 
 func TestCompileAddsFixedCollectorDebugToEveryEnabledPipeline(t *testing.T) {
 	deployment, err := NewCompilerWithOptions(CompilerOptions{DebugEnabled: true}).Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
-		Namespace:   "oksg-system",
+		Namespace:   "karthos-system",
 		Agent:       collectorspec.AgentRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true, Traces: true}},
 		Gateway:     collectorspec.GatewayRequirements{OTLP: collectorspec.OTLPReceiver{Metrics: true, Traces: true}},
 	})
@@ -89,9 +89,9 @@ func TestCompileAddsFixedCollectorDebugToEveryEnabledPipeline(t *testing.T) {
 		"output_paths":        []string{"stdout"},
 	}
 	for _, config := range []CollectorConfig{deployment.AgentConfig, deployment.GatewayConfig} {
-		require.Equal(t, wantExporter, config.Exporters["debug/oksg"])
+		require.Equal(t, wantExporter, config.Exporters["debug/karthos"])
 		for pipelineName, pipeline := range config.Service.Pipelines {
-			require.Containsf(t, pipeline.Exporters, "debug/oksg", "expected %s pipeline to emit debug batches", pipelineName)
+			require.Containsf(t, pipeline.Exporters, "debug/karthos", "expected %s pipeline to emit debug batches", pipelineName)
 		}
 	}
 }
@@ -99,23 +99,23 @@ func TestCompileAddsFixedCollectorDebugToEveryEnabledPipeline(t *testing.T) {
 func TestCompileGatewayUsesReservedBackendEndpointEnvironment(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
-		Namespace:   "oksg-system",
+		Namespace:   "karthos-system",
 	})
 	require.NoError(t, err)
 
 	exporter := deployment.GatewayConfig.Exporters[otlpGRPCExporter].(map[string]any)
-	require.Equal(t, "${env:OKSG_BACKEND_GRPC_ENDPOINT}", exporter["endpoint"])
+	require.Equal(t, "${env:KARTHOS_BACKEND_GRPC_ENDPOINT}", exporter["endpoint"])
 }
 
 func TestCompileAgentUsesReservedGatewayEndpointEnvironment(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
-		Namespace:   "oksg-system",
+		Namespace:   "karthos-system",
 	})
 	require.NoError(t, err)
 
 	exporter := deployment.AgentConfig.Exporters[otlpGRPCExporter].(map[string]any)
-	require.Equal(t, "${env:OKSG_GATEWAY_GRPC_ENDPOINT}", exporter["endpoint"])
+	require.Equal(t, "${env:KARTHOS_GATEWAY_GRPC_ENDPOINT}", exporter["endpoint"])
 }
 
 func TestCompileRetainsIstioProtocolCounters(t *testing.T) {
@@ -131,7 +131,7 @@ func TestCompileRetainsIstioProtocolCounters(t *testing.T) {
 func TestCompileGatewayDisablesKubeClusterDefaultsOutsideThePoCAllowlist(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
-		Namespace:   "oksg-system",
+		Namespace:   "karthos-system",
 		Gateway: collectorspec.GatewayRequirements{KubeCluster: &collectorspec.KubeCluster{
 			SourceID: metrics.SourceKubeCluster,
 			EnabledMetricNames: []string{

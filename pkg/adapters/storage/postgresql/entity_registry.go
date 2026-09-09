@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
 )
 
 // PostgresEntityRegistry implements persistence.EntityRegistry using PostgreSQL.

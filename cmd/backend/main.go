@@ -12,20 +12,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/adapters/api"
-	kubernetesadapter "github.com/erickivel/oksg/pkg/adapters/kubernetes"
-	"github.com/erickivel/oksg/pkg/adapters/otlp"
-	"github.com/erickivel/oksg/pkg/adapters/storage"
-	"github.com/erickivel/oksg/pkg/backend/ingest"
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/core/topology"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources"
-	"github.com/erickivel/oksg/pkg/sources/contract"
-	"github.com/erickivel/oksg/pkg/sources/structure"
+	"github.com/erickivel/karthos/pkg/adapters/api"
+	kubernetesadapter "github.com/erickivel/karthos/pkg/adapters/kubernetes"
+	"github.com/erickivel/karthos/pkg/adapters/otlp"
+	"github.com/erickivel/karthos/pkg/adapters/storage"
+	"github.com/erickivel/karthos/pkg/backend/ingest"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/sources/structure"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -213,22 +213,22 @@ func run(ctx context.Context, args []string) error {
 
 func parseConfig(args []string) (config, error) {
 	fs := flag.NewFlagSet("backend", flag.ContinueOnError)
-	grpcListenAddress := fs.String("grpc-listen-address", envOrDefault("OKSG_BACKEND_GRPC_LISTEN_ADDRESS", defaultBackendGRPCListenAddr), "OTLP gRPC listen address")
-	healthListenAddress := fs.String("health-listen-address", envOrDefault("OKSG_BACKEND_HEALTH_LISTEN_ADDRESS", defaultBackendHealthListenAddr), "health listen address")
-	apiListenAddress := fs.String("api-listen-address", envOrDefault("OKSG_BACKEND_API_LISTEN_ADDRESS", defaultBackendAPIListenAddr), "REST API listen address")
-	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultBackendLogLevel), "structured log level")
-	enabledSignals := fs.String("enabled-signals", envOrDefault("OKSG_BACKEND_ENABLED_SIGNALS", "metric,trace"), "comma-separated enabled signals")
-	clusterName := fs.String("cluster-name", envOrDefault("OKSG_CLUSTER_NAME", "default"), "cluster name for entity resolution")
-	capabilityProfile := fs.String("capability-profile", envOrDefault("OKSG_CAPABILITY_PROFILE", ""), "path to mounted capability profile JSON")
-	sourcePlan := fs.String("source-plan", envOrDefault("OKSG_SOURCE_PLAN", ""), "path to mounted resolved source plan JSON")
-	storageBackend := fs.String("storage-backend", envOrDefault("OKSG_STORAGE_BACKEND", defaultStorageBackend), "storage backend: memory or external")
-	postgresDSN := fs.String("postgres-dsn", envOrDefault("OKSG_POSTGRES_DSN", ""), "PostgreSQL connection string")
-	vmURL := fs.String("victoriametrics-url", envOrDefault("OKSG_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
-	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("OKSG_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
-	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("OKSG_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
-	nodeTTLStr := fs.String("node-ttl", envOrDefault("OKSG_NODE_TTL", defaultNodeTTL.String()), "topology node TTL; nodes absent from snapshots for longer than this age out (0 disables)")
-	podLifecycleRequired := fs.Bool("pod-lifecycle-required", envOrDefault("OKSG_POD_LIFECYCLE_REQUIRED", "false") == "true", "require in-cluster pod lifecycle validation for metric runs_on edges")
-	structureRefreshStr := fs.String("structure-refresh-interval", envOrDefault("OKSG_STRUCTURE_REFRESH_INTERVAL", defaultStructureRefreshInterval.String()), "interval to refresh live Kubernetes structural topology; must be positive and strictly less than node TTL")
+	grpcListenAddress := fs.String("grpc-listen-address", envOrDefault("KARTHOS_BACKEND_GRPC_LISTEN_ADDRESS", defaultBackendGRPCListenAddr), "OTLP gRPC listen address")
+	healthListenAddress := fs.String("health-listen-address", envOrDefault("KARTHOS_BACKEND_HEALTH_LISTEN_ADDRESS", defaultBackendHealthListenAddr), "health listen address")
+	apiListenAddress := fs.String("api-listen-address", envOrDefault("KARTHOS_BACKEND_API_LISTEN_ADDRESS", defaultBackendAPIListenAddr), "REST API listen address")
+	logLevel := fs.String("log-level", envOrDefault("KARTHOS_LOG_LEVEL", defaultBackendLogLevel), "structured log level")
+	enabledSignals := fs.String("enabled-signals", envOrDefault("KARTHOS_BACKEND_ENABLED_SIGNALS", "metric,trace"), "comma-separated enabled signals")
+	clusterName := fs.String("cluster-name", envOrDefault("KARTHOS_CLUSTER_NAME", "default"), "cluster name for entity resolution")
+	capabilityProfile := fs.String("capability-profile", envOrDefault("KARTHOS_CAPABILITY_PROFILE", ""), "path to mounted capability profile JSON")
+	sourcePlan := fs.String("source-plan", envOrDefault("KARTHOS_SOURCE_PLAN", ""), "path to mounted resolved source plan JSON")
+	storageBackend := fs.String("storage-backend", envOrDefault("KARTHOS_STORAGE_BACKEND", defaultStorageBackend), "storage backend: memory or external")
+	postgresDSN := fs.String("postgres-dsn", envOrDefault("KARTHOS_POSTGRES_DSN", ""), "PostgreSQL connection string")
+	vmURL := fs.String("victoriametrics-url", envOrDefault("KARTHOS_VICTORIAMETRICS_URL", ""), "VictoriaMetrics base URL")
+	topologyFlushIntervalStr := fs.String("topology-flush-interval", envOrDefault("KARTHOS_TOPOLOGY_FLUSH_INTERVAL", defaultTopologyFlushInterval.String()), "topology snapshot flush interval")
+	statusStaleSeconds := fs.Int("status-stale-seconds", parseIntOrDefault(envOrDefault("KARTHOS_BACKEND_STATUS_STALE_SECONDS", ""), defaultStatusStaleSeconds), "snapshot staleness threshold in seconds for status endpoint")
+	nodeTTLStr := fs.String("node-ttl", envOrDefault("KARTHOS_NODE_TTL", defaultNodeTTL.String()), "topology node TTL; nodes absent from snapshots for longer than this age out (0 disables)")
+	podLifecycleRequired := fs.Bool("pod-lifecycle-required", envOrDefault("KARTHOS_POD_LIFECYCLE_REQUIRED", "false") == "true", "require in-cluster pod lifecycle validation for metric runs_on edges")
+	structureRefreshStr := fs.String("structure-refresh-interval", envOrDefault("KARTHOS_STRUCTURE_REFRESH_INTERVAL", defaultStructureRefreshInterval.String()), "interval to refresh live Kubernetes structural topology; must be positive and strictly less than node TTL")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}

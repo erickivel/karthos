@@ -3,7 +3,7 @@ package topology
 import (
 	"time"
 
-	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/schema"
 )
 
 type Snapshot struct {

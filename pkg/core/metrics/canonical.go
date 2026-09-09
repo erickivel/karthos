@@ -1,6 +1,6 @@
 package metrics
 
-import "github.com/erickivel/oksg/pkg/core/entities"
+import "github.com/erickivel/karthos/pkg/core/entities"
 
 type MetricCategory string
 type MetricScope string
@@ -47,7 +47,7 @@ type SourceRef struct {
 // Logical source IDs. Each ID is the contract between the catalog (which metrics
 // declare a producer), the source registry (which detects availability and owns
 // source parsing), and the planner (which tags wire output with the
-// matching oksg.source attribute).
+// matching karthos.source attribute).
 const (
 	// SourceKubernetesStructure identifies the non-metric Kubernetes API module.
 	// It is included in capability snapshots but never in metric arbitration.

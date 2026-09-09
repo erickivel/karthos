@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OKSG turns Kubernetes discovery and OpenTelemetry-driven runtime telemetry
+Karthos turns Kubernetes discovery and OpenTelemetry-driven runtime telemetry
 into a queryable system graph. Control flow:
 
 ```text
@@ -38,7 +38,7 @@ Kubernetes API -> ClusterProfile -> Source Plan -> Generic Collection Plan -> OT
 | `cmd/discovery-job` | `discover` / `plan` / `deploy` CLI |
 | `cmd/backend` | Mounted source-contract validation, OTLP ingest, normalization, REST API, structural refresh loop |
 | `web/` | React frontend (Vite + TypeScript) — Cluster Overview, Topology Graph, Metrics Explorer |
-| `deploy/helm/oksg-otel` | Helm chart packaging agent, gateway, backend, frontend, optional storage subcharts |
+| `deploy/helm/karthos` | Helm chart packaging agent, gateway, backend, frontend, optional storage subcharts |
 
 ## Collection Plane
 
@@ -50,17 +50,17 @@ packages that output with the mounted source contract. Receivers and connectors:
 - kubeletstats as component ID `kubelet_stats` (always; pod, container, volume metrics)
 - hostmetrics as component ID `host_metrics` (always; per-node CPU, memory, disk, filesystem, and network data). Agent pods use the host network so interface counters describe the node.
 - `k8s_cluster` (always on the gateway; an explicit Collector v0.156 allowlist retains only container requests/limits/status, pod phase/reason, and selected node conditions). Its pinned receiver still watches `resourcequotas`, so gateway RBAC retains that permission while the ResourceQuota metric family and graph kind remain disabled. See the [v0.156 receiver RBAC contract](https://raw.githubusercontent.com/open-telemetry/opentelemetry-collector-contrib/v0.156.0/receiver/k8sclusterreceiver/README.md).
-- `prometheus` on the singleton gateway for application Service-DNS targets (scrape jobs stamp `oksg_source=prometheus.app`)
-- `mesh-istio` Prometheus job (only when discovery finds a complete sidecar mesh; each DaemonSet agent scrapes only `istio-proxy:15020/stats/prometheus` Pods on its own node, rewrites Istio labels into servicegraph `client`/`server` edge attributes, and stamps `oksg_source=mesh.istio`)
-- `otlp` receivers (when discovery finds workloads with `oksg.io/otlp-traces: "true"` or ports `4317`/`4318`)
+- `prometheus` on the singleton gateway for application Service-DNS targets (scrape jobs stamp `karthos_source=prometheus.app`)
+- `mesh-istio` Prometheus job (only when discovery finds a complete sidecar mesh; each DaemonSet agent scrapes only `istio-proxy:15020/stats/prometheus` Pods on its own node, rewrites Istio labels into servicegraph `client`/`server` edge attributes, and stamps `karthos_source=mesh.istio`)
+- `otlp` receivers (when discovery finds workloads with `karthos.io/otlp-traces: "true"` or ports `4317`/`4318`)
 - servicegraph as component ID `service_graph` (gateway, when traces are present and the mesh does not own the POC service-graph coverage; it is the sole selected source for a partial mesh)
 
-Collector-owned agent and gateway pipelines run a `transform/oksg-source`
-processor that stamps the Prometheus-safe `oksg_source` datapoint attribute from
+Collector-owned agent and gateway pipelines run a `transform/karthos-source`
+processor that stamps the Prometheus-safe `karthos_source` datapoint attribute from
 the receiver-determined metric-name namespace. The backend accepts either
-`oksg_source` or dotted `oksg.source` from producers. External OTLP metrics use isolated `metrics/otlp` pipelines without
+`karthos_source` or dotted `karthos.source` from producers. External OTLP metrics use isolated `metrics/otlp` pipelines without
 inference and must arrive with a registered source. Together with scrape-time relabel stamps
-(`oksg_source=prometheus.app` / `mesh.istio`) this gives the backend a
+(`karthos_source=prometheus.app` / `mesh.istio`) this gives the backend a
 reliable signal for source arbitration.
 
 ## Semantic Normalization
@@ -78,9 +78,9 @@ The backend ingest pipeline:
 | `kubernetes.structure` | `pkg/sources/structure` | Direct Kubernetes API refresh of `exposes`, `routes_to`, `uses`, `mounts`, and containment with `k8s-api` provenance. |
 | `CompositeTopologyBuilder` | `pkg/backend/ingest/composite_topology_builder.go` | Chains metric-derived observed `runs_on` and source-classified `calls` builders. Direct Kubernetes structure refresh remains separate. |
 | `MultiIngestor` | `pkg/backend/ingest/normalizing_ingestor.go` | Fans an envelope to `NormalizingIngestor → MetricStore` and `BufferedTopologyIngestor → GraphStore`. |
-| `BufferedTopologyIngestor` | `pkg/backend/ingest/buffered_topology_ingestor.go` | Accumulates only observed `runs_on` and `calls` edges from metric and trace builders; flushes one consolidated edge batch per window (default `OKSG_TOPOLOGY_FLUSH_INTERVAL=60s`) and requeues a failed in-process write for the next flush. Direct Kubernetes refresh owns all structural nodes and relations. |
+| `BufferedTopologyIngestor` | `pkg/backend/ingest/buffered_topology_ingestor.go` | Accumulates only observed `runs_on` and `calls` edges from metric and trace builders; flushes one consolidated edge batch per window (default `KARTHOS_TOPOLOGY_FLUSH_INTERVAL=60s`) and requeues a failed in-process write for the next flush. Direct Kubernetes refresh owns all structural nodes and relations. |
 
-The `--cluster-name` flag (or `OKSG_CLUSTER_NAME`) controls the cluster name
+The `--cluster-name` flag (or `KARTHOS_CLUSTER_NAME`) controls the cluster name
 component of every entity ID; default `default`.
 
 ## Source Arbitration
@@ -102,7 +102,7 @@ either a classic regular container or a Kubernetes native sidecar init
 container with `restartPolicy: Always`. Discovery classifies the mesh as
 partial when a non-system controller-owned workload Pod is outside an injected
 namespace, explicitly disables injection, or lacks one of those supported proxy
-layouts. Kubernetes, Istio control-plane, and OKSG namespaces are excluded.
+layouts. Kubernetes, Istio control-plane, and Karthos namespaces are excluded.
 Ambient mode remains unsupported because it has no per-Pod proxy scrape
 contract. A complete mesh owns the service-graph metrics and enables the
 node-owned mesh scrape job. A partial mesh disables that scrape globally and
@@ -127,15 +127,15 @@ Edge model (Standard tier):
 
 Workload, ingress, configmap, secret, and PVC nodes are produced **only** by
 the direct Kubernetes structure module, never by OTLP. The backend therefore
-refreshes that module every `OKSG_STRUCTURE_REFRESH_INTERVAL` (default `5m`).
-Invariant: `structure_refresh_interval < node_ttl` (default `OKSG_NODE_TTL=24h`).
+refreshes that module every `KARTHOS_STRUCTURE_REFRESH_INTERVAL` (default `5m`).
+Invariant: `structure_refresh_interval < node_ttl` (default `KARTHOS_NODE_TTL=24h`).
 Violating it makes structural-only kinds disappear from `/api/v1/graph`
 after the TTL window.
 
 `GraphStore` separates two write paths. The direct Kubernetes structure module
 appends complete structural snapshots. Telemetry and Pod lifecycle ingestion
 maintain only current observed edges. After the initial refresh and every
-`OKSG_STRUCTURE_REFRESH_INTERVAL`, the backend materializes one immutable full
+`KARTHOS_STRUCTURE_REFRESH_INTERVAL`, the backend materializes one immutable full
 graph snapshot: the newest structure provides all nodes and structural edges;
 only active observed `runs_on`/`calls` edges seen in the preceding five minutes
 survive, and both endpoints must be structural members. The API reads only
@@ -171,11 +171,11 @@ Backend storage flags:
 
 | Flag | Env Var | Default |
 |------|---------|---------|
-| `--storage-backend` | `OKSG_STORAGE_BACKEND` | `memory` |
-| `--postgres-dsn` | `OKSG_POSTGRES_DSN` | `""` |
-| `--victoriametrics-url` | `OKSG_VICTORIAMETRICS_URL` | `""` |
-| `--topology-flush-interval` | `OKSG_TOPOLOGY_FLUSH_INTERVAL` | `60s` |
-| `--node-ttl` | `OKSG_NODE_TTL` | `24h` |
+| `--storage-backend` | `KARTHOS_STORAGE_BACKEND` | `memory` |
+| `--postgres-dsn` | `KARTHOS_POSTGRES_DSN` | `""` |
+| `--victoriametrics-url` | `KARTHOS_VICTORIAMETRICS_URL` | `""` |
+| `--topology-flush-interval` | `KARTHOS_TOPOLOGY_FLUSH_INTERVAL` | `60s` |
+| `--node-ttl` | `KARTHOS_NODE_TTL` | `24h` |
 
 ## REST API
 
@@ -209,14 +209,14 @@ REST API flags:
 
 | Flag | Env Var | Default |
 |------|---------|---------|
-| `--api-listen-address` | `OKSG_BACKEND_API_LISTEN_ADDRESS` | `0.0.0.0:8080` |
-| `--status-stale-seconds` | `OKSG_BACKEND_STATUS_STALE_SECONDS` | `360` |
+| `--api-listen-address` | `KARTHOS_BACKEND_API_LISTEN_ADDRESS` | `0.0.0.0:8080` |
+| `--status-stale-seconds` | `KARTHOS_BACKEND_STATUS_STALE_SECONDS` | `360` |
 
 ## Frontend
 
 `web/` is a React + Vite + TypeScript SPA served by nginx with `/api/*`
 reverse-proxied in Helm deployments to the release-scoped backend Service
-(`oksg-otel-backend:8080` for the default release). Three views:
+(`karthos-backend:8080` for the default release). Three views:
 
 - `/` Cluster Overview — KPI row, entity breakdown, relation types, runtime health summary, discovery sources
 - `/topology` Topology Graph — React Flow canvas with three projection modes (Ownership, Infrastructure, Traffic) and three granularity levels; per-mode layout strategies under `web/src/views/TopologyGraph/layouts/` are selected via `LAYOUT_REGISTRY` (custom tree for Ownership, `@dagrejs/dagre` for Infrastructure, `elkjs` layered orthogonal for Traffic)
@@ -230,7 +230,7 @@ Design system, projection-mode rules, and layout details:
 
 ## Deployment Model
 
-The Helm chart in `deploy/helm/oksg-otel/` owns Kubernetes resource shape
+The Helm chart in `deploy/helm/karthos/` owns Kubernetes resource shape
 (agent ConfigMap + ServiceAccount + RBAC + DaemonSet, gateway
 ConfigMap + ServiceAccount + Service + Deployment, one backend source-contract
 ConfigMap + Service + Deployment, frontend Service + Deployment + ConfigMap,
@@ -246,11 +246,11 @@ dependencies, gated by `storage.postgresql.enabled` /
 subcharts are enabled, the chart auto-derives DSN and VM URL from the
 subchart service names; explicit overrides go in `storage.postgresql.dsn`
 and `storage.victoriametrics.url`. After modifying `Chart.yaml`
-dependencies, run `helm dependency build deploy/helm/oksg-otel/`.
+dependencies, run `helm dependency build deploy/helm/karthos/`.
 
 For development-only telemetry inspection, `discovery-job --collector-debug`
-(or `OKSG_COLLECTOR_DEBUG=true`) asks the OTel adapter to compile its fixed
-`debug/oksg` exporter into every enabled agent and gateway pipeline. It is
+(or `KARTHOS_COLLECTOR_DEBUG=true`) asks the OTel adapter to compile its fixed
+`debug/karthos` exporter into every enabled agent and gateway pipeline. It is
 disabled by default, writes detailed batches directly to Collector stdout, and
 is never a backend persistence path. Both planes intentionally log the same
 forwarded telemetry while debugging, so output is temporary and duplicated.
@@ -267,7 +267,7 @@ The chart schema requires an explicit `storage.backend` (`memory` or
 - **ConfigMaps** — structured collector configuration for agent and gateway plus the chart-owned backend source contract
 - **Secrets** — credentials and sensitive settings
 - **Env vars** — pod/node metadata and chart-propagated Collector endpoint
-  values; `OKSG_BACKEND_GRPC_ENDPOINT` and `OKSG_GATEWAY_GRPC_ENDPOINT` are
+  values; `KARTHOS_BACKEND_GRPC_ENDPOINT` and `KARTHOS_GATEWAY_GRPC_ENDPOINT` are
   generated from the chart's release-scoped Services and reserved from user
   overrides
 

@@ -5,9 +5,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources"
 )
 
 func TestComposeKeepsTraceIntakeWhenIstioOwnsServiceGraphMetrics(t *testing.T) {
@@ -17,7 +17,7 @@ func TestComposeKeepsTraceIntakeWhenIstioOwnsServiceGraphMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, metrics.SourceMeshIstio, sourcePlan.MetricAssignments["servicegraph.request.count"])
 
-	plan, err := NewComposer("oksg-system").Compose(capabilityProfile, sourcePlan)
+	plan, err := NewComposer("karthos-system").Compose(capabilityProfile, sourcePlan)
 	require.NoError(t, err)
 	require.True(t, plan.Agent.OTLP.Traces)
 	require.True(t, plan.Gateway.OTLP.Traces)
@@ -34,7 +34,7 @@ func TestComposeAddsDerivedServiceGraphOnlyWhenSelected(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, metrics.SourceTracesServicegraph, sourcePlan.MetricAssignments["servicegraph.request.count"])
 
-	plan, err := NewComposer("oksg-system").Compose(capabilityProfile, sourcePlan)
+	plan, err := NewComposer("karthos-system").Compose(capabilityProfile, sourcePlan)
 	require.NoError(t, err)
 	require.NotNil(t, plan.Gateway.ServiceGraph)
 	require.Equal(t, metrics.SourceTracesServicegraph, plan.Gateway.ServiceGraph.SourceID)

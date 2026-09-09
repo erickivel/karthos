@@ -1,7 +1,7 @@
-# Frontend Design Specification — OKSG Visualizer
+# Frontend Design Specification - Karthos
 
-The OKSG frontend is a read-only observability dashboard that renders the
-topology graph and metrics produced by the OKSG backend. No cluster
+The Karthos frontend is a read-only observability dashboard that renders the
+topology graph and metrics produced by the Karthos backend. No cluster
 mutations, no control-plane operations.
 
 ---
@@ -78,9 +78,9 @@ Three routes sharing a persistent shell (sidebar + top bar + status bar). Zustan
 
 | Component | Position | Description |
 |-----------|----------|-------------|
-| **Top Bar** | Floating, top | OKSG branding, polling interval indicator, connection status dot. Floats over the canvas with `var(--surface-nav)` background, not docked to the edge. |
+| **Top Bar** | Floating, top | Karthos branding, polling interval indicator, connection status dot. Floats over the canvas with `var(--surface-nav)` background, not docked to the edge. |
 | **Sidebar** | Floating, left | Icon navigation for 3 routes. Floats over the canvas, not docked. Active state via tonal shift + signal color icon. |
-| **Status Bar** | Bottom, full width | System status + OKSG tool health (see Section 5.4) |
+| **Status Bar** | Bottom, full width | System status + Karthos tool health (see Section 5.4) |
 | **Node Inspector** | Floating, right | 280px panel, floats over canvas on `/topology` when entity selected. Not docked to edge. |
 
 ### Routes
@@ -320,11 +320,11 @@ The Metrics Explorer must treat catalog `scopes` as authoritative:
 
 ### 5.4 Status Bar
 
-Persistent bottom bar across all routes. Shows both cluster system status and OKSG tool health.
+Persistent bottom bar across all routes. Shows both cluster system status and Karthos tool health.
 
 **Layout:** Single horizontal bar, left-to-right:
 - **System status indicator**: green dot + `SYSTEM_NOMINAL` (or red + `DEGRADED` based on `/api/v1/status` components)
-- **OKSG tool status**: `[OKSG] BACKEND CONNECTED · LAST SNAPSHOT 12s AGO · 52 NODES · 56 EDGES`
+- **Karthos tool status**: `[Karthos] BACKEND CONNECTED · LAST SNAPSHOT 12s AGO · 52 NODES · 56 EDGES`
 - **Network info** (right-aligned): `[NET] API PROXY` (a stable UI
   label; Helm's nginx proxy targets the release-scoped backend Service)
 
@@ -413,8 +413,8 @@ Each layer has one current responsibility: `api/client.ts` owns HTTP transport,
 
 - **Build:** Multi-stage Dockerfile — stage 1 builds static files with Vite, stage 2 copies `dist/` into an nginx image
 - **Container:** nginx serving static files + reverse proxy for `/api/*` → the
-  Helm release's backend Service (`oksg-otel-backend:8080` by default)
-- **Helm:** Deployed as additional templates under `deploy/helm/oksg-otel/`
+  Helm release's backend Service (`karthos-backend:8080` by default)
+- **Helm:** Deployed as additional templates under `deploy/helm/karthos/`
   - Deployment: single replica, nginx image with built frontend baked in
   - Service: ClusterIP on port 80
   - ConfigMap: nginx.conf with `/api/*` proxy pass to the release-scoped backend

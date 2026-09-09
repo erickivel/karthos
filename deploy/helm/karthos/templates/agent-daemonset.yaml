@@ -1,29 +1,29 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "oksg-otel.agentName" . }}
-  namespace: {{ include "oksg-otel.namespace" . }}
+  name: {{ include "karthos.agentName" . }}
+  namespace: {{ include "karthos.namespace" . }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "agent") | nindent 4 }}
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
+      app.kubernetes.io/name: {{ include "karthos.name" . }}
       app.kubernetes.io/component: agent
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
+        app.kubernetes.io/name: {{ include "karthos.name" . }}
         app.kubernetes.io/component: agent
       annotations:
-        checksum/config: {{ include "oksg-otel.agentChecksum" . }}
+        checksum/config: {{ include "karthos.agentChecksum" . }}
     spec:
-      serviceAccountName: {{ include "oksg-otel.agentName" . }}
+      serviceAccountName: {{ include "karthos.agentName" . }}
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: agent
-          image: {{ include "oksg-otel.image" . }}
+          image: {{ include "karthos.image" . }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           args:
             - --config=/conf/config.yaml
@@ -32,8 +32,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            - name: OKSG_GATEWAY_GRPC_ENDPOINT
-              value: {{ printf "%s:%d" (include "oksg-otel.gatewayName" .) (int .Values.gateway.service.port) | quote }}
+            - name: KARTHOS_GATEWAY_GRPC_ENDPOINT
+              value: {{ printf "%s:%d" (include "karthos.gatewayName" .) (int .Values.gateway.service.port) | quote }}
           ports:
             - containerPort: 4317
               hostPort: 4317
@@ -69,7 +69,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "oksg-otel.agentName" . }}-config
+            name: {{ include "karthos.agentName" . }}-config
         - name: hostfs
           hostPath:
             path: /

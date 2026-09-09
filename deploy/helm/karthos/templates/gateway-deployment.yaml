@@ -1,34 +1,34 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "oksg-otel.gatewayName" . }}
-  namespace: {{ include "oksg-otel.namespace" . }}
+  name: {{ include "karthos.gatewayName" . }}
+  namespace: {{ include "karthos.namespace" . }}
   labels:
-    {{- include "oksg-otel.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
+    {{- include "karthos.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
 spec:
   replicas: {{ .Values.gateway.replicas }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
+      app.kubernetes.io/name: {{ include "karthos.name" . }}
       app.kubernetes.io/component: gateway
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
+        app.kubernetes.io/name: {{ include "karthos.name" . }}
         app.kubernetes.io/component: gateway
       annotations:
-        checksum/config: {{ include "oksg-otel.gatewayChecksum" . }}
+        checksum/config: {{ include "karthos.gatewayChecksum" . }}
     spec:
-      serviceAccountName: {{ include "oksg-otel.gatewayName" . }}
+      serviceAccountName: {{ include "karthos.gatewayName" . }}
       containers:
         - name: gateway
-          image: {{ include "oksg-otel.image" . }}
+          image: {{ include "karthos.image" . }}
           imagePullPolicy: {{ .Values.global.image.pullPolicy }}
           args:
             - --config=/conf/config.yaml
           env:
-            - name: OKSG_BACKEND_GRPC_ENDPOINT
-              value: {{ printf "%s:%d" (include "oksg-otel.backendName" .) (int .Values.backend.grpcPort) | quote }}
+            - name: KARTHOS_BACKEND_GRPC_ENDPOINT
+              value: {{ printf "%s:%d" (include "karthos.backendName" .) (int .Values.backend.grpcPort) | quote }}
           ports:
             - containerPort: {{ .Values.gateway.service.port }}
               name: otlp-grpc
@@ -56,4 +56,4 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "oksg-otel.gatewayName" . }}-config
+            name: {{ include "karthos.gatewayName" . }}-config

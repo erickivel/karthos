@@ -37,7 +37,7 @@ const (
 	AttrMeshSourcePrincipal      = "mesh.peer.source.principal"
 	AttrMeshDestinationPrincipal = "mesh.peer.destination.principal"
 	AttrNetworkProtocolName      = "network.protocol.name"
-	AttrOKSGSource               = "oksg.source"
+	AttrKarthosSource            = "karthos.source"
 	AttrPeerService              = "peer.service"
 	AttrResource                 = "resource"
 	AttrServer                   = "server"
@@ -54,7 +54,7 @@ const (
 	AttrMeshSourcePrincipalProm      = "mesh_peer_source_principal"
 	AttrMeshDestinationPrincipalProm = "mesh_peer_destination_principal"
 	AttrNetworkProtocolNameProm      = "network_protocol_name"
-	AttrOKSGSourceProm               = "oksg_source"
+	AttrKarthosSourceProm            = "karthos_source"
 )
 
 // Internal labels derived during normalization.

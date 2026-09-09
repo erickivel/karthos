@@ -5,9 +5,9 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/erickivel/oksg/pkg/adapters/otel"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
-	"github.com/erickivel/oksg/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/adapters/otel"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 type Generator struct {

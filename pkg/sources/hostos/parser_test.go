@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/core/semconv"
 )
 
 func TestParseExpandsHostDirectionalMetrics(t *testing.T) {

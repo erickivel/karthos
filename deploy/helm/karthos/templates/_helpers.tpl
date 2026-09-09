@@ -1,65 +1,65 @@
-{{- define "oksg-otel.name" -}}
+{{- define "karthos.name" -}}
 {{- .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "oksg-otel.namespace" -}}
+{{- define "karthos.namespace" -}}
 {{- .Release.Namespace -}}
 {{- end -}}
 
-{{- define "oksg-otel.agentName" -}}
-{{- printf "%s-agent" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "karthos.agentName" -}}
+{{- printf "%s-agent" (include "karthos.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "oksg-otel.gatewayName" -}}
-{{- printf "%s-gateway" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "karthos.gatewayName" -}}
+{{- printf "%s-gateway" (include "karthos.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "oksg-otel.backendName" -}}
-{{- printf "%s-backend" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "karthos.backendName" -}}
+{{- printf "%s-backend" (include "karthos.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "oksg-otel.frontendName" -}}
-{{- printf "%s-frontend" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "karthos.frontendName" -}}
+{{- printf "%s-frontend" (include "karthos.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "oksg-otel.frontendConfigName" -}}
-{{- printf "%s-frontend-nginx" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "karthos.frontendConfigName" -}}
+{{- printf "%s-frontend-nginx" (include "karthos.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "oksg-otel.labels" -}}
-app.kubernetes.io/name: {{ include "oksg-otel.name" . }}
+{{- define "karthos.labels" -}}
+app.kubernetes.io/name: {{ include "karthos.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
-oksg.io/cluster: {{ .Values.global.clusterName | quote }}
+karthos.io/cluster: {{ .Values.global.clusterName | quote }}
 {{- end -}}
 
-{{- define "oksg-otel.componentLabels" -}}
-{{ include "oksg-otel.labels" .context }}
+{{- define "karthos.componentLabels" -}}
+{{ include "karthos.labels" .context }}
 app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
-{{- define "oksg-otel.image" -}}
+{{- define "karthos.image" -}}
 {{ printf "%s:%s" .Values.global.image.repository .Values.global.image.tag }}
 {{- end -}}
 
-{{- define "oksg-otel.backendImage" -}}
+{{- define "karthos.backendImage" -}}
 {{ printf "%s:%s" .Values.backend.image.repository .Values.backend.image.tag }}
 {{- end -}}
 
-{{- define "oksg-otel.sourceContractName" -}}
-{{- printf "%s-source-contract" (include "oksg-otel.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "karthos.sourceContractName" -}}
+{{- printf "%s-source-contract" (include "karthos.name" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "oksg-otel.frontendImage" -}}
+{{- define "karthos.frontendImage" -}}
 {{ printf "%s:%s" .Values.frontend.image.repository .Values.frontend.image.tag }}
 {{- end -}}
 
-{{- define "oksg-otel.gatewayChecksum" -}}
+{{- define "karthos.gatewayChecksum" -}}
 {{- .Values.gateway.collectorConfig | sha256sum -}}
 {{- end -}}
 
-{{- define "oksg-otel.agentChecksum" -}}
+{{- define "karthos.agentChecksum" -}}
 {{- .Values.agent.collectorConfig | sha256sum -}}
 {{- end -}}
 
@@ -67,7 +67,7 @@ app.kubernetes.io/component: {{ .component }}
 PostgreSQL DSN: use explicit dsn if set, otherwise build from subchart service name.
 Bitnami postgresql subchart creates a service named <release>-postgresql.
 */}}
-{{- define "oksg-otel.postgresDSN" -}}
+{{- define "karthos.postgresDSN" -}}
 {{- if .Values.storage.postgresql.dsn -}}
 {{ .Values.storage.postgresql.dsn }}
 {{- else -}}
@@ -79,7 +79,7 @@ Bitnami postgresql subchart creates a service named <release>-postgresql.
 VictoriaMetrics URL: use explicit url if set, otherwise derive from subchart service name.
 VM single subchart creates a service named <release>-victoria-metrics-single-server.
 */}}
-{{- define "oksg-otel.vmURL" -}}
+{{- define "karthos.vmURL" -}}
 {{- if .Values.storage.victoriametrics.url -}}
 {{ .Values.storage.victoriametrics.url }}
 {{- else -}}

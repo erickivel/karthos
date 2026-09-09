@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
-E2E_OUTPUT_DIR="${OKSG_E2E_OUTPUT_DIR:-${REPO_ROOT}/bin/e2e}"
+E2E_OUTPUT_DIR="${KARTHOS_E2E_OUTPUT_DIR:-${REPO_ROOT}/bin/e2e}"
 
 cd "${REPO_ROOT}"
 task test:e2e:scenario:fallback:prepare

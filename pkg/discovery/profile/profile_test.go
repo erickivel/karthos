@@ -17,7 +17,7 @@ func TestClusterProfileSerializesOnlyModuleCapabilities(t *testing.T) {
 				Signals:  []string{"metric"},
 				Evidence: CapabilityEvidence{PrometheusTargets: []PrometheusTarget{{
 					ServiceName: "gateway-go",
-					Namespace:   "oksg-demo",
+					Namespace:   "karthos-demo",
 					Port:        8080,
 					Path:        "/metrics",
 				}},

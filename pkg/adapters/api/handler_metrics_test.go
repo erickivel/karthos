@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/core/metrics"
 )
 
 func serveMetricsRequest(t *testing.T, store persistence.MetricStore, target string) *httptest.ResponseRecorder {

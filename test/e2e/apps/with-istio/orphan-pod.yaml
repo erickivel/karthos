@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: ops-toolbox
-  namespace: oksg-sparse
+  namespace: karthos-sparse
   labels:
     app: ops-toolbox
   annotations:
@@ -10,7 +10,7 @@ metadata:
 spec:
   restartPolicy: Always
   nodeSelector:
-    kubernetes.io/hostname: oksg-test-control-plane
+    kubernetes.io/hostname: karthos-test-control-plane
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists

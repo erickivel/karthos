@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 
-	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/core/semconv"
 )
 
 func TestCallsEdgeMetadataClassifiesIstioMetricsAndPreservesMeshDimensions(t *testing.T) {

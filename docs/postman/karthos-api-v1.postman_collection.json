@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "bcb80c53-e1a5-4f4b-bcdc-b71cce6e8f5a",
-    "name": "OKSG API v1",
-    "description": "# OKSG public API consumer collection\n\nThis collection documents the complete `/api/v1` surface. The bundled frontend is one consumer of this API; dashboards, automation, analytics, and other tools can use the same contracts.\n\n## Start here\n\n1. Set `baseUrl` (the local default is the backend port-forward at `http://localhost:18081`).\n2. Call **Discovery** to learn which compiled sources are currently available.\n3. Call **Graph → List nodes** or **Entities → List entities** and copy a canonical ID into `entityId`, `sourceEntityId`, or `targetEntityId`.\n4. Call **Metrics → List catalog** before querying samples. The catalog is the supported metric inventory and applicability authority.\n5. Use **Metric samples** for timestamped values and **Metric series** for the current, paginated dimensional series view.\n\n## Query rules\n\n- All success payloads use `{ \"data\": ... }`; failures use `{ \"error\": \"...\", \"code\": number }`.\n- Entity and edge filters require canonical IDs returned by the graph/entity endpoints. Do not substitute display names.\n- `next_token` is opaque: return it unchanged in the following request.\n- `page_size` defaults to 100 and is capped at 1000.\n- A metric result preserves every label-distinct series. `labels.source` is the source that actually produced a sample; catalog sources are priority declarations, not proof that a source emitted data.\n- Metric timestamps are producer timestamps. Query evaluation is on the backend 15-second grid and samples older than the active freshness window are omitted.\n\n## Local development\n\n```sh\nkubectl port-forward -n oksg-system deployment/oksg-otel-backend 18081:8080\n```\n\nThen set `baseUrl` to `http://localhost:18081`.",
+    "name": "Karthos API v1",
+    "description": "# Karthos public API consumer collection\n\nThis collection documents the complete `/api/v1` surface. The bundled frontend is one consumer of this API; dashboards, automation, analytics, and other tools can use the same contracts.\n\n## Start here\n\n1. Set `baseUrl` (the local default is the backend port-forward at `http://localhost:18081`).\n2. Call **Discovery** to learn which compiled sources are currently available.\n3. Call **Graph → List nodes** or **Entities → List entities** and copy a canonical ID into `entityId`, `sourceEntityId`, or `targetEntityId`.\n4. Call **Metrics → List catalog** before querying samples. The catalog is the supported metric inventory and applicability authority.\n5. Use **Metric samples** for timestamped values and **Metric series** for the current, paginated dimensional series view.\n\n## Query rules\n\n- All success payloads use `{ \"data\": ... }`; failures use `{ \"error\": \"...\", \"code\": number }`.\n- Entity and edge filters require canonical IDs returned by the graph/entity endpoints. Do not substitute display names.\n- `next_token` is opaque: return it unchanged in the following request.\n- `page_size` defaults to 100 and is capped at 1000.\n- A metric result preserves every label-distinct series. `labels.source` is the source that actually produced a sample; catalog sources are priority declarations, not proof that a source emitted data.\n- Metric timestamps are producer timestamps. Query evaluation is on the backend 15-second grid and samples older than the active freshness window are omitted.\n\n## Local development\n\n```sh\nkubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080\n```\n\nThen set `baseUrl` to `http://localhost:18081`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -50,7 +50,7 @@
     },
     {
       "key": "namespace",
-      "value": "oksg-demo",
+      "value": "karthos-demo",
       "type": "string",
       "description": "Kubernetes namespace filter for graph/entity listing."
     },

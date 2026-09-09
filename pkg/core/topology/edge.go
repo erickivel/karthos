@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/entities"
 )
 
 type Edge struct {

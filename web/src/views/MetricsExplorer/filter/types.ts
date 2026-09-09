@@ -31,7 +31,7 @@ export interface FilterOption {
 
 /**
  * Public health-status union. The backend translates the integer-encoded
- * `oksg.{pod,container}.health.status` enum to one of these strings at the
+ * `karthos.{pod,container}.health.status` enum to one of these strings at the
  * API boundary (see `pkg/core/metrics/health_status.go`); the frontend just
  * renders. No mapping logic lives here.
  */
