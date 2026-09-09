@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "karthos.gatewayName" . }}
+  namespace: {{ include "karthos.namespace" . }}
+  labels:
+    {{- include "karthos.componentLabels" (dict "context" . "component" "gateway") | nindent 4 }}
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "karthos.name" . }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "karthos.name" . }}
+        app.kubernetes.io/component: gateway
+      annotations:
+        checksum/config: {{ include "karthos.gatewayChecksum" . }}
+    spec:
+      serviceAccountName: {{ include "karthos.gatewayName" . }}
+      containers:
+        - name: gateway
+          image: {{ include "karthos.image" . }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          args:
+            - --config=/conf/config.yaml
+          env:
+            - name: KARTHOS_BACKEND_GRPC_ENDPOINT
+              value: {{ printf "%s:%d" (include "karthos.backendName" .) (int .Values.backend.grpcPort) | quote }}
+          ports:
+            - containerPort: {{ .Values.gateway.service.port }}
+              name: otlp-grpc
+            - containerPort: {{ .Values.gateway.service.httpPort }}
+              name: otlp-http
+            - containerPort: 13133
+              name: health
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+          resources:
+{{ toYaml .Values.gateway.resources | indent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "karthos.gatewayName" . }}-config

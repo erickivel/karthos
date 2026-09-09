@@ -3,23 +3,25 @@ package api
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/topology"
 )
 
 // GraphHandler serves topology graph query endpoints.
 type GraphHandler struct {
 	graphStore     persistence.GraphStore
 	entityRegistry persistence.EntityRegistry
-	metricStore    persistence.MetricStore
+	healthResolver *HealthResolver
 	logger         *logging.Logger
 }
 
@@ -71,6 +73,12 @@ type availableFilters struct {
 	Relations  []string `json:"relations"`
 }
 
+type healthEnrichmentQuality struct {
+	Status     healthQuality `json:"status"`
+	Pods       healthQuality `json:"pods"`
+	Containers healthQuality `json:"containers"`
+}
+
 // --- helpers ---
 
 // enrichNodeFrom builds an enrichedNode from a topology node, a pre-resolved
@@ -117,60 +125,35 @@ func (h *GraphHandler) batchEntities(ctx context.Context, ids []entities.EntityI
 	return resolved
 }
 
-// resolveHealthStatus issues at most two metric-store queries (one per
-// derived health-status metric) for the supplied node IDs and returns a map
-// of entity ID to its public string label. Missing entries (no recent
-// sample, no metric store, query error) are absent from the returned map;
-// the caller defaults to metrics.HealthUnknown.
-//
-// The lookup is per-snapshot (not per-node) and uses the multi-match
-// entity_id=~"..." filter that metricSelector already supports, so this is
-// O(2 queries) regardless of node count.
-func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node) map[entities.EntityID]string {
-	if h.metricStore == nil || len(nodes) == 0 {
-		return nil
+// resolveHealthStatus issues at most three metric-store queries. Snapshot-wide
+// callers omit entity matchers and intersect in memory, keeping query text
+// bounded as the graph grows. Single-node callers retain exact filtering.
+func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node, exact bool) (map[entities.EntityID]string, healthEnrichmentQuality) {
+	if h.healthResolver == nil {
+		return map[entities.EntityID]string{}, healthEnrichmentQuality{Status: healthQualityUnavailable, Pods: healthQualityUnavailable, Containers: healthQualityUnavailable}
 	}
-	var podIDs, containerIDs []entities.EntityID
-	for _, n := range nodes {
-		switch n.Kind {
-		case entities.KindPod:
-			podIDs = append(podIDs, n.ID)
-		case entities.KindContainer:
-			containerIDs = append(containerIDs, n.ID)
+	resolution := h.healthResolver.Resolve(ctx, nodes, exact)
+	for _, err := range resolution.Errors {
+		h.logger.Warn("health query failed", logging.Error(err))
+	}
+	applicable := make([]healthQuality, 0, 2)
+	for _, node := range nodes {
+		if node.Kind == entities.KindPod {
+			applicable = append(applicable, resolution.Pods)
+			break
 		}
 	}
-	resolved := make(map[entities.EntityID]string)
-	h.fillHealthStatus(ctx, "oksg.pod.health.status", podIDs, resolved)
-	h.fillHealthStatus(ctx, "oksg.container.health.status", containerIDs, resolved)
-	return resolved
-}
-
-func (h *GraphHandler) fillHealthStatus(ctx context.Context, metricName string, ids []entities.EntityID, into map[entities.EntityID]string) {
-	if len(ids) == 0 {
-		return
-	}
-	now := time.Now()
-	samples, err := h.metricStore.Query(ctx, query.MetricQuery{
-		MetricName: metricName,
-		EntityIDs:  ids,
-		From:       now.Add(-5 * time.Minute),
-		To:         now,
-	})
-	if err != nil {
-		h.logger.Warn("health-status query failed", logging.Error(err), logging.String("metric", metricName))
-		return
-	}
-	// Keep the most recent sample per entity (samples come back in
-	// descending time order from the store).
-	for _, s := range samples {
-		if _, seen := into[s.EntityID]; seen {
-			continue
+	for _, node := range nodes {
+		if node.Kind == entities.KindContainer {
+			applicable = append(applicable, resolution.Containers)
+			break
 		}
-		if s.ValueLabel == "" {
-			continue
-		}
-		into[s.EntityID] = s.ValueLabel
 	}
+	status := healthQualityComplete
+	if len(applicable) > 0 {
+		status = combineHealthQuality(applicable...)
+	}
+	return resolution.Statuses, healthEnrichmentQuality{Status: status, Pods: resolution.Pods, Containers: resolution.Containers}
 }
 
 func summaryFrom(entity entities.Entity) *relatedEntitySummary {
@@ -231,23 +214,11 @@ func entityRefOf(e entities.Entity) entityRef {
 // --- handlers ---
 
 func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
-	if h.graphStore == nil {
-		writeError(w, http.StatusNotFound, "graph store not configured")
+	snap, ok := h.selectedGraphSnapshot(w, r)
+	if !ok {
 		return
 	}
-
-	snap, err := h.graphStore.GetLatest(r.Context())
-	if err != nil {
-		h.logger.Warn("failed to get latest graph", logging.Error(err))
-		writeError(w, http.StatusInternalServerError, "failed to retrieve graph")
-		return
-	}
-	if snap == nil {
-		writeError(w, http.StatusNotFound, "no graph snapshot available")
-		return
-	}
-
-	nodes, edges := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+	nodes, edges := snap.Graph.Nodes, snap.Graph.Edges
 
 	kindCounts := map[string]int{}
 	nsSet := map[string]struct{}{}
@@ -274,7 +245,7 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, n.ID)
 	}
 	resolved := h.batchEntities(r.Context(), ids)
-	healthByID := h.resolveHealthStatus(r.Context(), nodes)
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), nodes, false)
 
 	enrichedNodes := make([]enrichedNode, 0, len(nodes))
 	for _, n := range nodes {
@@ -282,6 +253,10 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
+		"snapshot": map[string]any{
+			"id":         snap.ID,
+			"created_at": snap.CreatedAt,
+		},
 		"version":    snap.Version,
 		"from":       snap.From,
 		"to":         snap.To,
@@ -291,6 +266,7 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 			"nodes":     enrichedNodes,
 			"edges":     edges,
 		},
+		"health_enrichment": healthQuality,
 		"summary": map[string]any{
 			"node_count":           len(nodes),
 			"edge_count":           len(edges),
@@ -307,23 +283,11 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
-	if h.graphStore == nil {
-		writeError(w, http.StatusNotFound, "graph store not configured")
+	snap, ok := h.selectedGraphSnapshot(w, r)
+	if !ok {
 		return
 	}
-
-	snap, err := h.graphStore.GetLatest(r.Context())
-	if err != nil {
-		h.logger.Warn("failed to get latest graph", logging.Error(err))
-		writeError(w, http.StatusInternalServerError, "failed to retrieve graph")
-		return
-	}
-	if snap == nil {
-		writeJSONPaginated(w, http.StatusOK, map[string]any{"nodes": []enrichedNode{}, "total": 0}, "")
-		return
-	}
-
-	nodes, _ := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+	nodes := snap.Graph.Nodes
 
 	kindFilter := entities.EntityKind(r.URL.Query().Get("kind"))
 	nsFilter := r.URL.Query().Get("namespace")
@@ -340,7 +304,7 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		candidateIDs = append(candidateIDs, n.ID)
 	}
 	resolved := h.batchEntities(r.Context(), candidateIDs)
-	healthByID := h.resolveHealthStatus(r.Context(), candidates)
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), candidates, false)
 
 	var filtered []enrichedNode
 	for _, n := range candidates {
@@ -362,35 +326,28 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	})
 
 	total := len(filtered)
-	pag := parsePaginationParams(r)
-	page, nextToken := applyPagination(filtered, pag)
+	pag, err := parseGraphPaginationParams(r, snap.ID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, nextToken := applyGraphPagination(filtered, pag, snap.ID)
 
 	writeJSONPaginated(w, http.StatusOK, map[string]any{
-		"nodes": page,
-		"total": total,
+		"nodes":             page,
+		"total":             total,
+		"snapshot":          graphSnapshotIdentity(snap),
+		"health_enrichment": healthQuality,
 	}, nextToken)
 }
 
 func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
-	if h.graphStore == nil {
-		writeError(w, http.StatusNotFound, "graph store not configured")
-		return
-	}
-
 	nodeID := entities.EntityID(r.PathValue("id"))
-
-	snap, err := h.graphStore.GetLatest(r.Context())
-	if err != nil {
-		h.logger.Warn("failed to get latest graph", logging.Error(err))
-		writeError(w, http.StatusInternalServerError, "failed to retrieve graph")
+	snap, ok := h.selectedGraphSnapshot(w, r)
+	if !ok {
 		return
 	}
-	if snap == nil {
-		writeError(w, http.StatusNotFound, "node not found")
-		return
-	}
-
-	nodes, edges := canonicalizeGraph(snap.Graph.Nodes, snap.Graph.Edges)
+	nodes, edges := snap.Graph.Nodes, snap.Graph.Edges
 
 	var found *topology.Node
 	for i := range nodes {
@@ -427,7 +384,7 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, id)
 	}
 	resolved := h.batchEntities(r.Context(), ids)
-	healthByID := h.resolveHealthStatus(r.Context(), []topology.Node{*found})
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), []topology.Node{*found}, true)
 
 	enriched := enrichNodeFrom(*found, resolved[nodeID], healthByID[nodeID])
 
@@ -441,7 +398,9 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"node": enriched,
+		"node":              enriched,
+		"snapshot":          graphSnapshotIdentity(snap),
+		"health_enrichment": healthQuality,
 		"edges": map[string]any{
 			"outbound": outboundEnriched,
 			"inbound":  inboundEnriched,
@@ -450,60 +409,151 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GraphHandler) handleListEdges(w http.ResponseWriter, r *http.Request) {
-	if h.graphStore == nil {
-		writeError(w, http.StatusNotFound, "graph store not configured")
-		return
-	}
-
 	sourceFilter := entities.EntityID(r.URL.Query().Get("source"))
 	targetFilter := entities.EntityID(r.URL.Query().Get("target"))
 	relationFilter := topology.RelationType(r.URL.Query().Get("relation"))
-
-	edges, err := h.graphStore.QueryEdges(r.Context(), query.EdgeQuery{})
-	if err != nil {
-		h.logger.Warn("failed to query edges", logging.Error(err))
-		writeError(w, http.StatusInternalServerError, "failed to query edges")
+	if sourceFilter != "" && !entities.IsCanonicalID(sourceFilter) {
+		writeError(w, http.StatusBadRequest, "source must be a canonical entity ID")
+		return
+	}
+	if targetFilter != "" && !entities.IsCanonicalID(targetFilter) {
+		writeError(w, http.StatusBadRequest, "target must be a canonical entity ID")
 		return
 	}
 
-	if snap, snapErr := h.graphStore.GetLatest(r.Context()); snapErr == nil && snap != nil {
-		_, edges = canonicalizeGraph(snap.Graph.Nodes, edges)
+	snap, ok := h.selectedGraphSnapshot(w, r)
+	if !ok {
+		return
 	}
-
-	var filtered []topology.Edge
-	for _, e := range edges {
-		if sourceFilter != "" && e.Source != sourceFilter {
+	edges := make([]topology.Edge, 0, len(snap.Graph.Edges))
+	for _, edge := range snap.Graph.Edges {
+		if sourceFilter != "" && edge.Source != sourceFilter {
 			continue
 		}
-		if targetFilter != "" && e.Target != targetFilter {
+		if targetFilter != "" && edge.Target != targetFilter {
 			continue
 		}
-		if relationFilter != "" && e.Relation != relationFilter {
+		if relationFilter != "" && edge.Relation != relationFilter {
 			continue
 		}
-		filtered = append(filtered, e)
-	}
-	edges = filtered
-
-	if edges == nil {
-		edges = []topology.Edge{}
+		edges = append(edges, edge)
 	}
 
 	slices.SortFunc(edges, func(a, b topology.Edge) int {
 		if c := cmp.Compare(string(a.Relation), string(b.Relation)); c != 0 {
 			return c
 		}
-		return cmp.Compare(string(a.Source), string(b.Source))
+		if c := cmp.Compare(string(a.Source), string(b.Source)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(string(a.Target), string(b.Target)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	total := len(edges)
-	pag := parsePaginationParams(r)
-	page, nextToken := applyPagination(edges, pag)
+	pag, err := parseGraphPaginationParams(r, snap.ID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, nextToken := applyGraphPagination(edges, pag, snap.ID)
 
 	writeJSONPaginated(w, http.StatusOK, map[string]any{
-		"edges": page,
-		"total": total,
+		"edges":    page,
+		"total":    total,
+		"snapshot": graphSnapshotIdentity(snap),
 	}, nextToken)
+}
+
+func graphSnapshotIdentity(snapshot *topology.Snapshot) map[string]any {
+	return map[string]any{"id": snapshot.ID, "created_at": snapshot.CreatedAt}
+}
+
+type graphPaginationToken struct {
+	SnapshotID int64 `json:"snapshot_id"`
+	Offset     int   `json:"offset"`
+}
+
+// parseGraphPaginationParams accepts a graph cursor only when it belongs to
+// the materialized snapshot selected for this request. This prevents a second
+// page from silently crossing a five-minute graph refresh boundary.
+func parseGraphPaginationParams(r *http.Request, snapshotID int64) (PaginationParams, error) {
+	params := parsePaginationParams(r)
+	raw := r.URL.Query().Get("next_token")
+	if raw == "" {
+		return params, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return PaginationParams{}, fmt.Errorf("next_token is invalid for this graph snapshot")
+	}
+	var token graphPaginationToken
+	if err := json.Unmarshal(decoded, &token); err != nil || token.Offset <= 0 || token.SnapshotID <= 0 {
+		return PaginationParams{}, fmt.Errorf("next_token is invalid for this graph snapshot")
+	}
+	if token.SnapshotID != snapshotID {
+		return PaginationParams{}, fmt.Errorf("next_token belongs to a different graph snapshot")
+	}
+	params.Offset = token.Offset
+	return params, nil
+}
+
+func applyGraphPagination[T any](items []T, params PaginationParams, snapshotID int64) (page []T, nextToken string) {
+	if params.Offset >= len(items) {
+		return []T{}, ""
+	}
+	end := params.Offset + params.PageSize
+	if end >= len(items) {
+		return items[params.Offset:], ""
+	}
+	encoded, _ := json.Marshal(graphPaginationToken{SnapshotID: snapshotID, Offset: end})
+	return items[params.Offset:end], base64.RawURLEncoding.EncodeToString(encoded)
+}
+
+// selectedGraphSnapshot applies the shared graph-time contract. An omitted at
+// reads the newest materialized snapshot; an explicit timestamp reads the
+// newest retained snapshot at or before that time.
+func (h *GraphHandler) selectedGraphSnapshot(w http.ResponseWriter, r *http.Request) (*topology.Snapshot, bool) {
+	if h.graphStore == nil {
+		writeError(w, http.StatusNotFound, "graph store not configured")
+		return nil, false
+	}
+	rawAt := r.URL.Query().Get("at")
+	if rawAt == "" {
+		snapshot, err := h.graphStore.GetLatest(r.Context())
+		if err != nil {
+			h.logger.Warn("failed to get latest graph", logging.Error(err))
+			writeError(w, http.StatusInternalServerError, "failed to retrieve graph")
+			return nil, false
+		}
+		if snapshot == nil {
+			writeError(w, http.StatusNotFound, "no graph snapshot available")
+			return nil, false
+		}
+		return snapshot, true
+	}
+	at, err := time.Parse(time.RFC3339, rawAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "at must be an RFC3339 timestamp")
+		return nil, false
+	}
+	if at.After(time.Now().UTC()) {
+		writeError(w, http.StatusBadRequest, "at must not be in the future")
+		return nil, false
+	}
+	snapshot, err := h.graphStore.GetAt(r.Context(), at)
+	if err != nil {
+		h.logger.Warn("failed to get graph at time", logging.Error(err))
+		writeError(w, http.StatusInternalServerError, "failed to retrieve graph")
+		return nil, false
+	}
+	if snapshot == nil {
+		writeError(w, http.StatusNotFound, "no graph snapshot available at requested time")
+		return nil, false
+	}
+	return snapshot, true
 }
 
 // --- utility ---

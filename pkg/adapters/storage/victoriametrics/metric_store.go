@@ -8,16 +8,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/backend/query"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/metrics"
 )
 
 // VMMetricStore implements persistence.MetricStore using VictoriaMetrics HTTP API.
@@ -88,8 +90,9 @@ func (s *VMMetricStore) Write(ctx context.Context, samples []metrics.MetricSampl
 	return nil
 }
 
-// Query builds a PromQL query from MetricQuery and calls VictoriaMetrics'
-// /api/v1/query_range endpoint. Returns parsed MetricSamples.
+// Query evaluates a provider-neutral MetricQuery through VictoriaMetrics. Public
+// resolved queries use a precise range request plus, when needed, one instant
+// request at a non-grid final evaluation point.
 func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metrics.MetricSample, error) {
 	promql := buildPromQL(q)
 	if promql == "" {
@@ -104,49 +107,108 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 	if to.IsZero() {
 		to = time.Now()
 	}
-
-	params := url.Values{
-		"query": {promql},
-		"start": {strconv.FormatInt(from.Unix(), 10)},
-		"end":   {strconv.FormatInt(to.Unix(), 10)},
-		"step":  {"15s"},
+	step := queryStep(q)
+	rangeEnd := to
+	needsFinalEvaluation := q.Step > 0 && !to.Equal(from.Add(to.Sub(from)/step*step))
+	if needsFinalEvaluation {
+		rangeEnd = from.Add(to.Sub(from) / step * step)
 	}
 
-	reqURL := s.baseURL + "/api/v1/query_range?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	samples, err := s.queryRange(ctx, promql, from, rangeEnd, step)
+	if err != nil {
+		return nil, err
+	}
+	if needsFinalEvaluation {
+		final, err := s.queryInstant(ctx, promql, to, step)
+		if err != nil {
+			return nil, err
+		}
+		samples = mergeSamples(samples, final)
+	}
+
+	for i := range samples {
+		samples[i].MetricName = q.MetricName
+	}
+
+	return samples, nil
+}
+
+func queryStep(q query.MetricQuery) time.Duration {
+	if q.Step > 0 {
+		return q.Step
+	}
+	return query.DefaultMetricStep
+}
+
+func (s *VMMetricStore) queryRange(ctx context.Context, promql string, from, to time.Time, step time.Duration) ([]metrics.MetricSample, error) {
+	params := url.Values{
+		"query":   {promql},
+		"start":   {formatQueryTimestamp(from)},
+		"end":     {formatQueryTimestamp(to)},
+		"step":    {step.String()},
+		"nocache": {"1"},
+	}
+	resp, err := s.doQuery(ctx, "/api/v1/query_range", params)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	return parseQueryRangeResponse(resp.Body)
+}
+
+func (s *VMMetricStore) queryInstant(ctx context.Context, promql string, at time.Time, step time.Duration) ([]metrics.MetricSample, error) {
+	params := url.Values{
+		"query":   {promql},
+		"time":    {formatQueryTimestamp(at)},
+		"step":    {step.String()},
+		"nocache": {"1"},
+	}
+	resp, err := s.doQuery(ctx, "/api/v1/query", params)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	return parseInstantQueryResponse(resp.Body)
+}
+
+func (s *VMMetricStore) doQuery(ctx context.Context, path string, params url.Values) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+path+"?"+params.Encode(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("vm query: %w", err)
 	}
-
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("vm query: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
-
 	if resp.StatusCode != http.StatusOK {
+		defer resp.Body.Close() //nolint:errcheck
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("vm query: unexpected status %d: %s", resp.StatusCode, string(respBody))
 	}
+	return resp, nil
+}
 
-	samples, err := parseQueryRangeResponse(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+func formatQueryTimestamp(timestamp time.Time) string {
+	return timestamp.UTC().Format(time.RFC3339Nano)
+}
 
-	healthMetric := metrics.IsHealthStatusMetric(q.MetricName)
-	for i := range samples {
-		samples[i].MetricName = q.MetricName
-		if healthMetric {
-			// Populate the public string label so consumers never have to
-			// re-implement the integer→label mapping. Storage and PromQL
-			// composition keep the integer; this is the API-boundary
-			// translation point.
-			samples[i].ValueLabel = metrics.HealthLabel(q.MetricName, samples[i].Value)
+func mergeSamples(primary, additional []metrics.MetricSample) []metrics.MetricSample {
+	merged := make([]metrics.MetricSample, 0, len(primary)+len(additional))
+	seen := make(map[string]struct{}, len(primary)+len(additional))
+	for _, sample := range append(primary, additional...) {
+		key := metricSampleKey(sample)
+		if _, ok := seen[key]; ok {
+			continue
 		}
+		seen[key] = struct{}{}
+		merged = append(merged, sample)
 	}
+	return merged
+}
 
-	return samples, nil
+func metricSampleKey(sample metrics.MetricSample) string {
+	labels, _ := json.Marshal(sample.Labels)
+	return sample.MetricName + "|" + string(sample.EntityID) + "|" + string(sample.Unit) + "|" + sample.Timestamp.UTC().Format(time.RFC3339Nano) + "|" + string(labels)
 }
 
 // QueryCatalogStats issues two instant PromQL queries against VictoriaMetrics
@@ -315,7 +377,7 @@ func catalogPromNameRegex() string {
 	names := make([]string, 0, len(catalog))
 	for _, m := range catalog {
 		names = append(names, promMetricName(m.Name))
-		if _, ok := histogramDerivedMeanMetrics[m.Name]; ok {
+		if metrics.IsWindowedMeanMetric(m.Name) {
 			names = append(names, promMetricName(m.Name+"_sum"), promMetricName(m.Name+"_count"))
 		}
 	}
@@ -327,7 +389,7 @@ func catalogPromNameLookup() map[string]string {
 	lookup := make(map[string]string, len(catalog))
 	for _, m := range catalog {
 		lookup[promMetricName(m.Name)] = m.Name
-		if _, ok := histogramDerivedMeanMetrics[m.Name]; ok {
+		if metrics.IsWindowedMeanMetric(m.Name) {
 			lookup[promMetricName(m.Name+"_sum")] = m.Name
 			lookup[promMetricName(m.Name+"_count")] = m.Name
 		}
@@ -339,6 +401,8 @@ func catalogPromNameLookup() map[string]string {
 // format suitable for /api/v1/import/prometheus.
 //
 // Format: metric_name{label1="val1",label2="val2"} value timestamp_ms
+const storedUnitLabel = "karthos_unit"
+
 func samplesToPrometheusText(samples []metrics.MetricSample) []byte {
 	var buf bytes.Buffer
 	for _, s := range samples {
@@ -347,7 +411,15 @@ func samplesToPrometheusText(samples []metrics.MetricSample) []byte {
 		buf.WriteString(`entity_id="`)
 		buf.WriteString(string(s.EntityID))
 		buf.WriteByte('"')
+		if metrics.IsValidUnit(s.Unit) {
+			buf.WriteString(`,` + storedUnitLabel + `="`)
+			buf.WriteString(string(s.Unit))
+			buf.WriteByte('"')
+		}
 		for k, v := range s.Labels {
+			if k == storedUnitLabel {
+				continue
+			}
 			buf.WriteByte(',')
 			buf.WriteString(k)
 			buf.WriteString(`="`)
@@ -371,113 +443,111 @@ func escapeLabelValue(v string) string {
 	return v
 }
 
-// histogramDerivedMeanMetrics maps a canonical metric name to the pair of cumulative
-// counters emitted by the normalizer (see pkg/backend/ingest/normalizer.go histogram
-// path). A query for the base name is served as rate(sum)/rate(count), yielding a
-// rate-weighted mean in the metric's native units.
-var histogramDerivedMeanMetrics = map[string]struct{}{
-	"http.server.request.duration":    {},
-	"rpc.server.duration":             {},
-	"servicegraph.request.duration":   {},
-	"servicegraph.request.body.size":  {},
-	"servicegraph.response.body.size": {},
-}
-
 // buildPromQL constructs a PromQL selector from a MetricQuery.
 func buildPromQL(q query.MetricQuery) string {
 	if q.MetricName == "" {
 		return ""
 	}
 
-	if _, ok := histogramDerivedMeanMetrics[q.MetricName]; ok {
-		sumSelector := metricSelector(withMetricName(q, q.MetricName+"_sum"))
-		countSelector := metricSelector(withMetricName(q, q.MetricName+"_count"))
-		return fmt.Sprintf("rate(%s[1m]) / clamp_min(rate(%s[1m]), 1)", sumSelector, countSelector)
+	q = resolveQueryDefaults(q)
+	if metrics.IsWindowedMeanMetric(q.MetricName) {
+		sumIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_sum"))
+		countIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_count"))
+		return withFreshness(q, fmt.Sprintf("%s / ignoring(%s) (%s > 0)", sumIncrease, storedUnitLabel, countIncrease))
 	}
 
 	selector := metricSelector(q)
-	switch q.MetricName {
-	case "http.server.request.count",
-		"rpc.server.request.count",
-		"servicegraph.request.count",
-		"servicegraph.request.error.count",
-		"servicegraph.grpc.request.message.count",
-		"servicegraph.grpc.response.message.count",
-		"servicegraph.tcp.connection.open.count",
-		"servicegraph.tcp.connection.close.count",
-		"servicegraph.tcp.bytes.sent",
-		"servicegraph.tcp.bytes.received",
-		"system.cpu.time",
-		"system.disk.operations",
-		"system.disk.operation_time",
-		"system.disk.io_time",
-		"system.disk.weighted_io_time",
-		"system.disk.merged",
-		"system.network.errors",
-		"system.network.dropped",
-		"system.network.packets",
-		"system.paging.faults",
-		"k8s.pod.network.io",
-		"k8s.pod.network.errors",
-		"k8s.node.network.io",
-		"k8s.node.network.errors":
-		return fmt.Sprintf("rate(%s[1m])", selector)
-	case "servicegraph.request.error.ratio":
-		errorRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "servicegraph.request.error.count")))
-		requestRate := fmt.Sprintf("rate(%s[1m])", metricSelector(withMetricName(q, "servicegraph.request.count")))
-		return fmt.Sprintf("%s / clamp_min(%s, 1e-9)", errorRate, requestRate)
-	case "oksg.container.health.status":
-		// Per-container composite. Priority order: restarting > not_ready > healthy.
-		// Each clause uses the `(predicate) * 0 + N` idiom so a clause emits
-		// a sample with value N only when its predicate matches, and emits
-		// no sample otherwise. PromQL `or` then keeps the first matching
-		// clause per series (clause ordering = priority). The `bool`
-		// modifier would have collapsed false predicates to 0-valued samples
-		// instead of dropping them, breaking the priority cascade.
-		// Samples are keyed by the same entity_id (container ID), so no
-		// cross-entity join is needed.
-		ready := metricSelector(withMetricName(q, "k8s.container.ready"))
-		restarts := metricSelector(withMetricName(q, "k8s.container.restarts"))
-		return fmt.Sprintf(
-			"(rate(%s[5m]) > 0) * 0 + 3 or (%s == 0) * 0 + 2 or (%s == 1) * 0 + 1",
-			restarts, ready, ready,
-		)
-	case "oksg.pod.health.status":
-		// Per-pod composite, derived from k8s.pod.phase only (1=Pending,
-		// 2=Running, 3=Succeeded, 4=Failed, 5=Unknown). Public enum:
-		// 1=healthy, 4=pending, 5=succeeded, 6=failed, 7=unknown. The
-		// running_not_ready (2) and restarting (3) states are observable at
-		// container scope; rolling them up to pod scope requires a pod_id
-		// label on container metrics — see plan.
-		phase := metricSelector(withMetricName(q, "k8s.pod.phase"))
-		return fmt.Sprintf(
-			"(%s == 2) * 0 + 1 or (%s == 1) * 0 + 4 or (%s == 3) * 0 + 5 or (%s == 4) * 0 + 6 or (%s == 5) * 0 + 7",
-			phase, phase, phase, phase, phase,
-		)
-	default:
-		return selector
+	if metric, ok := metrics.CatalogByName()[q.MetricName]; ok && metric.Instrument == metrics.InstrumentCounter {
+		switch q.Aggregation {
+		case metrics.AggregationLatest:
+			return withFreshness(q, selector)
+		case metrics.AggregationIncrease:
+			return withFreshness(q, exactWindowIncrease(q))
+		case metrics.AggregationWindowRate:
+			return withFreshness(q, fmt.Sprintf("(%s / %d)", exactWindowIncrease(q), int64(q.Window.Seconds())))
+		case metrics.AggregationActiveRate:
+			return withFreshness(q, activeCounterRate(q))
+		}
 	}
+	return withFreshness(q, selector)
+}
+
+func withFreshness(q query.MetricQuery, expression string) string {
+	if q.MaxSampleAge <= 0 {
+		return expression
+	}
+	matching := ""
+	if metrics.IsWindowedMeanMetric(q.MetricName) {
+		matching = fmt.Sprintf(" ignoring(%s)", storedUnitLabel)
+	}
+	return fmt.Sprintf("(%s) and%s last_over_time(%s[%s])", expression, matching, freshnessSelector(q), durationExpr(q.MaxSampleAge))
+}
+
+func freshnessSelector(q query.MetricQuery) string {
+	if metrics.IsWindowedMeanMetric(q.MetricName) {
+		return metricSelector(withMetricName(q, q.MetricName+"_count"))
+	}
+	return metricSelector(q)
 }
 
 func metricSelector(q query.MetricQuery) string {
+	return metricSelectorWithMatchers(q)
+}
+
+func metricSelectorWithMatchers(q query.MetricQuery, extraMatchers ...string) string {
 	var matchers []string
 	if len(q.EntityIDs) > 0 {
 		ids := make([]string, 0, len(q.EntityIDs))
 		for _, id := range q.EntityIDs {
-			ids = append(ids, string(id))
+			ids = append(ids, regexp.QuoteMeta(string(id)))
 		}
-		matchers = append(matchers, fmt.Sprintf(`entity_id=~"%s"`, strings.Join(ids, "|")))
+		matchers = append(matchers, fmt.Sprintf(`entity_id=~"^(?:%s)$"`, strings.Join(ids, "|")))
 	}
 	if q.EdgeSourceID != "" {
-		matchers = append(matchers, fmt.Sprintf(`edge_client_id="%s"`, q.EdgeSourceID))
+		matchers = append(matchers, fmt.Sprintf(`edge_client_id="%s"`, escapeLabelValue(string(q.EdgeSourceID))))
 	}
 	if q.EdgeTargetID != "" {
-		matchers = append(matchers, fmt.Sprintf(`edge_server_id="%s"`, q.EdgeTargetID))
+		matchers = append(matchers, fmt.Sprintf(`edge_server_id="%s"`, escapeLabelValue(string(q.EdgeTargetID))))
 	}
+	matchers = append(matchers, extraMatchers...)
 	if len(matchers) == 0 {
 		return promMetricName(q.MetricName)
 	}
 	return fmt.Sprintf(`%s{%s}`, promMetricName(q.MetricName), strings.Join(matchers, ","))
+}
+
+func resolveQueryDefaults(q query.MetricQuery) query.MetricQuery {
+	if q.Aggregation != "" {
+		return q
+	}
+	metric, ok := metrics.CatalogByName()[q.MetricName]
+	if !ok {
+		return q
+	}
+	resolved, err := metrics.ResolveAggregation(metric, "", "")
+	if err == nil {
+		q.Aggregation, q.Window, q.Unit = resolved.Mode, resolved.Window, resolved.Unit
+	}
+	return q
+}
+
+func exactWindowIncrease(q query.MetricQuery) string {
+	window := durationExpr(q.Window)
+	historyWindow := durationExpr(2 * q.Window)
+	cumulative := metricSelectorWithMatchers(q, `temporality!="delta"`)
+	delta := metricSelectorWithMatchers(q, `temporality="delta"`)
+	gate := fmt.Sprintf("(count_over_time(%s[%s]) >= 2) and ((tlast_over_time(%s[%s]) - tfirst_over_time(%s[%s])) >= %d)", cumulative, window, cumulative, historyWindow, cumulative, historyWindow, int64(q.Window.Seconds()))
+	return fmt.Sprintf("((increase(%s[%s]) and %s) or sum_over_time(%s[%s]))", cumulative, window, gate, delta, window)
+}
+
+func activeCounterRate(q query.MetricQuery) string {
+	window := durationExpr(q.Window)
+	cumulative := metricSelectorWithMatchers(q, `temporality!="delta"`)
+	return fmt.Sprintf("(rate(%s[%s]) and (count_over_time(%s[%s]) >= 2))", cumulative, window, cumulative, window)
+}
+
+func durationExpr(window time.Duration) string {
+	return strconv.FormatInt(int64(window.Seconds()), 10) + "s"
 }
 
 func withMetricName(q query.MetricQuery, metricName string) query.MetricQuery {
@@ -494,13 +564,26 @@ func semconvMetricName(metricName string) string {
 }
 
 // queryRangeResponse represents the Prometheus query_range API response.
+type querySeries struct {
+	Metric map[string]string `json:"metric"`
+	Values [][]interface{}   `json:"values"`
+}
+
 type queryRangeResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string        `json:"resultType"`
+		Result     []querySeries `json:"result"`
+	} `json:"data"`
+}
+
+type instantQueryResponse struct {
 	Status string `json:"status"`
 	Data   struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
 			Metric map[string]string `json:"metric"`
-			Values [][]interface{}   `json:"values"`
+			Value  []interface{}     `json:"value"`
 		} `json:"result"`
 	} `json:"data"`
 }
@@ -517,15 +600,40 @@ func parseQueryRangeResponse(body io.Reader) ([]metrics.MetricSample, error) {
 		return nil, fmt.Errorf("vm query: response status %q", resp.Status)
 	}
 
+	return parseQuerySeries(resp.Data.Result), nil
+}
+
+// parseInstantQueryResponse parses a Prometheus /api/v1/query vector response
+// into MetricSamples.
+func parseInstantQueryResponse(body io.Reader) ([]metrics.MetricSample, error) {
+	var resp instantQueryResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("vm parse response: %w", err)
+	}
+	if resp.Status != "success" {
+		return nil, fmt.Errorf("vm query: response status %q", resp.Status)
+	}
+	series := make([]querySeries, 0, len(resp.Data.Result))
+	for _, result := range resp.Data.Result {
+		series = append(series, querySeries{Metric: result.Metric, Values: [][]interface{}{result.Value}})
+	}
+	return parseQuerySeries(series), nil
+}
+
+func parseQuerySeries(seriesList []querySeries) []metrics.MetricSample {
 	var samples []metrics.MetricSample
-	for _, series := range resp.Data.Result {
+	for _, series := range seriesList {
 		metricName := semconvMetricName(series.Metric["__name__"])
 		entityID := entities.EntityID(series.Metric["entity_id"])
+		unit := metrics.Unit(series.Metric[storedUnitLabel])
+		if !metrics.IsValidUnit(unit) {
+			unit = ""
+		}
 
 		// Build labels excluding __name__ and entity_id.
 		labels := make(map[string]string)
 		for k, v := range series.Metric {
-			if k == "__name__" || k == "entity_id" {
+			if k == "__name__" || k == "entity_id" || k == storedUnitLabel {
 				continue
 			}
 			labels[k] = v
@@ -547,16 +655,30 @@ func parseQueryRangeResponse(body io.Reader) ([]metrics.MetricSample, error) {
 			if err != nil {
 				continue
 			}
+			if math.IsInf(val, 0) || math.IsNaN(val) {
+				continue
+			}
 
 			samples = append(samples, metrics.MetricSample{
 				MetricName: metricName,
 				EntityID:   entityID,
 				Value:      val,
-				Timestamp:  time.Unix(int64(ts), 0),
+				Timestamp:  timestampFromUnixSeconds(ts),
 				Labels:     labels,
+				Unit:       unit,
 			})
 		}
 	}
 
-	return samples, nil
+	return samples
+}
+
+func timestampFromUnixSeconds(seconds float64) time.Time {
+	whole, fraction := math.Modf(seconds)
+	nanos := int64(math.Round(fraction * float64(time.Second)))
+	if nanos == int64(time.Second) {
+		whole++
+		nanos = 0
+	}
+	return time.Unix(int64(whole), nanos).UTC()
 }

@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/logging"
 )
 
 // EntityHandler serves entity query endpoints.
@@ -43,8 +43,6 @@ func (h *EntityHandler) handleListEntities(w http.ResponseWriter, r *http.Reques
 	if result == nil {
 		result = []entities.Entity{}
 	}
-	result = dedupeEntities(result)
-
 	slices.SortFunc(result, func(a, b entities.Entity) int {
 		if c := cmp.Compare(string(a.Kind()), string(b.Kind())); c != 0 {
 			return c

@@ -7,9 +7,10 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from 'recharts'
-import type { MetricSample, SourceRef } from '@/types/metrics'
-import { formatValue } from '../../utils/formatters'
+import type { MetricQuery, MetricSample, MetricScope, SourceRef } from '@/types/metrics'
+import { formatMetricValue } from '../../utils/formatters'
 import { InfoTooltip } from './InfoTooltip'
+import { metricPresentation } from './metricPresentation'
 import styles from './MetricCard.module.css'
 
 interface MetricCardProps {
@@ -18,6 +19,12 @@ interface MetricCardProps {
   unit: string
   samples: MetricSample[]
   sources?: SourceRef[]
+  query: MetricQuery
+  description: string
+  scope: Extract<MetricScope, 'entity' | 'edge'>
+  labels?: Record<string, string>
+  edge?: { source_id: string; target_id: string }
+  emptyMessage?: string
   /** Recharts syncId — cards sharing this value share tooltip + cursor. */
   syncId?: string
 }
@@ -38,10 +45,11 @@ function CustomTooltip({
 }) {
   if (!active || !payload || payload.length === 0) return null
   const entry = payload[0]!
+  const display = formatMetricValue(entry.value, unit)
   return (
     <div className={styles.tooltip}>
       <span className={styles.tooltipValue}>
-        {formatValue(entry.value)} {unit}
+        {display.value} {display.unit}
       </span>
       <span className={styles.tooltipTime}>{entry.payload.fullTime}</span>
     </div>
@@ -54,6 +62,12 @@ export function MetricCard({
   unit,
   samples,
   sources,
+  query,
+  description,
+  scope,
+  labels,
+  edge,
+  emptyMessage,
   syncId,
 }: MetricCardProps) {
   const sorted = [...samples].sort(
@@ -63,6 +77,14 @@ export function MetricCard({
   const hasSamples = sorted.length > 0
   const currentValue = hasSamples ? sorted[sorted.length - 1]!.value : 0
   const activeSource = hasSamples ? sorted[sorted.length - 1]!.labels?.source : undefined
+  const valueDisplay = hasSamples ? formatMetricValue(currentValue, unit) : undefined
+  const presentation = metricPresentation({
+    canonicalName,
+    scope,
+    labels,
+    fallbackMeaning: description,
+    fallbackTitle: name,
+  })
 
   const sortedSources = sources ? [...sources].sort((a, b) => a.priority - b.priority) : []
 
@@ -90,12 +112,15 @@ export function MetricCard({
       <div className={styles.header}>
         <div className={styles.headingCol}>
           <div className={styles.titleRow}>
-            <span className={styles.name}>{name}</span>
+            <span className={styles.name}>{presentation.title}</span>
             <InfoTooltip
               canonicalName={canonicalName}
               sampleCount={sorted.length}
               sources={sortedSources}
-              activeSource={activeSource}
+              meaning={presentation.meaning}
+              observedSource={activeSource}
+              query={query}
+              seriesLabels={presentation.seriesLabels}
             />
           </div>
           {sortedSources.length > 0 && (
@@ -104,14 +129,7 @@ export function MetricCard({
                 <span
                   key={s.id}
                   className={styles.sourceChip}
-                  data-active={hasSamples ? s.id === activeSource : s === sortedSources[0]}
-                  title={
-                    hasSamples
-                      ? s.id === activeSource
-                        ? 'active source'
-                        : `fallback (priority ${s.priority})`
-                      : `priority ${s.priority}`
-                  }
+                  title={`declared priority ${s.priority}`}
                 >
                   {s.id}
                 </span>
@@ -120,9 +138,17 @@ export function MetricCard({
           )}
         </div>
         <span className={styles.value}>
-          {hasSamples ? formatValue(currentValue) : '—'}
-          <span className={styles.unit}> {unit}</span>
+          {valueDisplay?.value ?? '—'}
+          {valueDisplay?.unit && <span className={styles.unit}> {valueDisplay.unit}</span>}
         </span>
+      </div>
+
+      <div className={styles.queryMeta}>
+        <span>{query.aggregation}{query.window ? ` · ${query.window}` : ''}</span>
+        <span>{query.step} grid · {query.timestamp_semantics}</span>
+        <span>{new Date(query.from).toLocaleTimeString()} → {new Date(query.to).toLocaleTimeString()}</span>
+        {activeSource && <span>sample source: {activeSource}</span>}
+        {edge && <span>edge: {edge.source_id} → {edge.target_id}</span>}
       </div>
 
       {hasSamples ? (
@@ -154,7 +180,7 @@ export function MetricCard({
         </div>
       ) : (
         <div className={styles.empty}>
-          <span className={styles.emptyMessage}>No samples in selected time range</span>
+          <span className={styles.emptyMessage}>{emptyMessage ?? 'No samples in selected time range'}</span>
           {sortedSources.length > 0 && (
             <span className={styles.emptyHint}>
               Expected from: {sortedSources.map((s) => s.id).join(', ')}

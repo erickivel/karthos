@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/schema"
 )
 
 func TestBuildMetricEnvelopesFromOTLPRequest(t *testing.T) {
@@ -27,7 +27,8 @@ func TestBuildMetricEnvelopesFromOTLPRequest(t *testing.T) {
 				Resource: &resourcepb.Resource{
 					Attributes: []*commonpb.KeyValue{
 						{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "gateway"}}},
-						{Key: "k8s.namespace.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "oksg-demo"}}},
+						{Key: "k8s.namespace.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "karthos-demo"}}},
+						{Key: "k8s.pod.uid", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "pod-uid-a"}}},
 					},
 				},
 				ScopeMetrics: []*metricpb.ScopeMetrics{
@@ -47,7 +48,8 @@ func TestBuildMetricEnvelopesFromOTLPRequest(t *testing.T) {
 	require.Equal(t, schema.SignalMetric, envelopes[0].SignalType)
 	require.Equal(t, "otlp/grpc", envelopes[0].Source)
 	require.Equal(t, "gateway", envelopes[0].Resource["service.name"])
-	require.Equal(t, "oksg-demo", envelopes[0].Resource["k8s.namespace.name"])
+	require.Equal(t, "karthos-demo", envelopes[0].Resource["k8s.namespace.name"])
+	require.Equal(t, "pod-uid-a", envelopes[0].Resource["k8s.pod.uid"])
 	require.NotEmpty(t, envelopes[0].Payload)
 	require.Equal(t, now, envelopes[0].Timestamp)
 }
@@ -108,7 +110,7 @@ func TestBuildTraceEnvelopesFromOTLPRequest(t *testing.T) {
 		},
 	}
 
-	envelopes, err := builder.BuildTraceEnvelopes("otlp/http", request)
+	envelopes, err := builder.BuildTraceEnvelopes("test-source", request)
 	require.NoError(t, err)
 	require.Len(t, envelopes, 1)
 	require.Equal(t, schema.SignalTrace, envelopes[0].SignalType)
@@ -120,7 +122,7 @@ func TestBuildTraceEnvelopesFromOTLPRequest(t *testing.T) {
 func TestSignalRouterRoutesBySignalType(t *testing.T) {
 	metricsSink := &recordingIngestor{}
 	tracesSink := &recordingIngestor{}
-	router := NewSignalRouter(metricsSink, tracesSink, nil)
+	router := NewSignalRouter(metricsSink, tracesSink)
 
 	metricEnvelope, err := schema.NewRawEnvelope(
 		"otlp/grpc",

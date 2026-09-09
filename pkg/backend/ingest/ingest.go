@@ -3,7 +3,7 @@ package ingest
 import (
 	"context"
 
-	"github.com/erickivel/oksg/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/schema"
 )
 
 type Ingestor interface {

@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/logging"
 )
 
 // Config holds the API server configuration. All store fields are interfaces;
@@ -23,7 +23,7 @@ type Config struct {
 	StatusStaleSeconds int // default 300 if zero
 }
 
-// Server is the REST API server for query and control endpoints.
+// Server is the REST API server for query endpoints.
 type Server struct {
 	config     Config
 	logger     *logging.Logger
@@ -62,6 +62,7 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 	if staleSeconds <= 0 {
 		staleSeconds = 300
 	}
+	healthResolver := NewHealthResolver(cfg.MetricStore)
 
 	statusHandler := &StatusHandler{
 		metadataStore:    cfg.MetadataStore,
@@ -74,13 +75,14 @@ func NewServer(cfg Config, logger *logging.Logger) (*Server, error) {
 		hasEntityReg:     cfg.EntityRegistry != nil,
 		staleThreshold:   time.Duration(staleSeconds) * time.Second,
 		logger:           logger,
+		healthResolver:   healthResolver,
 	}
 	statusHandler.RegisterRoutes(mux)
 
 	graphHandler := &GraphHandler{
 		graphStore:     cfg.GraphStore,
 		entityRegistry: cfg.EntityRegistry,
-		metricStore:    cfg.MetricStore,
+		healthResolver: healthResolver,
 		logger:         logger,
 	}
 	graphHandler.RegisterRoutes(mux)

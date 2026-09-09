@@ -77,6 +77,7 @@ export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamples
               <th>Source</th>
               {showMesh && <th>Mesh</th>}
               <th>Value</th>
+              <th>Label</th>
               <th>Unit</th>
               <th>Timestamp</th>
             </tr>
@@ -102,6 +103,7 @@ export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamples
                     </td>
                   )}
                   <td className={styles.value}>{s.value.toFixed(2)}</td>
+                  <td>{s.value_label ?? <span className={styles.muted}>-</span>}</td>
                   <td>{s.unit}</td>
                   <td>{new Date(s.timestamp).toLocaleString()}</td>
                 </tr>

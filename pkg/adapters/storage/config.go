@@ -9,7 +9,7 @@ const (
 	// BackendMemory uses in-memory stores. Suitable for testing and development.
 	BackendMemory StorageBackend = "memory"
 
-	// BackendExternal uses PostgreSQL for graph/metadata/raw and VictoriaMetrics for metrics.
+	// BackendExternal uses PostgreSQL for graph/metadata and VictoriaMetrics for metrics.
 	BackendExternal StorageBackend = "external"
 )
 
@@ -18,6 +18,5 @@ type StorageConfig struct {
 	Backend     StorageBackend
 	PostgresDSN string        // required when Backend == BackendExternal
 	VMURL       string        // required when Backend == BackendExternal
-	RawEnabled  bool          // whether to persist raw envelopes
 	NodeTTL     time.Duration // age out topology nodes; 0 disables
 }

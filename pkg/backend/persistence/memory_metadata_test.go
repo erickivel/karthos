@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
 
 func TestMetadataStore_EmptyReturnsNil(t *testing.T) {
@@ -68,4 +68,22 @@ func TestMetadataStore_ReturnsCopy(t *testing.T) {
 
 	got2, _ := store.GetDiscovery(ctx)
 	assert.Equal(t, "original", got2.ClusterName)
+}
+
+func TestMetadataStoreOwnsNestedCapabilitySlices(t *testing.T) {
+	store := NewInMemoryMetadataStore()
+	profile := profile.ClusterProfile{Capabilities: []profile.SourceCapability{{
+		SourceID: "kubelet", Signals: []string{"metric"},
+	}}}
+	require.NoError(t, store.PutDiscovery(context.Background(), profile))
+	profile.Capabilities[0].Signals[0] = "mutated"
+
+	first, err := store.GetDiscovery(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "metric", first.Capabilities[0].Signals[0])
+	first.Capabilities[0].Signals[0] = "returned-mutation"
+
+	second, err := store.GetDiscovery(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "metric", second.Capabilities[0].Signals[0])
 }

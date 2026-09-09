@@ -17,6 +17,15 @@ func TestNewRawEnvelopePopulatesCoreFields(t *testing.T) {
 	require.NotEmpty(t, envelope.ID)
 	require.Equal(t, "prometheus", envelope.Source)
 	require.Equal(t, SignalMetric, envelope.SignalType)
+	require.Equal(t, time.Unix(1700000000, 0), envelope.Timestamp, "timestamp is the backend receipt time")
+}
+
+func TestNewRawEnvelopeSupportsMetricAndTraceHandoffs(t *testing.T) {
+	for _, signal := range []SignalType{SignalMetric, SignalTrace} {
+		envelope, err := NewRawEnvelope("otlp/grpc", signal, nil, json.RawMessage(`{"value":42}`), time.Unix(1700000000, 0))
+		require.NoError(t, err)
+		require.Equal(t, signal, envelope.SignalType)
+	}
 }
 
 func TestValidateEnvelopeRejectsMissingRequiredFields(t *testing.T) {
@@ -33,7 +42,6 @@ func TestValidateEnvelopeRejectsUnknownSignalType(t *testing.T) {
 		SignalType: SignalType("unknown"),
 		Timestamp:  time.Unix(1700000000, 0),
 		Payload:    json.RawMessage(`{"value":1}`),
-		ReceivedAt: time.Unix(1700000001, 0),
 	}
 
 	require.Error(t, ValidateEnvelope(envelope))

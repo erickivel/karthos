@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Prepare a remote k3s host for OKSG e2e use.
+# Prepare a remote k3s host for Karthos e2e use.
 #
 # Assumes k3s is ALREADY installed and reachable via `ssh $K3S_SSH_HOST`.
 # This script:
 #   1. Verifies SSH + kubectl access on the server.
-#   2. Ensures an "oksg-registry" container is running on the server,
-#      bound to 127.0.0.1:${K3S_REGISTRY_PORT}.
+#   2. Ensures an "karthos-registry" container is running on the server,
+#      bound to 127.0.0.1:5001.
 #   3. Installs /etc/rancher/k3s/registries.yaml mirroring localhost:5001
 #      to that container, and restarts k3s only if the file changed.
 #   4. Fetches /etc/rancher/k3s/k3s.yaml, rewrites the server URL to
@@ -28,7 +28,6 @@ require() {
 require K3S_SSH_HOST
 require K3S_SERVER_IP
 : "${K3S_API_PORT:=6443}"
-: "${K3S_REGISTRY_PORT:=5001}"
 
 SSH="ssh -o BatchMode=yes ${K3S_SSH_HOST}"
 
@@ -38,34 +37,34 @@ ${SSH} true \
 ${SSH} "systemctl is-active --quiet k3s" \
   || { echo "k3s service is not active on ${K3S_SSH_HOST} (try: ssh ${K3S_SSH_HOST} 'sudo systemctl status k3s')" >&2; exit 1; }
 
-echo "==> ensuring oksg-registry container on ${K3S_SSH_HOST}"
+echo "==> ensuring karthos-registry container on ${K3S_SSH_HOST}"
 ${SSH} bash -se <<EOF
 set -euo pipefail
-if docker inspect -f '{{.State.Running}}' oksg-registry 2>/dev/null | grep -qx true; then
+if docker inspect -f '{{.State.Running}}' karthos-registry 2>/dev/null | grep -qx true; then
   echo "registry already running"
 else
-  docker rm -f oksg-registry 2>/dev/null || true
+  docker rm -f karthos-registry 2>/dev/null || true
   docker run -d --restart=always \
-    -p 127.0.0.1:${K3S_REGISTRY_PORT}:5000 \
-    --name oksg-registry \
+    -p 127.0.0.1:5001:5000 \
+    --name karthos-registry \
     registry:2
 fi
 EOF
 
 echo "==> rendering registries.yaml"
-TMP="$(mktemp -t oksg-registries.XXXXXX)"
-LOCAL_SERVER_SCRIPT="$(mktemp -t oksg-server-setup.XXXXXX)"
+TMP="$(mktemp -t karthos-registries.XXXXXX)"
+LOCAL_SERVER_SCRIPT="$(mktemp -t karthos-server-setup.XXXXXX)"
 trap 'rm -f "${TMP}" "${LOCAL_SERVER_SCRIPT}"' EXIT
 cat >"${TMP}" <<EOF
 mirrors:
   "localhost:5001":
     endpoint:
-      - "http://127.0.0.1:${K3S_REGISTRY_PORT}"
+      - "http://127.0.0.1:5001"
 EOF
 
 # Allocate a per-run tmpdir on the server so concurrent invocations from
 # different laptops sharing one host cannot collide on /tmp paths.
-REMOTE_TMPDIR="$(${SSH} 'mktemp -d -t oksg-setup.XXXXXX')"
+REMOTE_TMPDIR="$(${SSH} 'mktemp -d -t karthos-setup.XXXXXX')"
 REMOTE_TMP="${REMOTE_TMPDIR}/registries.yaml"
 REMOTE_KUBECONFIG="${REMOTE_TMPDIR}/kubeconfig.yaml"
 REMOTE_SCRIPT="${REMOTE_TMPDIR}/server-setup.sh"
@@ -101,7 +100,7 @@ ssh -t "${K3S_SSH_HOST}" \
 echo "==> fetching kubeconfig to ${KUBECONFIG}"
 KUBECONFIG_DIR="$(dirname "${KUBECONFIG}")"
 mkdir -p "${KUBECONFIG_DIR}"
-LOCAL_KUBECONFIG_TMP="$(mktemp -t oksg-k3s-kubeconfig.XXXXXX)"
+LOCAL_KUBECONFIG_TMP="$(mktemp -t karthos-k3s-kubeconfig.XXXXXX)"
 scp -q "${K3S_SSH_HOST}:${REMOTE_KUBECONFIG}" "${LOCAL_KUBECONFIG_TMP}"
 ${SSH} "rm -rf '${REMOTE_TMPDIR}'"
 sed "s#https://127.0.0.1:6443#https://${K3S_SERVER_IP}:${K3S_API_PORT}#" "${LOCAL_KUBECONFIG_TMP}" >"${KUBECONFIG}"
@@ -114,7 +113,7 @@ k3s+ssh cell ready.
 
 Next steps:
   export KUBECONFIG=${KUBECONFIG}
-  task test:cluster:tunnel    # in a separate pane; keeps localhost:${K3S_REGISTRY_PORT} live
   task test:cluster:doctor    # validate the cell
+  # Optional: task test:cluster:tunnel  # inspect the remote registry from the laptop
 
 EOF

@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-bundle
+  namespace: karthos-demo
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: config-bundle
+  template:
+    metadata:
+      labels:
+        app: config-bundle
+    spec:
+      containers:
+        - name: config-bundle
+          image: localhost:5001/service-b-node:latest
+          imagePullPolicy: Always
+          command: ["node", "server.js"]
+          envFrom:
+            - configMapRef:
+                name: bundle-config
+            - secretRef:
+                name: bundle-secret
+          volumeMounts:
+            - name: bundle-cache
+              mountPath: /tmp/cache
+      volumes:
+        - name: bundle-cache
+          persistentVolumeClaim:
+            claimName: bundle-cache

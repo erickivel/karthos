@@ -5,43 +5,71 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
-	"time"
+	"strconv"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	k8sadapter "github.com/erickivel/oksg/pkg/adapters/kubernetes"
-	"github.com/erickivel/oksg/pkg/adapters/otel"
-	"github.com/erickivel/oksg/pkg/collector/configgen"
-	"github.com/erickivel/oksg/pkg/collector/deployer"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/discovery/profile"
+	k8sadapter "github.com/erickivel/karthos/pkg/adapters/kubernetes"
+	"github.com/erickivel/karthos/pkg/adapters/otel"
+	"github.com/erickivel/karthos/pkg/collector"
+	"github.com/erickivel/karthos/pkg/collector/configgen"
+	"github.com/erickivel/karthos/pkg/collector/deployer"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/discovery/profile"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 type planner interface {
-	Plan(ctx context.Context, profile *profile.ClusterProfile) (*otel.Plan, error)
+	Plan(ctx context.Context, profile *profile.ClusterProfile) (*deploymentPlan, error)
 }
 
 type generator interface {
-	Generate(plan otel.Plan) ([]byte, error)
+	Generate(deployment otel.Deployment, capabilityProfile profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) ([]byte, error)
+}
+
+type deploymentPlan struct {
+	Deployment        otel.Deployment
+	CapabilityProfile profile.ClusterProfile
+	SourcePlan        contract.ResolvedSourcePlan
+}
+
+type commandPlanner struct {
+	modules  sources.Registry
+	composer *collector.Composer
+	compiler *otel.Compiler
+}
+
+func newCommandPlanner(namespace string, collectorDebug bool) *commandPlanner {
+	return &commandPlanner{
+		modules:  sources.DefaultRegistry(),
+		composer: collector.NewComposer(namespace),
+		compiler: otel.NewCompilerWithOptions(otel.CompilerOptions{DebugEnabled: collectorDebug}),
+	}
+}
+
+func (p *commandPlanner) Plan(_ context.Context, capabilityProfile *profile.ClusterProfile) (*deploymentPlan, error) {
+	sourcePlan, err := p.modules.ResolveSourcePlan(capabilityProfile)
+	if err != nil {
+		return nil, err
+	}
+	collectionPlan, err := p.composer.Compose(capabilityProfile, sourcePlan)
+	if err != nil {
+		return nil, err
+	}
+	deployment, err := p.compiler.Compile(collectionPlan)
+	if err != nil {
+		return nil, err
+	}
+	return &deploymentPlan{Deployment: deployment, CapabilityProfile: *capabilityProfile, SourcePlan: sourcePlan}, nil
 }
 
 type deployerInterface interface {
 	Apply(ctx context.Context, values []byte, options deployer.Options) error
 	Template(ctx context.Context, values []byte, options deployer.Options) error
-}
-
-type deployFunc func(ctx context.Context, values []byte, options deployer.Options) error
-
-func (f deployFunc) Apply(ctx context.Context, values []byte, options deployer.Options) error {
-	return f(ctx, values, options)
-}
-
-func (f deployFunc) Template(_ context.Context, _ []byte, _ deployer.Options) error {
-	return fmt.Errorf("template not implemented")
 }
 
 type dependencies struct {
@@ -59,34 +87,49 @@ func main() {
 }
 
 const defaultClusterName = "default-cluster"
-const defaultReleaseName = "oksg-otel"
 const defaultLogLevel = "info"
 
 func run(ctx context.Context, args []string, deps dependencies) error {
+	collectorDebugDefault, err := envBool("KARTHOS_COLLECTOR_DEBUG", false)
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("discovery-job", flag.ContinueOnError)
 	mode := fs.String("mode", "discover", "mode to run: discover, plan, deploy")
 	kubeconfig := fs.String("kubeconfig", "", "path to kubeconfig")
 	clusterName := fs.String("cluster-name", defaultClusterName, "name of the cluster being discovered")
-	profilePath := fs.String("profile", "", "path to discovery profile JSON")
-	outputPath := fs.String("output", "", "output file path")
+	profilePath := fs.String("capability-profile", "", "path to capability profile JSON")
+	outputPath := fs.String("output", "", "output file path for discover capability profile")
 	valuesOutputPath := fs.String("values-output", "", "output file path for generated Helm values")
+	resolvedPlanOutputPath := fs.String("resolved-plan-output", "", "output path for resolved source plan JSON (defaults beside --values-output)")
 	renderedOutputPath := fs.String("rendered-output", "", "directory for helm template output")
-	namespace := fs.String("namespace", otel.DefaultNamespace, "namespace for generated collector resources")
-	helmNamespace := fs.String("helm-namespace", "", "namespace for Helm release resources (defaults to --namespace)")
-	releaseName := fs.String("release-name", defaultReleaseName, "helm release name")
-	chartPath := fs.String("chart-path", configgen.DefaultChartPath, "path to the Helm chart")
+	namespace := fs.String("namespace", collector.DefaultNamespace, "namespace for generated collector resources")
+	releaseName := fs.String("release-name", deployer.DefaultReleaseName, "helm release name")
+	chartPath := fs.String("chart-path", deployer.DefaultChartPath, "path to the Helm chart")
 	helmTimeout := fs.Duration("helm-timeout", deployer.DefaultTimeout, "timeout for helm operations")
 	helmDryRun := fs.Bool("helm-dry-run", false, "run helm upgrade with --dry-run")
-	logLevel := fs.String("log-level", envOrDefault("OKSG_LOG_LEVEL", defaultLogLevel), "structured log level: debug, info, warn, error")
+	logLevel := fs.String("log-level", envOrDefault("KARTHOS_LOG_LEVEL", defaultLogLevel), "structured log level: info, warn, error")
 	targetNamespace := fs.String("target-namespace", "", "filter Prometheus discovery to this namespace (empty = all namespaces)")
-	collectorImageRepository := fs.String("collector-image-repository", envOrDefault("OKSG_COLLECTOR_IMAGE_REPOSITORY", configgen.DefaultCollectorRepository), "collector image repository")
-	collectorImageTag := fs.String("collector-image-tag", envOrDefault("OKSG_COLLECTOR_IMAGE_TAG", configgen.DefaultCollectorTag), "collector image tag")
-	collectorImagePullPolicy := fs.String("collector-image-pull-policy", envOrDefault("OKSG_COLLECTOR_IMAGE_PULL_POLICY", configgen.DefaultCollectorPullPolicy), "collector image pull policy")
-	backendImageRepository := fs.String("backend-image-repository", envOrDefault("OKSG_BACKEND_IMAGE_REPOSITORY", configgen.DefaultBackendRepository), "backend image repository")
-	backendImageTag := fs.String("backend-image-tag", envOrDefault("OKSG_BACKEND_IMAGE_TAG", configgen.DefaultBackendTag), "backend image tag")
-	backendImagePullPolicy := fs.String("backend-image-pull-policy", envOrDefault("OKSG_BACKEND_IMAGE_PULL_POLICY", configgen.DefaultBackendPullPolicy), "backend image pull policy")
+	collectorImageRepository := fs.String("collector-image-repository", envOrDefault("KARTHOS_COLLECTOR_IMAGE_REPOSITORY", ""), "collector image repository override")
+	collectorImageTag := fs.String("collector-image-tag", envOrDefault("KARTHOS_COLLECTOR_IMAGE_TAG", ""), "collector image tag override")
+	collectorImagePullPolicy := fs.String("collector-image-pull-policy", envOrDefault("KARTHOS_COLLECTOR_IMAGE_PULL_POLICY", ""), "collector image pull policy override")
+	backendImageRepository := fs.String("backend-image-repository", envOrDefault("KARTHOS_BACKEND_IMAGE_REPOSITORY", ""), "backend image repository override")
+	backendImageTag := fs.String("backend-image-tag", envOrDefault("KARTHOS_BACKEND_IMAGE_TAG", ""), "backend image tag override")
+	backendImagePullPolicy := fs.String("backend-image-pull-policy", envOrDefault("KARTHOS_BACKEND_IMAGE_PULL_POLICY", ""), "backend image pull policy override")
+	frontendImageRepository := fs.String("frontend-image-repository", envOrDefault("KARTHOS_FRONTEND_IMAGE_REPOSITORY", ""), "frontend image repository override")
+	frontendImageTag := fs.String("frontend-image-tag", envOrDefault("KARTHOS_FRONTEND_IMAGE_TAG", ""), "frontend image tag override")
+	frontendImagePullPolicy := fs.String("frontend-image-pull-policy", envOrDefault("KARTHOS_FRONTEND_IMAGE_PULL_POLICY", ""), "frontend image pull policy override")
+	storageBackend := fs.String("storage-backend", envOrDefault("KARTHOS_DEPLOY_STORAGE_BACKEND", ""), "storage backend override: memory or external")
+	postgresqlMode := fs.String("postgresql-mode", envOrDefault("KARTHOS_DEPLOY_POSTGRESQL_MODE", ""), "external PostgreSQL mode: bundled or remote")
+	postgresqlDSN := fs.String("postgresql-dsn", envOrDefault("KARTHOS_POSTGRES_DSN", ""), "remote PostgreSQL DSN override")
+	victoriaMetricsMode := fs.String("victoriametrics-mode", envOrDefault("KARTHOS_DEPLOY_VICTORIAMETRICS_MODE", ""), "external VictoriaMetrics mode: bundled or remote")
+	victoriaMetricsURL := fs.String("victoriametrics-url", envOrDefault("KARTHOS_VICTORIAMETRICS_URL", ""), "remote VictoriaMetrics URL override")
+	collectorDebug := fs.Bool("collector-debug", collectorDebugDefault, "enable development-only Collector debug output")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *mode != "discover" && *outputPath != "" {
+		return fmt.Errorf("--output is only supported in discover mode; use --values-output for generated Helm values")
 	}
 
 	logger, err := logging.New("discovery-job", *logLevel)
@@ -95,11 +138,9 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	}
 
 	activeNamespace := *namespace
-	if *helmNamespace != "" {
-		activeNamespace = *helmNamespace
-	}
 
-	valuesPath := coalesce(*valuesOutputPath, *outputPath)
+	valuesPath := *valuesOutputPath
+	resolvedPlanPath := coalesce(*resolvedPlanOutputPath, defaultResolvedPlanPath(valuesPath))
 	deployOptions := deployer.Options{
 		ReleaseName:  *releaseName,
 		ChartPath:    *chartPath,
@@ -108,20 +149,16 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 		DryRun:       *helmDryRun,
 		RenderedPath: *renderedOutputPath,
 	}
-	generatorOptions := configgen.GeneratorOptions{
-		CollectorImage: configgen.ImageValues{
-			Repository: *collectorImageRepository,
-			Tag:        *collectorImageTag,
-			PullPolicy: *collectorImagePullPolicy,
+	generatorOptions := configgen.GeneratorOptions{Runtime: configgen.RuntimeSettings{
+		CollectorImage: configgen.ImageValues{Repository: *collectorImageRepository, Tag: *collectorImageTag, PullPolicy: *collectorImagePullPolicy},
+		BackendImage:   configgen.ImageValues{Repository: *backendImageRepository, Tag: *backendImageTag, PullPolicy: *backendImagePullPolicy},
+		FrontendImage:  configgen.ImageValues{Repository: *frontendImageRepository, Tag: *frontendImageTag, PullPolicy: *frontendImagePullPolicy},
+		Storage: configgen.StorageSettings{
+			Backend:         configgen.StorageBackend(*storageBackend),
+			PostgreSQL:      configgen.StoreSettings{Mode: configgen.StoreMode(*postgresqlMode), Endpoint: *postgresqlDSN},
+			VictoriaMetrics: configgen.StoreSettings{Mode: configgen.StoreMode(*victoriaMetricsMode), Endpoint: *victoriaMetricsURL},
 		},
-		BackendImage: configgen.ImageValues{
-			Repository: *backendImageRepository,
-			Tag:        *backendImageTag,
-			PullPolicy: *backendImagePullPolicy,
-		},
-		ReleaseName: *releaseName,
-		ChartPath:   *chartPath,
-	}
+	}}
 
 	logger.Info("starting command",
 		logging.String("mode", *mode),
@@ -132,7 +169,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	switch *mode {
 	case "discover":
 		if deps.discover == nil {
-			deps.discover = realDependenciesWithKubeconfig(*kubeconfig, *clusterName, *namespace, *targetNamespace).discover
+			deps.discover = realDependenciesWithKubeconfig(*kubeconfig, *clusterName, *targetNamespace).discover
 		}
 		clusterProfile, err := deps.discover(ctx)
 		if err != nil {
@@ -155,7 +192,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = otel.NewSourcePlanner(activeNamespace)
+			deps.planner = newCommandPlanner(activeNamespace, *collectorDebug)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator(generatorOptions)
@@ -165,7 +202,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			logger.Error("planning failed", logging.Error(err))
 			return err
 		}
-		values, err := deps.generator.Generate(*plan)
+		values, err := deps.generator.Generate(plan.Deployment, plan.CapabilityProfile, plan.SourcePlan)
 		if err != nil {
 			logger.Error("generate helm values failed", logging.Error(err))
 			return err
@@ -173,6 +210,11 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 		if err := writeOutput(valuesPath, values); err != nil {
 			logger.Error("write helm values failed", logging.Error(err))
 			return err
+		}
+		if resolvedPlanPath != "" {
+			if err := writeJSON(resolvedPlanPath, plan.SourcePlan); err != nil {
+				return fmt.Errorf("write resolved source plan: %w", err)
+			}
 		}
 		if *renderedOutputPath != "" {
 			if deps.deployer == nil {
@@ -196,7 +238,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = otel.NewSourcePlanner(activeNamespace)
+			deps.planner = newCommandPlanner(activeNamespace, *collectorDebug)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator(generatorOptions)
@@ -209,7 +251,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			logger.Error("planning failed", logging.Error(err))
 			return err
 		}
-		values, err := deps.generator.Generate(*plan)
+		values, err := deps.generator.Generate(plan.Deployment, plan.CapabilityProfile, plan.SourcePlan)
 		if err != nil {
 			logger.Error("generate helm values failed", logging.Error(err))
 			return err
@@ -218,6 +260,11 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			if err := writeOutput(valuesPath, values); err != nil {
 				logger.Error("write helm values failed", logging.Error(err))
 				return err
+			}
+		}
+		if resolvedPlanPath != "" {
+			if err := writeJSON(resolvedPlanPath, plan.SourcePlan); err != nil {
+				return fmt.Errorf("write resolved source plan: %w", err)
 			}
 		}
 		logger.Info("deploying helm release",
@@ -240,7 +287,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	}
 }
 
-func realDependenciesWithKubeconfig(kubeconfig, clusterName, namespace, targetNamespace string) dependencies {
+func realDependenciesWithKubeconfig(kubeconfig, clusterName, targetNamespace string) dependencies {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return dependencies{
@@ -264,37 +311,12 @@ func realDependenciesWithKubeconfig(kubeconfig, clusterName, namespace, targetNa
 		opts = append(opts, k8sadapter.WithTargetNamespaces(targetNamespace))
 	}
 
-	adapter := k8sadapter.NewDiscoveryAdapter(clientset, clusterName, httpProbe, opts...)
-	return dependencies{
-		discover:  adapter.Discover,
-		planner:   otel.NewSourcePlanner(namespace),
-		generator: defaultGenerator(configgen.GeneratorOptions{}),
-		deployer:  deployer.New(nil),
-	}
+	adapter := k8sadapter.NewDiscoveryAdapter(clientset, clusterName, opts...)
+	return dependencies{discover: adapter.Discover}
 }
 
 func defaultGenerator(options configgen.GeneratorOptions) generator {
 	return configgen.NewGeneratorWithOptions(options)
-}
-
-func httpProbe(ctx context.Context, url string) bool {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false
-	}
-
-	client := &http.Client{Timeout: 3 * time.Second}
-	response, err := client.Do(request)
-	if err != nil {
-		return false
-	}
-
-	healthy := response.StatusCode >= 200 && response.StatusCode < 400
-	if err := response.Body.Close(); err != nil {
-		return false
-	}
-
-	return healthy
 }
 
 func readProfile(path string) (*profile.ClusterProfile, error) {
@@ -302,7 +324,7 @@ func readProfile(path string) (*profile.ClusterProfile, error) {
 		return nil, fmt.Errorf("profile path is required")
 	}
 
-	data, err := os.ReadFile(filepath.Clean(path)) //#nosec G304 -- path comes from trusted CLI flag --profile
+	data, err := os.ReadFile(filepath.Clean(path)) //#nosec G304 -- path comes from trusted CLI flag --capability-profile
 	if err != nil {
 		return nil, fmt.Errorf("read profile: %w", err)
 	}
@@ -340,9 +362,28 @@ func coalesce(values ...string) string {
 	return ""
 }
 
+func defaultResolvedPlanPath(valuesPath string) string {
+	if valuesPath == "" {
+		return ""
+	}
+	return valuesPath + ".source-plan.json"
+}
+
 func envOrDefault(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) (bool, error) {
+	value, found := os.LookupEnv(key)
+	if !found || value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean: %w", key, err)
+	}
+	return parsed, nil
 }

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/entities"
 )
 
 type Edge struct {
@@ -34,7 +34,18 @@ func NewEdge(source, target entities.EntityID, relation RelationType, firstSeen 
 }
 
 func ComputeEdgeID(source, target entities.EntityID, relation RelationType) string {
-	payload := strings.Join([]string{string(source), string(target), string(relation)}, "/")
+	return ComputeEdgeIDWithDiscriminator(source, target, relation, "")
+}
+
+// ComputeEdgeIDWithDiscriminator adds a stable source-specific identity to an
+// edge while preserving its public source and target endpoints. An empty
+// discriminator retains the historical edge ID.
+func ComputeEdgeIDWithDiscriminator(source, target entities.EntityID, relation RelationType, discriminator string) string {
+	parts := []string{string(source), string(target), string(relation)}
+	if discriminator != "" {
+		parts = append(parts, discriminator)
+	}
+	payload := strings.Join(parts, "/")
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }

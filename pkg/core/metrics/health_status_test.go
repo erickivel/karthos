@@ -3,69 +3,37 @@ package metrics
 import (
 	"math"
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
-func TestPodHealthLabel(t *testing.T) {
-	cases := []struct {
-		name     string
-		value    float64
-		expected string
+func TestPodPhaseLabel(t *testing.T) {
+	tests := []struct {
+		name  string
+		value float64
+		want  string
 	}{
-		{"healthy", 1, HealthHealthy},
-		{"running_not_ready", 2, HealthRunningNotReady},
-		{"restarting", 3, HealthRestarting},
-		{"pending", 4, HealthPending},
-		{"succeeded", 5, HealthSucceeded},
-		{"failed", 6, HealthFailed},
-		{"unknown_explicit", 7, HealthUnknown},
-		{"out_of_range_low", 0, HealthUnknown},
-		{"out_of_range_high", 99, HealthUnknown},
-		{"negative", -1, HealthUnknown},
-		{"nan", math.NaN(), HealthUnknown},
-		{"float_drift_above", 1.4, HealthHealthy},
-		{"float_drift_below", 0.51, HealthHealthy},
+		{name: "pending", value: 1, want: HealthPending},
+		{name: "running", value: 2, want: PodPhaseRunning},
+		{name: "succeeded", value: 3, want: HealthSucceeded},
+		{name: "failed", value: 4, want: HealthFailed},
+		{name: "unknown", value: 5, want: HealthUnknown},
+		{name: "invalid", value: 99, want: HealthUnknown},
+		{name: "not a number", value: math.NaN(), want: HealthUnknown},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			require.Equal(t, c.expected, PodHealthLabel(c.value))
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := PodPhaseLabel(test.value); got != test.want {
+				t.Fatalf("PodPhaseLabel(%v) = %q, want %q", test.value, got, test.want)
+			}
 		})
 	}
 }
 
-func TestContainerHealthLabel(t *testing.T) {
-	cases := []struct {
-		name     string
-		value    float64
-		expected string
-	}{
-		{"healthy", 1, HealthHealthy},
-		{"running_not_ready", 2, HealthRunningNotReady},
-		{"restarting", 3, HealthRestarting},
-		{"out_of_range_high", 4, HealthUnknown},
-		{"out_of_range_low", 0, HealthUnknown},
-		{"negative", -1, HealthUnknown},
-		{"nan", math.NaN(), HealthUnknown},
+func TestHealthLabelRecognizesPodPhase(t *testing.T) {
+	if !IsHealthStatusMetric("k8s.pod.phase") {
+		t.Fatal("k8s.pod.phase must expose an API enum label")
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			require.Equal(t, c.expected, ContainerHealthLabel(c.value))
-		})
+	if got := HealthLabel("k8s.pod.phase", 2); got != PodPhaseRunning {
+		t.Fatalf("HealthLabel() = %q, want %q", got, PodPhaseRunning)
 	}
-}
-
-func TestIsHealthStatusMetric(t *testing.T) {
-	require.True(t, IsHealthStatusMetric("oksg.pod.health.status"))
-	require.True(t, IsHealthStatusMetric("oksg.container.health.status"))
-	require.False(t, IsHealthStatusMetric("k8s.pod.phase"))
-	require.False(t, IsHealthStatusMetric("k8s.container.ready"))
-	require.False(t, IsHealthStatusMetric(""))
-}
-
-func TestHealthLabelDispatch(t *testing.T) {
-	require.Equal(t, HealthHealthy, HealthLabel("oksg.pod.health.status", 1))
-	require.Equal(t, HealthRestarting, HealthLabel("oksg.container.health.status", 3))
-	require.Equal(t, "", HealthLabel("k8s.pod.phase", 2))
-	require.Equal(t, "", HealthLabel("", 1))
 }

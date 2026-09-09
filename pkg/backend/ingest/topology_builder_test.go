@@ -11,9 +11,9 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/core/topology"
 )
 
 func makeTraceEnvelope(t *testing.T, source string, resource map[string]string, rs *tracepb.ResourceSpans) schema.RawEnvelope {
@@ -196,39 +196,6 @@ func TestTraceTopologyBuilder_EnvelopeProvenance(t *testing.T) {
 	require.Len(t, edges, 1)
 
 	assert.Equal(t, []string{source}, edges[0].Provenance)
-}
-
-func TestTraceTopologyBuilder_BuildNodesIncludesCallerAndCalleeServices(t *testing.T) {
-	resolver := NewOTLPEntityResolver(testCluster)
-	builder := NewTraceTopologyBuilder(resolver)
-
-	resource := map[string]string{"service.name": "svc-a"}
-	rs := &tracepb.ResourceSpans{
-		ScopeSpans: []*tracepb.ScopeSpans{
-			{
-				Spans: []*tracepb.Span{
-					makeSpan("svc-b", 1000000, 2000000),
-				},
-			},
-		},
-	}
-
-	envelope := makeTraceEnvelope(t, "test-source", resource, rs)
-	nodes := builder.BuildNodes(context.Background(), envelope)
-	require.Len(t, nodes, 2)
-
-	gotKinds := map[string]string{}
-	for _, node := range nodes {
-		gotKinds[string(node.ID)] = string(node.Kind)
-	}
-
-	callerID, err := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-a"})
-	require.NoError(t, err)
-	calleeID, err := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-b"})
-	require.NoError(t, err)
-
-	assert.Equal(t, string(entities.KindService), gotKinds[string(callerID)])
-	assert.Equal(t, string(entities.KindService), gotKinds[string(calleeID)])
 }
 
 func TestTraceTopologyBuilder_PrefersServiceEntityOverNodeForCaller(t *testing.T) {

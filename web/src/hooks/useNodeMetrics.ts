@@ -1,52 +1,64 @@
 import { useMemo } from 'react'
 import { useQueries } from '@tanstack/react-query'
-import { getSeries } from '@/api/metrics'
+import { getAllSeries } from '@/api/metrics'
+import type { CanonicalMetric, MetricSeries } from '@/types/metrics'
 import { collectAllMetricNames } from '@/views/TopologyGraph/nodeMetrics'
 import { usePollingEnabled } from './usePollingEnabled'
 
-// Per-entity metric snapshot keyed by metric name.
-export type NodeMetricValues = Record<string, number>
+export interface NodeMetricValue {
+  value?: number
+  unit: string
+  seriesCount: number
+}
 
-/**
- * Fetches the latest value of every metric named by NODE_METRICS for every
- * entity that has a sample. Returns a Map<entityId, Record<metric, value>>
- * so EntityNode can look up values by (kind → spec → metric name).
- *
- * The query list is derived from NODE_METRICS — adding a new metric there
- * automatically extends the fetch.
- */
-export function useNodeMetrics(): Map<string, NodeMetricValues> {
+export type NodeMetricValues = Record<string, NodeMetricValue>
+
+function latestSample(series: MetricSeries) {
+  return [...series.samples].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+  )[0]
+}
+
+/** Queries only catalog-declared presentation metrics. */
+export function useNodeMetrics(catalog: CanonicalMetric[] | undefined): Map<string, NodeMetricValues> {
   const pollingEnabled = usePollingEnabled()
-  const metricNames = useMemo(() => collectAllMetricNames(), [])
+  const metricNames = useMemo(() => {
+    const declared = new Set((catalog ?? []).map((metric) => metric.name))
+    return collectAllMetricNames().filter((name) => declared.has(name))
+  }, [catalog])
 
   const queries = useQueries({
     queries: metricNames.map((metric) => ({
-      queryKey: ['node-metrics', metric],
-      queryFn: () => getSeries({ metric_name: metric }),
+      queryKey: ['topology-metrics', metric],
+      queryFn: () => getAllSeries({ metric_name: metric, page_size: 1000 }),
       refetchInterval: pollingEnabled ? 30_000 : false,
       staleTime: 15_000,
     })),
   })
 
   return useMemo(() => {
-    const map = new Map<string, NodeMetricValues>()
-    for (let i = 0; i < metricNames.length; i++) {
-      const metric = metricNames[i]
-      const result = queries[i]
-      if (!metric || !result?.data) continue
-      for (const series of result.data.series) {
-        for (const sample of series.samples) {
-          let entry = map.get(sample.entity_id)
-          if (!entry) {
-            entry = {}
-            map.set(sample.entity_id, entry)
-          }
-          if (entry[metric] === undefined) {
-            entry[metric] = sample.value
-          }
-        }
+    const values = new Map<string, NodeMetricValues>()
+    metricNames.forEach((metricName, index) => {
+      const series = queries[index]?.data?.series ?? []
+      const byEntity = new Map<string, MetricSeries[]>()
+      for (const item of series) {
+        const entityID = item.samples[0]?.entity_id
+        if (!entityID) continue
+        const items = byEntity.get(entityID) ?? []
+        items.push(item)
+        byEntity.set(entityID, items)
       }
-    }
-    return map
-  }, [queries, metricNames])
+      for (const [entityID, entitySeries] of byEntity) {
+        const current = entitySeries.length === 1 ? latestSample(entitySeries[0]!) : undefined
+        const entry = values.get(entityID) ?? {}
+        entry[metricName] = {
+          value: current?.value,
+          unit: entitySeries[0]?.unit ?? '',
+          seriesCount: entitySeries.length,
+        }
+        values.set(entityID, entry)
+      }
+    })
+    return values
+  }, [metricNames, queries])
 }

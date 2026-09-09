@@ -24,8 +24,7 @@ type Logger struct {
 type level int
 
 const (
-	levelDebug level = iota
-	levelInfo
+	levelInfo level = iota
 	levelWarn
 	levelError
 )
@@ -72,7 +71,6 @@ func NewWithWriter(component, levelName string, out io.Writer) (*Logger, error) 
 	return l, nil
 }
 
-func (l *Logger) Debug(msg string, fields ...Field) { l.log(levelDebug, msg, fields...) }
 func (l *Logger) Info(msg string, fields ...Field)  { l.log(levelInfo, msg, fields...) }
 func (l *Logger) Warn(msg string, fields ...Field)  { l.log(levelWarn, msg, fields...) }
 func (l *Logger) Error(msg string, fields ...Field) { l.log(levelError, msg, fields...) }
@@ -111,8 +109,6 @@ func parseLevel(name string) (level, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", DefaultLevel:
 		return levelInfo, nil
-	case "debug":
-		return levelDebug, nil
 	case "warn", "warning":
 		return levelWarn, nil
 	case "error":
@@ -124,8 +120,6 @@ func parseLevel(name string) (level, error) {
 
 func (l level) String() string {
 	switch l {
-	case levelDebug:
-		return "debug"
 	case levelInfo:
 		return "info"
 	case levelWarn:

@@ -33,7 +33,7 @@ export function MetricCatalogRow({
   onToggle,
   onOpenInExplorer,
 }: MetricCatalogRowProps) {
-  const sources = metric.sources ?? []
+  const sources = metric.sources
   const appliesTo = metric.applies_to ?? []
 
   // Whole-row click toggles expansion. The chevron is now a visual indicator
@@ -82,23 +82,26 @@ export function MetricCatalogRow({
           {appliesTo.length === 0 ? (
             <span className={styles.muted}>—</span>
           ) : (
-            <span className={styles.muted} title={appliesTo.join(', ')}>
-              {appliesTo.length}
-            </span>
+            <div className={styles.appliesCompact} title={appliesTo.join(', ')}>
+              {appliesTo.slice(0, 2).map((k) => (
+                <span key={k} className={styles.appliesChip}>
+                  {k}
+                </span>
+              ))}
+              {appliesTo.length > 2 && (
+                <span className={styles.appliesMore}>+{appliesTo.length - 2}</span>
+              )}
+            </div>
           )}
         </td>
         <td>
-          {sources.length === 0 ? (
-            <span className={styles.muted}>derived</span>
-          ) : (
-            <div className={styles.chipRow}>
-              {sources.map((src) => (
-                <span key={src.id} className={styles.sourceChip} title={`priority ${src.priority}`}>
-                  {src.id}
-                </span>
-              ))}
-            </div>
-          )}
+          <div className={styles.chipRow}>
+            {sources.map((src) => (
+              <span key={src.id} className={styles.sourceChip} title={`priority ${src.priority}`}>
+                {src.id}
+              </span>
+            ))}
+          </div>
         </td>
         <td className={styles.numeric}>{rowStats.totalCount.toLocaleString()}</td>
         <td className={styles.muted}>{formatLastSeen(rowStats.lastSeenAt)}</td>
@@ -117,7 +120,7 @@ export function MetricCatalogRow({
                   <div className={styles.detailLabel}>Applies to</div>
                   <div className={styles.chipRow}>
                     {appliesTo.map((k) => (
-                      <span key={k} className={styles.chip}>
+                      <span key={k} className={styles.appliesChip}>
                         {k}
                       </span>
                     ))}
@@ -127,12 +130,7 @@ export function MetricCatalogRow({
 
               <div className={styles.detailSection}>
                 <div className={styles.detailLabel}>Sources & samples (last 1h)</div>
-                {sources.length === 0 && (!stats?.by_source || stats.by_source.length === 0) ? (
-                  <p className={styles.muted}>
-                    Query-derived metric — composed from other metrics at fetch time.
-                  </p>
-                ) : (
-                  <table className={styles.sourceTable}>
+                <table className={styles.sourceTable}>
                     <thead>
                       <tr>
                         <th>Source</th>
@@ -148,9 +146,9 @@ export function MetricCatalogRow({
                         sample_count: 0,
                         last_seen_at: null,
                       }))).map((s) => (
-                        <tr key={s.source_id || '(unsourced)'}>
+                        <tr key={s.source_id}>
                           <td>
-                            <span className={styles.sourceChip}>{s.source_id || '(unsourced)'}</span>
+                            <span className={styles.sourceChip}>{s.source_id}</span>
                           </td>
                           <td className={styles.muted}>{s.priority ?? '—'}</td>
                           <td className={styles.numeric}>{s.sample_count.toLocaleString()}</td>
@@ -162,12 +160,18 @@ export function MetricCatalogRow({
                         </tr>
                       ))}
                     </tbody>
-                  </table>
-                )}
+                </table>
               </div>
 
               <div className={styles.detailActions}>
-                <button type="button" className={styles.openButton} onClick={onOpenInExplorer}>
+                <button
+                  type="button"
+                  className={styles.openButton}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onOpenInExplorer()
+                  }}
+                >
                   Open in {openMode === 'edge' ? 'Edges' : 'Entities'}
                 </button>
               </div>

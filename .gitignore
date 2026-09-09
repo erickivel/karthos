@@ -21,11 +21,11 @@ schemas/
 
 # Cluster profile files; keep the default and any *.example.env templates
 .env.d/*.env
-!.env.d/oksg-test.env
+!.env.d/karthos-test.env
 !.env.d/*.example.env
 
 # Helm subchart downloads (re-fetch with: helm dependency build)
-deploy/helm/oksg-otel/charts/
+deploy/helm/karthos/charts/
 
 # Worktrees
 .worktrees/
@@ -33,6 +33,9 @@ deploy/helm/oksg-otel/charts/
 # Superpowers plans
 docs/superpowers/
 .superpowers/
+
+# Local audit workspaces
+audits/
 
 # Frontend build artifacts and dependencies (should never exist locally)
 web/node_modules/
@@ -42,3 +45,7 @@ web/dist/
 .playwright-mcp/
 web/playwright-report/
 web/test-results/
+
+# Python verification artifacts
+__pycache__/
+*.pyc

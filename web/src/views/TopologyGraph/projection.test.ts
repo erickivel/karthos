@@ -35,6 +35,8 @@ describe('topology projection', () => {
       node('svc-b', 'service', 'checkout'),
       node('workload-a', 'workload', 'gateway'),
       node('workload-b', 'workload', 'checkout'),
+      node('svc-idle', 'service', 'idle'),
+      node('workload-idle', 'workload', 'idle'),
       node('pod-a1', 'pod', 'gateway-a1'),
       node('pod-a2', 'pod', 'gateway-a2'),
       node('pod-b1', 'pod', 'checkout-b1'),
@@ -43,6 +45,7 @@ describe('topology projection', () => {
       edge('routes', 'ing', 'svc-a', 'routes_to'),
       edge('exposes-a', 'svc-a', 'workload-a', 'exposes'),
       edge('exposes-b', 'svc-b', 'workload-b', 'exposes'),
+      edge('exposes-idle', 'svc-idle', 'workload-idle', 'exposes'),
       edge('contains-a1', 'workload-a', 'pod-a1', 'contains'),
       edge('contains-a2', 'workload-a', 'pod-a2', 'contains'),
       edge('contains-b1', 'workload-b', 'pod-b1', 'contains'),
@@ -89,6 +92,23 @@ describe('topology projection', () => {
     expect(result.nodes.some((n) => n.kind === 'pod')).toBe(false)
   })
 
+  it('Workload Flow adds structural context only for services with observed traffic', () => {
+    const result = project(
+      trafficSample.nodes,
+      trafficSample.edges,
+      'traffic',
+      'runtime',
+    )
+
+    expect(result.nodes.map((n) => n.id).sort()).toEqual([
+      'ing',
+      'svc-a',
+      'svc-b',
+      'workload-a',
+      'workload-b',
+    ])
+  })
+
   it('Instance Flow shows only pod nodes with pod-level call edges', () => {
     const result = project(
       trafficSample.nodes,
@@ -106,7 +126,7 @@ describe('topology projection', () => {
   it('infrastructure detailed nests containers under pods under host nodes', () => {
     const result = project(
       [
-        node('host', 'node', 'oksg-test-worker'),
+        node('host', 'node', 'karthos-test-worker'),
         node('pod-a', 'pod', 'gateway-a'),
         node('container-a', 'container', 'gateway'),
       ],
@@ -131,7 +151,7 @@ describe('topology projection', () => {
   it('infrastructure overview shows only host nodes', () => {
     const result = project(
       [
-        node('host', 'node', 'oksg-test-worker'),
+        node('host', 'node', 'karthos-test-worker'),
         node('pod-a', 'pod', 'gateway-a'),
       ],
       [edge('runs-on', 'pod-a', 'host', 'runs_on')],
@@ -146,7 +166,7 @@ describe('topology projection', () => {
   it('infrastructure runtime shows pods nested under nodes (no containers)', () => {
     const result = project(
       [
-        node('host', 'node', 'oksg-test-worker'),
+        node('host', 'node', 'karthos-test-worker'),
         node('pod-a', 'pod', 'gateway-a'),
         node('container-a', 'container', 'gateway'),
       ],
@@ -166,7 +186,7 @@ describe('topology projection', () => {
   it('infrastructure drops PVC entirely', () => {
     const result = project(
       [
-        node('host', 'node', 'oksg-test-worker'),
+        node('host', 'node', 'karthos-test-worker'),
         node('pod-a', 'pod', 'gateway-a'),
         node('vol-a', 'pvc', 'data'),
       ],

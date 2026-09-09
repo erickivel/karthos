@@ -1,0 +1,336 @@
+{
+  "info": {
+    "_postman_id": "bcb80c53-e1a5-4f4b-bcdc-b71cce6e8f5a",
+    "name": "Karthos API v1",
+    "description": "# Karthos public API consumer collection\n\nThis collection documents the complete `/api/v1` surface. The bundled frontend is one consumer of this API; dashboards, automation, analytics, and other tools can use the same contracts.\n\n## Start here\n\n1. Set `baseUrl` (the local default is the backend port-forward at `http://localhost:18081`).\n2. Call **Discovery** to learn which compiled sources are currently available.\n3. Call **Graph → List nodes** or **Entities → List entities** and copy a canonical ID into `entityId`, `sourceEntityId`, or `targetEntityId`.\n4. Call **Metrics → List catalog** before querying samples. The catalog is the supported metric inventory and applicability authority.\n5. Use **Metric samples** for timestamped values and **Metric series** for the current, paginated dimensional series view.\n\n## Query rules\n\n- All success payloads use `{ \"data\": ... }`; failures use `{ \"error\": \"...\", \"code\": number }`.\n- Entity and edge filters require canonical IDs returned by the graph/entity endpoints. Do not substitute display names.\n- `next_token` is opaque: return it unchanged in the following request.\n- `page_size` defaults to 100 and is capped at 1000.\n- A metric result preserves every label-distinct series. `labels.source` is the source that actually produced a sample; catalog sources are priority declarations, not proof that a source emitted data.\n- Metric timestamps are producer timestamps. Query evaluation is on the backend 15-second grid and samples older than the active freshness window are omitted.\n\n## Local development\n\n```sh\nkubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080\n```\n\nThen set `baseUrl` to `http://localhost:18081`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:18081",
+      "type": "string",
+      "description": "Backend origin, without a trailing slash. Use the in-cluster API through a local port-forward during development."
+    },
+    {
+      "key": "pageSize",
+      "value": "100",
+      "type": "string",
+      "description": "Requested page size. The API defaults to 100 and caps this value at 1000."
+    },
+    {
+      "key": "nextToken",
+      "value": "",
+      "type": "string",
+      "description": "Opaque token returned as `next_token`. Paste it unchanged to fetch the next page."
+    },
+    {
+      "key": "snapshotAt",
+      "value": "",
+      "type": "string",
+      "description": "Optional RFC3339 graph time. The API selects the newest retained materialized snapshot at or before it; leave empty for the latest graph."
+    },
+    {
+      "key": "entityId",
+      "value": "",
+      "type": "string",
+      "description": "Canonical entity ID from `/graph/nodes` or `/entities`. Leave empty only when the request does not require an entity filter."
+    },
+    {
+      "key": "sourceEntityId",
+      "value": "",
+      "type": "string",
+      "description": "Canonical source entity ID for an edge/metric filter."
+    },
+    {
+      "key": "targetEntityId",
+      "value": "",
+      "type": "string",
+      "description": "Canonical target entity ID for an edge/metric filter."
+    },
+    {
+      "key": "namespace",
+      "value": "karthos-demo",
+      "type": "string",
+      "description": "Kubernetes namespace filter for graph/entity listing."
+    },
+    {
+      "key": "kind",
+      "value": "pod",
+      "type": "string",
+      "description": "Entity kind filter. Supported kinds: cluster, node, namespace, workload, pod, container, service, ingress, endpoint, configmap, secret, pvc, hpa."
+    },
+    {
+      "key": "relation",
+      "value": "calls",
+      "type": "string",
+      "description": "Graph relation filter. Supported relations: calls, runs_on, contains, routes_to, exposes, uses, mounts."
+    },
+    {
+      "key": "metricName",
+      "value": "k8s.pod.cpu.usage",
+      "type": "string",
+      "description": "Canonical metric name. Read `/metrics/catalog` first; only catalog metrics are supported."
+    },
+    {
+      "key": "category",
+      "value": "resource",
+      "type": "string",
+      "description": "Optional catalog category: resource, traffic, latency, error, capacity, or health."
+    },
+    {
+      "key": "from",
+      "value": "",
+      "type": "string",
+      "description": "Optional RFC3339 range start, for example `2026-09-04T18:00:00Z`."
+    },
+    {
+      "key": "to",
+      "value": "",
+      "type": "string",
+      "description": "Optional RFC3339 range end, for example `2026-09-04T18:15:00Z`."
+    },
+    {
+      "key": "aggregation",
+      "value": "window_rate",
+      "type": "string",
+      "description": "Optional aggregation: latest, window_rate, active_rate, or increase. Check the metric catalog for the supported/default aggregation."
+    },
+    {
+      "key": "window",
+      "value": "1m",
+      "type": "string",
+      "description": "Optional Go duration for rate/increase and histogram windows. Valid range: 1m through 1h."
+    }
+  ],
+  "item": [
+    {
+      "name": "Start here",
+      "description": "Use these requests in order to understand the current cluster contract before building another API consumer.",
+      "item": [
+        {
+          "name": "Status and health summary",
+          "request": {
+            "method": "GET",
+            "description": "Returns backend readiness, discovery/profile freshness, graph freshness, and supported derived-health summary. `freshness` is the age of the newest materialized graph snapshot, not the age of every telemetry sample.",
+            "url": "{{baseUrl}}/api/v1/status"
+          }
+        },
+        {
+          "name": "Discovery capability profile",
+          "request": {
+            "method": "GET",
+            "description": "Returns every compiled source module with its direct/derived kind, availability status, signals, and bounded probe evidence. Use this to adapt an application to the currently detected cluster rather than assuming Prometheus, Istio, or servicegraph are present.",
+            "url": "{{baseUrl}}/api/v1/discovery"
+          }
+        },
+        {
+          "name": "Latest graph snapshot",
+          "request": {
+            "method": "GET",
+            "description": "Returns the latest complete materialized graph, its snapshot ID, summary, nodes, and relations. Add `?at={{snapshotAt}}` to select a retained graph at a time.",
+            "url": "{{baseUrl}}/api/v1/graph?at={{snapshotAt}}"
+          }
+        },
+        {
+          "name": "Canonical metric catalog",
+          "request": {
+            "method": "GET",
+            "description": "Returns supported canonical metrics, scopes, applicability, units, declared source priorities, and query defaults. A consumer should use this endpoint to populate metric choices instead of hard-coding raw collector metric names.",
+            "url": "{{baseUrl}}/api/v1/metrics/catalog"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Graph",
+      "description": "The graph is a sequence of complete materialized structural-and-observation views. Canonical IDs emitted here are the identifiers used by metric and edge queries.",
+      "item": [
+        {
+          "name": "List nodes",
+          "request": {
+            "method": "GET",
+            "description": "Lists nodes from one selected materialized graph. Enable `kind` and/or `namespace` to filter. Use the returned `id` as `entityId` in metric queries or as an edge endpoint filter.",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/graph/nodes?page_size={{pageSize}}&next_token={{nextToken}}&kind={{kind}}&namespace={{namespace}}&at={{snapshotAt}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "graph", "nodes"],
+              "query": [
+                { "key": "page_size", "value": "{{pageSize}}", "description": "Optional page size, maximum 1000." },
+                { "key": "next_token", "value": "{{nextToken}}", "description": "Optional opaque cursor from the prior response.", "disabled": true },
+                { "key": "kind", "value": "{{kind}}", "description": "Optional entity kind filter.", "disabled": true },
+                { "key": "namespace", "value": "{{namespace}}", "description": "Optional namespace filter.", "disabled": true },
+                { "key": "at", "value": "{{snapshotAt}}", "description": "Optional RFC3339 materialized graph time.", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get one node with relations",
+          "request": {
+            "method": "GET",
+            "description": "Gets one canonical entity and its inbound/outbound graph relations from the selected materialized snapshot. Set `entityId` to an ID returned by List nodes.",
+            "url": "{{baseUrl}}/api/v1/graph/nodes/{{entityId}}?at={{snapshotAt}}"
+          }
+        },
+        {
+          "name": "List edges",
+          "request": {
+            "method": "GET",
+            "description": "Lists edges from one selected materialized graph. Enable any combination of `source`, `target`, and `relation` to narrow the result. Use canonical IDs, not Kubernetes names, for source/target.",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/graph/edges?page_size={{pageSize}}&next_token={{nextToken}}&source={{sourceEntityId}}&target={{targetEntityId}}&relation={{relation}}&at={{snapshotAt}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "graph", "edges"],
+              "query": [
+                { "key": "page_size", "value": "{{pageSize}}", "description": "Optional page size, maximum 1000." },
+                { "key": "next_token", "value": "{{nextToken}}", "description": "Optional opaque cursor from the prior response.", "disabled": true },
+                { "key": "source", "value": "{{sourceEntityId}}", "description": "Optional canonical source entity ID.", "disabled": true },
+                { "key": "target", "value": "{{targetEntityId}}", "description": "Optional canonical target entity ID.", "disabled": true },
+                { "key": "relation", "value": "{{relation}}", "description": "Optional relation filter.", "disabled": true },
+                { "key": "at", "value": "{{snapshotAt}}", "description": "Optional RFC3339 materialized graph time.", "disabled": true }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Entities",
+      "description": "Entity endpoints offer a compact canonical entity lookup surface. Use graph endpoints when the application also needs graph relations and graph-summary context.",
+      "item": [
+        {
+          "name": "List entities",
+          "request": {
+            "method": "GET",
+            "description": "Lists canonical entities with optional `kind` and `namespace` filters. Use this for pickers and search indexes; retain the returned canonical IDs.",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/entities?page_size={{pageSize}}&next_token={{nextToken}}&kind={{kind}}&namespace={{namespace}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "entities"],
+              "query": [
+                { "key": "page_size", "value": "{{pageSize}}", "description": "Optional page size, maximum 1000." },
+                { "key": "next_token", "value": "{{nextToken}}", "description": "Optional opaque cursor from the prior response.", "disabled": true },
+                { "key": "kind", "value": "{{kind}}", "description": "Optional entity kind filter.", "disabled": true },
+                { "key": "namespace", "value": "{{namespace}}", "description": "Optional namespace filter.", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get one entity",
+          "request": {
+            "method": "GET",
+            "description": "Gets one canonical entity. Set `entityId` from a graph/entity list response.",
+            "url": "{{baseUrl}}/api/v1/entities/{{entityId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Metrics",
+      "description": "Metrics are catalog-backed, source-aware, and dimensional. Query only canonical metric names advertised by the catalog. Never merge label-distinct result series unless an application explicitly exposes and documents a truthful aggregation.",
+      "item": [
+        {
+          "name": "List catalog",
+          "request": {
+            "method": "GET",
+            "description": "Lists every supported metric. Each entry explains unit, instrument semantics, scope, applicable entity kinds, declared source priorities, and default query behavior.",
+            "url": "{{baseUrl}}/api/v1/metrics/catalog"
+          }
+        },
+        {
+          "name": "Filter catalog by category",
+          "request": {
+            "method": "GET",
+            "description": "Filters the catalog by a category. Set `category` to resource, traffic, latency, error, capacity, or health. Disable this query parameter to list all catalog metrics.",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/metrics/catalog?category={{category}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "metrics", "catalog"],
+              "query": [
+                { "key": "category", "value": "{{category}}", "description": "Optional category filter." }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Catalog coverage statistics",
+          "request": {
+            "method": "GET",
+            "description": "Returns catalog coverage/statistics. Use it for an inventory view, not as evidence that every source currently emits samples.",
+            "url": "{{baseUrl}}/api/v1/metrics/catalog/stats"
+          }
+        },
+        {
+          "name": "Metric samples",
+          "request": {
+            "method": "GET",
+            "description": "Returns timestamped samples for one canonical `metric_name`. `entity_id` may be repeated to query several entities. For an edge-scoped metric, enable both edge endpoint filters. Enable range, aggregation, and window only when appropriate for the metric's catalog definition. `aggregation`: latest, window_rate, active_rate, increase. `window`: 1m through 1h.",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/metrics?metric_name={{metricName}}&entity_id={{entityId}}&edge_source_id={{sourceEntityId}}&edge_target_id={{targetEntityId}}&from={{from}}&to={{to}}&aggregation={{aggregation}}&window={{window}}&page_size={{pageSize}}&next_token={{nextToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "metrics"],
+              "query": [
+                { "key": "metric_name", "value": "{{metricName}}", "description": "Required canonical metric name from the catalog." },
+                { "key": "entity_id", "value": "{{entityId}}", "description": "Optional canonical entity ID. Add another entity_id query item to request multiple entities.", "disabled": true },
+                { "key": "edge_source_id", "value": "{{sourceEntityId}}", "description": "Optional canonical source ID for an edge-scoped metric.", "disabled": true },
+                { "key": "edge_target_id", "value": "{{targetEntityId}}", "description": "Optional canonical target ID for an edge-scoped metric.", "disabled": true },
+                { "key": "from", "value": "{{from}}", "description": "Optional RFC3339 range start.", "disabled": true },
+                { "key": "to", "value": "{{to}}", "description": "Optional RFC3339 range end.", "disabled": true },
+                { "key": "aggregation", "value": "{{aggregation}}", "description": "Optional aggregation supported by the catalog metric.", "disabled": true },
+                { "key": "window", "value": "{{window}}", "description": "Optional 1m-1h aggregation window.", "disabled": true },
+                { "key": "page_size", "value": "{{pageSize}}", "description": "Optional page size, maximum 1000." },
+                { "key": "next_token", "value": "{{nextToken}}", "description": "Optional opaque cursor from the prior response.", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Metric series",
+          "request": {
+            "method": "GET",
+            "description": "Returns the current query result as one item per complete label-distinct series, with query metadata and labels. Use this for metric cards/tables. It has the same filters as Metric samples, but paginates the series rather than just treating dimensions as display text. Raw samples in the response are scoped to this visible series page.",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/metrics/series?metric_name={{metricName}}&entity_id={{entityId}}&edge_source_id={{sourceEntityId}}&edge_target_id={{targetEntityId}}&from={{from}}&to={{to}}&aggregation={{aggregation}}&window={{window}}&page_size={{pageSize}}&next_token={{nextToken}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "metrics", "series"],
+              "query": [
+                { "key": "metric_name", "value": "{{metricName}}", "description": "Required canonical metric name from the catalog." },
+                { "key": "entity_id", "value": "{{entityId}}", "description": "Optional canonical entity ID. Add another entity_id query item to request multiple entities.", "disabled": true },
+                { "key": "edge_source_id", "value": "{{sourceEntityId}}", "description": "Optional canonical source ID for an edge-scoped metric.", "disabled": true },
+                { "key": "edge_target_id", "value": "{{targetEntityId}}", "description": "Optional canonical target ID for an edge-scoped metric.", "disabled": true },
+                { "key": "from", "value": "{{from}}", "description": "Optional RFC3339 range start.", "disabled": true },
+                { "key": "to", "value": "{{to}}", "description": "Optional RFC3339 range end.", "disabled": true },
+                { "key": "aggregation", "value": "{{aggregation}}", "description": "Optional aggregation supported by the catalog metric.", "disabled": true },
+                { "key": "window", "value": "{{window}}", "description": "Optional 1m-1h aggregation window.", "disabled": true },
+                { "key": "page_size", "value": "{{pageSize}}", "description": "Optional page size, maximum 1000." },
+                { "key": "next_token", "value": "{{nextToken}}", "description": "Optional opaque cursor from the prior response.", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Service graph request rate by edge",
+          "request": {
+            "method": "GET",
+            "description": "Example edge query. Set `sourceEntityId` and `targetEntityId` from a `calls` graph edge, then send. Label-distinct results can legitimately include separate HTTP response status-code series; preserve them rather than combining 2xx and 5xx traffic into one value.",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/metrics/series?metric_name=servicegraph.request.count&edge_source_id={{sourceEntityId}}&edge_target_id={{targetEntityId}}&aggregation=window_rate&window=1m&page_size={{pageSize}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "metrics", "series"],
+              "query": [
+                { "key": "metric_name", "value": "servicegraph.request.count", "description": "Canonical service-graph request counter." },
+                { "key": "edge_source_id", "value": "{{sourceEntityId}}", "description": "Required in practice for a specific calls edge." },
+                { "key": "edge_target_id", "value": "{{targetEntityId}}", "description": "Required in practice for a specific calls edge." },
+                { "key": "aggregation", "value": "window_rate", "description": "Request rate over the specified window." },
+                { "key": "window", "value": "1m", "description": "One-minute rate window." },
+                { "key": "page_size", "value": "{{pageSize}}", "description": "Optional page size, maximum 1000." }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

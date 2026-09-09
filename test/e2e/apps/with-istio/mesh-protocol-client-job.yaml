@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mesh-protocol-client
+  namespace: karthos-demo
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: mesh-protocol-client
+      annotations:
+        proxy.istio.io/config: '{"holdApplicationUntilProxyStarts":true}'
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mesh-protocol-client
+          image: localhost:5001/mesh-protocol-go:latest
+          imagePullPolicy: Always
+          args:
+            - --mode=client
+            - --grpc-target=mesh-protocol-server:50051
+            - --tcp-target=mesh-protocol-server:9000
+            - --unary=20
+            - --stream-messages=5
+            - --tcp-connections=10
+            - --tcp-bytes=1024
+            - --warmup-wait=180s
+            - --linger=180s

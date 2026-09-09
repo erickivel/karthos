@@ -1,0 +1,15 @@
+apiVersion: v2
+name: karthos
+description: Discovery-driven OpenTelemetry collector deployment for Karthos
+type: application
+version: 0.1.0
+appVersion: "0.156.0"
+dependencies:
+  - name: postgresql
+    version: "~18.5"
+    repository: https://charts.bitnami.com/bitnami
+    condition: storage.postgresql.enabled
+  - name: victoria-metrics-single
+    version: "~0.33"
+    repository: https://victoriametrics.github.io/helm-charts
+    condition: storage.victoriametrics.enabled

@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-protocol-server
+  namespace: karthos-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mesh-protocol-server
+  template:
+    metadata:
+      labels:
+        app: mesh-protocol-server
+    spec:
+      containers:
+        - name: mesh-protocol-server
+          image: localhost:5001/mesh-protocol-go:latest
+          imagePullPolicy: Always
+          args:
+            - --mode=server
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: tcp
+              containerPort: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-protocol-server
+  namespace: karthos-demo
+spec:
+  selector:
+    app: mesh-protocol-server
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      appProtocol: grpc
+    - name: tcp
+      port: 9000
+      targetPort: tcp
+      appProtocol: tcp

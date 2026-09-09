@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
 )
 
 func seedEntities(t *testing.T) *persistence.InMemoryEntityRegistry {
@@ -24,7 +24,7 @@ func seedEntities(t *testing.T) *persistence.InMemoryEntityRegistry {
 	require.NoError(t, reg.UpsertEntity(ctx, entities.NewPod("cluster", "kube-system", "pod-b", map[string]string{
 		"cluster": "cluster", "namespace": "kube-system", "name": "pod-b",
 	})))
-	require.NoError(t, reg.UpsertEntity(ctx, entities.NewService("cluster", "default", "svc-a", nil, map[string]string{
+	require.NoError(t, reg.UpsertEntity(ctx, entities.NewService("cluster", "default", "svc-a", map[string]string{
 		"cluster": "cluster", "namespace": "default", "name": "svc-a",
 	})))
 	return reg
@@ -89,40 +89,6 @@ func TestListEntitiesPagination(t *testing.T) {
 	ents2 := data2["entities"].([]any)
 	require.Len(t, ents2, 1)
 	require.Empty(t, nextToken2)
-}
-
-func TestListEntitiesSuppressesLegacyNamespaceLessServiceDuplicates(t *testing.T) {
-	reg := persistence.NewInMemoryEntityRegistry()
-	ctx := context.Background()
-	require.NoError(t, reg.UpsertEntity(ctx, &persistence.StoredEntity{
-		EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "oksg-demo", "gateway-go"),
-		EntityKind: entities.KindService,
-		Cluster:    "cluster",
-		Namespace:  "oksg-demo",
-		Name:       "gateway-go",
-		Metadata:   map[string]string{"name": "gateway-go", "namespace": "oksg-demo"},
-	}))
-	require.NoError(t, reg.UpsertEntity(ctx, &persistence.StoredEntity{
-		EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "gateway-go"),
-		EntityKind: entities.KindService,
-		Cluster:    "cluster",
-		Name:       "gateway-go",
-		Metadata:   map[string]string{"name": "gateway-go"},
-	}))
-
-	srv := newTestServer(t, Config{EntityRegistry: reg})
-	defer srv.cancel()
-
-	resp := doGet(t, srv, "/api/v1/entities?kind=service")
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	data := parsePaginatedData(t, resp)
-	require.EqualValues(t, 1, data["total"])
-	entitiesData := data["entities"].([]any)
-	require.Len(t, entitiesData, 1)
-	entity := entitiesData[0].(map[string]any)
-	require.Equal(t, "oksg-demo", entity["namespace"])
 }
 
 func TestGetEntityByID(t *testing.T) {

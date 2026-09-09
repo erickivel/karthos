@@ -153,12 +153,6 @@
   box-shadow: 0 1px 0 rgb(255 255 255 / 4%) inset;
 }
 
-.prop {
-  display: flex;
-  gap: 8px;
-  font-size: 0.74rem;
-}
-
 .propKey {
   color: var(--color-text-muted);
   flex-shrink: 0;
@@ -175,46 +169,6 @@
   margin-left: auto;
   text-align: right;
   font-size: 0.74rem;
-}
-
-.telemetryPanel {
-  padding: 20px;
-  background: var(--surface-module);
-  border: 1px solid var(--surface-divider);
-  border-radius: 8px;
-  box-shadow: 0 1px 0 rgb(255 255 255 / 5%) inset, 0 10px 28px rgb(0 0 0 / 18%);
-}
-
-.telemetryList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.telemetryRow {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: #c9ccd3;
-  font-size: 0.82rem;
-}
-
-.telemetryRow strong {
-  color: var(--color-signal);
-  font-size: 0.9rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.telemetryRow[data-tone="alert"] strong {
-  color: #ef4444;
-}
-
-.telemetryRow[data-tone="info"] strong {
-  color: var(--color-info);
-}
-
-.telemetryRow[data-tone="muted"] strong {
-  color: var(--color-text-muted);
 }
 
 .dataCardStack {
@@ -424,99 +378,4 @@
 
 .directionIcon[data-direction="outbound"] {
   color: var(--inspector-outbound);
-}
-
-.edgeMeshChips {
-  display: inline-flex;
-  gap: 2px;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.loadingSubtitle {
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #89919d;
-  animation: inspector-pulse 1.4s ease-in-out infinite;
-}
-
-.skeletonRow {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 56px;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 0;
-  border-top: 1px solid rgb(255 255 255 / 7%);
-}
-
-.skeletonRow:first-child {
-  border-top: none;
-}
-
-.skeletonDot {
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 6%);
-  animation: inspector-pulse 1.4s ease-in-out infinite;
-}
-
-.skeletonBar {
-  height: 10px;
-  border-radius: 2px;
-  background: linear-gradient(
-    90deg,
-    rgb(255 255 255 / 5%) 0%,
-    rgb(255 255 255 / 12%) 50%,
-    rgb(255 255 255 / 5%) 100%
-  );
-  background-size: 200% 100%;
-  animation: inspector-shimmer 1.6s linear infinite;
-}
-
-.skeletonBarShort {
-  width: 60%;
-}
-
-.errorState {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 0 2px;
-}
-
-.errorMessage {
-  color: #ef4444;
-  font-size: 0.74rem;
-}
-
-.retryBtn {
-  align-self: flex-start;
-  padding: 4px 10px;
-  background: rgb(239 68 68 / 12%);
-  border: 1px solid rgb(239 68 68 / 28%);
-  color: #ef9a9a;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.retryBtn:hover {
-  background: rgb(239 68 68 / 20%);
-  color: #fff;
-}
-
-@keyframes inspector-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-@keyframes inspector-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
 }

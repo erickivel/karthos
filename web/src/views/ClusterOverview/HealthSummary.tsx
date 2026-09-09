@@ -1,5 +1,6 @@
 import type { HealthSummary as HealthSummaryData } from '@/types/status'
 import { KpiCard } from './KpiCard'
+import { podHealthBuckets } from './overviewModel'
 import styles from './HealthSummary.module.css'
 
 interface HealthSummaryProps {
@@ -14,7 +15,7 @@ export function HealthSummary({ healthSummary }: HealthSummaryProps) {
       <div className={styles.header}>
         <h2 className={styles.title}>Runtime Health</h2>
         <span className={styles.subtitle}>
-          Latest node readiness and pod health-status enum from `/status`
+          Current quality and pod phase summary from `/api/v1/status`
         </span>
       </div>
 
@@ -29,41 +30,12 @@ export function HealthSummary({ healthSummary }: HealthSummaryProps) {
           value={healthSummary.nodes.unhealthy}
           accent={healthSummary.nodes.unhealthy > 0 ? 'alert' : 'muted'}
         />
-        <KpiCard
-          label="Healthy Pods"
-          value={healthSummary.pods.healthy}
-          accent="signal"
-        />
-        <KpiCard
-          label="Restarting Pods"
-          value={healthSummary.pods.restarting}
-          accent={healthSummary.pods.restarting > 0 ? 'alert' : 'muted'}
-        />
-        <KpiCard
-          label="Running, Not Ready"
-          value={healthSummary.pods.running_not_ready}
-          accent={healthSummary.pods.running_not_ready > 0 ? 'info' : 'muted'}
-        />
-        <KpiCard
-          label="Pending Pods"
-          value={healthSummary.pods.pending}
-          accent={healthSummary.pods.pending > 0 ? 'info' : 'muted'}
-        />
-        <KpiCard
-          label="Failed Pods"
-          value={healthSummary.pods.failed}
-          accent={healthSummary.pods.failed > 0 ? 'alert' : 'muted'}
-        />
-        <KpiCard
-          label="Succeeded Pods"
-          value={healthSummary.pods.succeeded}
-          accent={healthSummary.pods.succeeded > 0 ? 'info' : 'muted'}
-        />
-        <KpiCard
-          label="Unknown Pods"
-          value={healthSummary.pods.unknown}
-          accent={healthSummary.pods.unknown > 0 ? 'info' : 'muted'}
-        />
+        {podHealthBuckets(healthSummary.pods).map(([label, value, accent]) => (
+          <KpiCard key={label} label={label} value={value} accent={accent} />
+        ))}
+      </div>
+      <div className={styles.quality}>
+        Health quality: nodes <strong>{healthSummary.nodes.status}</strong>, pods <strong>{healthSummary.pods.status}</strong>
       </div>
     </section>
   )

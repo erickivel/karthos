@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "karthos.backendName" . }}
+  namespace: {{ include "karthos.namespace" . }}
+  labels:
+    {{- include "karthos.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "karthos.name" . }}
+    app.kubernetes.io/component: backend
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.backend.grpcPort }}
+      targetPort: otlp-grpc
+    - name: api
+      port: {{ .Values.backend.service.apiPort }}
+      targetPort: api

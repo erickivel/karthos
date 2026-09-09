@@ -1,13 +1,10 @@
 package entities
 
 type Node struct {
-	EntityID            EntityID          `json:"id"`
-	ClusterName         string            `json:"cluster_name"`
-	Name                string            `json:"name"`
-	CPUCores            uint32            `json:"cpu_cores,omitempty"`
-	CPUClockHz          uint64            `json:"cpu_clock_hz,omitempty"`
-	MemoryCapacityBytes uint64            `json:"memory_capacity_bytes,omitempty"`
-	Metadata            map[string]string `json:"labels,omitempty"`
+	EntityID    EntityID          `json:"id"`
+	ClusterName string            `json:"cluster_name"`
+	Name        string            `json:"name"`
+	Metadata    map[string]string `json:"labels,omitempty"`
 }
 
 func NewNode(clusterName, name string, labels map[string]string) Node {

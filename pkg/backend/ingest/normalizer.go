@@ -3,66 +3,65 @@ package ingest
 import (
 	"context"
 	"fmt"
-	"strings"
-	"sync/atomic"
 	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/schema"
-	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/schema"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 // OTLPNormalizer normalizes OTLP metric envelopes into semconv MetricSamples.
 type OTLPNormalizer struct {
-	resolver   EntityResolver
-	dialect    *metrics.DialectRegistry
-	assignment metrics.Assignment // optional; nil disables source enforcement
-	dropped    atomic.Uint64      // count of samples dropped due to source mismatch; concurrent-safe
+	resolver     EntityResolver
+	sourcePolicy *MetricSourcePolicy
+	modules      sources.Registry
+	catalog      map[string]metrics.CanonicalMetric
 }
 
 // NormalizerOption configures optional behavior on the OTLPNormalizer.
 type NormalizerOption func(*OTLPNormalizer)
 
-// WithAssignment enables source-mismatch enforcement: a sample whose
-// oksg_source attribute disagrees with assignment[canonical] is dropped.
-// Pass an empty/nil assignment to disable enforcement (default).
-func WithAssignment(a metrics.Assignment) NormalizerOption {
-	return func(n *OTLPNormalizer) { n.assignment = a }
+// WithSourcePolicy shares one source policy with the normalizer.
+func WithSourcePolicy(policy *MetricSourcePolicy) NormalizerOption {
+	return func(n *OTLPNormalizer) {
+		if policy != nil {
+			n.sourcePolicy = policy
+		}
+	}
 }
 
 // NewOTLPNormalizer creates a new OTLPNormalizer backed by the given EntityResolver.
-func NewOTLPNormalizer(resolver EntityResolver, dialect *metrics.DialectRegistry, opts ...NormalizerOption) *OTLPNormalizer {
+func NewOTLPNormalizer(resolver EntityResolver, modules sources.Registry, opts ...NormalizerOption) *OTLPNormalizer {
 	if resolver == nil {
 		panic("ingest.NewOTLPNormalizer: resolver is required")
 	}
-	if dialect == nil {
-		panic("ingest.NewOTLPNormalizer: dialect registry is required")
+	if len(modules.MetricIDs()) == 0 {
+		panic("ingest.NewOTLPNormalizer: source registry is required")
 	}
-	n := &OTLPNormalizer{resolver: resolver, dialect: dialect}
+	n := &OTLPNormalizer{
+		resolver:     resolver,
+		modules:      modules,
+		catalog:      metrics.CatalogByName(),
+		sourcePolicy: NewMetricSourcePolicy(modules.MetricIDs(), nil),
+	}
 	for _, opt := range opts {
 		opt(n)
 	}
 	return n
 }
 
-// DroppedSampleCount returns the number of samples dropped because their
-// oksg_source did not match the assigned source for the canonical metric.
-// Useful for observability and tests. Safe for concurrent callers.
-func (n *OTLPNormalizer) DroppedSampleCount() uint64 { return n.dropped.Load() }
-
 // Normalize deserializes a protojson-encoded ResourceMetrics from the envelope payload,
 // resolves the entity, and maps each recognized metric to a canonical MetricSample.
 //
-// For histogram-typed metrics the raw cumulative `sum` and `count` are emitted as two
-// separate samples (with suffixes `_sum` and `_count`), so that query-time consumers
-// can derive a rate-weighted mean via `rate(<metric>_sum[1m]) / rate(<metric>_count[1m])`.
-// Emitting a single precomputed mean would collapse a cumulative histogram into a
-// lifetime average, which is misleading.
+// For histogram-typed metrics the raw `sum` and `count` are emitted as separate
+// samples (with suffixes `_sum` and `_count`). Delta histograms retain their
+// incremental values and carry temporality=delta so query-time consumers can derive
+// a windowed mean without process-local state.
 func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvelope) ([]metrics.MetricSample, error) {
 	var rm metricspb.ResourceMetrics
 	if err := protojson.Unmarshal(envelope.Payload, &rm); err != nil {
@@ -73,57 +72,59 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
-			translatedName := n.dialect.Translate(metric.Name)
-			mapping, ok := metrics.OTLPSemconvMetrics[translatedName]
-			if !ok {
-				continue
-			}
-
 			// Histograms are decomposed into _sum / _count pairs.
 			if h := metric.GetHistogram(); h != nil {
 				for _, dp := range h.DataPoints {
+					if dp.TimeUnixNano == 0 {
+						continue
+					}
+					parsed, definition, validation, ok := n.parseAndValidate(metric.Name, dp.Attributes)
+					if !ok {
+						continue
+					}
+					if definition.Instrument != metrics.InstrumentHistogram {
+						continue
+					}
 					if dp.Count == 0 || dp.Sum == nil {
 						continue
 					}
-					metricName := resolveDirectionalName(translatedName, dp.Attributes)
-					if metricName == "" {
+					plan := newNormalizationPlan(metric.Name, parsed.CanonicalName, validation.Source, envelope.Resource, dp.Attributes, parsed)
+					if plan.Unit == "" {
+						plan.Unit = definition.StoredUnit
+					}
+					if err := applySourceNormalization(ctx, n.modules, n.resolver, &plan); err != nil {
+						return nil, fmt.Errorf("apply %s source module: %w", plan.Source, err)
+					}
+					if plan.Skip || plan.MetricName == "" {
 						continue
 					}
-					if n.shouldDropForSource(metricName, dp.Attributes) {
-						continue
-					}
-
-					entityID, skip, err := n.resolveMetricEntity(ctx, envelope.Resource, metric.Name, translatedName, dp.Attributes)
-					if err != nil {
-						return nil, fmt.Errorf("resolve entity: %w", err)
-					}
-					if skip {
-						continue
+					if plan.MetricName != parsed.CanonicalName {
+						return nil, fmt.Errorf("source module %q changed parsed metric name %q", plan.Source, parsed.CanonicalName)
 					}
 
 					ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
-					labels := baseLabels(envelope.Source, dp.Attributes)
-					applyMeshMetadataLabels(dp.Attributes, labels)
-					applyServiceGraphEdgeLabels(ctx, n.resolver, envelope.Resource, metric.Name, translatedName, dp.Attributes, labels)
-					factor := conversionFactor(metric.Name, mapping)
-					unit := sampleUnit(metricName, mapping, dp.Attributes)
+					sumValue := *dp.Sum * plan.ConversionFactor
+					countValue := float64(dp.Count)
+					if usesDeltaHistogramSemantics(h.AggregationTemporality) {
+						plan.Labels["temporality"] = "delta"
+					}
 
 					samples = append(samples,
 						metrics.MetricSample{
-							MetricName: metricName + "_sum",
-							EntityID:   entityID,
-							Value:      *dp.Sum * factor,
+							MetricName: plan.MetricName + "_sum",
+							EntityID:   plan.EntityID,
+							Value:      sumValue,
 							Timestamp:  ts,
-							Labels:     labels,
-							Unit:       unit,
+							Labels:     plan.Labels,
+							Unit:       plan.Unit,
 						},
 						metrics.MetricSample{
-							MetricName: metricName + "_count",
-							EntityID:   entityID,
-							Value:      float64(dp.Count),
+							MetricName: plan.MetricName + "_count",
+							EntityID:   plan.EntityID,
+							Value:      countValue,
 							Timestamp:  ts,
-							Labels:     cloneLabels(labels),
-							Unit:       unit,
+							Labels:     cloneLabels(plan.Labels),
+							Unit:       metrics.UnitCount,
 						},
 					)
 				}
@@ -132,47 +133,55 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 
 			dps := collectScalarDataPoints(metric)
 			for _, dp := range dps {
+				if dp.TimeUnixNano == 0 {
+					continue
+				}
+				parsed, definition, validation, ok := n.parseAndValidate(metric.Name, dp.Attributes)
+				if !ok {
+					continue
+				}
+				if definition.Instrument == metrics.InstrumentHistogram {
+					continue
+				}
 				ts := time.Unix(0, int64(dp.TimeUnixNano)).UTC() //#nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
-				value := dp.Value * conversionFactor(metric.Name, mapping)
-
-				metricName := resolveDirectionalName(translatedName, dp.Attributes)
-				if metricName == "" {
+				plan := newNormalizationPlan(metric.Name, parsed.CanonicalName, validation.Source, envelope.Resource, dp.Attributes, parsed)
+				if plan.Unit == "" {
+					plan.Unit = definition.StoredUnit
+				}
+				if err := applySourceNormalization(ctx, n.modules, n.resolver, &plan); err != nil {
+					return nil, fmt.Errorf("apply %s source module: %w", plan.Source, err)
+				}
+				if plan.Skip || plan.MetricName == "" {
 					continue
 				}
-				if n.shouldDropForSource(metricName, dp.Attributes) {
-					continue
+				if plan.MetricName != parsed.CanonicalName {
+					return nil, fmt.Errorf("source module %q changed parsed metric name %q", plan.Source, parsed.CanonicalName)
 				}
-
-				entityID, skip, err := n.resolveMetricEntity(ctx, envelope.Resource, metric.Name, translatedName, dp.Attributes)
-				if err != nil {
-					return nil, fmt.Errorf("resolve entity: %w", err)
+				value := dp.Value * plan.ConversionFactor
+				if usesDeltaCounterSemantics(definition.Instrument, dp.AggregationTemporality) {
+					plan.Labels["temporality"] = "delta"
 				}
-				if skip {
-					continue
-				}
-
-				labels := baseLabels(envelope.Source, dp.Attributes)
-				applyMeshMetadataLabels(dp.Attributes, labels)
-				applyServiceGraphEdgeLabels(ctx, n.resolver, envelope.Resource, metric.Name, translatedName, dp.Attributes, labels)
 
 				samples = append(samples, metrics.MetricSample{
-					MetricName: metricName,
-					EntityID:   entityID,
+					MetricName: plan.MetricName,
+					EntityID:   plan.EntityID,
 					Value:      value,
 					Timestamp:  ts,
-					Labels:     labels,
-					Unit:       sampleUnit(metricName, mapping, dp.Attributes),
+					Labels:     plan.Labels,
+					Unit:       plan.Unit,
 				})
-				if shouldEmitIstioErrorCount(metric.Name, dp.Attributes) {
-					errorMapping := metrics.OTLPSemconvMetrics["servicegraph.request.error.count"]
-					errorLabels := cloneLabels(labels)
+				for _, derived := range plan.Derived {
+					derivedDefinition, accepted := n.catalog[derived.MetricName]
+					if !accepted || !n.sourcePolicy.Validate(derived.MetricName, dp.Attributes).Accepted() {
+						continue
+					}
 					samples = append(samples, metrics.MetricSample{
-						MetricName: "servicegraph.request.error.count",
-						EntityID:   entityID,
-						Value:      dp.Value * errorMapping.ConversionFactor,
+						MetricName: derived.MetricName,
+						EntityID:   plan.EntityID,
+						Value:      dp.Value * derived.ConversionFactor,
 						Timestamp:  ts,
-						Labels:     errorLabels,
-						Unit:       errorMapping.Unit,
+						Labels:     cloneLabels(plan.Labels),
+						Unit:       derivedDefinition.StoredUnit,
 					})
 				}
 			}
@@ -180,40 +189,6 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 	}
 
 	return samples, nil
-}
-
-// shouldDropForSource enforces the source-assignment contract: when an
-// Assignment is configured and the canonical metric has a winning source, drop
-// any datapoint whose oksg_source attribute disagrees. Samples that don't carry
-// an oksg_source attribute are accepted (legacy / partially-instrumented path).
-//
-// canonicalName is the post-resolveDirectionalName canonical metric name.
-func (n *OTLPNormalizer) shouldDropForSource(canonicalName string, attrs []*commonpb.KeyValue) bool {
-	if len(n.assignment) == 0 {
-		return false
-	}
-	expected, ok := n.assignment[canonicalName]
-	if !ok || expected == "" {
-		return false
-	}
-	actual := firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm)
-	if actual == "" {
-		return false
-	}
-	if actual == expected {
-		return false
-	}
-	n.dropped.Add(1)
-	return true
-}
-
-func baseLabels(source string, attrs []*commonpb.KeyValue) map[string]string {
-	if override := firstKVString(attrs, semconv.AttrOKSGSource, semconv.AttrOKSGSourceProm); override != "" {
-		source = override
-	}
-	labels := map[string]string{semconv.LabelSource: source}
-	preserveTopologyMetricLabels(attrs, labels)
-	return labels
 }
 
 func cloneLabels(in map[string]string) map[string]string {
@@ -224,273 +199,11 @@ func cloneLabels(in map[string]string) map[string]string {
 	return out
 }
 
-// applyServiceGraphEdgeLabels annotates labels with servicegraph client/server identifiers.
-// edge_client_id / edge_server_id are only set when the referenced service resolves to a
-// canonical Service entity; otherwise only the raw edge_client / edge_server names are
-// preserved as context.
-func applyServiceGraphEdgeLabels(
-	ctx context.Context,
-	resolver EntityResolver,
-	resource map[string]string,
-	metricName string,
-	translatedName string,
-	attrs []*commonpb.KeyValue,
-	labels map[string]string,
-) {
-	if !isServiceGraphEdgeMetric(metricName, translatedName) {
-		return
-	}
-	if c := kvString(attrs, semconv.AttrClient); c != "" {
-		labels[semconv.LabelEdgeClient] = c
-		if clientID, ok := resolveServiceMetricEntityID(ctx, resolver, resource, c, kvString(attrs, semconv.AttrClientNamespace)); ok {
-			labels[semconv.LabelEdgeClientID] = string(clientID)
-		}
-	}
-	if s := kvString(attrs, semconv.AttrServer); s != "" {
-		labels[semconv.LabelEdgeServer] = s
-		if serverID, ok := resolveServiceMetricEntityID(ctx, resolver, resource, s, kvString(attrs, semconv.AttrServerNamespace)); ok {
-			labels[semconv.LabelEdgeServerID] = string(serverID)
-		}
-	}
-}
-
-// resolveMetricEntity resolves the entity a metric datapoint belongs to.
-//
-// Returns (id, skip, err):
-//   - skip=true indicates the datapoint must be dropped (e.g. servicegraph client
-//     attribute can't be mapped to a canonical Service). Callers must not emit.
-//   - skip=false + id populated is the normal success path.
-//   - err != nil is a hard ingest failure.
-//
-// Connector metrics (servicegraph, spanmetrics) are conceptually service-scoped.
-// If a canonical Service entity can't be derived, we deliberately do NOT fall
-// back to the emitting resource (which is typically the collector's own pod or
-// node) — doing so misattributes service traffic to the collector.
-func (n *OTLPNormalizer) resolveMetricEntity(
-	ctx context.Context,
-	resource map[string]string,
-	metricName string,
-	translatedName string,
-	attrs []*commonpb.KeyValue,
-) (entities.EntityID, bool, error) {
-	if isServiceGraphEdgeMetric(metricName, translatedName) {
-		client := kvString(attrs, semconv.AttrClient)
-		if client == "" {
-			return "", true, nil
-		}
-		if clientID, ok := resolveServiceMetricEntityID(ctx, n.resolver, resource, client, kvString(attrs, semconv.AttrClientNamespace)); ok {
-			return clientID, false, nil
-		}
-		return "", true, nil
-	}
-
-	if strings.HasPrefix(metricName, "traces.span.metrics.") {
-		serviceName := resource[semconv.ResourceServiceName]
-		if serviceName == "" {
-			return "", true, nil
-		}
-		if serviceID, ok := resolveServiceMetricEntityID(ctx, n.resolver, resource, serviceName, resource[semconv.ResourceK8sNamespaceName]); ok {
-			return serviceID, false, nil
-		}
-		return "", true, nil
-	}
-
-	if isVolumeMetric(translatedName) {
-		namespace := resource[semconv.ResourceK8sNamespaceName]
-		claimName := firstKVString(attrs, semconv.AttrK8sPVCName, "persistentvolumeclaim", "persistentvolumeclaim_name")
-		if namespace != "" && claimName != "" {
-			clusterName := resource[semconv.ResourceK8sClusterName]
-			if otlpResolver, ok := n.resolver.(*OTLPEntityResolver); ok && otlpResolver.clusterName != "" {
-				clusterName = otlpResolver.clusterName
-			}
-			return entities.ComputeEntityID(entities.KindPVC, clusterName, namespace, claimName), false, nil
-		}
-	}
-
-	id, err := n.resolver.Resolve(ctx, resource)
-	if err != nil {
-		return "", false, err
-	}
-	return id, false, nil
-}
-
-func isVolumeMetric(metricName string) bool {
-	return strings.HasPrefix(metricName, "k8s.volume.")
-}
-
-func isServiceGraphEdgeMetric(metricName, translatedName string) bool {
-	return strings.HasPrefix(metricName, "traces.service.graph.") ||
-		strings.HasPrefix(metricName, "istio_") ||
-		strings.HasPrefix(translatedName, "servicegraph.")
-}
-
-func conversionFactor(metricName string, mapping metrics.OTLPMetricMapping) float64 {
-	if metricName == "istio_request_duration_milliseconds" {
-		return 1e6
-	}
-	return mapping.ConversionFactor
-}
-
-func sampleUnit(metricName string, mapping metrics.OTLPMetricMapping, attrs []*commonpb.KeyValue) metrics.Unit {
-	if isResourceQuotaMetric(metricName) {
-		return resourceQuotaUnit(kvString(attrs, semconv.AttrResource))
-	}
-	return mapping.Unit
-}
-
-func isResourceQuotaMetric(metricName string) bool {
-	return metricName == "k8s.resource_quota.hard_limit" || metricName == "k8s.resource_quota.used"
-}
-
-func resourceQuotaUnit(resource string) metrics.Unit {
-	switch strings.ToLower(resource) {
-	case "cpu", "requests.cpu", "limits.cpu":
-		return metrics.UnitMillicores
-	case "memory", "requests.memory", "limits.memory",
-		"ephemeral-storage", "requests.ephemeral-storage", "limits.ephemeral-storage",
-		"storage", "requests.storage":
-		return metrics.UnitBytes
-	case "pods", "services", "services.loadbalancers", "services.nodeports",
-		"configmaps", "secrets", "persistentvolumeclaims", "replicationcontrollers",
-		"resourcequotas", "requests.nvidia.com/gpu":
-		return metrics.UnitCount
-	}
-	if strings.HasPrefix(resource, "count/") {
-		return metrics.UnitCount
-	}
-	if strings.HasPrefix(resource, "requests.") && strings.HasSuffix(resource, "/storage") {
-		return metrics.UnitBytes
-	}
-	if strings.HasSuffix(resource, "/requests.storage") {
-		return metrics.UnitBytes
-	}
-	if strings.Contains(resource, "hugepages-") {
-		return metrics.UnitBytes
-	}
-	return metrics.UnitResource
-}
-
-func applyMeshMetadataLabels(attrs []*commonpb.KeyValue, labels map[string]string) {
-	for _, key := range []string{
-		semconv.AttrNetworkProtocolName,
-		semconv.AttrHTTPStatusCode,
-		semconv.AttrGRPCStatusCode,
-		semconv.AttrMeshPolicy,
-		semconv.AttrMeshSourcePrincipal,
-		semconv.AttrMeshDestinationPrincipal,
-		semconv.AttrMeshResponseFlags,
-		semconv.AttrMeshID,
-	} {
-		if value := meshAttrValue(attrs, key); value != "" {
-			labels[key] = value
-		}
-	}
-}
-
-func preserveTopologyMetricLabels(attrs []*commonpb.KeyValue, labels map[string]string) {
-	for _, key := range []string{
-		semconv.AttrK8sPVCName,
-		semconv.AttrK8sVolumeName,
-		semconv.AttrResource,
-		semconv.ResourceK8sPodName,
-		semconv.ResourceK8sNamespaceName,
-	} {
-		if value := kvString(attrs, key); value != "" {
-			labels[key] = value
-		}
-	}
-}
-
-func shouldEmitIstioErrorCount(metricName string, attrs []*commonpb.KeyValue) bool {
-	if metricName != "istio_requests_total" {
-		return false
-	}
-	status := kvString(attrs, semconv.AttrHTTPStatusCode)
-	if status == "" {
-		status = kvString(attrs, semconv.AttrHTTPStatusCodeProm)
-	}
-	return strings.HasPrefix(status, "5")
-}
-
-func meshAttrValue(attrs []*commonpb.KeyValue, canonical string) string {
-	switch canonical {
-	case semconv.AttrNetworkProtocolName:
-		return firstKVString(attrs, canonical, semconv.AttrNetworkProtocolNameProm)
-	case semconv.AttrHTTPStatusCode:
-		return firstKVString(attrs, canonical, semconv.AttrHTTPStatusCodeProm)
-	case semconv.AttrGRPCStatusCode:
-		return firstKVString(attrs, canonical, semconv.AttrGRPCStatusCodeProm)
-	case semconv.AttrMeshPolicy:
-		return firstKVString(attrs, canonical, semconv.AttrMeshPolicyProm)
-	case semconv.AttrMeshSourcePrincipal:
-		return firstKVString(attrs, canonical, semconv.AttrMeshSourcePrincipalProm)
-	case semconv.AttrMeshDestinationPrincipal:
-		return firstKVString(attrs, canonical, semconv.AttrMeshDestinationPrincipalProm)
-	case semconv.AttrMeshResponseFlags:
-		return firstKVString(attrs, canonical, semconv.AttrMeshResponseFlagsProm)
-	case semconv.AttrMeshID:
-		return firstKVString(attrs, canonical, semconv.AttrMeshIDProm)
-	default:
-		return kvString(attrs, canonical)
-	}
-}
-
-func firstKVString(attrs []*commonpb.KeyValue, keys ...string) string {
-	for _, key := range keys {
-		if value := kvString(attrs, key); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func resolveServiceMetricEntityID(
-	ctx context.Context,
-	resolver EntityResolver,
-	resource map[string]string,
-	serviceName, namespaceHint string,
-) (entities.EntityID, bool) {
-	if serviceName == "" {
-		return "", false
-	}
-
-	if otlpResolver, ok := resolver.(*OTLPEntityResolver); ok {
-		if serviceID, _, ok := otlpResolver.resolveCanonicalService(ctx, serviceName, namespaceHint); ok {
-			return serviceID, true
-		}
-	}
-
-	if fallbackNS := fallbackMetricServiceNamespace(resource, serviceName); fallbackNS != "" {
-		clusterName := resource[semconv.ResourceK8sClusterName]
-		if otlpResolver, ok := resolver.(*OTLPEntityResolver); ok && otlpResolver.clusterName != "" {
-			clusterName = otlpResolver.clusterName
-		}
-		return entities.ComputeEntityID(entities.KindService, clusterName, fallbackNS, serviceName), true
-	}
-
-	return "", false
-}
-
-func fallbackMetricServiceNamespace(resource map[string]string, serviceName string) string {
-	namespace := resource[semconv.ResourceK8sNamespaceName]
-	if namespace == "" {
-		return ""
-	}
-
-	resourceService := resource[semconv.ResourceServiceName]
-	if resourceService == "" || resourceService == serviceName {
-		return namespace
-	}
-	if resource[semconv.ResourceK8sNodeName] != "" {
-		return ""
-	}
-	return namespace
-}
-
 type scalarDataPoint struct {
-	Attributes   []*commonpb.KeyValue
-	TimeUnixNano uint64
-	Value        float64
+	Attributes             []*commonpb.KeyValue
+	TimeUnixNano           uint64
+	Value                  float64
+	AggregationTemporality metricspb.AggregationTemporality
 }
 
 // collectScalarDataPoints extracts scalar (gauge/sum) datapoints from OTLP metrics.
@@ -498,15 +211,18 @@ type scalarDataPoint struct {
 // pairs instead of being collapsed to a single scalar.
 func collectScalarDataPoints(metric *metricspb.Metric) []scalarDataPoint {
 	if g := metric.GetGauge(); g != nil {
-		return numberDataPointsToScalar(g.DataPoints)
+		return numberDataPointsToScalar(g.DataPoints, metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_UNSPECIFIED)
 	}
 	if s := metric.GetSum(); s != nil {
-		return numberDataPointsToScalar(s.DataPoints)
+		return numberDataPointsToScalar(s.DataPoints, s.AggregationTemporality)
 	}
 	return nil
 }
 
-func numberDataPointsToScalar(points []*metricspb.NumberDataPoint) []scalarDataPoint {
+func numberDataPointsToScalar(
+	points []*metricspb.NumberDataPoint,
+	temporality metricspb.AggregationTemporality,
+) []scalarDataPoint {
 	if len(points) == 0 {
 		return nil
 	}
@@ -524,54 +240,42 @@ func numberDataPointsToScalar(points []*metricspb.NumberDataPoint) []scalarDataP
 		}
 
 		scalars = append(scalars, scalarDataPoint{
-			Attributes:   dp.Attributes,
-			TimeUnixNano: dp.TimeUnixNano,
-			Value:        rawValue,
+			Attributes:             dp.Attributes,
+			TimeUnixNano:           dp.TimeUnixNano,
+			Value:                  rawValue,
+			AggregationTemporality: temporality,
 		})
 	}
 
 	return scalars
 }
 
-// resolveDirectionalName resolves metrics whose semantic identity depends on an
-// OTLP attribute, keeping the translated semconv name for all others.
-func resolveDirectionalName(metricName string, attrs []*commonpb.KeyValue) string {
-	switch metricName {
-	case "system.disk.io":
-		dir := kvString(attrs, semconv.AttrDirection)
-		if dir == "write" {
-			return "system.disk.io.write"
-		}
-		return "system.disk.io.read"
-	case "system.network.io":
-		dir := kvString(attrs, semconv.AttrDirection)
-		if dir == "transmit" || dir == "tx" {
-			return "system.network.io.transmit"
-		}
-		return "system.network.io.receive"
-	case "k8s.node.condition":
-		condType := kvString(attrs, semconv.AttrCondition)
-		switch condType {
-		case "Ready":
-			return "k8s.node.condition.ready"
-		case "MemoryPressure":
-			return "k8s.node.condition.memory_pressure"
-		case "DiskPressure":
-			return "k8s.node.condition.disk_pressure"
-		}
-		return "" // skip unknown conditions
+func usesDeltaCounterSemantics(
+	instrument metrics.MetricInstrument,
+	temporality metricspb.AggregationTemporality,
+) bool {
+	if instrument != metrics.InstrumentCounter {
+		return false
 	}
-	return metricName
+	return temporality == metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
 }
 
-// kvString returns the string value for key from a []*commonpb.KeyValue slice, or "".
-func kvString(attrs []*commonpb.KeyValue, key string) string {
-	for _, kv := range attrs {
-		if kv.Key == key && kv.Value != nil {
-			if sv, ok := kv.Value.Value.(*commonpb.AnyValue_StringValue); ok {
-				return sv.StringValue
-			}
-		}
+func (n *OTLPNormalizer) parseAndValidate(rawMetricName string, attrs []*commonpb.KeyValue) (contract.ParsedMetric, metrics.CanonicalMetric, SourceValidation, bool) {
+	parsed, ok := n.modules.ParseMetric(sourceFromAttrs(attrs), rawMetricName, contract.AttributeStrings(attrs))
+	if !ok {
+		return contract.ParsedMetric{}, metrics.CanonicalMetric{}, SourceValidation{}, false
 	}
-	return ""
+	definition, ok := n.catalog[parsed.CanonicalName]
+	if !ok {
+		return contract.ParsedMetric{}, metrics.CanonicalMetric{}, SourceValidation{}, false
+	}
+	validation := n.sourcePolicy.Validate(parsed.CanonicalName, attrs)
+	if !validation.Accepted() {
+		return contract.ParsedMetric{}, metrics.CanonicalMetric{}, SourceValidation{}, false
+	}
+	return parsed, definition, validation, true
+}
+
+func usesDeltaHistogramSemantics(temporality metricspb.AggregationTemporality) bool {
+	return temporality == metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
 }

@@ -95,6 +95,15 @@
   min-height: 140px;
 }
 
+.queryMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+}
+
 .empty {
   height: 140px;
   display: flex;

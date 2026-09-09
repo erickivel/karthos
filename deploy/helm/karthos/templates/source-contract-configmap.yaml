@@ -1,0 +1,14 @@
+{{- $profile := required "backend.sourceContract.capabilityProfile is required" .Values.backend.sourceContract.capabilityProfile }}
+{{- $plan := required "backend.sourceContract.sourcePlan is required" .Values.backend.sourceContract.sourcePlan }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "karthos.sourceContractName" . }}
+  namespace: {{ include "karthos.namespace" . }}
+  labels:
+    {{- include "karthos.componentLabels" (dict "context" . "component" "backend") | nindent 4 }}
+data:
+  capability-profile.json: |-
+{{ $profile | toPrettyJson | nindent 4 }}
+  source-plan.json: |-
+{{ $plan | toPrettyJson | nindent 4 }}

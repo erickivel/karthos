@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/erickivel/oksg/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/entities"
 )
 
 // ErrEntityNotFound is returned when an entity lookup finds no matching record.
@@ -44,4 +44,4 @@ func (e StoredEntity) ID() entities.EntityID { return e.EntityID }
 func (e StoredEntity) Kind() entities.EntityKind { return e.EntityKind }
 
 // Labels returns the entity metadata labels.
-func (e StoredEntity) Labels() map[string]string { return e.Metadata }
+func (e StoredEntity) Labels() map[string]string { return cloneStringMap(e.Metadata) }

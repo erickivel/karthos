@@ -1,18 +1,25 @@
 import { useState } from 'react'
-import type { SourceRef } from '@/types/metrics'
+import type { MetricQuery, SourceRef } from '@/types/metrics'
+import { metricDetailRows, type SeriesLabel } from './metricPresentation'
 import styles from './InfoTooltip.module.css'
 
 interface Props {
   canonicalName: string
+  idSuffix?: string
   sampleCount: number
   sources?: SourceRef[]
-  activeSource?: string
+  meaning: string
+  observedSource?: string
+  query: MetricQuery
+  seriesLabels: SeriesLabel[]
 }
 
-export function InfoTooltip({ canonicalName, sampleCount, sources, activeSource }: Props) {
+export function InfoTooltip({ canonicalName, idSuffix, sampleCount, sources, meaning, observedSource, query, seriesLabels }: Props) {
   const [open, setOpen] = useState(false)
-  const tooltipId = `metric-tip-${canonicalName.replace(/[^a-z0-9]+/gi, '-')}`
+  const suffix = idSuffix ? `-${idSuffix.replace(/[^a-z0-9]+/gi, '-')}` : ''
+  const tooltipId = `metric-tip-${canonicalName.replace(/[^a-z0-9]+/gi, '-')}${suffix}`
   const sortedSources = sources ? [...sources].sort((a, b) => a.priority - b.priority) : []
+  const details = metricDetailRows({ meaning, observedSource, query, seriesLabels })
 
   return (
     <span
@@ -41,15 +48,21 @@ export function InfoTooltip({ canonicalName, sampleCount, sources, activeSource 
           <span>
             <strong className={styles.value}>{sampleCount}</strong> samples in the selected time range
           </span>
+          {details.map((detail) => (
+            <span key={detail.label} className={styles.detail}>
+              <strong>{detail.label}</strong>
+              <span className={styles.detailValue}>{detail.value}</span>
+            </span>
+          ))}
           <span className={styles.muted}>
             Canonical name: <strong className={styles.code}>{canonicalName}</strong>
           </span>
           {sortedSources.length > 0 && (
             <span className={styles.muted}>
-              Sources:{' '}
+              Declared source priority:{' '}
               {sortedSources.map((s, i) => (
                 <span key={s.id}>
-                  <strong className={s.id === activeSource ? styles.activeSource : styles.code}>{s.id}</strong>
+                  <strong className={styles.code}>{s.id}</strong> ({s.priority})
                   {i < sortedSources.length - 1 ? ', ' : ''}
                 </span>
               ))}

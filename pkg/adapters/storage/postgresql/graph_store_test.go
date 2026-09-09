@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/core/topology"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,13 +17,4 @@ func TestApplySnapshotTimestampSetsGraphTimestampFromCreatedAt(t *testing.T) {
 	applySnapshotTimestamp(&snap)
 
 	assert.Equal(t, createdAt, snap.Graph.Timestamp)
-}
-
-func TestBuildLatestNodeQueryUsesSubSecondTTLPrecision(t *testing.T) {
-	t.Parallel()
-
-	sql, args := latestNodeQuery(250 * time.Millisecond)
-
-	assert.Contains(t, sql, "WHERE ts.created_at > NOW() - $1::interval")
-	assert.Equal(t, []any{"250ms"}, args)
 }

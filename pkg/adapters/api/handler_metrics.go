@@ -2,16 +2,17 @@ package api
 
 import (
 	"cmp"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"time"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/logging"
-	"github.com/erickivel/oksg/pkg/core/metrics"
-	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/backend/query"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/core/semconv"
 )
 
 // catalogStatsLookback is the fixed window used by the /api/v1/metrics/catalog/stats
@@ -22,19 +23,15 @@ const catalogStatsLookback = time.Hour
 // MetricsHandler serves metric query and catalog endpoints.
 type MetricsHandler struct {
 	metricStore persistence.MetricStore
-	unitLookup  map[string]metrics.Unit
+	catalog     map[string]metrics.CanonicalMetric
 	logger      *logging.Logger
 }
 
-// newMetricsHandler creates a MetricsHandler with a prebuilt unit lookup from the catalog.
+// newMetricsHandler creates a MetricsHandler backed by the canonical catalog.
 func newMetricsHandler(store persistence.MetricStore, logger *logging.Logger) *MetricsHandler {
-	lookup := make(map[string]metrics.Unit)
-	for _, m := range metrics.DefaultCatalog() {
-		lookup[m.Name] = m.Unit
-	}
 	return &MetricsHandler{
-		metricStore: store,
-		unitLookup:  lookup,
+		metricStore: persistence.DecorateMetricStore(store),
+		catalog:     metrics.CatalogByName(),
 		logger:      logger,
 	}
 }
@@ -59,6 +56,7 @@ type enrichedSample struct {
 	Labels     map[string]string `json:"labels,omitempty"`
 	Unit       metrics.Unit      `json:"unit,omitempty"`
 	Edge       *edgeRef          `json:"edge,omitempty"`
+	observedAt time.Time
 }
 
 type metricSeries struct {
@@ -75,36 +73,75 @@ type edgeRef struct {
 	TargetID entities.EntityID `json:"target_id"`
 }
 
+type effectiveMetricQuery struct {
+	Aggregation        metrics.AggregationMode `json:"aggregation"`
+	Window             string                  `json:"window,omitempty"`
+	From               string                  `json:"from"`
+	To                 string                  `json:"to"`
+	Step               string                  `json:"step"`
+	TimestampSemantics string                  `json:"timestamp_semantics"`
+	Unit               metrics.Unit            `json:"-"`
+}
+
 // queryEnrichedSamples parses the common metrics query parameters, issues the
 // store query, and returns enriched+sorted (descending) samples. On HTTP-level
 // failure the handler has already written the error response and the second
 // return is false.
-func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Request) ([]enrichedSample, bool) {
+func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Request) ([]enrichedSample, effectiveMetricQuery, bool) {
 	if h.metricStore == nil {
 		writeError(w, http.StatusNotFound, "metric store not configured")
-		return nil, false
+		return nil, effectiveMetricQuery{}, false
 	}
 
 	from, err := parseTimeParam(r, "from")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid 'from' parameter: expected RFC3339 format")
-		return nil, false
+		return nil, effectiveMetricQuery{}, false
 	}
 	to, err := parseTimeParam(r, "to")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid 'to' parameter: expected RFC3339 format")
-		return nil, false
+		return nil, effectiveMetricQuery{}, false
 	}
 
 	metricName := r.URL.Query().Get("metric_name")
 	if metricName == "" {
 		writeError(w, http.StatusBadRequest, "metric_name query parameter is required")
-		return nil, false
+		return nil, effectiveMetricQuery{}, false
+	}
+	metric, exists := h.catalog[metricName]
+	if !exists {
+		writeError(w, http.StatusBadRequest, "unsupported metric_name")
+		return nil, effectiveMetricQuery{}, false
+	}
+	resolved, err := metrics.ResolveAggregation(metric, r.URL.Query().Get("aggregation"), r.URL.Query().Get("window"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, effectiveMetricQuery{}, false
+	}
+	effective := effectiveMetricQuery{Aggregation: resolved.Mode, Unit: resolved.Unit}
+	if resolved.Window > 0 {
+		effective.Window = metrics.FormatAggregationWindow(resolved.Window)
 	}
 
 	var entityIDs []entities.EntityID
 	for _, id := range r.URL.Query()["entity_id"] {
-		entityIDs = append(entityIDs, entities.EntityID(id))
+		entityID := entities.EntityID(id)
+		if !entities.IsCanonicalID(entityID) {
+			writeError(w, http.StatusBadRequest, "entity_id must be a canonical entity ID")
+			return nil, effectiveMetricQuery{}, false
+		}
+		entityIDs = append(entityIDs, entityID)
+	}
+	edgeSourceID := entities.EntityID(r.URL.Query().Get("edge_source_id"))
+	if edgeSourceID != "" && !entities.IsCanonicalID(edgeSourceID) {
+		writeError(w, http.StatusBadRequest, "edge_source_id must be a canonical entity ID")
+		return nil, effectiveMetricQuery{}, false
+	}
+	edgeTargetID := entities.EntityID(r.URL.Query().Get("edge_target_id"))
+	if edgeTargetID != "" && !entities.IsCanonicalID(edgeTargetID) {
+		writeError(w, http.StatusBadRequest, "edge_target_id must be a canonical entity ID")
+		return nil, effectiveMetricQuery{}, false
 	}
 
 	q := query.MetricQuery{
@@ -112,39 +149,79 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 		MetricName:   metricName,
 		From:         from,
 		To:           to,
-		EdgeSourceID: entities.EntityID(r.URL.Query().Get("edge_source_id")),
-		EdgeTargetID: entities.EntityID(r.URL.Query().Get("edge_target_id")),
+		EdgeSourceID: edgeSourceID,
+		EdgeTargetID: edgeTargetID,
+		Aggregation:  resolved.Mode,
+		Window:       resolved.Window,
+		Unit:         resolved.Unit,
 	}
+	resolvedRange, err := query.ResolveMetricQuery(q, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, effectiveMetricQuery{}, false
+	}
+	q = resolvedRange.MetricQuery
+	effective.From = q.From.Format(time.RFC3339Nano)
+	effective.To = q.To.Format(time.RFC3339Nano)
+	effective.Step = q.Step.String()
+	effective.TimestampSemantics = "evaluation"
 
 	samples, err := h.metricStore.Query(r.Context(), q)
 	if err != nil {
 		h.logger.Warn("failed to query metrics", logging.Error(err))
 		writeError(w, http.StatusInternalServerError, "failed to query metrics")
-		return nil, false
+		return nil, effectiveMetricQuery{}, false
 	}
 
 	enriched := make([]enrichedSample, 0, len(samples))
 	for _, s := range samples {
+		unit := resolved.Unit
+		// A generic resolved unit marks a heterogeneous family whose physical
+		// unit is carried by the sample. Fixed-unit
+		// metrics, especially counter modes, must keep the mode-aware resolved
+		// unit even when raw storage carries a presentation unit that differs.
+		if resolved.Unit == metrics.UnitResource && metrics.IsValidUnit(s.Unit) {
+			unit = s.Unit
+		}
 		enriched = append(enriched, enrichedSample{
 			MetricName: s.MetricName,
 			EntityID:   s.EntityID,
 			Value:      s.Value,
 			ValueLabel: s.ValueLabel,
-			Timestamp:  s.Timestamp.UTC().Format("2006-01-02T15:04:05Z"),
+			Timestamp:  s.Timestamp.UTC().Format(time.RFC3339Nano),
 			Labels:     s.Labels,
-			Unit:       h.unitLookup[s.MetricName],
+			Unit:       unit,
 			Edge:       edgeRefFromLabels(s.Labels),
+			observedAt: s.Timestamp,
 		})
 	}
 
 	slices.SortFunc(enriched, func(a, b enrichedSample) int {
-		return cmp.Compare(b.Timestamp, a.Timestamp) // descending
+		if c := b.observedAt.Compare(a.observedAt); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.MetricName, b.MetricName); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(string(a.EntityID), string(b.EntityID)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(string(a.Unit), string(b.Unit)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(seriesGroupKey(a), seriesGroupKey(b)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.Value, b.Value); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ValueLabel, b.ValueLabel)
 	})
-	return enriched, true
+	return enriched, effective, true
 }
 
 func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Request) {
-	enriched, ok := h.queryEnrichedSamples(w, r)
+	enriched, effective, ok := h.queryEnrichedSamples(w, r)
 	if !ok {
 		return
 	}
@@ -154,6 +231,7 @@ func (h *MetricsHandler) handleQueryMetrics(w http.ResponseWriter, r *http.Reque
 	page, nextToken := applyPagination(enriched, pag)
 
 	writeJSONPaginated(w, http.StatusOK, map[string]any{
+		"query":   effective,
 		"samples": page,
 		"total":   total,
 	}, nextToken)
@@ -237,7 +315,6 @@ func (h *MetricsHandler) handleGetCatalogStats(w http.ResponseWriter, r *http.Re
 	entries := make([]catalogStatsEntry, 0, len(catalog))
 	for _, m := range catalog {
 		entry := catalogStatsEntry{MetricName: m.Name}
-		seen := map[string]struct{}{}
 		// One row per declared source — zero-fill if nothing arrived.
 		for _, src := range m.Sources {
 			ss := indexed[srcKey{metric: m.Name, source: src.ID}]
@@ -247,30 +324,6 @@ func (h *MetricsHandler) handleGetCatalogStats(w http.ResponseWriter, r *http.Re
 				SampleCount: ss.SampleCount,
 				LastSeenAt:  formatLastSeen(ss.LastSeenAt),
 			})
-			seen[src.ID] = struct{}{}
-		}
-		// Surface any unexpected sources observed in storage that aren't in
-		// the catalog declaration (e.g. legacy producers, or samples with no
-		// `source` label which collapse to SourceID ""). Drop the SourceID ""
-		// case entirely when the metric has any declared source — it's noise
-		// next to the canonical breakdown.
-		for _, cs := range rawStats {
-			if cs.MetricName != m.Name {
-				continue
-			}
-			for _, ss := range cs.BySource {
-				if _, declared := seen[ss.SourceID]; declared {
-					continue
-				}
-				if ss.SourceID == "" && len(m.Sources) > 0 {
-					continue
-				}
-				entry.BySource = append(entry.BySource, catalogStatsBySource{
-					SourceID:    ss.SourceID,
-					SampleCount: ss.SampleCount,
-					LastSeenAt:  formatLastSeen(ss.LastSeenAt),
-				})
-			}
 		}
 		entries = append(entries, entry)
 	}
@@ -282,15 +335,17 @@ func (h *MetricsHandler) handleGetCatalogStats(w http.ResponseWriter, r *http.Re
 }
 
 func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Request) {
-	enriched, ok := h.queryEnrichedSamples(w, r)
+	enriched, effective, ok := h.queryEnrichedSamples(w, r)
 	if !ok {
 		return
 	}
 
-	// Group samples by metric name and edge identity when present.
+	// Group samples by the complete public series identity. This prevents
+	// different entities, dimensions, or dynamically resolved units from being
+	// presented as a single series.
 	groups := map[string][]enrichedSample{}
 	for _, es := range enriched {
-		key := seriesGroupKey(es.MetricName, es.Edge)
+		key := seriesGroupKey(es)
 		groups[key] = append(groups[key], es)
 	}
 
@@ -309,7 +364,7 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 		name := samps[0].MetricName
 		ms := metricSeries{
 			MetricName: name,
-			Unit:       h.unitLookup[name],
+			Unit:       samps[0].Unit,
 			Samples:    samps,
 			Edge:       samps[0].Edge,
 		}
@@ -325,6 +380,7 @@ func (h *MetricsHandler) handleGetMetricSeries(w http.ResponseWriter, r *http.Re
 	page, nextToken := applyPagination(series, pag)
 
 	writeJSONPaginated(w, http.StatusOK, map[string]any{
+		"query":  effective,
 		"series": page,
 		"total":  total,
 	}, nextToken)
@@ -342,9 +398,20 @@ func edgeRefFromLabels(labels map[string]string) *edgeRef {
 	return &edgeRef{SourceID: source, TargetID: target}
 }
 
-func seriesGroupKey(metricName string, edge *edgeRef) string {
-	if edge == nil {
-		return metricName
+func seriesGroupKey(sample enrichedSample) string {
+	identity := struct {
+		MetricName string            `json:"metric_name"`
+		EntityID   entities.EntityID `json:"entity_id"`
+		Unit       metrics.Unit      `json:"unit"`
+		Labels     map[string]string `json:"labels"`
+		Edge       *edgeRef          `json:"edge"`
+	}{
+		MetricName: sample.MetricName,
+		EntityID:   sample.EntityID,
+		Unit:       sample.Unit,
+		Labels:     sample.Labels,
+		Edge:       sample.Edge,
 	}
-	return metricName + "|" + string(edge.SourceID) + "|" + string(edge.TargetID)
+	encoded, _ := json.Marshal(identity)
+	return string(encoded)
 }

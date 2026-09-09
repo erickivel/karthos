@@ -1,0 +1,79 @@
+global:
+  clusterName: default-cluster
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: 0.156.0
+    pullPolicy: IfNotPresent
+
+enabledSignals: []
+# Collector configuration is intentionally absent from chart defaults. It is
+# generated from a discovered profile by collector/configgen and required by
+# the ConfigMap templates.
+agent:
+  resources: {}
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector: {}
+
+gateway:
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 4317
+    httpPort: 4318
+  resources: {}
+
+backend:
+  grpcPort: 4317
+  logLevel: info
+  image:
+    repository: karthos-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    healthPort: 13133
+    apiPort: 8080
+  statusStaleSeconds: 360
+  structureRefreshInterval: "5m"
+  topologyFlushInterval: "60s"
+  sourceContract:
+    capabilityProfile: {}
+    sourcePlan: {}
+  resources: {}
+
+storage:
+  backend: memory
+  postgresql:
+    enabled: false
+    dsn: ""
+  victoriametrics:
+    enabled: false
+    url: ""
+
+postgresql:
+  auth:
+    database: karthos
+    username: karthos
+    password: karthos
+
+victoria-metrics-single:
+  server:
+    extraArgs:
+      dedup.minScrapeInterval: 1ms
+    persistentVolume:
+      size: 5Gi
+    retentionPeriod: 30d
+
+frontend:
+  enabled: true
+  image:
+    repository: karthos-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}

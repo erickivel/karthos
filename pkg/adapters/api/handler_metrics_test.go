@@ -3,17 +3,31 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/logging"
+	"github.com/erickivel/karthos/pkg/core/metrics"
 )
+
+func serveMetricsRequest(t *testing.T, store persistence.MetricStore, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	logger, err := logging.NewWithWriter("metrics-test", "info", io.Discard)
+	require.NoError(t, err)
+	mux := http.NewServeMux()
+	newMetricsHandler(store, logger).RegisterRoutes(mux)
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+	return recorder
+}
 
 func seedMetrics(t *testing.T) *persistence.InMemoryMetricStore {
 	t.Helper()
@@ -21,8 +35,8 @@ func seedMetrics(t *testing.T) *persistence.InMemoryMetricStore {
 
 	entityA := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "pod-a")
 	entityB := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "pod-b")
-	ts1 := time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
-	ts2 := time.Date(2026, 3, 30, 11, 0, 0, 0, time.UTC)
+	ts1 := seedMetricStart.Add(3 * time.Second)
+	ts2 := seedMetricStart.Add(4 * time.Second)
 
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
 		{MetricName: "k8s.pod.cpu.usage", EntityID: entityA, Value: 250, Timestamp: ts1},
@@ -30,6 +44,15 @@ func seedMetrics(t *testing.T) *persistence.InMemoryMetricStore {
 		{MetricName: "k8s.pod.cpu.usage", EntityID: entityB, Value: 500, Timestamp: ts2},
 	}))
 	return ms
+}
+
+var (
+	seedMetricStart = time.Date(2026, 3, 30, 10, 0, 0, 0, time.UTC)
+	seedMetricEnd   = seedMetricStart.Add(15 * time.Second)
+)
+
+func seedMetricRange() string {
+	return "&from=" + seedMetricStart.Format(time.RFC3339) + "&to=" + seedMetricEnd.Format(time.RFC3339)
 }
 
 func TestQueryMetricsRequiresMetricName(t *testing.T) {
@@ -42,12 +65,99 @@ func TestQueryMetricsRequiresMetricName(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+func TestQueryMetricsRejectsNonCanonicalPublicIDs(t *testing.T) {
+	store := seedMetrics(t)
+	for _, target := range []string{
+		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&entity_id=not-an-id",
+		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&edge_source_id=not-an-id",
+		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&edge_target_id=not-an-id",
+	} {
+		response := serveMetricsRequest(t, store, target)
+		require.Equal(t, http.StatusBadRequest, response.Code, target)
+	}
+}
+
+func TestQueryMetricsAggregationMetadataAndModeAwareUnits(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	end := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	labels := map[string]string{"temporality": "cumulative"}
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "servicegraph.request.count", EntityID: entities.ComputeEntityID(entities.KindService, "cluster", "default", "api"), Value: 100, Timestamp: end.Add(-100 * time.Second), Labels: labels, Unit: metrics.UnitPerSecond},
+		{MetricName: "servicegraph.request.count", EntityID: entities.ComputeEntityID(entities.KindService, "cluster", "default", "api"), Value: 105, Timestamp: end.Add(-80 * time.Second), Labels: labels, Unit: metrics.UnitPerSecond},
+		{MetricName: "servicegraph.request.count", EntityID: entities.ComputeEntityID(entities.KindService, "cluster", "default", "api"), Value: 110, Timestamp: end.Add(-50 * time.Second), Labels: labels, Unit: metrics.UnitPerSecond},
+		{MetricName: "servicegraph.request.count", EntityID: entities.ComputeEntityID(entities.KindService, "cluster", "default", "api"), Value: 140, Timestamp: end, Labels: labels, Unit: metrics.UnitPerSecond},
+	}))
+
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=increase&window=90s&from="+end.Format(time.RFC3339)+"&to="+end.Format(time.RFC3339))
+	require.Equal(t, http.StatusOK, resp.Code)
+	var body PaginatedResponse
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	encoded, err := json.Marshal(body.Data)
+	require.NoError(t, err)
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &data))
+	queryMeta := data["query"].(map[string]any)
+	assert.Equal(t, "increase", queryMeta["aggregation"])
+	assert.Equal(t, "1m30s", queryMeta["window"])
+	samples := data["samples"].([]any)
+	require.Len(t, samples, 1)
+	assert.Equal(t, "count", samples[0].(map[string]any)["unit"])
+
+	seriesResp := serveMetricsRequest(t, store, "/api/v1/metrics/series?metric_name=servicegraph.request.count&window=1m&from="+end.Format(time.RFC3339)+"&to="+end.Format(time.RFC3339))
+	require.Equal(t, http.StatusOK, seriesResp.Code)
+	assert.Contains(t, seriesResp.Body.String(), `"aggregation":"window_rate"`)
+	assert.Contains(t, seriesResp.Body.String(), `"unit":"per_second"`)
+}
+
+func TestQueryMetricsReportsResolvedEvaluationRange(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	start := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
+	end := start.Add(30 * time.Second)
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
+		MetricName: "k8s.pod.cpu.usage",
+		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
+		Value:      42,
+		Timestamp:  start.Add(3 * time.Second),
+	}}))
+
+	response := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&from="+start.Format(time.RFC3339)+"&to="+end.Format(time.RFC3339))
+
+	require.Equal(t, http.StatusOK, response.Code)
+	var body PaginatedResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	encoded, err := json.Marshal(body.Data)
+	require.NoError(t, err)
+	var data map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &data))
+	queryMeta := data["query"].(map[string]any)
+	assert.Equal(t, start.Format(time.RFC3339Nano), queryMeta["from"])
+	assert.Equal(t, end.Format(time.RFC3339Nano), queryMeta["to"])
+	assert.Equal(t, "15s", queryMeta["step"])
+	assert.Equal(t, "evaluation", queryMeta["timestamp_semantics"])
+}
+
+func TestQueryMetricsRejectsInvalidAggregationControls(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	for _, target := range []string{
+		"/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=bogus",
+		"/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=increase&window=bad",
+		"/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=increase&window=59s",
+		"/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=increase&window=61m",
+		"/api/v1/metrics?metric_name=servicegraph.request.count&aggregation=latest&window=1m",
+		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&aggregation=latest",
+		"/api/v1/metrics?metric_name=k8s.pod.cpu.usage&window=1m",
+	} {
+		resp := serveMetricsRequest(t, store, target)
+		assert.Equal(t, http.StatusBadRequest, resp.Code, target)
+	}
+}
+
 func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 	ms := seedMetrics(t)
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -59,13 +169,43 @@ func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 	require.NotEmpty(t, sample["unit"])
 }
 
+func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
+		MetricName: "k8s.pod.status_reason",
+		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
+		Value:      6,
+		Timestamp:  time.Now().UTC(),
+		Unit:       metrics.UnitCount,
+	}}))
+
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.status_reason")
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.Contains(t, resp.Body.String(), `"value_label":"unknown"`)
+}
+
+func TestQueryMetricsReturnsReadablePodPhase(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
+		MetricName: "k8s.pod.phase",
+		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
+		Value:      2,
+		Timestamp:  time.Now().UTC(),
+		Unit:       metrics.UnitCount,
+	}}))
+
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.phase")
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.Contains(t, resp.Body.String(), `"value_label":"running"`)
+}
+
 func TestQueryMetricsFilterByEntityID(t *testing.T) {
 	ms := seedMetrics(t)
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
 	entityA := entities.ComputeEntityID(entities.KindPod, "cluster", "default", "pod-a")
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&entity_id="+string(entityA))
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&entity_id="+string(entityA)+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -79,32 +219,52 @@ func TestQueryMetricsFilterByEdgeIDs(t *testing.T) {
 	sourceID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-a")
 	targetID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-b")
 	otherTargetID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-c")
+	graphID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph")
+	edgeLabels := func(target entities.EntityID) map[string]string {
+		return map[string]string{
+			"edge_client_id": string(sourceID),
+			"edge_server_id": string(target),
+			"temporality":    "cumulative",
+		}
+	}
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
 		{
-			MetricName: "servicegraph.request.duration",
-			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
-			Value:      12,
-			Timestamp:  now,
-			Labels: map[string]string{
-				"edge_client_id": string(sourceID),
-				"edge_server_id": string(targetID),
-			},
+			MetricName: "servicegraph.request.duration_sum", EntityID: graphID,
+			Value: 100, Timestamp: now.Add(-time.Minute), Labels: edgeLabels(targetID),
 		},
 		{
-			MetricName: "servicegraph.request.duration",
-			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
-			Value:      15,
-			Timestamp:  now,
-			Labels: map[string]string{
-				"edge_client_id": string(sourceID),
-				"edge_server_id": string(otherTargetID),
-			},
+			MetricName: "servicegraph.request.duration_sum", EntityID: graphID,
+			Value: 112, Timestamp: now, Labels: edgeLabels(targetID),
+		},
+		{
+			MetricName: "servicegraph.request.duration_count", EntityID: graphID,
+			Value: 10, Timestamp: now.Add(-time.Minute), Labels: edgeLabels(targetID),
+		},
+		{
+			MetricName: "servicegraph.request.duration_count", EntityID: graphID,
+			Value: 11, Timestamp: now, Labels: edgeLabels(targetID),
+		},
+		{
+			MetricName: "servicegraph.request.duration_sum", EntityID: graphID,
+			Value: 200, Timestamp: now.Add(-time.Minute), Labels: edgeLabels(otherTargetID),
+		},
+		{
+			MetricName: "servicegraph.request.duration_sum", EntityID: graphID,
+			Value: 215, Timestamp: now, Labels: edgeLabels(otherTargetID),
+		},
+		{
+			MetricName: "servicegraph.request.duration_count", EntityID: graphID,
+			Value: 20, Timestamp: now.Add(-time.Minute), Labels: edgeLabels(otherTargetID),
+		},
+		{
+			MetricName: "servicegraph.request.duration_count", EntityID: graphID,
+			Value: 21, Timestamp: now, Labels: edgeLabels(otherTargetID),
 		},
 	}))
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID)+"&edge_target_id="+string(targetID))
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID)+"&edge_target_id="+string(targetID)+"&from="+now.Format(time.RFC3339)+"&to="+now.Format(time.RFC3339))
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -121,7 +281,7 @@ func TestQueryMetricsFilterByMetricName(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -134,7 +294,7 @@ func TestQueryMetricsFilterByTimeRange(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&from=2026-03-30T10:30:00Z&to=2026-03-30T11:30:00Z")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.memory.working_set"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -157,7 +317,7 @@ func TestQueryMetricsPagination(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=1")
+	resp := doGet(t, srv, "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&page_size=1"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data, nextToken := parsePaginatedDataWithToken(t, resp)
@@ -190,7 +350,7 @@ func TestCatalogFilterByCategory(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parseResponseData(t, resp)
-	require.EqualValues(t, 3, data["total"])
+	require.EqualValues(t, 2, data["total"])
 }
 
 func TestCatalogReturnsMetricScopes(t *testing.T) {
@@ -232,22 +392,22 @@ func TestMetricSeriesGrouped(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage")
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.cpu.usage"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	data := parsePaginatedData(t, resp)
-	require.EqualValues(t, 1, data["total"])
+	require.EqualValues(t, 2, data["total"])
 
 	series := data["series"].([]any)
-	require.Len(t, series, 1)
+	require.Len(t, series, 2)
 
 	s0 := series[0].(map[string]any)
 	require.Equal(t, "k8s.pod.cpu.usage", s0["metric_name"])
 	require.Equal(t, "millicores", s0["unit"])
 	require.Equal(t, "resource", s0["category"])
 	samples := s0["samples"].([]any)
-	require.Len(t, samples, 2)
+	require.Len(t, samples, 1)
 }
 
 func TestMetricSeriesFilterByMetricName(t *testing.T) {
@@ -255,7 +415,7 @@ func TestMetricSeriesFilterByMetricName(t *testing.T) {
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.memory.working_set")
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=k8s.pod.memory.working_set"+seedMetricRange())
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 
 	data := parsePaginatedData(t, resp)
@@ -287,32 +447,52 @@ func TestMetricSeriesGroupsEdgeMetricsPerEdge(t *testing.T) {
 	sourceID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-a")
 	targetB := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-b")
 	targetC := entities.ComputeEntityID(entities.KindService, "cluster", "default", "svc-c")
+	graphID := entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph")
+	edgeLabels := func(target entities.EntityID) map[string]string {
+		return map[string]string{
+			"edge_client_id": string(sourceID),
+			"edge_server_id": string(target),
+			"temporality":    "cumulative",
+		}
+	}
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
 		{
-			MetricName: "servicegraph.request.duration",
-			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
-			Value:      12,
-			Timestamp:  now,
-			Labels: map[string]string{
-				"edge_client_id": string(sourceID),
-				"edge_server_id": string(targetB),
-			},
+			MetricName: "servicegraph.request.duration_sum", EntityID: graphID,
+			Value: 100, Timestamp: now.Add(-time.Minute), Labels: edgeLabels(targetB),
 		},
 		{
-			MetricName: "servicegraph.request.duration",
-			EntityID:   entities.ComputeEntityID(entities.KindService, "cluster", "default", "graph"),
-			Value:      15,
-			Timestamp:  now.Add(time.Minute),
-			Labels: map[string]string{
-				"edge_client_id": string(sourceID),
-				"edge_server_id": string(targetC),
-			},
+			MetricName: "servicegraph.request.duration_sum", EntityID: graphID,
+			Value: 112, Timestamp: now, Labels: edgeLabels(targetB),
+		},
+		{
+			MetricName: "servicegraph.request.duration_count", EntityID: graphID,
+			Value: 10, Timestamp: now.Add(-time.Minute), Labels: edgeLabels(targetB),
+		},
+		{
+			MetricName: "servicegraph.request.duration_count", EntityID: graphID,
+			Value: 11, Timestamp: now, Labels: edgeLabels(targetB),
+		},
+		{
+			MetricName: "servicegraph.request.duration_sum", EntityID: graphID,
+			Value: 200, Timestamp: now.Add(-time.Minute), Labels: edgeLabels(targetC),
+		},
+		{
+			MetricName: "servicegraph.request.duration_sum", EntityID: graphID,
+			Value: 215, Timestamp: now, Labels: edgeLabels(targetC),
+		},
+		{
+			MetricName: "servicegraph.request.duration_count", EntityID: graphID,
+			Value: 20, Timestamp: now.Add(-time.Minute), Labels: edgeLabels(targetC),
+		},
+		{
+			MetricName: "servicegraph.request.duration_count", EntityID: graphID,
+			Value: 21, Timestamp: now, Labels: edgeLabels(targetC),
 		},
 	}))
 	srv := newTestServer(t, Config{MetricStore: ms})
 	defer srv.cancel()
 
-	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID))
+	resp := doGet(t, srv, "/api/v1/metrics/series?metric_name=servicegraph.request.duration&edge_source_id="+string(sourceID)+"&from="+now.Format(time.RFC3339)+"&to="+now.Format(time.RFC3339))
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 

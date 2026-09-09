@@ -2,47 +2,36 @@ package otlp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
-	backendingest "github.com/erickivel/oksg/pkg/backend/ingest"
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/backend/query"
-	"github.com/erickivel/oksg/pkg/core/logging"
+	backendingest "github.com/erickivel/karthos/pkg/backend/ingest"
+	"github.com/erickivel/karthos/pkg/core/logging"
 	colmetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
 type Config struct {
 	GRPCListenAddress   string
-	HTTPListenAddress   string
 	HealthListenAddress string
 	EnabledSignals      []string
-	MetricStore         persistence.MetricStore // optional; enables /debug/metrics when set
-	GraphStore          persistence.GraphStore  // optional; enables /debug/graph when set
 }
 
 type Server struct {
-	config       Config
 	builder      *backendingest.EnvelopeBuilder
 	router       *backendingest.SignalRouter
 	logger       *logging.Logger
 	grpcServer   *grpc.Server
-	httpServer   *http.Server
 	healthServer *http.Server
 	grpcListener net.Listener
-	httpListener net.Listener
 	healthListen net.Listener
 	enabled      map[string]bool
 }
@@ -66,25 +55,17 @@ func NewServer(config Config, builder *backendingest.EnvelopeBuilder, router *ba
 	if err != nil {
 		return nil, fmt.Errorf("listen grpc: %w", err)
 	}
-	httpListener, err := net.Listen("tcp", config.HTTPListenAddress)
-	if err != nil {
-		_ = grpcListener.Close()
-		return nil, fmt.Errorf("listen http: %w", err)
-	}
 	healthListener, err := net.Listen("tcp", config.HealthListenAddress)
 	if err != nil {
 		_ = grpcListener.Close()
-		_ = httpListener.Close()
 		return nil, fmt.Errorf("listen health: %w", err)
 	}
 
 	server := &Server{
-		config:       config,
 		builder:      builder,
 		router:       router,
 		logger:       logger,
 		grpcListener: grpcListener,
-		httpListener: httpListener,
 		healthListen: healthListener,
 		enabled:      make(map[string]bool, len(config.EnabledSignals)),
 	}
@@ -96,40 +77,11 @@ func NewServer(config Config, builder *backendingest.EnvelopeBuilder, router *ba
 	colmetricpb.RegisterMetricsServiceServer(server.grpcServer, &metricsService{server: server})
 	coltracepb.RegisterTraceServiceServer(server.grpcServer, &traceService{server: server})
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/metrics", server.handleMetricsHTTP)
-	mux.HandleFunc("/v1/traces", server.handleTracesHTTP)
-	server.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-
 	healthMux := http.NewServeMux()
 	healthMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	if config.MetricStore != nil {
-		ms := config.MetricStore
-		healthMux.HandleFunc("/debug/metrics", func(w http.ResponseWriter, r *http.Request) {
-			samples, err := ms.Query(r.Context(), query.MetricQuery{})
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(samples)
-		})
-	}
-	if config.GraphStore != nil {
-		gs := config.GraphStore
-		healthMux.HandleFunc("/debug/graph", func(w http.ResponseWriter, r *http.Request) {
-			snap, err := gs.GetLatest(r.Context())
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(snap)
-		})
-	}
 	server.healthServer = &http.Server{Handler: healthMux, ReadHeaderTimeout: 10 * time.Second}
 
 	return server, nil
@@ -139,21 +91,16 @@ func (s *Server) GRPCAddress() string {
 	return s.grpcListener.Addr().String()
 }
 
-func (s *Server) HTTPAddress() string {
-	return s.httpListener.Addr().String()
-}
-
 func (s *Server) HealthAddress() string {
 	return s.healthListen.Addr().String()
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 2)
 	var wg sync.WaitGroup
 
-	wg.Add(3)
+	wg.Add(2)
 	go s.serveGRPC(&wg, errCh)
-	go s.serveHTTP(&wg, errCh)
 	go s.serveHealth(&wg, errCh)
 
 	select {
@@ -162,7 +109,7 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-errCh:
 		s.shutdown()
 		wg.Wait()
-		if errors.Is(err, http.ErrServerClosed) {
+		if isExpectedShutdownError(err) {
 			return nil
 		}
 		return err
@@ -172,7 +119,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	select {
 	case err := <-errCh:
-		if errors.Is(err, http.ErrServerClosed) {
+		if isExpectedShutdownError(err) {
 			return nil
 		}
 		return err
@@ -181,16 +128,13 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+func isExpectedShutdownError(err error) bool {
+	return errors.Is(err, http.ErrServerClosed) || errors.Is(err, grpc.ErrServerStopped)
+}
+
 func (s *Server) serveGRPC(wg *sync.WaitGroup, errCh chan<- error) {
 	defer wg.Done()
 	if err := s.grpcServer.Serve(s.grpcListener); err != nil {
-		errCh <- err
-	}
-}
-
-func (s *Server) serveHTTP(wg *sync.WaitGroup, errCh chan<- error) {
-	defer wg.Done()
-	if err := s.httpServer.Serve(s.httpListener); err != nil {
 		errCh <- err
 	}
 }
@@ -204,88 +148,7 @@ func (s *Server) serveHealth(wg *sync.WaitGroup, errCh chan<- error) {
 
 func (s *Server) shutdown() {
 	s.grpcServer.GracefulStop()
-	_ = s.httpServer.Shutdown(context.Background())
 	_ = s.healthServer.Shutdown(context.Background())
-}
-
-func (s *Server) handleMetricsHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.enabled["metric"] {
-		http.Error(w, "metric signal disabled", http.StatusNotFound)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	request := &colmetricpb.ExportMetricsServiceRequest{}
-	if err := proto.Unmarshal(body, request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	envelopes, err := s.builder.BuildMetricEnvelopes("otlp/http", request)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	for _, envelope := range envelopes {
-		if err := s.router.Route(r.Context(), envelope); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	payload, err := proto.Marshal(&colmetricpb.ExportMetricsServiceResponse{})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(payload)
-}
-
-func (s *Server) handleTracesHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.enabled["trace"] {
-		http.Error(w, "trace signal disabled", http.StatusNotFound)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	request := &coltracepb.ExportTraceServiceRequest{}
-	if err := proto.Unmarshal(body, request); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	envelopes, err := s.builder.BuildTraceEnvelopes("otlp/http", request)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	for _, envelope := range envelopes {
-		if err := s.router.Route(r.Context(), envelope); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	payload, err := proto.Marshal(&coltracepb.ExportTraceServiceResponse{})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(payload)
 }
 
 type metricsService struct {

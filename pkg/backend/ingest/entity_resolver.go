@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/erickivel/oksg/pkg/backend/persistence"
-	"github.com/erickivel/oksg/pkg/core/entities"
-	"github.com/erickivel/oksg/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/semconv"
 )
 
 // ErrUnresolvableEntity is returned by EntityResolver when no known OTLP semantic convention
@@ -34,7 +34,7 @@ func NewOTLPEntityResolverWithRegistry(clusterName string, registry persistence.
 // Resolve maps OTLP resource attributes to a canonical EntityID using OTLP semantic conventions.
 // Resolution is attempted in priority order: container, pod, node, deployment,
 // statefulset, replicaset, daemonset, job, cronjob, replicationcontroller,
-// hpa, resourcequota, namespace, service.
+// hpa, namespace, service.
 // Returns ErrUnresolvableEntity when no known attributes are present.
 func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]string) (entities.EntityID, error) {
 	containerName, hasContainer := resource[semconv.ResourceK8sContainerName]
@@ -50,7 +50,6 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 	cronJobName, hasCronJob := resource[semconv.ResourceK8sCronJobName]
 	replicationControllerName, hasReplicationController := resource[semconv.ResourceK8sReplicationControllerName]
 	hpaName, hasHPA := resource[semconv.ResourceK8sHPAName]
-	resourceQuotaName, hasResourceQuota := resource[semconv.ResourceK8sResourceQuotaName]
 
 	var id entities.EntityID
 	var kind entities.EntityKind
@@ -123,19 +122,13 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 		kind = entities.KindHPA
 		name = hpaName
 
-	// 12. ResourceQuota: requires resourcequota name and namespace
-	case hasResourceQuota && hasNamespace:
-		id = entities.ComputeEntityID(entities.KindResourceQuota, r.clusterName, namespace, resourceQuotaName)
-		kind = entities.KindResourceQuota
-		name = resourceQuotaName
-
-	// 13. Namespace: requires namespace name but no more specific entity or service
+	// 12. Namespace: requires namespace name but no more specific entity or service
 	case hasNamespace && !hasService:
 		id = entities.ComputeEntityID(entities.KindNamespace, r.clusterName, namespace)
 		kind = entities.KindNamespace
 		name = namespace
 
-	// 14. Service: requires service name; namespace is optional (best-effort)
+	// 13. Service: requires service name; namespace is optional (best-effort)
 	case hasService && hasNamespace:
 		id = entities.ComputeEntityID(entities.KindService, r.clusterName, namespace, serviceName)
 		kind = entities.KindService
@@ -156,14 +149,16 @@ func (r *OTLPEntityResolver) Resolve(ctx context.Context, resource map[string]st
 	}
 
 	if r.registry != nil {
-		_ = r.registry.UpsertEntity(ctx, persistence.StoredEntity{
+		if err := r.registry.UpsertEntity(ctx, persistence.StoredEntity{
 			EntityID:   id,
 			EntityKind: kind,
 			Cluster:    r.clusterName,
 			Namespace:  namespace,
 			Name:       name,
 			Metadata:   resource,
-		})
+		}); err != nil {
+			return "", fmt.Errorf("upsert resolved entity %s: %w", id, err)
+		}
 	}
 
 	return id, nil
@@ -207,6 +202,28 @@ func (r *OTLPEntityResolver) resolveCanonicalService(ctx context.Context, servic
 		return fallback[0].ID(), "", true
 	}
 	return "", "", false
+}
+
+// ClusterName implements the source-module normalization contract.
+func (r *OTLPEntityResolver) ClusterName() string { return r.clusterName }
+
+// ResolveServiceMetricEntity implements the source-module normalization contract.
+func (r *OTLPEntityResolver) ResolveServiceMetricEntity(ctx context.Context, resource map[string]string, serviceName, namespaceHint string) (entities.EntityID, bool) {
+	if serviceName == "" {
+		return "", false
+	}
+	if id, _, ok := r.resolveCanonicalService(ctx, serviceName, namespaceHint); ok {
+		return id, true
+	}
+	namespace := resource[semconv.ResourceK8sNamespaceName]
+	if namespace == "" {
+		return "", false
+	}
+	resourceService := resource[semconv.ResourceServiceName]
+	if (resourceService == "" || resourceService == serviceName) || resource[semconv.ResourceK8sNodeName] == "" {
+		return entities.ComputeEntityID(entities.KindService, r.clusterName, namespace, serviceName), true
+	}
+	return "", false
 }
 
 func serviceEntityName(entity entities.Entity) string {

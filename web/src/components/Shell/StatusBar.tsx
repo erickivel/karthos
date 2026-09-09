@@ -27,7 +27,7 @@ export function StatusBar() {
       </div>
 
       <div className={styles.segment}>
-        <span className={styles.tag}>[OKSG]</span>
+        <span className={styles.tag}>[Karthos]</span>
         <span className={styles.label}>
           {connectionStatus !== 'disconnected' ? 'BACKEND STATUS' : 'BACKEND UNREACHABLE'}
         </span>
@@ -46,7 +46,7 @@ export function StatusBar() {
       <div className={styles.right}>
         <span className={styles.tag}>[NET]</span>
         <span className={styles.label}>
-          API {status ? 'oksg-backend:8080' : '--'}
+          API {status ? 'PROXY' : '--'}
         </span>
       </div>
     </footer>
