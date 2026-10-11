@@ -64,7 +64,7 @@ EOF
 cat >"${TMPDIR_TEST}/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == "-o" && "$2" == "BatchMode=yes" && "$3" == "kivel-server" ]]
+[[ "$1" == "-o" && "$2" == "BatchMode=yes" && "$3" == "fixture-host" ]]
 shift 3
 bash -c "$*"
 EOF
@@ -73,7 +73,7 @@ chmod +x "${TMPDIR_TEST}/bin/"*
 
 PATH="${TMPDIR_TEST}/bin:${PATH}" \
   CLUSTER_ENGINE=k3s \
-  K3S_SSH_HOST=kivel-server \
+  K3S_SSH_HOST=fixture-host \
   IMAGE_TAG=test-tag \
   REGISTRY_HOST=localhost:5001 \
   KIND_NAMESPACE=karthos-system \
