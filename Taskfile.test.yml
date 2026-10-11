@@ -132,6 +132,7 @@ tasks:
   e2e:scenario:prometheus:
     desc: Run the complete Prometheus discovery and servicegraph accuracy scenario
     cmds:
+      - defer: {task: e2e:reset}
       - task: _e2e:scenario:prometheus:prepare
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/prometheus-available/run.sh
 
@@ -151,12 +152,14 @@ tasks:
   e2e:scenario:istio:
     desc: Run the complete Istio HTTP, gRPC, and TCP accuracy scenario
     cmds:
+      - defer: {task: e2e:reset}
       - task: _e2e:scenario:istio:prepare
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/istio-available/run.sh
 
   e2e:scenario:fallback:
     desc: Deploy and verify the strict direct-source fallback scenario
     cmds:
+      - defer: {task: e2e:reset}
       - task: _e2e:scenario:fallback:prepare
       - ./test/e2e/scenarios/no-telemetry/run.sh
 
@@ -178,6 +181,7 @@ tasks:
     desc: Verify the backend rejects a mismatched source plan and restores the valid contract
     deps: [_e2e:ensure-cluster]
     cmds:
+      - defer: {task: e2e:reset}
       - ./test/e2e/apps/deploy.sh base
       - task: _e2e:deploy-platform
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system ./test/e2e/scenarios/source-contract-rejection/run.sh

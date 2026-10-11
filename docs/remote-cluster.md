@@ -76,9 +76,10 @@ Every cluster-touching task dispatches on `CLUSTER_ENGINE`:
                                    exports kubeconfig)
 ```
 
-Same pattern for `e2e:teardown`, `e2e:ensure-cluster`, `cluster:doctor`,
-`cluster:tunnel`. Adding a new engine = new `test/e2e/cluster/<engine>/`
-directory + new case in those branches; nothing else moves.
+The same pattern applies to public teardown, doctor, and tunnel tasks and to the
+internal cluster-readiness prerequisite. Adding a new engine means adding a
+`test/e2e/cluster/<engine>/` directory and a new case in those dispatch points;
+nothing else moves.
 
 ## Support Matrix
 

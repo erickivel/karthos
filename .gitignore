@@ -41,11 +41,6 @@ audits/
 web/node_modules/
 web/dist/
 
-# Playwright
-.playwright-mcp/
-web/playwright-report/
-web/test-results/
-
 # Python verification artifacts
 __pycache__/
 *.pyc

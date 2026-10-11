@@ -51,8 +51,10 @@ Key coverage areas:
 
 ```bash
 task test:e2e:setup
-task deploy
 task test:e2e:scenario:prometheus
+
+# Or deploy only the platform for development:
+task deploy
 ```
 
 `task test:e2e:setup` provisions one control-plane node and one worker
@@ -68,8 +70,9 @@ discovers the cluster, deploys with Helm, waits for all rollouts, and verifies
 the configured tags and running digests. It does not install Istio or fixtures.
 
 Each public scenario owns fixture preparation, discovery, platform publication
-and deployment, readiness verification, traffic, assertions, and restoration.
-The individual stages are deliberately internal rather than public Task APIs.
+and deployment, readiness verification, traffic, assertions, and deferred
+environment cleanup, including failure paths. The individual stages are
+deliberately internal rather than public Task APIs.
 
 ## Scenario Expectations
 
