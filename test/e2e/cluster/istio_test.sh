@@ -51,6 +51,18 @@ if ISTIO_TEST_STATE=external bash "${REPO_ROOT}/test/e2e/cluster/istio.sh" reset
   exit 1
 fi
 grep -Fq 'not owned by the Karthos E2E harness' "${TMPDIR_TEST}/external.out"
-[[ ! -s "${ISTIO_TEST_LOG}" ]]
+if grep -Eq '^(istioctl|kubectl (delete|wait))' "${ISTIO_TEST_LOG}"; then
+  echo "strict external Istio reset performed a destructive action" >&2
+  cat "${ISTIO_TEST_LOG}" >&2
+  exit 1
+fi
+
+: >"${ISTIO_TEST_LOG}"
+ISTIO_TEST_STATE=external bash "${REPO_ROOT}/test/e2e/cluster/istio.sh" reset-if-owned
+if grep -Eq '^(istioctl|kubectl (delete|wait))' "${ISTIO_TEST_LOG}"; then
+  echo "scenario cleanup changed externally managed Istio" >&2
+  cat "${ISTIO_TEST_LOG}" >&2
+  exit 1
+fi
 
 echo "Istio ownership cleanup is strict and safe: PASS"

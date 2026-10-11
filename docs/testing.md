@@ -174,13 +174,16 @@ task test:e2e:traffic:watch TRAFFIC_ERROR_EVERY=0 # disable /error requests
 ```
 
 `task test:e2e:scenario:prometheus` already runs normal and error gateway
-traffic and completes the live metric assertions. Use the standalone traffic
-tasks to generate additional load after the scenario has deployed.
+traffic and completes the live metric assertions before its deferred cleanup.
+Standalone traffic and debug tasks target a manually retained development
+environment; complete public scenarios remove their platform and fixtures when
+they finish.
 
-Typical sequence after a scenario run:
+Typical persistent development sequence:
 
 ```bash
-task test:e2e:scenario:prometheus   # deploy, generate controlled traffic, and assert VM/API semantics
+./test/e2e/apps/deploy.sh with-prometheus
+task deploy
 task test:e2e:traffic TRAFFIC_REQUESTS=30  # optional: send more traffic
 task test:e2e:traffic TRAFFIC_ERROR_REQUESTS=10  # optional: send more error traffic
 task test:e2e:debug:api             # verify backend REST API access

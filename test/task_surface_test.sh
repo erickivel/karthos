@@ -77,11 +77,19 @@ for scenario in prometheus istio source-contract-rejection; do
     echo "scenario ${scenario} must run exactly one final environment cleanup" >&2
     exit 1
   fi
+  if [[ "${scenario_dry_run}" != *'./test/e2e/cluster/istio.sh reset-if-owned'* ]]; then
+    echo "scenario ${scenario} cleanup must preserve externally managed Istio" >&2
+    exit 1
+  fi
 done
 fallback_dry_run="$(task --dry test:e2e:scenario:fallback 2>&1)"
 fallback_cleanup_count="$(grep -Fc './test/e2e/platform/undeploy.sh' <<<"${fallback_dry_run}" || true)"
 if [[ "${fallback_cleanup_count}" -ne 2 ]]; then
   echo "fallback scenario must clean before preparation and after verification" >&2
+  exit 1
+fi
+if [[ "${fallback_dry_run}" != *'./test/e2e/cluster/istio.sh reset-if-owned'* ]]; then
+  echo "fallback final cleanup must preserve externally managed Istio" >&2
   exit 1
 fi
 

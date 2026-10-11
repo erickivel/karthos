@@ -116,6 +116,13 @@ tasks:
       - task: _e2e:reset-platform
       - task: _e2e:reset-fixtures
 
+  _e2e:cleanup-scenario:
+    internal: true
+    cmds:
+      - ./test/e2e/cluster/istio.sh reset-if-owned
+      - task: _e2e:reset-platform
+      - task: _e2e:reset-fixtures
+
   _e2e:ensure-cluster:
     internal: true
     cmds:
@@ -132,7 +139,7 @@ tasks:
   e2e:scenario:prometheus:
     desc: Run the complete Prometheus discovery and servicegraph accuracy scenario
     cmds:
-      - defer: {task: e2e:reset}
+      - defer: {task: _e2e:cleanup-scenario}
       - task: _e2e:scenario:prometheus:prepare
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/prometheus-available/run.sh
 
@@ -152,14 +159,14 @@ tasks:
   e2e:scenario:istio:
     desc: Run the complete Istio HTTP, gRPC, and TCP accuracy scenario
     cmds:
-      - defer: {task: e2e:reset}
+      - defer: {task: _e2e:cleanup-scenario}
       - task: _e2e:scenario:istio:prepare
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/istio-available/run.sh
 
   e2e:scenario:fallback:
     desc: Deploy and verify the strict direct-source fallback scenario
     cmds:
-      - defer: {task: e2e:reset}
+      - defer: {task: _e2e:cleanup-scenario}
       - task: _e2e:scenario:fallback:prepare
       - ./test/e2e/scenarios/no-telemetry/run.sh
 
@@ -181,7 +188,7 @@ tasks:
     desc: Verify the backend rejects a mismatched source plan and restores the valid contract
     deps: [_e2e:ensure-cluster]
     cmds:
-      - defer: {task: e2e:reset}
+      - defer: {task: _e2e:cleanup-scenario}
       - ./test/e2e/apps/deploy.sh base
       - task: _e2e:deploy-platform
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system ./test/e2e/scenarios/source-contract-rejection/run.sh
