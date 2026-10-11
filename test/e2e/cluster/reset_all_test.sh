@@ -34,7 +34,17 @@ cat >"${TMPDIR_TEST}/bin/istioctl" <<'EOF'
 set -euo pipefail
 printf 'istioctl %s\n' "$*" >>"${RESET_ALL_ACTION_LOG}"
 EOF
-chmod +x "${TMPDIR_TEST}/bin/kubectl" "${TMPDIR_TEST}/bin/helm" "${TMPDIR_TEST}/bin/istioctl"
+cat >"${TMPDIR_TEST}/bin/kind" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'karthos-test\n'
+EOF
+cat >"${TMPDIR_TEST}/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'true\n'
+EOF
+chmod +x "${TMPDIR_TEST}/bin/"*
 
 export PATH="${TMPDIR_TEST}/bin:${PATH}"
 export RESET_ALL_ACTION_LOG="${TMPDIR_TEST}/actions.log"
@@ -51,6 +61,17 @@ if ! grep -Fq 'not owned by the Karthos E2E harness' "${TMPDIR_TEST}/reset-all.o
 fi
 if [[ -s "${RESET_ALL_ACTION_LOG}" ]]; then
   echo "strict fallback changed E2E state before rejecting externally owned Istio:" >&2
+  cat "${RESET_ALL_ACTION_LOG}" >&2
+  exit 1
+fi
+
+: >"${RESET_ALL_ACTION_LOG}"
+if RESET_ALL_ISTIO_STATE=external task test:e2e:scenario:fallback >"${TMPDIR_TEST}/fallback.out" 2>&1; then
+  echo "fallback should reject externally owned Istio" >&2
+  exit 1
+fi
+if [[ -s "${RESET_ALL_ACTION_LOG}" ]]; then
+  echo "fallback changed E2E state after rejecting externally owned Istio:" >&2
   cat "${RESET_ALL_ACTION_LOG}" >&2
   exit 1
 fi

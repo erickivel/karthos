@@ -166,6 +166,7 @@ tasks:
   e2e:scenario:fallback:
     desc: Deploy and verify the strict direct-source fallback scenario
     cmds:
+      - task: e2e:reset
       - defer: {task: _e2e:cleanup-scenario}
       - task: _e2e:scenario:fallback:prepare
       - ./test/e2e/scenarios/no-telemetry/run.sh
@@ -174,7 +175,6 @@ tasks:
     internal: true
     deps: [_e2e:ensure-cluster]
     cmds:
-      - task: e2e:reset
       - ./test/e2e/apps/deploy.sh base
       - task: _e2e:deploy-platform
 
