@@ -4,13 +4,12 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMPDIR_TEST="$(mktemp -d -t karthos-deploy-test.XXXXXX)"
-TEST_PROFILE="${REPO_ROOT}/.env.d/deploy-test.env"
+TEST_PROFILE="${TMPDIR_TEST}/deploy-test.env"
 cleanup() {
   local status=$?
   if [[ "${status}" -ne 0 && -f "${DEPLOY_TEST_LOG:-}" ]]; then
     cat "${DEPLOY_TEST_LOG}" >&2
   fi
-  rm -f "${TEST_PROFILE}"
   rm -rf "${TMPDIR_TEST}"
   exit "${status}"
 }
@@ -23,6 +22,7 @@ K3S_SSH_HOST=fixture-host
 IMAGE_TAG=latest
 EOF
 export KARTHOS_CLUSTER_PROFILE_OVERRIDE=deploy-test
+export KARTHOS_CLUSTER_PROFILE_FILE_OVERRIDE="${TEST_PROFILE}"
 cd "${REPO_ROOT}"
 # shellcheck disable=SC1091
 . "${REPO_ROOT}/test/e2e/cluster/profile.sh"

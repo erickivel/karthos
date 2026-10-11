@@ -74,6 +74,7 @@ tasks:
       - bash test/task_surface_test.sh
       - bash test/e2e/platform/image_tag_test.sh
       - bash test/e2e/platform/deploy_test.sh
+      - bash test/e2e/platform/undeploy_test.sh
       - bash test/e2e/platform/verify_test.sh
       - python3 test/e2e/scenarios/istio-available/verify_protocol_metrics_test.py
 

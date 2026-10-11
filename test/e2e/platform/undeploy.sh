@@ -10,5 +10,10 @@ cd "${REPO_ROOT}"
 
 namespace="${KIND_NAMESPACE:-karthos-system}"
 release="${HELM_RELEASE_NAME:-karthos}"
-helm uninstall "${release}" --namespace "${namespace}" || true
+if ! uninstall_output="$(helm uninstall "${release}" --namespace "${namespace}" 2>&1)"; then
+  if [[ "${uninstall_output}" != *"release: not found"* ]]; then
+    printf '%s\n' "${uninstall_output}" >&2
+    exit 1
+  fi
+fi
 kubectl delete pvc "data-${release}-postgresql-0" --namespace "${namespace}" --ignore-not-found

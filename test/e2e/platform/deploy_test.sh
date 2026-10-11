@@ -4,10 +4,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMPDIR_TEST="$(mktemp -d -t karthos-deploy-test.XXXXXX)"
-TEST_PROFILE="${REPO_ROOT}/.env.d/deploy-contract-test.env"
+TEST_PROFILE="${TMPDIR_TEST}/deploy-contract-test.env"
 cleanup() {
   local status=$?
-  rm -f "${TEST_PROFILE}"
   rm -rf "${TMPDIR_TEST}"
   exit "${status}"
 }
@@ -53,6 +52,7 @@ KIND_CLUSTER_NAME=karthos-test
 IMAGE_TAG=latest
 EOF
 export KARTHOS_CLUSTER_PROFILE_OVERRIDE=deploy-contract-test
+export KARTHOS_CLUSTER_PROFILE_FILE_OVERRIDE="${TEST_PROFILE}"
 export KARTHOS_DEPLOY_IMAGE_BUILDER="${TMPDIR_TEST}/image-builder"
 cat >"${KARTHOS_DEPLOY_IMAGE_BUILDER}" <<'EOF'
 #!/usr/bin/env bash
