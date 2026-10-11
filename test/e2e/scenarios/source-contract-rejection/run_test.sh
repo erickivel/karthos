@@ -65,6 +65,13 @@ export PATH="${TMPDIR_TEST}:${PATH}"
 export SOURCE_CONTRACT_TEST_LOG="${TMPDIR_TEST}/calls.log"
 export HELM_RELEASE_NAME="release-check"
 export KIND_NAMESPACE="contract-check"
+export KARTHOS_PLATFORM_DEPLOYER="${TMPDIR_TEST}/platform-deploy"
+cat >"${KARTHOS_PLATFORM_DEPLOYER}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "platform deploy" >>"${SOURCE_CONTRACT_TEST_LOG}"
+EOF
+chmod +x "${KARTHOS_PLATFORM_DEPLOYER}"
 
 bash "${REPO_ROOT}/test/e2e/scenarios/source-contract-rejection/run.sh"
 

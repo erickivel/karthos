@@ -46,8 +46,6 @@ cleanup_port_forwards() {
   done
 }
 
-task test:e2e:scenario:prometheus:prepare
-
 python3 - <<'PY'
 import json
 from pathlib import Path

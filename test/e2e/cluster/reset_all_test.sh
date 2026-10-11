@@ -40,7 +40,7 @@ export PATH="${TMPDIR_TEST}/bin:${PATH}"
 export RESET_ALL_ACTION_LOG="${TMPDIR_TEST}/actions.log"
 
 cd "${REPO_ROOT}"
-if RESET_ALL_ISTIO_STATE=external task test:e2e:reset-all >"${TMPDIR_TEST}/reset-all.out" 2>&1; then
+if RESET_ALL_ISTIO_STATE=external task test:e2e:reset >"${TMPDIR_TEST}/reset-all.out" 2>&1; then
   echo "strict fallback should reject externally owned Istio" >&2
   exit 1
 fi
@@ -56,7 +56,7 @@ if [[ -s "${RESET_ALL_ACTION_LOG}" ]]; then
 fi
 
 : >"${RESET_ALL_ACTION_LOG}"
-RESET_ALL_ISTIO_STATE=owned task test:e2e:reset-all
+RESET_ALL_ISTIO_STATE=owned task test:e2e:reset
 
 first_action="$(head -n1 "${RESET_ALL_ACTION_LOG}")"
 [[ "${first_action}" == "istioctl uninstall --purge -y" ]] || {

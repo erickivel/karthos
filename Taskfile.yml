@@ -12,34 +12,31 @@ includes:
     taskfile: ./web/Taskfile.yml
 
 tasks:
-  default:
-    cmds:
-      - task: test
-
   fmt:
-    desc: Format Go code
+    desc: Format Go code across the root and nested fixture modules
     cmds:
-      - gofmt -w ./cmd ./pkg
+      - gofmt -w ./cmd ./pkg ./deploy/helm/karthos ./test/e2e/apps/base/gateway-go ./test/e2e/apps/instrumented/gateway-go ./test/e2e/apps/mesh-protocol-go
 
   fmt:check:
-    desc: Check Go code formatting (CI)
+    desc: Check Go formatting across all modules without modifying source
     cmds:
-      - test -z "$(gofmt -l ./cmd ./pkg)"
+      - test -z "$(gofmt -l ./cmd ./pkg ./deploy/helm/karthos ./test/e2e/apps/base/gateway-go ./test/e2e/apps/instrumented/gateway-go ./test/e2e/apps/mesh-protocol-go)"
 
   generate:
-    desc: Generate JSON schemas
+    desc: Generate JSON schemas and other Go-generated artifacts
     cmds:
       - go generate {{.GO_PACKAGE_PATHS}}
 
   vet:
-    desc: Run go vet
+    desc: Run go vet across the root and nested Go modules
     cmds:
       - go vet {{.GO_PACKAGE_PATHS}}
+      - task: vet:fixture:instrumented-gateway
+      - task: vet:fixture:mesh-protocol
 
   test:
-    desc: Run unit tests
+    desc: Run unit tests for the main Karthos module
     cmds:
-      - task: test:branding
       - go test {{.GO_PACKAGE_PATHS}}
 
   test:branding:
@@ -48,7 +45,7 @@ tasks:
       - bash test/branding_contract_test.sh
 
   test:race:
-    desc: Run unit tests with race detection and coverage
+    desc: Run main-module tests with race detection and coverage
     cmds:
       - go test -race -coverprofile=coverage.out {{.GO_PACKAGE_PATHS}}
 
@@ -58,7 +55,7 @@ tasks:
       - go test -tags=integration -count=1 -timeout=3m ./pkg/adapters/storage/postgresql
 
   test:fixtures:
-    desc: Run repository-owned nested fixture test suites
+    desc: Run repository-owned fixture contract tests and nested-module tests
     cmds:
       - bash test/e2e/cluster/image_test.sh
       - bash test/e2e/cluster/registry_identity_test.sh
@@ -74,33 +71,32 @@ tasks:
       - go -C test/e2e/apps/mesh-protocol-go test ./...
       - bash test/e2e/scripts/traffic_schedule_test.sh
       - bash test/e2e/scripts/port_forward_cleanup_test.sh
+      - bash test/task_surface_test.sh
+      - bash test/e2e/platform/image_tag_test.sh
+      - bash test/e2e/platform/deploy_test.sh
+      - bash test/e2e/platform/verify_test.sh
       - python3 test/e2e/scenarios/istio-available/verify_protocol_metrics_test.py
 
   build:
-    desc: Build all binaries into bin/ (never write binaries to repo root)
-    deps:
-      - fmt
-    cmds:
-      - mkdir -p bin
-      - go build -o ./bin/backend ./cmd/backend
-      - go build -o ./bin/discovery-job ./cmd/discovery-job
-
-  build:check:
-    desc: Build all binaries without formatting (CI)
+    desc: Build backend and discovery-job into bin/ without modifying source
     cmds:
       - mkdir -p bin
       - go build -o ./bin/backend ./cmd/backend
       - go build -o ./bin/discovery-job ./cmd/discovery-job
 
   tidy:
-    desc: Tidy Go module dependencies
+    desc: Run go mod tidy across the root and nested Go modules
     cmds:
       - go mod tidy
+      - task: tidy:fixture:instrumented-gateway
+      - task: tidy:fixture:mesh-protocol
 
   lint:
-    desc: Run golangci-lint (long timeout for CI package loading)
+    desc: Run golangci-lint across the root and nested Go modules
     cmds:
       - golangci-lint run --timeout=5m {{.GO_PACKAGE_PATHS}}
+      - task: lint:fixture:instrumented-gateway
+      - task: lint:fixture:mesh-protocol
 
   security:
     desc: Run security scanning across root and nested Go modules
@@ -124,8 +120,44 @@ tasks:
       - govulncheck ./...
       - gosec -quiet ./...
 
+  vet:fixture:instrumented-gateway:
+    internal: true
+    dir: ./test/e2e/apps/instrumented/gateway-go
+    cmds:
+      - go vet ./...
+
+  vet:fixture:mesh-protocol:
+    internal: true
+    dir: ./test/e2e/apps/mesh-protocol-go
+    cmds:
+      - go vet ./...
+
+  tidy:fixture:instrumented-gateway:
+    internal: true
+    dir: ./test/e2e/apps/instrumented/gateway-go
+    cmds:
+      - go mod tidy
+
+  tidy:fixture:mesh-protocol:
+    internal: true
+    dir: ./test/e2e/apps/mesh-protocol-go
+    cmds:
+      - go mod tidy
+
+  lint:fixture:instrumented-gateway:
+    internal: true
+    dir: ./test/e2e/apps/instrumented/gateway-go
+    cmds:
+      - golangci-lint run --timeout=5m ./...
+
+  lint:fixture:mesh-protocol:
+    internal: true
+    dir: ./test/e2e/apps/mesh-protocol-go
+    cmds:
+      - golangci-lint run --timeout=5m ./...
+
   ci:
-    desc: Run all CI checks locally
+    desc: Run branding, formatting, vet, lint, race, PostgreSQL, fixture, binary-build, and frontend checks
     cmds:
       - task: test:branding
       - task: fmt:check
@@ -134,11 +166,25 @@ tasks:
       - task: test:race
       - task: test:postgres
       - task: test:fixtures
-      - task: build:check
-      - task: web:build
+      - task: build
+      - task: web:check
 
   clean:
-    desc: Remove generated artifacts and any binaries accidentally built in repo root
+    desc: Remove generated schemas, binaries, coverage output, and E2E output
     cmds:
       - rm -rf bin coverage.out schemas
       - rm -f discovery-job backend
+
+  deploy:
+    desc: Validate, build, publish, deploy, and verify the current Karthos platform code
+    cmds:
+      - task: test:cluster:doctor
+      - task: test
+      - task: build
+      - task: web:check
+      - ./test/e2e/platform/deploy.sh
+
+  undeploy:
+    desc: Remove the configured Karthos Helm release and its harness-owned PostgreSQL PVC
+    cmds:
+      - ./test/e2e/platform/undeploy.sh

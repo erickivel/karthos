@@ -12,12 +12,15 @@
 # via an absolute path).
 
 __KARTHOS_REPO_ROOT="${PWD}"
-
 if [ -f "${__KARTHOS_REPO_ROOT}/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   . "${__KARTHOS_REPO_ROOT}/.env"
   set +a
+fi
+
+if [ -n "${KARTHOS_CLUSTER_PROFILE_OVERRIDE:-}" ]; then
+  CLUSTER_PROFILE="${KARTHOS_CLUSTER_PROFILE_OVERRIDE}"
 fi
 
 : "${CLUSTER_PROFILE:=karthos-test}"

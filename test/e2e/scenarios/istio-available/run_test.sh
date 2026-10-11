@@ -91,7 +91,7 @@ cd "${TMPDIR_TEST}"
 GATEWAY_LOCAL_PORT=18082 bash "${REPO_ROOT}/test/e2e/scenarios/istio-available/run.sh"
 
 grep -Fqx "          image: ${ISTIO_RUN_TEST_REGISTRY}/mesh-protocol-go:run-tag" "${ISTIO_RUN_TEST_APPLY_MANIFEST}"
-grep -Fqx "test:e2e:scenario:istio:prepare GATEWAY_LOCAL_PORT=18082" "${ISTIO_RUN_TEST_TASK_LOG}"
+[[ ! -s "${ISTIO_RUN_TEST_TASK_LOG}" ]]
 
 if [[ ! -s "${ISTIO_RUN_TEST_PORT_FORWARD_PIDS}" ]]; then
   echo "Istio runner did not start its expected port-forward children" >&2

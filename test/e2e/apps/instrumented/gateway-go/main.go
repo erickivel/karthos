@@ -193,7 +193,9 @@ func callDownstream(ctx context.Context, serviceName, url string) downstreamResp
 		span.SetStatus(codes.Error, err.Error())
 		return downstreamResponse{Service: serviceName, Error: err.Error()}
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode >= http.StatusInternalServerError {
 		span.SetStatus(codes.Error, http.StatusText(resp.StatusCode))
 	}
