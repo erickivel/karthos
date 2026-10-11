@@ -51,51 +51,25 @@ Key coverage areas:
 
 ```bash
 task test:e2e:setup
-VARIANT=with-prometheus task test:e2e:deploy
-task test:e2e:discover
-task test:e2e:apply-otel
-task test:e2e:verify
+task deploy
+task test:e2e:scenario:prometheus
 ```
 
 `task test:e2e:setup` provisions one control-plane node and one worker
 node so topology QA can validate cross-node placement in the live cluster.
 
-> **`VARIANT` contract:** `e2e:deploy` reads `VARIANT` from the shell
-> environment only. There is no Task-CLI-var form — the previous
-> `task test:e2e:deploy VARIANT=with-prometheus` syntax does not
-> propagate. Pass it as an env-var prefix on the CLI
-> (`VARIANT=… task …`). Internal scenarios call `deploy.sh` with an explicit
-> variant argument so scenario correctness does not depend on nested Task
-> environment propagation.
-
 The same `task test:e2e:*` commands work against a remote k3s cluster
 reached over SSH — set `CLUSTER_PROFILE` in `.env` (see
 [remote-cluster.md](remote-cluster.md)).
 
-What each stage does:
+`task deploy` is platform-only. It validates and builds the current working
+tree, assigns one immutable tag to backend and frontend, publishes both images,
+discovers the cluster, deploys with Helm, waits for all rollouts, and verifies
+the configured tags and running digests. It does not install Istio or fixtures.
 
-- `test:e2e:discover`
-  writes `bin/e2e/profile.json`
-- `test:e2e:prepare-platform-images`
-  builds and publishes backend/frontend images through the active cell's image
-  transport; fixture deployment never builds those platform images
-- `test:e2e:apply-otel`
-  runs `discovery-job --mode=deploy`, which self-contains planning, compiles dynamic values, and uses
-  Helm to deploy agent, gateway, backend, and frontend with the chart-owned
-  source-contract ConfigMap
-- `test:e2e:verify`
-  checks Helm status, pod readiness including the frontend rollout, and recent agent/gateway/backend logs
-
-`test:e2e:deploy` builds and publishes fixture images only, then waits for the
-demo app Deployments and pods before discovery
-runs. This keeps capability profiles from capturing terminating rollout pods
-that would later appear as duplicate topology cards.
-
-`test:e2e:plan` remains available only to inspect generated values or render
-output manually. Live scenarios intentionally use the single deploy path:
-fixture deployment → discovery → `e2e:apply-otel` → verification. The latter
-first runs `e2e:prepare-platform-images`, so the deployed release never relies
-on fixture deployment to build a platform image.
+Each public scenario owns fixture preparation, discovery, platform publication
+and deployment, readiness verification, traffic, assertions, and restoration.
+The individual stages are deliberately internal rather than public Task APIs.
 
 ## Scenario Expectations
 
@@ -238,40 +212,6 @@ The debug and traffic tasks never terminate a process occupying one of these
 ports. They fail with the conflicting port and the Task variable to override,
 for example `task test:e2e:traffic GATEWAY_LOCAL_PORT=18082`.
 
-## Frontend Topology QA
-
-The topology Playwright suite runs against the live frontend and a
-port-forwarded backend API. Keep all Node/Playwright commands inside Docker.
-
-Prerequisites:
-
-- `task test:e2e:scenario:prometheus`
-- `task web:e2e:install`
-- `task web:dev`
-- `kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080`
-
-Run the suite:
-
-```bash
-task web:e2e
-```
-
-Update committed screenshot baselines for the 9 projection/granularity views:
-
-```bash
-task web:e2e:update
-```
-
-Coverage currently includes:
-
-- projection mode grouping behavior
-- granularity transitions and selection persistence
-- sparse/orphan pod handling
-- infrastructure overview rendering Kubernetes nodes as metric cards
-- compact infrastructure runtime pod packing inside node groups
-- traffic cards rendering servicegraph request rates
-- screenshot baselines for all `mode x granularity` combinations
-
 Topology metric assertions should stay entity-scoped. Pod CPU and memory are
 valid on pod cards, servicegraph request rates are valid on service and ingress
 traffic cards, node CPU and memory are valid on Kubernetes node cards, and PVC
@@ -313,9 +253,8 @@ When changing the e2e flow, keep log inspection and rendered Helm artifacts easy
 ## Cleanup
 
 ```bash
-task test:e2e:reset       # remove the Helm-owned OTel release and its E2E PostgreSQL PVC
-task test:e2e:reset-apps  # remove demo fixtures from karthos-demo and karthos-sparse
-task test:e2e:reset-all   # remove release, fixtures, and E2E-owned Istio
+task undeploy             # remove platform release and its harness-owned PostgreSQL PVC
+task test:e2e:reset       # remove platform, fixtures, data, and E2E-owned Istio
 task test:e2e:teardown    # destroy the kind cluster and local registry
 ```
 

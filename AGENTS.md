@@ -119,10 +119,7 @@ The frontend lives in `web/`. **All frontend operations run inside Docker contai
 | Command | What it does |
 |---------|-------------|
 | `task web:dev` | Start dev container with Vite HMR (port 5173) |
-| `task web:build` | Build production Docker image |
-| `task web:install` | Install npm dependencies inside container |
-| `task web:typecheck` | Run `tsc --noEmit` inside container |
-| `task web:lint` | Run ESLint inside container |
+| `task web:check` | Build shared dependencies, typecheck, lint, and build the production image |
 
 ### Key rules
 
