@@ -62,7 +62,10 @@ export GATEWAY_LOCAL_PORT=18082
 cd "${TMPDIR_TEST}/work"
 bash "${REPO_ROOT}/test/e2e/scenarios/prometheus-available/run.sh"
 
-grep -Fx 'task test:e2e:scenario:prometheus:prepare' "${PROMETHEUS_RUN_TEST_LOG}"
+if grep -Fq 'scenario:prometheus:prepare' "${PROMETHEUS_RUN_TEST_LOG}"; then
+  echo "scenario runner recursively invoked its hidden preparation task" >&2
+  exit 1
+fi
 traffic_calls="$(grep -Fc 'task test:e2e:traffic ' "${PROMETHEUS_RUN_TEST_LOG}" || true)"
 [[ "${traffic_calls}" == "2" ]] || { echo "expected two controlled traffic calls" >&2; exit 1; }
 traffic_port_overrides="$(grep -Fc 'GATEWAY_LOCAL_PORT=18082' "${PROMETHEUS_RUN_TEST_LOG}" || true)"

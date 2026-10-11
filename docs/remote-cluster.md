@@ -76,9 +76,10 @@ Every cluster-touching task dispatches on `CLUSTER_ENGINE`:
                                    exports kubeconfig)
 ```
 
-Same pattern for `e2e:teardown`, `e2e:ensure-cluster`, `cluster:doctor`,
-`cluster:tunnel`. Adding a new engine = new `test/e2e/cluster/<engine>/`
-directory + new case in those branches; nothing else moves.
+The same pattern applies to public teardown, doctor, and tunnel tasks and to the
+internal cluster-readiness prerequisite. Adding a new engine means adding a
+`test/e2e/cluster/<engine>/` directory and a new case in those dispatch points;
+nothing else moves.
 
 ## Support Matrix
 
@@ -282,13 +283,9 @@ to inspect the remote registry from the laptop.
        pane 1 (work)                              optional pane 2
        ─────────────                              ───────────────
 
- VARIANT=base task test:e2e:deploy                task test:cluster:tunnel
-       │ fixture docker build → docker save → SSH load/push │ ssh -N -L 5001:…
-       │                                                │ (registry inspection only)
-       │ kubectl apply                                  │
-       │                                                │
- task test:e2e:apply-otel                              │
-       │ platform image build/publish → discovery-job --mode=deploy → Helm │
+ task deploy                                       task test:cluster:tunnel
+       │ validate → build → SSH load/push → discover → Helm │ ssh -N -L 5001:…
+       │ verify rollouts, image tags, and digests       │ (registry inspection only)
        │                                                │
  kubectl port-forward 18081:8080 &                      │
        │                                                │
@@ -303,11 +300,8 @@ Or, copy-pasteable:
 task test:e2e:setup           # ensures registry, registries.yaml, kubeconfig
 task test:cluster:doctor      # confirms SSH, k3s, server registry, kubectl, TLS SAN
 
-# Pane 1, normal work:
-VARIANT=base task test:e2e:deploy
-# apply-otel publishes the backend/frontend images through this cell first.
-task test:e2e:apply-otel
-task test:e2e:verify
+# Pane 1, normal platform work:
+task deploy                  # current committed or uncommitted backend/frontend source
 kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080 &
 task web:dev                  # frontend hits the remote cluster
 

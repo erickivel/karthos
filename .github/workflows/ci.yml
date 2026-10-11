@@ -142,7 +142,7 @@ jobs:
           gosec-version: ${{ env.GOSEC_VERSION }}
 
       - name: Build binaries
-        run: task build:check
+        run: task build
 
   frontend-build:
     name: Frontend Build
@@ -160,14 +160,8 @@ jobs:
           govulncheck-version: ${{ env.GOVULNCHECK_VERSION }}
           gosec-version: ${{ env.GOSEC_VERSION }}
 
-      - name: Typecheck frontend
-        run: task web:typecheck
-
-      - name: Lint frontend
-        run: task web:lint
-
-      - name: Build frontend container
-        run: task web:build
+      - name: Check frontend
+        run: task web:check
 
   security:
     name: Security Scan

@@ -75,8 +75,9 @@ task test:e2e:scenario:fallback           # strict direct-source baseline
 Targeting a remote k3s cluster (or any other supported cell) is a
 `CLUSTER_PROFILE` switch in `.env`; see [docs/remote-cluster.md](docs/remote-cluster.md).
 
-Step-by-step (`fixture deploy → discover → apply-otel → verify`) is documented
-in [docs/testing.md](docs/testing.md).
+`task deploy` validates and deploys the current working tree, including
+uncommitted backend and frontend source. Complete scenarios own fixture setup,
+deployment, verification, and restoration; see [docs/testing.md](docs/testing.md).
 
 After deploying, generate traffic and inspect:
 
@@ -91,25 +92,11 @@ Local port convention:
 - `18081` → backend REST API
 - `13133` → backend health checks
 
-### Frontend topology QA (Playwright)
-
-```bash
-task web:e2e:install
-task web:dev
-kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080
-task web:e2e
-task web:e2e:update          # refresh committed screenshot baselines
-```
-
-The runner expects the frontend at `http://localhost:5173`; the Vite proxy
-forwards `/api/*` to `http://localhost:18081`.
-
 ### Cleanup
 
 ```bash
-task test:e2e:reset           # remove the Helm-owned OTel release and source contract
-task test:e2e:reset-apps      # remove demo fixtures
-task test:e2e:reset-all       # both, plus an E2E-owned Istio control plane
+task undeploy                 # remove only the platform release and owned PostgreSQL PVC
+task test:e2e:reset           # remove platform, fixtures, data, and E2E-owned Istio
 task test:e2e:teardown        # destroy cluster and registry
 ```
 

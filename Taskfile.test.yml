@@ -49,7 +49,7 @@ env:
 
 tasks:
   e2e:setup:
-    desc: Provision the cluster for the active CLUSTER_PROFILE (kind+local default; k3s+ssh for remote)
+    desc: Provision local kind or prepare the configured remote k3s environment
     cmds:
       - mkdir -p {{.E2E_OUTPUT_DIR}}
       - |
@@ -60,7 +60,7 @@ tasks:
         esac
 
   e2e:teardown:
-    desc: Tear down the cluster (kind) or Karthos resources on it (k3s)
+    desc: Destroy local kind infrastructure or remove harness-managed remote resources
     cmds:
       - |
         case "{{.CLUSTER_ENGINE}}" in
@@ -69,149 +69,87 @@ tasks:
           *)    echo "unsupported CLUSTER_ENGINE: {{.CLUSTER_ENGINE}}" >&2; exit 1 ;;
         esac
 
-  e2e:deploy:
-    desc: "Build and deploy test apps to cluster (set VARIANT env var; defaults to base. Accepts: base, with-prometheus, with-istio)"
+  _e2e:deploy-fixtures:
+    internal: true
     cmds:
       # VARIANT is read from the shell env (no Task-CLI-var form). CLI users
-      # pass it as an env-var prefix, e.g. `VARIANT=with-prometheus task test:e2e:deploy`.
+      # pass it as an env-var prefix when invoking this internal task.
       - ./test/e2e/apps/deploy.sh "${VARIANT:-base}"
 
-  e2e:install-istio:
-    desc: Install minimal Istio control plane for mesh telemetry e2e scenarios
-    deps: [e2e:ensure-cluster]
+  _e2e:install-istio:
+    internal: true
+    deps: [_e2e:ensure-cluster]
     cmds:
       - ./test/e2e/cluster/istio.sh install
 
-  e2e:reset-istio:
-    desc: Remove the Istio control plane only when this E2E harness owns it
+  _e2e:reset-istio:
+    internal: true
     cmds:
       - ./test/e2e/cluster/istio.sh reset
 
-  e2e:ensure-build:
-    desc: Build discovery-job into bin/ so e2e never creates binaries in repo root
+  _e2e:ensure-build:
+    internal: true
     cmds:
       - mkdir -p bin
       - go build -o ./bin/discovery-job ./cmd/discovery-job
 
-  e2e:discover:
-    desc: Run Kubernetes discovery against the cluster
-    deps: [e2e:ensure-build]
+  _e2e:deploy-platform:
+    internal: true
     cmds:
-      - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - "{{.DISCOVERY_JOB_BIN}} --mode=discover --kubeconfig={{.KUBECONFIG}} --cluster-name={{.CLUSTER_PROFILE}} --output={{.PROFILE_PATH}} --namespace={{.KIND_NAMESPACE}} --target-namespace={{.TARGET_NAMESPACE}}"
+      - ./test/e2e/platform/deploy.sh
 
-  e2e:plan:
-    desc: Generate Helm values from discovery output
-    deps: [e2e:ensure-build]
+  _e2e:reset-platform:
+    internal: true
     cmds:
-      - mkdir -p {{.E2E_OUTPUT_DIR}}
-      - helm dependency build {{.HELM_CHART_PATH}}
-      - "{{.DISCOVERY_JOB_BIN}} --mode=plan --capability-profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}} --frontend-image-repository={{.FRONTEND_IMAGE_REPOSITORY}} --frontend-image-tag={{.FRONTEND_IMAGE_TAG}} --frontend-image-pull-policy={{.FRONTEND_IMAGE_PULL_POLICY}} --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled"
+      - ./test/e2e/platform/undeploy.sh
 
-  e2e:apply-otel:
-    desc: Deploy the discovery-derived collection plane through discovery-job
-    deps: [e2e:ensure-build, e2e:prepare-platform-images]
-    cmds:
-      - helm dependency build {{.HELM_CHART_PATH}}
-      - "{{.DISCOVERY_JOB_BIN}} --mode=deploy --capability-profile={{.PROFILE_PATH}} --values-output={{.VALUES_PATH}} --rendered-output={{.RENDERED_PATH}} --namespace={{.KIND_NAMESPACE}} --chart-path={{.HELM_CHART_PATH}} --release-name={{.HELM_RELEASE_NAME}} --backend-image-repository={{.BACKEND_IMAGE_REPOSITORY}} --backend-image-tag={{.BACKEND_IMAGE_TAG}} --backend-image-pull-policy={{.BACKEND_IMAGE_PULL_POLICY}} --frontend-image-repository={{.FRONTEND_IMAGE_REPOSITORY}} --frontend-image-tag={{.FRONTEND_IMAGE_TAG}} --frontend-image-pull-policy={{.FRONTEND_IMAGE_PULL_POLICY}} --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled"
-
-  e2e:verify:
-    desc: Verify generated collectors and storage backends are deployed
-    cmds:
-      - helm status {{.HELM_RELEASE_NAME}} -n {{.KIND_NAMESPACE}}
-      - kubectl get pods -n {{.KIND_NAMESPACE}}
-      - echo "Waiting for storage backends..."
-      - kubectl rollout status statefulset/{{.HELM_RELEASE_NAME}}-postgresql -n {{.KIND_NAMESPACE}} --timeout=180s
-      - kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=victoria-metrics-single,app.kubernetes.io/instance={{.HELM_RELEASE_NAME}} -n {{.KIND_NAMESPACE}} --timeout=180s
-      - echo "Waiting for collector rollouts..."
-      - kubectl rollout status deployment/{{.HELM_RELEASE_NAME}}-backend -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl rollout status deployment/{{.HELM_RELEASE_NAME}}-frontend -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl rollout status deployment/{{.HELM_RELEASE_NAME}}-gateway -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl rollout status daemonset/{{.HELM_RELEASE_NAME}}-agent -n {{.KIND_NAMESPACE}} --timeout=120s
-      - kubectl logs -n {{.KIND_NAMESPACE}} daemonset/{{.HELM_RELEASE_NAME}}-agent --tail=30
-      - kubectl logs -n {{.KIND_NAMESPACE}} deployment/{{.HELM_RELEASE_NAME}}-gateway --tail=30
-      - kubectl logs -n {{.KIND_NAMESPACE}} deployment/{{.HELM_RELEASE_NAME}}-backend --tail=30
-
-  e2e:reset:
-    desc: Remove deployed OTel Helm release and its harness-owned PostgreSQL data
-    cmds:
-      - helm uninstall {{.HELM_RELEASE_NAME}} --namespace {{.KIND_NAMESPACE}} || true
-      - kubectl delete pvc data-{{.HELM_RELEASE_NAME}}-postgresql-0 --namespace {{.KIND_NAMESPACE}} --ignore-not-found
-
-  e2e:reset-apps:
-    desc: Remove deployed demo fixtures across all e2e app namespaces
+  _e2e:reset-fixtures:
+    internal: true
     cmds:
       - kubectl delete namespace {{.TARGET_NAMESPACE}} --ignore-not-found
       - kubectl delete namespace {{.SPARSE_NAMESPACE}} --ignore-not-found
 
-  e2e:reset-all:
-    desc: Remove both OTel collectors and all deployed demo fixtures
+  e2e:reset:
+    desc: Remove the Karthos release, fixture namespaces, PostgreSQL data, and harness-owned Istio
     cmds:
-      - task: e2e:reset-istio
-      - task: e2e:reset
-      - task: e2e:reset-apps
+      - task: _e2e:reset-istio
+      - task: _e2e:reset-platform
+      - task: _e2e:reset-fixtures
 
-  e2e:prepare-platform-images:
-    desc: Build and publish backend and frontend images through the active cell transport
-    deps: [e2e:ensure-cluster]
+  _e2e:cleanup-scenario:
+    internal: true
     cmds:
-      - ./test/e2e/prepare-platform-images.sh
+      - ./test/e2e/cluster/istio.sh reset-if-owned
+      - task: _e2e:reset-platform
+      - task: _e2e:reset-fixtures
 
-  e2e:ensure-cluster:
-    desc: Verify the active cluster is reachable and ready (engine-aware)
+  _e2e:ensure-cluster:
+    internal: true
     cmds:
-      - |
-        case "{{.CLUSTER_ENGINE}}" in
-          kind)
-            if ! kind get clusters 2>/dev/null | grep -qx "{{.KIND_CLUSTER_NAME}}"; then
-              echo "Cluster not found. Run 'task test:e2e:setup' first."
-              exit 1
-            fi
-            if ! docker inspect -f '{{`{{.State.Running}}`}}' karthos-kind-registry 2>/dev/null | grep -q true; then
-              echo "Registry not running. Run 'task test:e2e:setup' first."
-              exit 1
-            fi
-            ;;
-          k3s)
-            if ! kubectl --kubeconfig "{{.KUBECONFIG}}" get nodes >/dev/null 2>&1; then
-              echo "kubectl cannot reach the cluster (KUBECONFIG={{.KUBECONFIG}}). Run 'task test:e2e:setup' and 'task test:cluster:doctor'."
-              exit 1
-            fi
-            if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "{{.K3S_SSH_HOST}}" curl -fsS --max-time 5 http://127.0.0.1:5001/v2/ >/dev/null 2>&1; then
-              echo "remote registry is not reachable from the k3s server at 127.0.0.1:5001. Run 'task test:e2e:setup' and 'task test:cluster:doctor'."
-              exit 1
-            fi
-            ;;
-          *)
-            echo "unsupported CLUSTER_ENGINE: {{.CLUSTER_ENGINE}}" >&2
-            exit 1
-            ;;
-        esac
+      - CLUSTER_ENGINE={{.CLUSTER_ENGINE}} KIND_CLUSTER_NAME={{.KIND_CLUSTER_NAME}} K3S_SSH_HOST={{.K3S_SSH_HOST}} ./test/e2e/platform/ensure-cluster.sh
     silent: true
 
-  e2e:scenario:prometheus:prepare:
-    desc: Prepare the Prometheus discovery scenario without generating traffic
-    deps: [e2e:ensure-cluster]
+  _e2e:scenario:prometheus:prepare:
+    internal: true
+    deps: [_e2e:ensure-cluster]
     cmds:
       - ./test/e2e/apps/deploy.sh with-prometheus
-      - task: e2e:discover
-      - task: e2e:apply-otel
-      - task: e2e:verify
+      - task: _e2e:deploy-platform
 
   e2e:scenario:prometheus:
-    desc: Run Prometheus discovery scenario with gateway traffic (full pipeline including servicegraph)
+    desc: Run the complete Prometheus discovery and servicegraph accuracy scenario
     cmds:
+      - defer: {task: _e2e:cleanup-scenario}
+      - task: _e2e:scenario:prometheus:prepare
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/prometheus-available/run.sh
 
-  e2e:scenario:istio:prepare:
-    desc: Prepare the Istio mesh telemetry scenario and generate gateway traffic
-    deps: [e2e:ensure-cluster]
+  _e2e:scenario:istio:prepare:
+    internal: true
+    deps: [_e2e:ensure-cluster]
     cmds:
-      - task: e2e:install-istio
+      - task: _e2e:install-istio
       - ./test/e2e/apps/deploy.sh with-istio
-      - task: e2e:discover
-      - task: e2e:apply-otel
-      - task: e2e:verify
+      - task: _e2e:deploy-platform
       - task: e2e:traffic
         vars:
           TRAFFIC_REQUESTS: "30"
@@ -219,48 +157,54 @@ tasks:
           TRAFFIC_INTERVAL: "0.2"
 
   e2e:scenario:istio:
-    desc: Run the full Istio mesh accuracy scenario, including deterministic gRPC and TCP verification
+    desc: Run the complete Istio HTTP, gRPC, and TCP accuracy scenario
     cmds:
+      - defer: {task: _e2e:cleanup-scenario}
+      - task: _e2e:scenario:istio:prepare
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/istio-available/run.sh
 
   e2e:scenario:fallback:
-    desc: Run no-telemetry fallback scenario (full pipeline)
+    desc: Deploy and verify the strict direct-source fallback scenario
     cmds:
+      - task: e2e:reset
+      - defer: {task: _e2e:cleanup-scenario}
+      - task: _e2e:scenario:fallback:prepare
       - ./test/e2e/scenarios/no-telemetry/run.sh
 
-  e2e:scenario:fallback:prepare:
-    desc: Strictly reset E2E-owned state, then deploy and verify direct-source fallback
-    deps: [e2e:ensure-cluster]
+  _e2e:scenario:fallback:prepare:
+    internal: true
+    deps: [_e2e:ensure-cluster]
     cmds:
-      - task: e2e:reset-all
       - ./test/e2e/apps/deploy.sh base
-      - task: e2e:discover
-      - task: e2e:apply-otel
-      - task: e2e:verify
+      - task: _e2e:deploy-platform
 
   e2e:scenario:detector-failure:
-    desc: Verify discovery fails closed and never writes a profile after a detector failure
-    deps: [e2e:ensure-build]
+    desc: Verify detector failure produces no capability profile or partial deployment
+    deps: [_e2e:ensure-build]
     cmds:
       - ./test/e2e/scenarios/detector-failure/run.sh
 
   e2e:scenario:source-contract-rejection:
-    desc: Verify backend rejects a mismatched source plan and restores the valid contract
+    desc: Verify the backend rejects a mismatched source plan and restores the valid contract
+    deps: [_e2e:ensure-cluster]
     cmds:
+      - defer: {task: _e2e:cleanup-scenario}
+      - ./test/e2e/apps/deploy.sh base
+      - task: _e2e:deploy-platform
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system ./test/e2e/scenarios/source-contract-rejection/run.sh
 
   e2e:debug:api:
-    desc: Query the backend REST API status endpoint via a dedicated local port-forward
+    desc: Open a temporary port-forward and query backend status
     cmds:
       - BACKEND_API_LOCAL_PORT={{.BACKEND_API_LOCAL_PORT}} KIND_NAMESPACE={{.KIND_NAMESPACE}} HELM_RELEASE_NAME={{.HELM_RELEASE_NAME}} ./test/e2e/scripts/debug-api.sh
 
   e2e:debug:logs:
-    desc: Tail backend logs and filter for write confirmations and skipped-entity warnings
+    desc: Follow backend logs and stream write confirmations, skipped envelopes, and errors until interrupted
     cmds:
-      - kubectl logs -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/component=backend --tail=200 | grep -E '(wrote metric samples|skipping envelope|error)'
+      - kubectl logs -f -n {{.KIND_NAMESPACE}} -l app.kubernetes.io/component=backend --tail=200 | grep -E '(wrote metric samples|skipping envelope|error)'
 
   e2e:traffic:
-    desc: Send gateway-go traffic; optionally send TRAFFIC_ERROR_REQUESTS to /error for servicegraph error metrics
+    desc: Send configurable normal and error requests through the gateway fixture
     vars:
       TRAFFIC_REQUESTS: '{{default .TRAFFIC_REQUESTS_DEFAULT .TRAFFIC_REQUESTS}}'
       TRAFFIC_ERROR_REQUESTS: '{{default .TRAFFIC_ERROR_REQUESTS_DEFAULT .TRAFFIC_ERROR_REQUESTS}}'
@@ -270,7 +214,7 @@ tasks:
       - GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} TARGET_NAMESPACE={{.TARGET_NAMESPACE}} TRAFFIC_REQUESTS={{.TRAFFIC_REQUESTS}} TRAFFIC_ERROR_REQUESTS={{.TRAFFIC_ERROR_REQUESTS}} TRAFFIC_INTERVAL={{.TRAFFIC_INTERVAL}} TRAFFIC_INTERLEAVE_ERRORS={{.TRAFFIC_INTERLEAVE_ERRORS}} ./test/e2e/scripts/traffic.sh once
 
   e2e:traffic:watch:
-    desc: Continuously send gateway-go requests; every TRAFFIC_ERROR_EVERY request hits /error by default (set 0 to disable)
+    desc: Send gateway traffic continuously until interrupted
     vars:
       TRAFFIC_ERROR_EVERY: '{{default .TRAFFIC_ERROR_EVERY_DEFAULT .TRAFFIC_ERROR_EVERY}}'
       TRAFFIC_INTERVAL: '{{default .TRAFFIC_INTERVAL_DEFAULT .TRAFFIC_INTERVAL}}'
@@ -278,7 +222,7 @@ tasks:
       - GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} TARGET_NAMESPACE={{.TARGET_NAMESPACE}} TRAFFIC_ERROR_EVERY={{.TRAFFIC_ERROR_EVERY}} TRAFFIC_INTERVAL={{.TRAFFIC_INTERVAL}} ./test/e2e/scripts/traffic.sh watch
 
   cluster:profile:
-    desc: Print the resolved cluster profile variables for the active CLUSTER_PROFILE
+    desc: Print the resolved profile, engine, registry, platform, and kubeconfig
     cmds:
       - |
         echo "CLUSTER_PROFILE={{.CLUSTER_PROFILE}}"
@@ -300,7 +244,7 @@ tasks:
         esac
 
   cluster:doctor:
-    desc: Run pre-flight checks against the active cluster profile
+    desc: Run engine-aware preflight checks against the configured cluster profile
     cmds:
       - |
         case "{{.CLUSTER_ENGINE}}" in

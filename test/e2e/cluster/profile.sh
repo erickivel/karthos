@@ -12,7 +12,6 @@
 # via an absolute path).
 
 __KARTHOS_REPO_ROOT="${PWD}"
-
 if [ -f "${__KARTHOS_REPO_ROOT}/.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -20,8 +19,16 @@ if [ -f "${__KARTHOS_REPO_ROOT}/.env" ]; then
   set +a
 fi
 
+if [ -n "${KARTHOS_CLUSTER_PROFILE_OVERRIDE:-}" ]; then
+  CLUSTER_PROFILE="${KARTHOS_CLUSTER_PROFILE_OVERRIDE}"
+fi
+
 : "${CLUSTER_PROFILE:=karthos-test}"
-__KARTHOS_PROFILE_FILE="${__KARTHOS_REPO_ROOT}/.env.d/${CLUSTER_PROFILE}.env"
+if [ -n "${KARTHOS_CLUSTER_PROFILE_FILE_OVERRIDE:-}" ]; then
+  __KARTHOS_PROFILE_FILE="${KARTHOS_CLUSTER_PROFILE_FILE_OVERRIDE}"
+else
+  __KARTHOS_PROFILE_FILE="${__KARTHOS_REPO_ROOT}/.env.d/${CLUSTER_PROFILE}.env"
+fi
 
 if [ ! -f "${__KARTHOS_PROFILE_FILE}" ]; then
   echo "cluster profile not found: ${__KARTHOS_PROFILE_FILE}" >&2
