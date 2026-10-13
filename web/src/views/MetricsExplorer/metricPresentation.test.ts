@@ -39,6 +39,19 @@ describe('service metric presentation', () => {
     })
   })
 
+  it('keeps raw Prometheus HTTP status visible for service entity series', () => {
+    expect(metricPresentation({
+      canonicalName: 'http.server.request.count',
+      scope: 'entity',
+      labels: { status: '500' },
+    }).seriesLabels).toContainEqual({ label: 'HTTP status', value: '500' })
+    expect(metricPresentation({
+      canonicalName: 'http.server.request.count',
+      scope: 'entity',
+      labels: { status: '200' },
+    }).seriesLabels).toContainEqual({ label: 'HTTP status', value: '200' })
+  })
+
   it('names a servicegraph entity metric as outbound traffic', () => {
     expect(metricPresentation({
       canonicalName: 'servicegraph.request.count',

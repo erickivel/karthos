@@ -224,7 +224,7 @@ function containerPresentation(canonicalName: string): Pick<MetricPresentation, 
 }
 
 function httpStatus(labels?: Record<string, string>) {
-  return labels?.['http.response.status_code'] ?? labels?.http_status_code
+  return labels?.['http.response.status_code'] ?? labels?.http_status_code ?? labels?.status
 }
 
 function titleForHTTPStatus(base: Pick<MetricPresentation, 'title' | 'meaning'>, status: string | undefined): Pick<MetricPresentation, 'title' | 'meaning'> {

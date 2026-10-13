@@ -85,6 +85,7 @@ export function MetricCard({
     fallbackMeaning: description,
     fallbackTitle: name,
   })
+  const httpStatus = presentation.seriesLabels.find((label) => label.label === 'HTTP status')?.value
 
   const sortedSources = sources ? [...sources].sort((a, b) => a.priority - b.priority) : []
 
@@ -113,6 +114,7 @@ export function MetricCard({
         <div className={styles.headingCol}>
           <div className={styles.titleRow}>
             <span className={styles.name}>{presentation.title}</span>
+            {httpStatus && <span className={styles.statusBadge}>HTTP {httpStatus}</span>}
             <InfoTooltip
               canonicalName={canonicalName}
               sampleCount={sorted.length}
