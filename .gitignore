@@ -44,3 +44,8 @@ web/dist/
 # Python verification artifacts
 __pycache__/
 *.pyc
+
+# Local browser and frontend test output
+/.playwright-mcp/
+/web/playwright-report/
+/web/test-results/
