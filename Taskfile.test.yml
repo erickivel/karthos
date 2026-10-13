@@ -157,9 +157,8 @@ tasks:
           TRAFFIC_INTERVAL: "0.2"
 
   e2e:scenario:istio:
-    desc: Run the complete Istio HTTP, gRPC, and TCP accuracy scenario
+    desc: Run Istio HTTP, gRPC, and TCP accuracy checks and retain the environment
     cmds:
-      - defer: {task: _e2e:cleanup-scenario}
       - task: _e2e:scenario:istio:prepare
       - HELM_RELEASE_NAME=karthos KIND_NAMESPACE=karthos-system GATEWAY_LOCAL_PORT={{.GATEWAY_LOCAL_PORT}} ./test/e2e/scenarios/istio-available/run.sh
 

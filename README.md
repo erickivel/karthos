@@ -68,7 +68,7 @@ task test:race     # run with race detector
 task test:e2e:setup                       # one control-plane + one worker node
 
 task test:e2e:scenario:prometheus         # Prometheus discovery + servicegraph traces
-task test:e2e:scenario:istio              # Istio sidecar mesh scrape
+task test:e2e:scenario:istio              # Istio sidecar mesh scrape; retains the environment
 task test:e2e:scenario:fallback           # strict direct-source baseline
 ```
 

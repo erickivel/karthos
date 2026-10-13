@@ -70,9 +70,11 @@ discovers the cluster, deploys with Helm, waits for all rollouts, and verifies
 the configured tags and running digests. It does not install Istio or fixtures.
 
 Each public scenario owns fixture preparation, discovery, platform publication
-and deployment, readiness verification, traffic, assertions, and deferred
-environment cleanup, including failure paths. The individual stages are
-deliberately internal rather than public Task APIs.
+and deployment, readiness verification, traffic, and assertions. Prometheus,
+fallback, and source-contract scenarios defer environment cleanup, including
+failure paths. The Istio scenario leaves its entire deployed environment in
+place after success or failure so its results can be inspected. The individual
+stages are deliberately internal rather than public Task APIs.
 
 ## Scenario Expectations
 
@@ -140,6 +142,7 @@ Expected:
 - an injected Go fixture warms the protocol counters, waits 180 seconds so the collector can capture a mature baseline and the warm-up leaves the one-minute window, then emits exactly 20 unary calls plus five bidirectional request/response messages and ten fresh 1,024-byte TCP echo connections
 - destination-sidecar raw counters and canonical VictoriaMetrics counters increase by `25/25` gRPC messages, `10/10` TCP opened/closed connections, and `10,240/10,240` TCP sent/received bytes
 - API `increase` values and base units match those totals; default one-minute rates are approximately `0.417 per_second`, `0.167 per_second`, and `170.667 bytes_per_second`; active rate is present for the cumulative series
+- after success or failure, Istio, the Karthos release, its PostgreSQL data, and fixture namespaces remain installed for inspection; use `task test:e2e:reset` when explicitly ready to remove them
 - this remains an explicit cluster accuracy task and is not a GitHub Actions cluster job
 
 ### Host OS accuracy
@@ -176,8 +179,8 @@ task test:e2e:traffic:watch TRAFFIC_ERROR_EVERY=0 # disable /error requests
 `task test:e2e:scenario:prometheus` already runs normal and error gateway
 traffic and completes the live metric assertions before its deferred cleanup.
 Standalone traffic and debug tasks target a manually retained development
-environment; complete public scenarios remove their platform and fixtures when
-they finish.
+environment. The Istio scenario also retains its platform and fixtures; other
+complete public scenarios remove theirs when they finish.
 
 Typical persistent development sequence:
 
@@ -268,3 +271,7 @@ The live harness always deploys the bundled PostgreSQL store. Reset removes
 only that release-scoped E2E PVC so each scenario starts with the required
 fresh materialized-snapshot schema; it does not target a remote PostgreSQL
 deployment.
+
+`task test:e2e:scenario:istio` does not reset any of its deployed resources at
+the end. A later `task test:e2e:reset` or `task test:e2e:scenario:fallback`
+still removes harness-owned Istio because strict fallback requires no mesh.
