@@ -128,6 +128,13 @@ func TestCompileRetainsIstioProtocolCounters(t *testing.T) {
 	}
 }
 
+func TestPrometheusAppScrapesAtFifteenSeconds(t *testing.T) {
+	config := prometheusReceiver(&collectorspec.Prometheus{SourceID: metrics.SourcePrometheusApp, Targets: []profile.PrometheusTarget{{Namespace: "demo", ServiceName: "api", Port: 8080, Path: "/metrics"}}})
+	scrapes := config["config"].(map[string]any)["scrape_configs"].([]map[string]any)
+	require.Len(t, scrapes, 1)
+	require.Equal(t, "15s", scrapes[0]["scrape_interval"])
+}
+
 func TestCompileGatewayDisablesKubeClusterDefaultsOutsideThePoCAllowlist(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
