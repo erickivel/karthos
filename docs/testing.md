@@ -102,7 +102,7 @@ Expected:
 
 - Prometheus-annotated services are detected
 - gateway-go emits OTLP traces (instrumented with OTel Go SDK, `peer.service` attributes set)
-- generated Helm values include Prometheus receiver config and the selected gateway `service_graph` component ID
+- generated Helm values include 15-second application Service scrape jobs and the selected gateway `service_graph` component ID
 - agent DaemonSet, gateway Deployment, backend Deployment, and frontend Deployment become ready
 - backend logs show accepted metric envelopes after the gateway forwards traffic
 - generated traffic flows through `gateway-go -> service-a-python` and `gateway-go -> service-b-node`; the error fixture uses `gateway-go /error`, passes `force_error=true` downstream, returns 5xx responses, and marks the corresponding spans as error status
@@ -110,7 +110,7 @@ Expected:
 - `/api/v1/metrics` returns semconv servicegraph samples for `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
 - servicegraph samples preserve `failed`, `connection_type`, and distinct `client_http_method` / `server_http_method` labels when emitted; duration `_sum` and `_count` carry identical labels
 - raw canonical servicegraph cumulative counters increase by exactly 40 requests and 10 errors for each of the three internal edges during the controlled traffic window; the scenario captures before/after VM baselines because collector v0.156 emits cumulative servicegraph Sums
-- after a mature baseline, the runner waits until every expected edge has its complete supported API result set (explicit increases, default and explicit one-minute window rates, active rate, and duration); it then verifies `40/10` increases, approximately `0.667/0.167` rates per second, and matching response metadata/units. Raw-counter readiness alone is not sufficient because derived API results can arrive later.
+- after a mature baseline, the runner records the controlled burst end and queries a fixed historical evaluation time while separately waiting for graph materialization. It waits until every expected edge has its complete supported API result set (explicit increases, default and explicit one-minute window rates, active rate, and duration), then verifies `40/10` increases, approximately `0.667/0.167` rates per second, and matching response metadata/units. Raw-counter readiness alone is not sufficient because derived API results can arrive later.
 - the controlled 40-request run can legitimately add 40 `otelcol_connector_servicegraph_expired_edges`: root inbound gateway server spans have no in-cluster client span to pair with. Internal pairing correctness is determined from the exact three internal edge totals, not from a zero global-expiration expectation; the generated connector pairing TTL remains 30 seconds
 - `/api/v1/graph` returns the newest materialized snapshot. The runner polls
   through at most one five-minute materialization interval before requiring the
