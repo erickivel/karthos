@@ -72,9 +72,11 @@ the configured tags and running digests. It does not install Istio or fixtures.
 Each public scenario owns fixture preparation, discovery, platform publication
 and deployment, readiness verification, traffic, and assertions. Prometheus,
 fallback, and source-contract scenarios defer environment cleanup, including
-failure paths. The Istio scenario leaves its entire deployed environment in
-place after success or failure so its results can be inspected. The individual
-stages are deliberately internal rather than public Task APIs.
+failure paths. The Istio scenario first removes harness-owned Istio, the
+Karthos release and bundled PostgreSQL PVC, and fixture namespaces. It leaves
+the new environment in place after success or failure so its results can be
+inspected. An externally managed Istio control plane is preserved and used.
+The individual stages are deliberately internal rather than public Task APIs.
 
 ## Scenario Expectations
 
@@ -127,6 +129,7 @@ Expected:
 Expected:
 
 - the task installs a minimal Istio control plane if needed, deploys the `with-istio` fixture, generates normal plus intentional error gateway traffic, and applies the Karthos collector plan
+- before deployment, the task resets harness-owned Istio, the Karthos release and bundled PostgreSQL PVC, and fixture namespaces; it keeps an externally managed Istio installation intact and uses it for the new run
 - `karthos-demo` has sidecar injection enabled, while the sparse orphan pod explicitly disables injection
 - discovery emits an `istio` source with `mesh.flavor=istio`, `mesh.mode=sidecar`, `mesh.partial=false`, and `/stats/prometheus` on port `15020`; complete sidecar meshes may use either a classic regular `istio-proxy` container or a Kubernetes native `initContainer` with `restartPolicy: Always`
 - ambient mode remains unsupported because it has no per-Pod proxy scrape contract
@@ -272,6 +275,7 @@ only that release-scoped E2E PVC so each scenario starts with the required
 fresh materialized-snapshot schema; it does not target a remote PostgreSQL
 deployment.
 
-`task test:e2e:scenario:istio` does not reset any of its deployed resources at
-the end. A later `task test:e2e:reset` or `task test:e2e:scenario:fallback`
-still removes harness-owned Istio because strict fallback requires no mesh.
+`task test:e2e:scenario:istio` resets harness-owned resources before each run,
+then retains the newly deployed resources at the end. A later
+`task test:e2e:reset` or `task test:e2e:scenario:fallback` still removes
+harness-owned Istio because strict fallback requires no mesh.
