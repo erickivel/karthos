@@ -1,6 +1,7 @@
+import { useMemo } from 'react'
 import type { MetricSample } from '@/types/metrics'
 import styles from './RawSamplesTable.module.css'
-import { seriesIdentity } from './rawSampleIdentity'
+import { seriesIdentities } from './rawSampleIdentity'
 
 interface RawSamplesTableProps {
   samples: MetricSample[]
@@ -62,6 +63,7 @@ function defaultScope(sample: MetricSample): string {
 }
 
 export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamplesTableProps) {
+  const identities = useMemo(() => seriesIdentities(samples), [samples])
   if (samples.length === 0) return null
 
   const showMesh = samples.some(hasMeshMetadata)
@@ -88,7 +90,7 @@ export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamples
             {samples.map((s, i) => {
               const source = s.labels?.source
               const mesh = showMesh && s.labels ? meshSummary(s.labels) : null
-              const identity = seriesIdentity(samples, s)
+              const identity = identities[i]!
               return (
                 <tr key={i} className={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
                   <td>{s.metric_name}</td>
