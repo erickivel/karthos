@@ -1,5 +1,7 @@
+import { useMemo } from 'react'
 import type { MetricSample } from '@/types/metrics'
 import styles from './RawSamplesTable.module.css'
+import { seriesIdentities } from './rawSampleIdentity'
 
 interface RawSamplesTableProps {
   samples: MetricSample[]
@@ -61,6 +63,7 @@ function defaultScope(sample: MetricSample): string {
 }
 
 export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamplesTableProps) {
+  const identities = useMemo(() => seriesIdentities(samples), [samples])
   if (samples.length === 0) return null
 
   const showMesh = samples.some(hasMeshMetadata)
@@ -77,7 +80,8 @@ export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamples
               <th>Source</th>
               {showMesh && <th>Mesh</th>}
               <th>Value</th>
-              <th>Label</th>
+              <th>Series</th>
+              <th>Value label</th>
               <th>Unit</th>
               <th>Timestamp</th>
             </tr>
@@ -86,6 +90,7 @@ export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamples
             {samples.map((s, i) => {
               const source = s.labels?.source
               const mesh = showMesh && s.labels ? meshSummary(s.labels) : null
+              const identity = identities[i]!
               return (
                 <tr key={i} className={i % 2 === 0 ? styles.rowEven : styles.rowOdd}>
                   <td>{s.metric_name}</td>
@@ -103,6 +108,12 @@ export function RawSamplesTable({ samples, scopeFor = defaultScope }: RawSamples
                     </td>
                   )}
                   <td className={styles.value}>{s.value.toFixed(2)}</td>
+                  <td>{identity.detail ? (
+                    <details className={styles.seriesDetails}>
+                      <summary className={styles.seriesCell}>{identity.summary || 'Labels'}</summary>
+                      <pre className={styles.seriesLabels}>{identity.detail}</pre>
+                    </details>
+                  ) : <span className={styles.muted}>-</span>}</td>
                   <td>{s.value_label ?? <span className={styles.muted}>-</span>}</td>
                   <td>{s.unit}</td>
                   <td>{new Date(s.timestamp).toLocaleString()}</td>

@@ -253,7 +253,7 @@ func gatewayExporter() map[string]any {
 func prometheusReceiver(requirement *collectorspec.Prometheus) map[string]any {
 	scrapes := make([]map[string]any, 0, len(requirement.Targets))
 	for _, target := range requirement.Targets {
-		scrapes = append(scrapes, map[string]any{"job_name": fmt.Sprintf("prometheus-app:%s:%s:%d", target.Namespace, target.ServiceName, target.Port), "metrics_path": target.Path, "static_configs": []map[string]any{{"targets": []string{fmt.Sprintf("%s.%s.svc.cluster.local:%d", target.ServiceName, target.Namespace, target.Port)}, "labels": map[string]string{"service": target.ServiceName, "namespace": target.Namespace, "metrics_path": target.Path, "service_port": fmt.Sprintf("%d", target.Port)}}}, "metric_relabel_configs": []map[string]any{{"target_label": "karthos_source", "replacement": requirement.SourceID}}})
+		scrapes = append(scrapes, map[string]any{"job_name": fmt.Sprintf("prometheus-app:%s:%s:%d", target.Namespace, target.ServiceName, target.Port), "scrape_interval": "15s", "metrics_path": target.Path, "static_configs": []map[string]any{{"targets": []string{fmt.Sprintf("%s.%s.svc.cluster.local:%d", target.ServiceName, target.Namespace, target.Port)}, "labels": map[string]string{"service": target.ServiceName, "namespace": target.Namespace, "metrics_path": target.Path, "service_port": fmt.Sprintf("%d", target.Port)}}}, "metric_relabel_configs": []map[string]any{{"target_label": "karthos_source", "replacement": requirement.SourceID}}})
 	}
 	return map[string]any{"config": map[string]any{"scrape_configs": scrapes}}
 }

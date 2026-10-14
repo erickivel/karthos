@@ -71,6 +71,32 @@
   white-space: nowrap;
 }
 
+.seriesCell {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+
+.seriesCell:hover,
+.seriesCell:focus-visible {
+  color: var(--color-signal);
+}
+
+.seriesLabels {
+  margin: var(--space-xs) 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}
+
 .muted {
   color: var(--color-text-muted);
 }

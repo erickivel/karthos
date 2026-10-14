@@ -70,9 +70,13 @@ discovers the cluster, deploys with Helm, waits for all rollouts, and verifies
 the configured tags and running digests. It does not install Istio or fixtures.
 
 Each public scenario owns fixture preparation, discovery, platform publication
-and deployment, readiness verification, traffic, assertions, and deferred
-environment cleanup, including failure paths. The individual stages are
-deliberately internal rather than public Task APIs.
+and deployment, readiness verification, traffic, and assertions. Prometheus,
+fallback, and source-contract scenarios defer environment cleanup, including
+failure paths. The Istio scenario first removes harness-owned Istio, the
+Karthos release and bundled PostgreSQL PVC, and fixture namespaces. It leaves
+the new environment in place after success or failure so its results can be
+inspected. An externally managed Istio control plane is preserved and used.
+The individual stages are deliberately internal rather than public Task APIs.
 
 ## Scenario Expectations
 
@@ -102,7 +106,7 @@ Expected:
 
 - Prometheus-annotated services are detected
 - gateway-go emits OTLP traces (instrumented with OTel Go SDK, `peer.service` attributes set)
-- generated Helm values include Prometheus receiver config and the selected gateway `service_graph` component ID
+- generated Helm values include 15-second application Service scrape jobs and the selected gateway `service_graph` component ID
 - agent DaemonSet, gateway Deployment, backend Deployment, and frontend Deployment become ready
 - backend logs show accepted metric envelopes after the gateway forwards traffic
 - generated traffic flows through `gateway-go -> service-a-python` and `gateway-go -> service-b-node`; the error fixture uses `gateway-go /error`, passes `force_error=true` downstream, returns 5xx responses, and marks the corresponding spans as error status
@@ -110,7 +114,7 @@ Expected:
 - `/api/v1/metrics` returns semconv servicegraph samples for `servicegraph.request.count`, `servicegraph.request.duration`, and `servicegraph.request.error.count`
 - servicegraph samples preserve `failed`, `connection_type`, and distinct `client_http_method` / `server_http_method` labels when emitted; duration `_sum` and `_count` carry identical labels
 - raw canonical servicegraph cumulative counters increase by exactly 40 requests and 10 errors for each of the three internal edges during the controlled traffic window; the scenario captures before/after VM baselines because collector v0.156 emits cumulative servicegraph Sums
-- after a mature baseline, the runner waits until every expected edge has its complete supported API result set (explicit increases, default and explicit one-minute window rates, active rate, and duration); it then verifies `40/10` increases, approximately `0.667/0.167` rates per second, and matching response metadata/units. Raw-counter readiness alone is not sufficient because derived API results can arrive later.
+- after a mature baseline, the runner records the controlled burst end and queries a fixed historical evaluation time while separately waiting for graph materialization. It waits until every expected edge has its complete supported API result set (explicit increases, default and explicit one-minute window rates, active rate, and duration), then verifies `40/10` increases, approximately `0.667/0.167` rates per second, and matching response metadata/units. Raw-counter readiness alone is not sufficient because derived API results can arrive later.
 - the controlled 40-request run can legitimately add 40 `otelcol_connector_servicegraph_expired_edges`: root inbound gateway server spans have no in-cluster client span to pair with. Internal pairing correctness is determined from the exact three internal edge totals, not from a zero global-expiration expectation; the generated connector pairing TTL remains 30 seconds
 - `/api/v1/graph` returns the newest materialized snapshot. The runner polls
   through at most one five-minute materialization interval before requiring the
@@ -125,6 +129,7 @@ Expected:
 Expected:
 
 - the task installs a minimal Istio control plane if needed, deploys the `with-istio` fixture, generates normal plus intentional error gateway traffic, and applies the Karthos collector plan
+- before deployment, the task resets harness-owned Istio, the Karthos release and bundled PostgreSQL PVC, and fixture namespaces; it keeps an externally managed Istio installation intact and uses it for the new run
 - `karthos-demo` has sidecar injection enabled, while the sparse orphan pod explicitly disables injection
 - discovery emits an `istio` source with `mesh.flavor=istio`, `mesh.mode=sidecar`, `mesh.partial=false`, and `/stats/prometheus` on port `15020`; complete sidecar meshes may use either a classic regular `istio-proxy` container or a Kubernetes native `initContainer` with `restartPolicy: Always`
 - ambient mode remains unsupported because it has no per-Pod proxy scrape contract
@@ -140,6 +145,7 @@ Expected:
 - an injected Go fixture warms the protocol counters, waits 180 seconds so the collector can capture a mature baseline and the warm-up leaves the one-minute window, then emits exactly 20 unary calls plus five bidirectional request/response messages and ten fresh 1,024-byte TCP echo connections
 - destination-sidecar raw counters and canonical VictoriaMetrics counters increase by `25/25` gRPC messages, `10/10` TCP opened/closed connections, and `10,240/10,240` TCP sent/received bytes
 - API `increase` values and base units match those totals; default one-minute rates are approximately `0.417 per_second`, `0.167 per_second`, and `170.667 bytes_per_second`; active rate is present for the cumulative series
+- after success or failure, Istio, the Karthos release, its PostgreSQL data, and fixture namespaces remain installed for inspection; use `task test:e2e:reset` when explicitly ready to remove them
 - this remains an explicit cluster accuracy task and is not a GitHub Actions cluster job
 
 ### Host OS accuracy
@@ -176,8 +182,8 @@ task test:e2e:traffic:watch TRAFFIC_ERROR_EVERY=0 # disable /error requests
 `task test:e2e:scenario:prometheus` already runs normal and error gateway
 traffic and completes the live metric assertions before its deferred cleanup.
 Standalone traffic and debug tasks target a manually retained development
-environment; complete public scenarios remove their platform and fixtures when
-they finish.
+environment. The Istio scenario also retains its platform and fixtures; other
+complete public scenarios remove theirs when they finish.
 
 Typical persistent development sequence:
 
@@ -268,3 +274,8 @@ The live harness always deploys the bundled PostgreSQL store. Reset removes
 only that release-scoped E2E PVC so each scenario starts with the required
 fresh materialized-snapshot schema; it does not target a remote PostgreSQL
 deployment.
+
+`task test:e2e:scenario:istio` resets harness-owned resources before each run,
+then retains the newly deployed resources at the end. A later
+`task test:e2e:reset` or `task test:e2e:scenario:fallback` still removes
+harness-owned Istio because strict fallback requires no mesh.

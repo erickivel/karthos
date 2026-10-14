@@ -153,6 +153,7 @@ PY
 
 # Generate one bounded traffic window so every rate and ratio has a known truth set.
 task test:e2e:traffic GATEWAY_LOCAL_PORT="${GATEWAY_LOCAL_PORT}" TRAFFIC_REQUESTS=30 TRAFFIC_ERROR_REQUESTS=10 TRAFFIC_INTERVAL=0.5 TRAFFIC_INTERLEAVE_ERRORS=true
+date -u +%Y-%m-%dT%H:%M:%SZ > bin/e2e/controlled-burst-end.txt
 
 # Inspect the graph through the public API. Calls are current observations, so
 # they become visible only when the backend publishes the next materialized
@@ -243,6 +244,7 @@ import math
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 expected_edges = {
@@ -250,6 +252,13 @@ expected_edges = {
     ("gateway-go", "service-b-node"),
     ("service-a-python", "service-b-node"),
 }
+burst_end = datetime.fromisoformat(Path("bin/e2e/controlled-burst-end.txt").read_text().strip().replace("Z", "+00:00"))
+# One fixed historical evaluation includes the whole controlled burst and
+# allows the 15-second connector flush to arrive before the graph wait ends.
+evaluation_to = burst_end + timedelta(seconds=25)
+evaluation_from = evaluation_to - timedelta(seconds=15)
+def api_time(value):
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 def vm_query(promql):
     url = "http://localhost:18428/api/v1/query?" + urllib.parse.urlencode({"query": promql})
     payload = json.loads(urllib.request.urlopen(url, timeout=5).read())
@@ -304,6 +313,8 @@ def api_payload(metric, aggregation=None, window="1m"):
     params = {
         "metric_name": metric,
         "page_size": "1000",
+        "from": api_time(evaluation_from),
+        "to": api_time(evaluation_to),
     }
     if aggregation:
         params["aggregation"] = aggregation
@@ -417,7 +428,7 @@ assert all(sample["unit"] == "per_second" for sample in default_requests_payload
 
 assert set(active_rates) == expected_edges, f"active rate missing cumulative servicegraph edges: {active_rates}"
 assert all(math.isfinite(value) and value > 0 for value in active_rates.values())
-print("✓ API exact increases, default/explicit window rates, active rates, metadata, and units are correct")
+print(f"✓ API exact increases, default/explicit window rates, active rates, metadata, and units are correct at {api_time(evaluation_to)}")
 
 assert set(durations) == expected_edges, f"duration missing internal edges: {durations.keys()}"
 for edge, sample in durations.items():

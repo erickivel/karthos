@@ -70,7 +70,7 @@ build_dry_run="$(task --dry build)"
 [[ "${build_dry_run}" == *'go build -o ./bin/discovery-job'* ]]
 [[ "${build_dry_run}" != *gofmt* ]]
 
-for scenario in prometheus istio source-contract-rejection; do
+for scenario in prometheus source-contract-rejection; do
   scenario_dry_run="$(task --dry "test:e2e:scenario:${scenario}" 2>&1)"
   cleanup_count="$(grep -Fc './test/e2e/platform/undeploy.sh' <<<"${scenario_dry_run}" || true)"
   if [[ "${cleanup_count}" -ne 1 ]]; then
@@ -82,6 +82,30 @@ for scenario in prometheus istio source-contract-rejection; do
     exit 1
   fi
 done
+istio_dry_run="$(task --dry test:e2e:scenario:istio 2>&1)"
+istio_steps=(
+  './test/e2e/cluster/istio.sh reset-if-owned'
+  './test/e2e/platform/undeploy.sh'
+  'kubectl delete namespace karthos-demo'
+  'kubectl delete namespace karthos-sparse'
+  './test/e2e/cluster/istio.sh install'
+  './test/e2e/apps/deploy.sh with-istio'
+  './test/e2e/scenarios/istio-available/run.sh'
+)
+previous_line=0
+for step in "${istio_steps[@]}"; do
+  count="$(grep -Fc "${step}" <<<"${istio_dry_run}" || true)"
+  line="$(grep -nF "${step}" <<<"${istio_dry_run}" | head -1 | cut -d: -f1 || true)"
+  if [[ "${count}" -ne 1 || "${line:-0}" -le "${previous_line}" ]]; then
+    echo "Istio scenario must reset owned resources once before preparation and retain the new environment: ${step}" >&2
+    exit 1
+  fi
+  previous_line="${line}"
+done
+if grep -Eq './test/e2e/cluster/istio.sh reset$' <<<"${istio_dry_run}"; then
+  echo "Istio scenario must preserve an externally managed control plane" >&2
+  exit 1
+fi
 fallback_dry_run="$(task --dry test:e2e:scenario:fallback 2>&1)"
 fallback_cleanup_count="$(grep -Fc './test/e2e/platform/undeploy.sh' <<<"${fallback_dry_run}" || true)"
 if [[ "${fallback_cleanup_count}" -ne 2 ]]; then

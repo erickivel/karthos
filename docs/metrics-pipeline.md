@@ -92,6 +92,12 @@ broader Kubernetes entity catalog independently of metric collection. Object
 snapshots/events from the OTel `k8s_objects` receiver are intentionally out of
 scope because that receiver emits logs, not metric samples.
 
+The `prometheus.app` source generates 15-second Service-DNS scrape jobs. This
+explicit interval is part of the source contract: the API's exact one-minute
+increase and histogram-mean queries need at least two cumulative samples
+inside the window. Prometheus otherwise defaults to a one-minute scrape
+interval; see the [upstream configuration reference](https://prometheus.io/docs/prometheus/latest/configuration/configuration/).
+
 Host OS network dimensions use the public labels `direction` and
 `network_interface_name`. Volume dimensions use `volume_name`, `volume_type`,
 and optional `persistentvolumeclaim_name`; standard OTLP resource attributes
