@@ -169,7 +169,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	switch *mode {
 	case "discover":
 		if deps.discover == nil {
-			deps.discover = realDependenciesWithKubeconfig(*kubeconfig, *clusterName, *targetNamespace).discover
+			deps.discover = realDependenciesWithKubeconfig(*kubeconfig, *clusterName, *targetNamespace, activeNamespace).discover
 		}
 		clusterProfile, err := deps.discover(ctx)
 		if err != nil {
@@ -287,7 +287,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	}
 }
 
-func realDependenciesWithKubeconfig(kubeconfig, clusterName, targetNamespace string) dependencies {
+func realDependenciesWithKubeconfig(kubeconfig, clusterName, targetNamespace, installationNamespace string) dependencies {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return dependencies{
@@ -306,7 +306,7 @@ func realDependenciesWithKubeconfig(kubeconfig, clusterName, targetNamespace str
 		}
 	}
 
-	var opts []k8sadapter.DiscoveryOption
+	opts := []k8sadapter.DiscoveryOption{k8sadapter.WithExcludedNamespace(installationNamespace)}
 	if targetNamespace != "" {
 		opts = append(opts, k8sadapter.WithTargetNamespaces(targetNamespace))
 	}

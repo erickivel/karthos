@@ -60,6 +60,8 @@ always-present receiver sources, structural availability, annotated Prometheus
 targets, Istio mesh completeness, or derived OTLP trace evidence. No detector
 performs independent Kubernetes API calls, so all modules evaluate one typed
 inventory captured by the adapter.
+Discovery excludes the Karthos installation namespace from Service, Pod, and
+Namespace detection, so the platform's own workloads do not select sources.
 
 ## Source planning
 
@@ -74,6 +76,9 @@ It includes:
 - a fingerprint of the normalized capability profile;
 - selected source module IDs;
 - the complete canonical metric-to-source assignment.
+
+The fingerprint excludes `discovered_at`; a refresh with identical capability
+evidence keeps the same source-plan identity.
 
 The generic collector composer consumes the same result to include only the
 selected semantic metric requirements, while an available servicegraph module

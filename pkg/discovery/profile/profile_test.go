@@ -3,9 +3,21 @@ package profile
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestFingerprintIgnoresDiscoveryTime(t *testing.T) {
+	first := &ClusterProfile{ClusterName: "demo", DiscoveredAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	second := &ClusterProfile{ClusterName: "demo", DiscoveredAt: first.DiscoveredAt.Add(time.Hour)}
+	a, err := first.Fingerprint()
+	require.NoError(t, err)
+	b, err := second.Fingerprint()
+	require.NoError(t, err)
+	require.Equal(t, a, b)
+	require.NotZero(t, first.DiscoveredAt)
+}
 
 func TestClusterProfileSerializesOnlyModuleCapabilities(t *testing.T) {
 	profile := ClusterProfile{

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -19,16 +20,22 @@ import (
 // not source-specific detection rules. Structural inventory remains owned by
 // kubernetes.structure at backend runtime.
 type DiscoveryAdapter struct {
-	client           kubernetes.Interface
-	clusterName      string
-	now              func() time.Time
-	targetNamespaces []string
+	client            kubernetes.Interface
+	clusterName       string
+	now               func() time.Time
+	targetNamespaces  []string
+	excludedNamespace string
 }
 
 type DiscoveryOption func(*DiscoveryAdapter)
 
 func WithTargetNamespaces(namespaces ...string) DiscoveryOption {
 	return func(d *DiscoveryAdapter) { d.targetNamespaces = append([]string(nil), namespaces...) }
+}
+
+// WithExcludedNamespace excludes Karthos' own installation from source detection.
+func WithExcludedNamespace(namespace string) DiscoveryOption {
+	return func(d *DiscoveryAdapter) { d.excludedNamespace = namespace }
 }
 
 func NewDiscoveryAdapter(client kubernetes.Interface, clusterName string, opts ...DiscoveryOption) *DiscoveryAdapter {
@@ -88,9 +95,22 @@ func (d *DiscoveryAdapter) inventory(ctx context.Context) (detection.Inventory, 
 		ClusterName:                   d.clusterName,
 		TargetNamespaces:              append([]string(nil), d.targetNamespaces...),
 		Nodes:                         nodes.Items,
-		Services:                      services.Items,
-		Namespaces:                    namespaces.Items,
-		Pods:                          pods.Items,
+		Services:                      withoutNamespace(services.Items, d.excludedNamespace, func(item *corev1.Service) string { return item.Namespace }),
+		Namespaces:                    withoutNamespace(namespaces.Items, d.excludedNamespace, func(item *corev1.Namespace) string { return item.Name }),
+		Pods:                          withoutNamespace(pods.Items, d.excludedNamespace, func(item *corev1.Pod) string { return item.Namespace }),
 		MutatingWebhookConfigurations: webhooks.Items,
 	}, nil
+}
+
+func withoutNamespace[T any](items []T, excluded string, namespace func(*T) string) []T {
+	if excluded == "" {
+		return items
+	}
+	filtered := make([]T, 0, len(items))
+	for i := range items {
+		if namespace(&items[i]) != excluded {
+			filtered = append(filtered, items[i])
+		}
+	}
+	return filtered
 }
