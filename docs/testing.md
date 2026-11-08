@@ -279,3 +279,7 @@ deployment.
 then retains the newly deployed resources at the end. A later
 `task test:e2e:reset` or `task test:e2e:scenario:fallback` still removes
 harness-owned Istio because strict fallback requires no mesh.
+
+### Query-view integration fixture
+
+`KARTHOS_TEST_VM_URL=http://127.0.0.1:<port> go test ./pkg/adapters/storage/victoriametrics -run TestQueryViewsVictoriaMetricsIntegration -v` runs deterministic fixtures against an isolated VictoriaMetrics1.138.0 instance. Use a disposable test database: fixtures write uniquely identified series and require the internal force-flush endpoint. Tests skip when the variable is unset. They cover outcome/status partitions, missing status, freshness, counter modes/resets, legacy counters, source/edge restrictions, derivation metadata, and canonical CPU/memory value round trips.
