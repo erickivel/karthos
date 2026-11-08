@@ -11,9 +11,9 @@ import {
 
 describe("formatters", () => {
   it("formats cpu values across micro, milli, and core ranges", () => {
-    expect(formatCpu(0.25)).toBe("250µ");
-    expect(formatCpu(42)).toBe("42.0m");
-    expect(formatCpu(1500)).toBe("1.5");
+    expect(formatCpu(0.00025)).toBe("250µ");
+    expect(formatCpu(0.042)).toBe("42.0m");
+    expect(formatCpu(1.5)).toBe("1.5");
   });
 
   it("formats memory values for compact topology labels", () => {
@@ -29,17 +29,17 @@ describe("formatters", () => {
     expect(formatBytes(5 * 1_048_576)).toBe("5.0 MB");
   });
 
-  it("formats latency from nanoseconds through seconds", () => {
+  it("formats latency from seconds", () => {
     expect(formatLatency()).toBeNull();
-    expect(formatLatency(9_500_000)).toBe("9.50ms");
-    expect(formatLatency(125_000_000)).toBe("125ms");
-    expect(formatLatency(1_500_000_000)).toBe("1.5s");
+    expect(formatLatency(0.0095)).toBe("9.50ms");
+    expect(formatLatency(0.125)).toBe("125ms");
+    expect(formatLatency(1.5)).toBe("1.5s");
   });
 
   it("separates a human-readable duration value from its unit", () => {
-    expect(formatMetricValue(5_625_000, "nanoseconds")).toEqual({ value: "5.63", unit: "ms" });
-    expect(formatMetricValue(830_000, "nanoseconds")).toEqual({ value: "0.83", unit: "ms" });
-    expect(formatMetricValue(1_500_000_000, "nanoseconds")).toEqual({ value: "1.5", unit: "s" });
+    expect(formatMetricValue(0.005625, "seconds")).toEqual({ value: "5.63", unit: "ms" });
+    expect(formatMetricValue(0.00083, "seconds")).toEqual({ value: "0.83", unit: "ms" });
+    expect(formatMetricValue(1.5, "seconds")).toEqual({ value: "1.5", unit: "s" });
   });
 
   it("formats snapshot ages in status-bar style", () => {

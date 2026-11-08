@@ -10,11 +10,11 @@ const SECTION_METRICS: Record<PodMetricSection, ReadonlySet<string>> = {
   overview: new Set(['k8s.pod.cpu.usage', 'k8s.pod.memory.working_set']),
   health: new Set(['k8s.pod.phase', 'k8s.pod.status_reason']),
   volumes: new Set([
-    'k8s.volume.available',
-    'k8s.volume.capacity',
-    'k8s.volume.inodes.free',
-    'k8s.volume.inodes.used',
-    'k8s.volume.inodes',
+    'k8s.pod.volume.available',
+    'k8s.pod.volume.capacity',
+    'k8s.pod.volume.inodes.free',
+    'k8s.pod.volume.inodes.used',
+    'k8s.pod.volume.inodes',
   ]),
 }
 

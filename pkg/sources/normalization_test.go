@@ -30,7 +30,7 @@ func TestCompiledModulesNormalizeTheirCurrentSourceContracts(t *testing.T) {
 	}{
 		{IDHostOS, plan(IDHostOS, "system.disk.io.write", attrs(semconv.AttrDirection, "write")), func(t *testing.T, got contract.Plan) { require.Equal(t, "system.disk.io.write", got.MetricName) }},
 		{IDKubeCluster, plan(IDKubeCluster, "k8s.node.condition.ready", attrs(semconv.AttrCondition, "Ready")), func(t *testing.T, got contract.Plan) { require.Equal(t, "k8s.node.condition.ready", got.MetricName) }},
-		{IDKubelet, plan(IDKubelet, "k8s.volume.usage", attrs(semconv.AttrK8sPVCName, "data")), func(t *testing.T, got contract.Plan) { require.NotEmpty(t, got.EntityID) }},
+		{IDKubelet, plan(IDKubelet, "k8s.pod.volume.available", attrs(semconv.AttrK8sPVCName, "data")), func(t *testing.T, got contract.Plan) { require.NotEmpty(t, got.EntityID) }},
 		{IDPrometheusApp, plan(IDPrometheusApp, "http.server.request.count", attrs("service", "api", "namespace", "demo")), func(t *testing.T, got contract.Plan) {
 			require.Equal(t, entities.EntityID("service:demo:api"), got.EntityID)
 		}},
@@ -47,6 +47,18 @@ func TestCompiledModulesNormalizeTheirCurrentSourceContracts(t *testing.T) {
 			tt.check(t, tt.plan)
 		})
 	}
+}
+
+func TestServicegraphNormalizesConnectorNamespaceDimensions(t *testing.T) {
+	plan := plan(IDTracesServicegraph, "servicegraph.request.count", attrs(
+		semconv.AttrClient, "frontend", semconv.AttrServer, "backend",
+		"client_k8s.namespace.name", "team-a", "server_k8s.namespace.name", "team-b",
+	))
+	module, ok := DefaultRegistry().Lookup(IDTracesServicegraph)
+	require.True(t, ok)
+	require.NoError(t, module.Normalize(context.Background(), normalizationResolver{}, &plan))
+	require.Equal(t, "team-a", plan.Labels[semconv.AttrClientNamespace])
+	require.Equal(t, "team-b", plan.Labels[semconv.AttrServerNamespace])
 }
 
 func plan(source, metric string, values []*commonpb.KeyValue) contract.Plan {

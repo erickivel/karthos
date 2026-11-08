@@ -7,7 +7,7 @@ function metric(overrides: Partial<CanonicalMetric>): CanonicalMetric {
   return {
     name: 'k8s.pod.cpu.usage',
     display_name: 'Pod CPU Usage',
-    unit: 'millicores',
+    unit: 'cores',
     category: 'resource',
     scopes: ['entity'],
     description: 'Observed pod CPU usage.',

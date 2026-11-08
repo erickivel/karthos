@@ -13,7 +13,7 @@ interface Props {
 export function NodeCpuSummary({ directSeries, derived, sources }: Props) {
   const directSample = latestSample(directSeries?.samples)
   const observedSource = directSample?.labels?.source
-  const directValue = directSample ? `${Math.round(directSample.value)} mCPU used` : 'No current kubelet CPU sample'
+  const directValue = directSample ? `${directSample.value.toFixed(3)} cores used` : 'No current kubelet CPU sample'
   const sortedSources = [...(sources ?? [])].sort((left, right) => left.priority - right.priority)
 
   return (
@@ -35,8 +35,8 @@ export function NodeCpuSummary({ directSeries, derived, sources }: Props) {
       </div>
       <details className={styles.details}>
         <summary>How this is calculated</summary>
-        <p><code>k8s.node.cpu.usage</code> is the direct kubelet CPU measurement, shown in mCPU.</p>
-        <p><code>system.cpu.utilization</code> adds context only: <code>100 − average(idle)</code> across {derived.observedCoreCount || 'all observed'} host CPU cores at the newest evaluation point.</p>
+        <p><code>k8s.node.cpu.usage</code> is the direct kubelet CPU measurement, shown in cores.</p>
+        <p><code>system.cpu.utilization</code> adds context only: <code>100 × (1 − average idle ratio)</code> across {derived.observedCoreCount || 'all observed'} host CPU cores at the newest evaluation point.</p>
         {sortedSources.length > 0 && (
           <p>Declared source priority: {sortedSources.map((source) => `${source.id} (${source.priority})`).join(', ')}.</p>
         )}

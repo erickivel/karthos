@@ -157,6 +157,6 @@ func TestResolveAggregationAllowsWindowOnlyForDerivedMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, AggregationWindowMean, mean.Mode)
 	require.Equal(t, 90*time.Second, mean.Window)
-	require.Equal(t, UnitNanoseconds, mean.Unit)
+	require.Equal(t, UnitSeconds, mean.Unit)
 
 }

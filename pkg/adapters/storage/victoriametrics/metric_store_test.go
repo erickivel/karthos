@@ -309,7 +309,7 @@ func TestParseQueryRangeResponse_HidesInvalidOrMissingStoredUnit(t *testing.T) {
 		"data": {
 			"resultType": "matrix",
 			"result": [
-				{"metric": {"__name__": "unknown_metric", "entity_id": "entity-a", "dimension": "cpu", "karthos_unit": "cores"}, "values": [[1742644800, "2"]]},
+				{"metric": {"__name__": "unknown_metric", "entity_id": "entity-a", "dimension": "cpu", "karthos_unit": "invalid"}, "values": [[1742644800, "2"]]},
 				{"metric": {"__name__": "unknown_metric", "entity_id": "entity-b", "dimension": "pods"}, "values": [[1742644800, "3"]]}
 			]
 		}

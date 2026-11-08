@@ -123,7 +123,7 @@ export function ContainerOverview({ overview, metrics, queries }: Props) {
         <ResourceRow
           title="CPU"
           Icon={Scale}
-          usedName="k8s.container.cpu.usage"
+          usedName="container.cpu.usage"
           requestName="k8s.container.cpu.request"
           limitName="k8s.container.cpu.limit"
           values={overview.cpu}
@@ -133,7 +133,7 @@ export function ContainerOverview({ overview, metrics, queries }: Props) {
         <ResourceRow
           title="Memory"
           Icon={ServerCog}
-          usedName="k8s.container.memory.usage"
+          usedName="container.memory.usage"
           requestName="k8s.container.memory.request"
           limitName="k8s.container.memory.limit"
           values={overview.memory}

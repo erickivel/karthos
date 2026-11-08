@@ -6,11 +6,11 @@ const podMetricNames = [
   'k8s.pod.memory.working_set',
   'k8s.pod.phase',
   'k8s.pod.status_reason',
-  'k8s.volume.available',
-  'k8s.volume.capacity',
-  'k8s.volume.inodes.free',
-  'k8s.volume.inodes.used',
-  'k8s.volume.inodes',
+  'k8s.pod.volume.available',
+  'k8s.pod.volume.capacity',
+  'k8s.pod.volume.inodes.free',
+  'k8s.pod.volume.inodes.used',
+  'k8s.pod.volume.inodes',
 ]
 
 describe('Pod metric sections', () => {
@@ -28,11 +28,11 @@ describe('Pod metric sections', () => {
       'k8s.pod.status_reason',
     ])
     expect(metricsForPodSection(podMetricNames, 'volumes')).toEqual([
-      'k8s.volume.available',
-      'k8s.volume.capacity',
-      'k8s.volume.inodes.free',
-      'k8s.volume.inodes.used',
-      'k8s.volume.inodes',
+      'k8s.pod.volume.available',
+      'k8s.pod.volume.capacity',
+      'k8s.pod.volume.inodes.free',
+      'k8s.pod.volume.inodes.used',
+      'k8s.pod.volume.inodes',
     ])
   })
 })

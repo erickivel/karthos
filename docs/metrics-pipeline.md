@@ -24,7 +24,7 @@ Each entry is a `CanonicalMetric` (`pkg/core/metrics/canonical.go`):
 type CanonicalMetric struct {
     Name            string          // semconv-style name, e.g. "k8s.pod.cpu.usage"
     DisplayName     string          // operator-facing label
-    Unit            Unit            // API-facing unit (millicores, bytes, ns, ...)
+    Unit            Unit            // API-facing unit (cores, bytes, ns, ...)
     Instrument      MetricInstrument // internal gauge, counter, or histogram semantics
     StoredUnit      Unit            // provider-neutral base unit retained by storage
     Category        MetricCategory  // resource | traffic | latency | error | capacity | health
@@ -81,8 +81,8 @@ receives only module IDs and capability availability, then writes the selected
 IDs and metric assignments to the mounted source plan. Every telemetry-capable
 module owns a parser; the structural module intentionally has none. The
 kubeletstats receiver emits a mix of `k8s.*` and upstream `container.*` names,
-so its source parser maps container usage metrics onto the public
-`k8s.container.*` catalog names.
+so its source parser keeps the direct `container.*` usage names. CPU
+requests/limits from `k8s_cluster` remain under `k8s.container.*`.
 
 The `kube-cluster` source is the metric-native Kubernetes API path for the
 focused catalog: container CPU/memory requests and limits, container readiness
@@ -98,15 +98,18 @@ increase and histogram-mean queries need at least two cumulative samples
 inside the window. Prometheus otherwise defaults to a one-minute scrape
 interval; see the [upstream configuration reference](https://prometheus.io/docs/prometheus/latest/configuration/configuration/).
 
+The pinned Collector Contrib v0.156.0 [kubeletstats contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/receiver/kubeletstatsreceiver/documentation.md) emits CPU usage as a `{cpu}` gauge and volume measurements under the raw `k8s.volume.*` names. Karthos stores CPU values as cores and maps raw volume names to the direct `k8s.pod.volume.*` convention. The [k8s_cluster contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/receiver/k8sclusterreceiver/documentation.md) likewise emits container CPU request/limit in `{cpu}`. The [servicegraph connector contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md) measures duration histograms in seconds; Istio's millisecond histograms are converted to seconds by its source parser. Host CPU/filesystem utilization is stored as a 0..1 ratio. The [system metric convention](https://opentelemetry.io/docs/specs/semconv/system/system-metrics/) defines `system.disk.io` and `system.network.io` as byte counters; Karthos' direction-specific `*.read`/`*.write`/`*.receive`/`*.transmit` rate views remain explicitly derived names because they report bytes per second, not the counter's unit.
+The servicegraph connector reads its configured dimensions from span attributes. The gateway copies `k8s.namespace.name` from each trace resource to its spans before the connector, which emits separate client and server namespace labels. The source module uses those labels for calls identity and drops evidence when either side lacks an explicit namespace.
+
 Host OS network dimensions use the public labels `direction` and
 `network_interface_name`. Volume dimensions use `volume_name`, `volume_type`,
 and optional `persistentvolumeclaim_name`; standard OTLP resource attributes
 and supported datapoint attributes normalize to those names. PVC-backed
 samples attach to PVC entities, while non-PVC volumes remain attached to their
-Pod. All `k8s.volume.*` catalog metrics therefore apply to both PVC and Pod.
+Pod. All `k8s.pod.volume.*` catalog metrics therefore apply to both PVC and Pod.
 
 The storage request/limit families are intentionally absent from the focused
-catalog. `k8s.volume.*` remains the retained mounted-volume capacity surface.
+catalog. `k8s.pod.volume.*` remains the retained mounted-volume capacity surface.
 
 `k8s_cluster` container and pod metrics resolve to the corresponding entities
 already materialized by structural discovery. The broader structural catalog
@@ -139,7 +142,7 @@ source; there is no cross-source fallback or centralized raw-name registry.
 | Source parser | Example result |
 |---------------|----------------|
 | `prometheusapp.Parse` | `http_requests_total` → `http.server.request.count` |
-| `kubelet.Parse` | `container.cpu.usage` → `k8s.container.cpu.usage` |
+| `kubelet.Parse` | `container.cpu.usage` → `container.cpu.usage` |
 | `kubecluster.Parse` | `k8s.container.cpu_request` → `k8s.container.cpu.request` |
 | `hostos.Parse` | `system.disk.io` + `direction=write` → `system.disk.io.write` |
 | `servicegraph.Parse`, `istio.Parse` | source wire names → `servicegraph.*` |
@@ -274,7 +277,7 @@ produce incomplete counts or boundary-node series. In collector v0.156,
 identity is carried separately by the optional `virtual_node=client|server`
 label. See the versioned [servicegraph connector contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
 
-Counter samples use a physical base unit (`count`, `bytes`, or `nanoseconds`),
+Counter samples use a physical base unit (`count`, `bytes`, or `seconds`),
 never an implied rate. Cumulative Sums retain their running base total; delta
 Sums retain the reported interval increment with `temporality=delta`; the
 backend keeps no per-series accumulator. Histogram datapoints likewise retain
@@ -595,7 +598,7 @@ terminal to retired. A delayed terminal-marker retry receives the retired state
 after a deletion/replacement has won and must not recreate pending grace.
 The retirement marker applies only to `runs_on`, not to another relation that
 happens to carry a metadata key of the same name. `graph?at=` selects a
-retained materialized snapshot from the public 24-hour window; it does not
+retained materialized snapshot from the public seven-day window; it does not
 reconstruct arbitrary historical graph state or provide unbounded history.
 
 ## 8. Adding a New Source

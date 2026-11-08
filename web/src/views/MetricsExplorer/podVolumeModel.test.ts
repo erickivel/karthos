@@ -15,11 +15,11 @@ function series(metricName: string, labels: Record<string, string>, value: numbe
 describe('groupPodVolumeSeries', () => {
   it('groups each metric family by the Pod-local volume name without aggregating values', () => {
     const groups = groupPodVolumeSeries({
-      'k8s.volume.available': [series('k8s.volume.available', { volume_name: 'data', volume_type: 'pvc', persistentvolumeclaim_name: 'data-claim' }, 80)],
-      'k8s.volume.capacity': [series('k8s.volume.capacity', { volume_name: 'data', volume_type: 'pvc', persistentvolumeclaim_name: 'data-claim' }, 100)],
-      'k8s.volume.inodes.free': [series('k8s.volume.inodes.free', { volume_name: 'data' }, 40)],
-      'k8s.volume.inodes.used': [series('k8s.volume.inodes.used', { volume_name: 'data' }, 60)],
-      'k8s.volume.inodes': [series('k8s.volume.inodes', { volume_name: 'data' }, 100)],
+      'k8s.pod.volume.available': [series('k8s.pod.volume.available', { volume_name: 'data', volume_type: 'pvc', persistentvolumeclaim_name: 'data-claim' }, 80)],
+      'k8s.pod.volume.capacity': [series('k8s.pod.volume.capacity', { volume_name: 'data', volume_type: 'pvc', persistentvolumeclaim_name: 'data-claim' }, 100)],
+      'k8s.pod.volume.inodes.free': [series('k8s.pod.volume.inodes.free', { volume_name: 'data' }, 40)],
+      'k8s.pod.volume.inodes.used': [series('k8s.pod.volume.inodes.used', { volume_name: 'data' }, 60)],
+      'k8s.pod.volume.inodes': [series('k8s.pod.volume.inodes', { volume_name: 'data' }, 100)],
     })
 
     expect(groups).toHaveLength(1)
@@ -37,9 +37,9 @@ describe('groupPodVolumeSeries', () => {
 
   it('keeps each unlabeled series as its own truthful fallback row', () => {
     const groups = groupPodVolumeSeries({
-      'k8s.volume.available': [
-        series('k8s.volume.available', { device: '/dev/a' }, 10),
-        series('k8s.volume.available', { device: '/dev/b' }, 20),
+      'k8s.pod.volume.available': [
+        series('k8s.pod.volume.available', { device: '/dev/a' }, 10),
+        series('k8s.pod.volume.available', { device: '/dev/b' }, 20),
       ],
     })
 
@@ -49,9 +49,9 @@ describe('groupPodVolumeSeries', () => {
   })
 
   it('uses the newest timestamp rather than the input order for a mount series', () => {
-    const available = series('k8s.volume.available', { volume_name: 'data' }, 80)
+    const available = series('k8s.pod.volume.available', { volume_name: 'data' }, 80)
     available.samples.unshift({
-      metric_name: 'k8s.volume.available',
+      metric_name: 'k8s.pod.volume.available',
       entity_id: 'pod-1',
       value: 100,
       unit: 'bytes',
@@ -59,7 +59,7 @@ describe('groupPodVolumeSeries', () => {
       labels: { volume_name: 'data' },
     })
 
-    const [group] = groupPodVolumeSeries({ 'k8s.volume.available': [available] })
+    const [group] = groupPodVolumeSeries({ 'k8s.pod.volume.available': [available] })
     expect(group?.available?.value).toBe(100)
   })
 })

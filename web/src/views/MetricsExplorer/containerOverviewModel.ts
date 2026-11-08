@@ -1,10 +1,10 @@
 import type { MetricSample, MetricSeries } from '@/types/metrics'
 
 export const CONTAINER_METRIC_NAMES = [
-  'k8s.container.cpu.usage',
+  'container.cpu.usage',
   'k8s.container.cpu.request',
   'k8s.container.cpu.limit',
-  'k8s.container.memory.usage',
+  'container.memory.usage',
   'k8s.container.memory.request',
   'k8s.container.memory.limit',
   'k8s.container.ready',
@@ -61,12 +61,12 @@ export function buildContainerOverview(status: string | undefined, seriesByMetri
   return {
     status: titleCase(status),
     cpu: {
-      used: metricValue(seriesByMetric['k8s.container.cpu.usage']),
+      used: metricValue(seriesByMetric['container.cpu.usage']),
       request: metricValue(seriesByMetric['k8s.container.cpu.request']),
       limit: metricValue(seriesByMetric['k8s.container.cpu.limit']),
     },
     memory: {
-      used: metricValue(seriesByMetric['k8s.container.memory.usage']),
+      used: metricValue(seriesByMetric['container.memory.usage']),
       request: metricValue(seriesByMetric['k8s.container.memory.request']),
       limit: metricValue(seriesByMetric['k8s.container.memory.limit']),
     },

@@ -4,6 +4,9 @@ type Unit string
 
 const (
 	UnitMillicores     Unit = "millicores"
+	UnitCores          Unit = "cores"
+	UnitSeconds        Unit = "seconds"
+	UnitRatio          Unit = "ratio"
 	UnitBytes          Unit = "bytes"
 	UnitBytesPerSecond Unit = "bytes_per_second"
 	UnitPercent        Unit = "percent"
@@ -19,6 +22,9 @@ const (
 func IsValidUnit(unit Unit) bool {
 	switch unit {
 	case UnitMillicores,
+		UnitCores,
+		UnitSeconds,
+		UnitRatio,
 		UnitBytes,
 		UnitBytesPerSecond,
 		UnitPercent,

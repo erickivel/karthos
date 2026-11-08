@@ -27,26 +27,26 @@ const dataLabels = {
 describe('PVC overview projection', () => {
   it('declares the five supported PVC volume metrics with plain-language titles', () => {
     expect(PVC_METRIC_NAMES).toEqual([
-      'k8s.volume.available',
-      'k8s.volume.capacity',
-      'k8s.volume.inodes.free',
-      'k8s.volume.inodes.used',
-      'k8s.volume.inodes',
+      'k8s.pod.volume.available',
+      'k8s.pod.volume.capacity',
+      'k8s.pod.volume.inodes.free',
+      'k8s.pod.volume.inodes.used',
+      'k8s.pod.volume.inodes',
     ])
-    expect(pvcMetricPresentation('k8s.volume.available')).toMatchObject({ title: 'Available storage' })
-    expect(pvcMetricPresentation('k8s.volume.capacity')).toMatchObject({ title: 'Storage capacity' })
-    expect(pvcMetricPresentation('k8s.volume.inodes.free')).toMatchObject({ title: 'Free inodes' })
-    expect(pvcMetricPresentation('k8s.volume.inodes.used')).toMatchObject({ title: 'Used inodes' })
-    expect(pvcMetricPresentation('k8s.volume.inodes')).toMatchObject({ title: 'Total inodes' })
+    expect(pvcMetricPresentation('k8s.pod.volume.available')).toMatchObject({ title: 'Available storage' })
+    expect(pvcMetricPresentation('k8s.pod.volume.capacity')).toMatchObject({ title: 'Storage capacity' })
+    expect(pvcMetricPresentation('k8s.pod.volume.inodes.free')).toMatchObject({ title: 'Free inodes' })
+    expect(pvcMetricPresentation('k8s.pod.volume.inodes.used')).toMatchObject({ title: 'Used inodes' })
+    expect(pvcMetricPresentation('k8s.pod.volume.inodes')).toMatchObject({ title: 'Total inodes' })
   })
 
   it('builds one direct storage snapshot without deriving used space or a percentage', () => {
     const overview = buildPVCOverview({
-      'k8s.volume.available': [series('k8s.volume.available', 180_435_808_256, dataLabels)],
-      'k8s.volume.capacity': [series('k8s.volume.capacity', 231_922_479_104, dataLabels)],
-      'k8s.volume.inodes.free': [series('k8s.volume.inodes.free', 14_047_173, dataLabels)],
-      'k8s.volume.inodes.used': [series('k8s.volume.inodes.used', 411_707, dataLabels)],
-      'k8s.volume.inodes': [series('k8s.volume.inodes', 14_458_880, dataLabels)],
+      'k8s.pod.volume.available': [series('k8s.pod.volume.available', 180_435_808_256, dataLabels)],
+      'k8s.pod.volume.capacity': [series('k8s.pod.volume.capacity', 231_922_479_104, dataLabels)],
+      'k8s.pod.volume.inodes.free': [series('k8s.pod.volume.inodes.free', 14_047_173, dataLabels)],
+      'k8s.pod.volume.inodes.used': [series('k8s.pod.volume.inodes.used', 411_707, dataLabels)],
+      'k8s.pod.volume.inodes': [series('k8s.pod.volume.inodes', 14_458_880, dataLabels)],
     })
 
     expect(overview).toMatchObject({ kind: 'single', seriesCount: 1 })
@@ -64,13 +64,13 @@ describe('PVC overview projection', () => {
 
   it('keeps label-distinct PVC series as separate drill-down snapshots', () => {
     const overview = buildPVCOverview({
-      'k8s.volume.available': [
-        series('k8s.volume.available', 80, { ...dataLabels, volume_name: 'data-a' }),
-        series('k8s.volume.available', 40, { ...dataLabels, volume_name: 'data-b' }),
+      'k8s.pod.volume.available': [
+        series('k8s.pod.volume.available', 80, { ...dataLabels, volume_name: 'data-a' }),
+        series('k8s.pod.volume.available', 40, { ...dataLabels, volume_name: 'data-b' }),
       ],
-      'k8s.volume.capacity': [
-        series('k8s.volume.capacity', 100, { ...dataLabels, volume_name: 'data-a' }),
-        series('k8s.volume.capacity', 50, { ...dataLabels, volume_name: 'data-b' }),
+      'k8s.pod.volume.capacity': [
+        series('k8s.pod.volume.capacity', 100, { ...dataLabels, volume_name: 'data-a' }),
+        series('k8s.pod.volume.capacity', 50, { ...dataLabels, volume_name: 'data-b' }),
       ],
     })
 

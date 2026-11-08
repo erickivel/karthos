@@ -404,7 +404,7 @@ func TestMetricSeriesGrouped(t *testing.T) {
 
 	s0 := series[0].(map[string]any)
 	require.Equal(t, "k8s.pod.cpu.usage", s0["metric_name"])
-	require.Equal(t, "millicores", s0["unit"])
+	require.Equal(t, "cores", s0["unit"])
 	require.Equal(t, "resource", s0["category"])
 	samples := s0["samples"].([]any)
 	require.Len(t, samples, 1)

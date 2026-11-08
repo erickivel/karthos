@@ -120,7 +120,7 @@ func TestRegistryParsesSupportedMetricsThroughEachStampedTelemetryModule(t *test
 		attributes map[string]string
 		canonical  string
 	}{
-		{source: IDKubelet, raw: "container.cpu.usage", canonical: "k8s.container.cpu.usage"},
+		{source: IDKubelet, raw: "container.cpu.usage", canonical: "container.cpu.usage"},
 		{source: IDHostOS, raw: "system.network.io", attributes: map[string]string{semconv.AttrDirection: "receive"}, canonical: "system.network.io.receive"},
 		{source: IDKubeCluster, raw: "k8s.container.cpu_request", canonical: "k8s.container.cpu.request"},
 		{source: IDPrometheusApp, raw: "http_requests_total", canonical: "http.server.request.count"},

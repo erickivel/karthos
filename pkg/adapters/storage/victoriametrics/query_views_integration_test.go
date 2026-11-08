@@ -71,7 +71,7 @@ func TestQueryViewsVictoriaMetricsIntegration(t *testing.T) {
 		name  string
 		value float64
 		unit  metrics.Unit
-	}{{"k8s.container.cpu.usage", 123, metrics.UnitMillicores}, {"k8s.container.memory.usage", 1048576, metrics.UnitBytes}} {
+	}{{"container.cpu.usage", 123, metrics.UnitMillicores}, {"container.memory.usage", 1048576, metrics.UnitBytes}} {
 		samples = append(samples, metrics.MetricSample{EntityID: entities.EntityID(prefix + "resources"), MetricName: v.name, Value: v.value, Timestamp: end, Labels: map[string]string{"source": metrics.SourceKubelet}, Unit: v.unit})
 	}
 	if err := store.Write(ctx, samples); err != nil {
@@ -171,7 +171,7 @@ func TestQueryViewsVictoriaMetricsIntegration(t *testing.T) {
 			name  string
 			value float64
 			unit  metrics.Unit
-		}{{"k8s.container.cpu.usage", 123, metrics.UnitMillicores}, {"k8s.container.memory.usage", 1048576, metrics.UnitBytes}} {
+		}{{"container.cpu.usage", 123, metrics.UnitMillicores}, {"container.memory.usage", 1048576, metrics.UnitBytes}} {
 			q := makeQuery("resources", metrics.AggregationLatest)
 			q.MetricName = tc.name
 			q.Source = metrics.SourceKubelet

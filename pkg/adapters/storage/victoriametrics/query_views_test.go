@@ -27,6 +27,6 @@ func TestTraceNativeQueryKeepsInputAndDifferentProvenance(t *testing.T) {
 	require.NotContains(t, text, "servicegraph_request_count{")
 }
 func TestSourceSelectorAppliesToOrdinaryQueries(t *testing.T) {
-	text := RenderQuery(query.MetricQuery{MetricName: "k8s.container.memory.usage", Source: "kubelet"})
+	text := RenderQuery(query.MetricQuery{MetricName: "container.memory.usage", Source: "kubelet"})
 	require.Contains(t, text, `source="kubelet"`)
 }

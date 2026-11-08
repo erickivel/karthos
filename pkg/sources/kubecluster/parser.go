@@ -25,12 +25,7 @@ func Parse(rawMetricName string, attributes map[string]string) (contract.ParsedM
 			return contract.ParsedMetric{}, false
 		}
 	}
-	factor := 1.0
-	switch canonical {
-	case "k8s.container.cpu.request", "k8s.container.cpu.limit":
-		factor = 1000.0
-	}
-	parsed := contract.ParsedMetric{CanonicalName: canonical, ConversionFactor: factor}
+	parsed := contract.ParsedMetric{CanonicalName: canonical, ConversionFactor: 1}
 	return parsed, true
 }
 

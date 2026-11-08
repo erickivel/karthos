@@ -48,11 +48,11 @@ export function deriveNodeCpuUtilization(series: MetricSeries[]): DerivedNodeCpu
       for (const cpu of cores) {
         const values = byCore.get(cpu)
         const value = values?.[0]
-        if (!values || values.length !== 1 || value === undefined || !Number.isFinite(value) || value < 0 || value > 100) return []
+        if (!values || values.length !== 1 || value === undefined || !Number.isFinite(value) || value < 0 || value > 1) return []
         idleValues.push(value)
       }
       const idleAverage = idleValues.reduce((total, value) => total + value, 0) / idleValues.length
-      return [{ timestamp, value: 100 - idleAverage }]
+      return [{ timestamp, value: Math.round(10000 * (1 - idleAverage)) / 100 }]
     })
     .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
 
