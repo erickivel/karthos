@@ -36,8 +36,8 @@ func TestCompiledModulesNormalizeTheirCurrentSourceContracts(t *testing.T) {
 		}},
 		{IDTracesServicegraph, plan(IDTracesServicegraph, "servicegraph.request.count", attrs(semconv.AttrClient, "client", semconv.AttrServer, "server", semconv.AttrClientNamespace, "demo", semconv.AttrServerNamespace, "demo")), func(t *testing.T, got contract.Plan) { require.Equal(t, "client", got.Labels[semconv.LabelEdgeClient]) }},
 		{IDMeshIstio, istioPlan(), func(t *testing.T, got contract.Plan) {
-			require.Len(t, got.Derived, 1)
-			require.Equal(t, "servicegraph.request.error.count", got.Derived[0].MetricName)
+			require.Empty(t, got.Derived)
+			require.Equal(t, "500", got.Labels[semconv.AttrHTTPStatusCode])
 		}},
 	}
 	registry := DefaultRegistry()

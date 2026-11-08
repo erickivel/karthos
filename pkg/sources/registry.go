@@ -47,6 +47,7 @@ type Module struct {
 	Contribute   func(*collectorspec.CollectionPlan, profile.SourceCapability, bool)
 	Normalize    contract.Normalizer
 	CallsEdge    contract.CallsEdgeClassifier
+	QueryViews   func() []contract.QueryView
 }
 
 // Registry is the one compiled inventory of source modules.
@@ -59,8 +60,8 @@ func DefaultRegistry() Registry {
 		{ID: IDHostOS, Kind: profile.SourceKindDirect, Parse: hostos.Parse, MetricSource: true, Detect: hostos.Detect, Validate: hostos.ValidateCapability, Contribute: hostos.Contribute, Normalize: hostos.Normalize},
 		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Parse: kubecluster.Parse, MetricSource: true, Detect: kubecluster.Detect, Validate: kubecluster.ValidateCapability, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
 		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Parse: prometheusapp.Parse, MetricSource: true, Detect: prometheusapp.Detect, Validate: prometheusapp.ValidateCapability, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
-		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Parse: istio.Parse, MetricSource: true, Detect: istio.Detect, Validate: istio.ValidateCapability, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata},
-		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Parse: servicegraph.Parse, MetricSource: true, Detect: servicegraph.Detect, Validate: servicegraph.ValidateCapability, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata},
+		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Parse: istio.Parse, MetricSource: true, Detect: istio.Detect, Validate: istio.ValidateCapability, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata, QueryViews: istio.QueryViews},
+		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Parse: servicegraph.Parse, MetricSource: true, Detect: servicegraph.Detect, Validate: servicegraph.ValidateCapability, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata, QueryViews: servicegraph.QueryViews},
 	}}
 }
 
@@ -217,4 +218,19 @@ func (r Registry) AppendRequirements(out *collectorspec.CollectionPlan, capabili
 	}
 	out.Normalize()
 	return nil
+}
+
+// QueryViews returns the static source-owned interpretations of a public metric.
+func (r Registry) QueryViews(metric string) []contract.QueryView {
+	var views []contract.QueryView
+	for _, module := range r.modules {
+		if module.QueryViews != nil {
+			for _, v := range module.QueryViews() {
+				if v.MetricName == metric {
+					views = append(views, v)
+				}
+			}
+		}
+	}
+	return views
 }

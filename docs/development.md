@@ -394,3 +394,7 @@ kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080 &
 curl -s http://localhost:18081/api/v1/status | jq '.data.system_status'
 kill %1
 ```
+
+Source query interpretations belong to compiled source modules via `contract.QueryView`; provider adapters render the declared predicates. `victoriametrics.RenderQuery` exposes the exact production expression for offline diagnostics and evaluation-owned query parity tools without adding a query-text API endpoint.
+
+The development memory backend receives the same static source query-view definitions through `WithMetricQueryViews` at storage composition. The persistence package evaluates generic predicates and existing rollups without importing source implementations; classified input observations also determine its derived-view catalog coverage.

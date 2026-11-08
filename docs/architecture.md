@@ -290,3 +290,15 @@ structured self-telemetry policy. Use `kubectl logs` for both paths.
 3. Let discovery decide what to collect, not how Kubernetes YAML is shaped.
 4. Keep technology-specific adapters isolated from domain packages.
 5. Remove stale deployment paths and outdated docs when replacing them.
+
+### Source-owned query views
+
+Compiled source modules may register small typed query views alongside normalization. A view declares its input metric, semantic series predicates, zero-valued classified branches and interpretation metadata. The storage adapter renders this provider-neutral definition; shared storage does not contain Istio classification policy. For error metrics this preserves observed status counters as the foundation while exposing compatible derived queries.
+
+```mermaid
+flowchart LR
+  Source[Source module predicates] --> Registry[Static source registry]
+  Raw[Canonical status counters] --> Adapter[Storage query renderer]
+  Registry --> Adapter
+  Adapter --> API[API samples and derivation metadata]
+```

@@ -215,7 +215,7 @@ func TestBuildPromQLDefaultCountersUseExactWindowAndPreserveFilters(t *testing.T
 				EdgeSourceID: entities.EntityID("svc-a"),
 				EdgeTargetID: entities.EntityID("svc-b"),
 			},
-			selector: `servicegraph_request_error_count{edge_client_id="svc-a",edge_server_id="svc-b",temporality!="delta"}`,
+			selector: `servicegraph_request_error_count{source="traces.servicegraph",edge_client_id="svc-a",edge_server_id="svc-b",temporality!="delta"}`,
 		},
 	}
 
@@ -578,7 +578,7 @@ func TestVMMetricStore_QueryCatalogStats(t *testing.T) {
 	store := NewVMMetricStore(srv.URL)
 	stats, err := store.QueryCatalogStats(context.Background(), time.Hour)
 	require.NoError(t, err)
-	require.Len(t, queries, 2)
+	require.Len(t, queries, 4)
 	assert.Contains(t, queries[0], "count_over_time")
 	assert.Contains(t, queries[0], "[3600s]")
 	assert.Contains(t, queries[0], "keep_metric_names")

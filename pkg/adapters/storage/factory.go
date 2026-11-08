@@ -8,6 +8,7 @@ import (
 	"github.com/erickivel/karthos/pkg/adapters/storage/postgresql"
 	"github.com/erickivel/karthos/pkg/adapters/storage/victoriametrics"
 	"github.com/erickivel/karthos/pkg/backend/persistence"
+	"github.com/erickivel/karthos/pkg/sources"
 )
 
 // Stores bundles all store implementations created by the factory.
@@ -49,7 +50,7 @@ func newMemoryStores(cfg StorageConfig) *Stores {
 		graphOpts = append(graphOpts, persistence.WithInMemoryNodeTTL(cfg.NodeTTL))
 	}
 	s := &Stores{
-		MetricStore:    persistence.DecorateMetricStore(persistence.NewInMemoryMetricStore()),
+		MetricStore:    persistence.DecorateMetricStore(persistence.NewInMemoryMetricStore(persistence.WithMetricQueryViews(sources.DefaultRegistry().QueryViews))),
 		GraphStore:     persistence.NewInMemoryGraphStore(graphOpts...),
 		MetadataStore:  persistence.NewInMemoryMetadataStore(),
 		EntityRegistry: persistence.NewInMemoryEntityRegistry(),

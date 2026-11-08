@@ -19,9 +19,6 @@ func Normalize(ctx context.Context, resolver contract.EntityResolver, plan *cont
 	if plan.Skip {
 		return nil
 	}
-	if strings.HasPrefix(contract.FirstLabelValue(plan.Attrs, semconv.AttrHTTPStatusCode, semconv.AttrHTTPStatusCodeProm), "5") && plan.RawMetricName == "istio_requests_total" {
-		plan.Derived = append(plan.Derived, contract.DerivedMetric{MetricName: "servicegraph.request.error.count", ConversionFactor: 1})
-	}
 	return nil
 }
 

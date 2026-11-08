@@ -429,3 +429,7 @@ kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.
 kubectl logs -n karthos-system -l app.kubernetes.io/name=karthos,app.kubernetes.io/component=backend --tail=50
 kubectl get pods,svc,endpoints -n karthos-system
 ```
+
+### Outcome preservation versus error interpretation
+
+Istio request-counter ingest preserves observed HTTP/gRPC statuses. Error classification is a query-time view over those counters; no extra Istio error-counter sample is emitted during normalization. Trace-derived failed counters retain upstream connector semantics. API responses identify the interpretation separately from preserved source labels; this does not record per-request application reasons.

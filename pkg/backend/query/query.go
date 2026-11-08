@@ -10,6 +10,7 @@ import (
 )
 
 type MetricQuery struct {
+	Source       string
 	EntityIDs    []entities.EntityID
 	MetricName   string
 	From         time.Time

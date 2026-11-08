@@ -13,18 +13,24 @@ import (
 	"github.com/erickivel/karthos/pkg/core/metrics"
 	"github.com/erickivel/karthos/pkg/core/semconv"
 	"github.com/erickivel/karthos/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 // InMemoryMetricStore is a thread-safe in-memory implementation of MetricStore.
 type InMemoryMetricStore struct {
-	mu      sync.RWMutex
-	samples []metrics.MetricSample
-	nowFn   func() time.Time
+	mu         sync.RWMutex
+	samples    []metrics.MetricSample
+	nowFn      func() time.Time
+	queryViews func(string) []contract.QueryView
 }
 
 // NewInMemoryMetricStore returns a new empty InMemoryMetricStore.
-func NewInMemoryMetricStore() *InMemoryMetricStore {
-	return &InMemoryMetricStore{nowFn: func() time.Time { return time.Now().UTC() }}
+func NewInMemoryMetricStore(options ...InMemoryMetricStoreOption) *InMemoryMetricStore {
+	store := &InMemoryMetricStore{nowFn: func() time.Time { return time.Now().UTC() }}
+	for _, option := range options {
+		option(store)
+	}
+	return store
 }
 
 // Write appends samples to the store.
@@ -41,21 +47,28 @@ func (s *InMemoryMetricStore) Write(_ context.Context, samples []metrics.MetricS
 func (s *InMemoryMetricStore) Query(_ context.Context, q query.MetricQuery) ([]metrics.MetricSample, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if samples, handled := s.queryViewSamples(q); handled {
+		return samples, nil
+	}
+	return s.queryRawLocked(q), nil
+}
+
+func (s *InMemoryMetricStore) queryRawLocked(q query.MetricQuery) []metrics.MetricSample {
 	if q.Step > 0 {
 		if q.Aggregation == "" || q.Aggregation == metrics.AggregationLatest {
-			return evaluateMemoryLatestTrend(s.filteredSamples(q, false), q), nil
+			return evaluateMemoryLatestTrend(s.filteredSamples(q, false), q)
 		}
-		return s.evaluateAggregatedTrend(q), nil
+		return s.evaluateAggregatedTrend(q)
 	}
 
 	if q.Aggregation != "" && q.Aggregation != metrics.AggregationLatest {
 		if q.Aggregation == metrics.AggregationWindowMean {
-			return s.queryWindowMean(q), nil
+			return s.queryWindowMean(q)
 		}
-		return aggregateMemorySamples(s.filteredSamples(q, false), q), nil
+		return aggregateMemorySamples(s.filteredSamples(q, false), q)
 	}
 
-	return cloneMetricSamples(s.filteredSamples(q, true)), nil
+	return cloneMetricSamples(s.filteredSamples(q, true))
 }
 
 func (s *InMemoryMetricStore) evaluateAggregatedTrend(q query.MetricQuery) []metrics.MetricSample {
@@ -125,6 +138,9 @@ func (s *InMemoryMetricStore) filteredSamples(q query.MetricQuery, applyFrom boo
 			continue
 		}
 		if q.EdgeSourceID != "" && sample.Labels["edge_client_id"] != string(q.EdgeSourceID) {
+			continue
+		}
+		if q.Source != "" && sample.Labels["source"] != q.Source {
 			continue
 		}
 		if q.EdgeTargetID != "" && sample.Labels["edge_server_id"] != string(q.EdgeTargetID) {
@@ -309,7 +325,7 @@ func (s *InMemoryMetricStore) QueryCatalogStats(_ context.Context, lookback time
 	}
 	buckets := map[key]*agg{}
 
-	for _, sample := range s.samples {
+	for _, sample := range s.catalogViewSamples() {
 		if sample.Timestamp.Before(cutoff) || sample.Timestamp.After(now) {
 			continue
 		}

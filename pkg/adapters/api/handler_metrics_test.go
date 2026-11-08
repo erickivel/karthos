@@ -572,3 +572,8 @@ func TestCatalogStatsZeroFillsAndJoins(t *testing.T) {
 	assert.EqualValues(t, 0, tracesCount)
 	assert.Nil(t, tracesSeen)
 }
+
+func TestMetricSourceSelectorRejectsUnregisteredSource(t *testing.T) {
+	response := serveMetricsRequest(t, seedMetrics(t), "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&source=unknown")
+	require.Equal(t, http.StatusBadRequest, response.Code)
+}

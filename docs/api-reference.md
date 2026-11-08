@@ -576,3 +576,20 @@ When modifying or adding API endpoints, update these files:
 | `deploy/helm/karthos/templates/backend-deployment.yaml` | API port arg and containerPort |
 | `deploy/helm/karthos/templates/backend-service.yaml` | API service port entry |
 | `docs/api-reference.md` | **This file** -- update when endpoints change |
+
+### Source selection and explicit error views
+
+`GET /api/v1/metrics` and `/api/v1/metrics/series` accept optional `source` identifying a registered metric source (for example `mesh.istio` or `traces.servicegraph`). Unknown/non-metric source IDs return400. A registered source without matching data returns no samples. Omission preserves multi-source queries. The effective `query` object echoes an explicitly selected source.
+
+The existing `servicegraph.request.error.count` name is a source-owned query view. For Istio it reads status-partitioned request counters with policy `istio.request-errors` version1; for trace servicegraphs it reports connector-native failures under `servicegraph.connector-failures` version1. These interpretations are distinct. Samples optionally include:
+
+```json
+"derivation": {
+  "id": "istio.request-errors",
+  "version": "1",
+  "input_metric": "servicegraph.request.count",
+  "interpretation": "HTTP 500–599 for non-gRPC; nonzero gRPC status for RPCs; missing RPC status unknown"
+}
+```
+
+Existing latest/increase/window-rate/active-rate modes and mode-aware units remain available. Status/source/edge dimensions remain separate. Successful classified partitions may return zero; unknown or absent outcomes do not synthesize zeros. `latest` represents a cumulative classified counter, not the number of failed requests within a selected interval. Public timestamps are query evaluation points, not producer timestamps.

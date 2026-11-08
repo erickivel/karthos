@@ -16,7 +16,15 @@ import (
 // API/store boundary for metrics where IsHealthStatusMetric reports true.
 // Frontends should render ValueLabel for those metrics; the integer encoding
 // never leaves the API for consumers.
+// Derivation identifies an explicit query interpretation, never a stored label.
+type Derivation struct {
+	ID             string `json:"id"`
+	Version        string `json:"version"`
+	InputMetric    string `json:"input_metric"`
+	Interpretation string `json:"interpretation"`
+}
 type MetricSample struct {
+	Derivation *Derivation       `json:"derivation,omitempty"`
 	MetricName string            `json:"metric_name"`
 	EntityID   entities.EntityID `json:"entity_id"`
 	Value      float64           `json:"value"`
