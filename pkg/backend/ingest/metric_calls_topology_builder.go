@@ -56,7 +56,8 @@ func (b *MetricCallsTopologyBuilder) Build(_ context.Context, envelope schema.Ra
 				if !ok {
 					continue
 				}
-				edge, ok := b.edgeFromAttributes(time.Unix(0, int64(dp.TimeUnixNano)).UTC(), dp.Attributes, metadata) // #nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
+				clientNamespace, serverNamespace := b.modules.CallsEdgeNamespaces(validation.Source, dp.Attributes)
+				edge, ok := b.edgeFromAttributes(time.Unix(0, int64(dp.TimeUnixNano)).UTC(), dp.Attributes, metadata, clientNamespace, serverNamespace) // #nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
 				if !ok {
 					continue
 				}
@@ -96,11 +97,17 @@ func (b *MetricCallsTopologyBuilder) parseAndValidate(rawMetricName string, attr
 	return parsed, validation, true
 }
 
-func (b *MetricCallsTopologyBuilder) edgeFromAttributes(timestamp time.Time, attrs []*commonpb.KeyValue, metadata map[string]string) (topology.Edge, bool) {
+func (b *MetricCallsTopologyBuilder) edgeFromAttributes(timestamp time.Time, attrs []*commonpb.KeyValue, metadata map[string]string, sourceClientNamespace, sourceServerNamespace string) (topology.Edge, bool) {
 	client := kvString(attrs, semconv.AttrClient)
 	server := kvString(attrs, semconv.AttrServer)
 	clientNamespace := kvString(attrs, semconv.AttrClientNamespace)
 	serverNamespace := kvString(attrs, semconv.AttrServerNamespace)
+	if clientNamespace == "" {
+		clientNamespace = sourceClientNamespace
+	}
+	if serverNamespace == "" {
+		serverNamespace = sourceServerNamespace
+	}
 	if client == "" || server == "" || clientNamespace == "" || serverNamespace == "" {
 		return topology.Edge{}, false
 	}

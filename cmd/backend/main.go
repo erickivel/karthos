@@ -35,7 +35,7 @@ const (
 	defaultBackendHealthListenAddr = "0.0.0.0:13133"
 	defaultBackendAPIListenAddr    = "0.0.0.0:8080"
 	defaultBackendLogLevel         = "info"
-	defaultStorageBackend          = "memory"
+	defaultStorageBackend          = "external"
 	defaultTopologyFlushInterval   = 60 * time.Second
 	defaultStatusStaleSeconds      = 360
 	defaultNodeTTL                 = 24 * time.Hour
@@ -139,9 +139,9 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName)
+	metricTopoBuilder := ingest.NewMetricTopologyBuilder(cfg.ClusterName, sourcePolicy)
 	if podLifecycle != nil {
-		metricTopoBuilder = ingest.NewMetricTopologyBuilderWithLifecycle(cfg.ClusterName, podLifecycle)
+		metricTopoBuilder = ingest.NewMetricTopologyBuilderWithLifecycle(cfg.ClusterName, podLifecycle, sourcePolicy)
 	}
 	metricCallsTopoBuilder := ingest.NewMetricCallsTopologyBuilder(cfg.ClusterName, sourcePolicy)
 

@@ -175,8 +175,8 @@ Notes:
   pipeline. It writes detailed batches to Collector stdout only; both planes
   intentionally produce duplicate diagnostic output. The exporter is alpha,
   so treat its log format as transient rather than an API contract.
-- Without `--storage-backend`, the chart's `memory` storage default remains in
-  effect. `--storage-backend=external` requires both `--postgresql-mode` and
+- Without `--storage-backend`, the chart's bundled PostgreSQL and VictoriaMetrics
+  default remains in effect. `--storage-backend=external` requires both `--postgresql-mode` and
   `--victoriametrics-mode` (`bundled` or `remote`). Remote endpoints come from
   the corresponding flags or `KARTHOS_POSTGRES_DSN` and `KARTHOS_VICTORIAMETRICS_URL`.
 - Image flags are typed partial overrides. Omitted repository, tag, or
@@ -185,7 +185,7 @@ Notes:
 - the backend is supported only as a Helm workload because it requires the mounted,
   chart-owned capability profile and resolved source plan.
 - collector runtime flags are generated from the collector plan; Collector Contrib is pinned to `0.156.0`
-- `--node-ttl` / `KARTHOS_NODE_TTL` is the structural freshness guard (default `24h`). The backend refuses to materialize from a direct Kubernetes structure snapshot older than this value. Set `0` to disable the guard. Materialized API snapshots have an independent fixed 24-hour retention window.
+- `--node-ttl` / `KARTHOS_NODE_TTL` is the structural freshness guard (default `24h`). The backend refuses to materialize from a direct Kubernetes structure snapshot older than this value. Set `0` to disable the guard. Materialized API snapshots have an independent fixed seven-day retention window.
 - `backend.structureRefreshInterval` controls the in-cluster structural refresh cadence (default `5m`). It is passed as `--structure-refresh-interval` and must remain strictly below `KARTHOS_NODE_TTL`.
 - `backend.statusStaleSeconds` controls when the status endpoint calls a graph snapshot stale (default `360`). It intentionally exceeds the five-minute structural refresh interval to tolerate normal scheduling delay.
 
@@ -326,7 +326,7 @@ curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.
 Notes:
 
 - Counter presentation is catalog-driven. Rate-presented counters default to `aggregation=window_rate&window=1m`, while callers may explicitly request `latest`, `increase`, `window_rate`, or `active_rate` when that metric declares the mode. Cumulative counters such as container restarts retain their catalog-declared `latest` default.
-- Istio metrics enter through the Istio source parser, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
+- Istio metrics enter through the Istio source parser, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to seconds before storage.
 - The Metrics Explorer entity search and breadcrumb filter are driven by the latest graph snapshot (`useGraphSnapshot`), not the historical `/api/v1/entities` registry. Edge mode lists `calls` edges from the same snapshot.
 
 Expected graph edge relations after telemetry flows:

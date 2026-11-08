@@ -65,6 +65,47 @@ func TestModuleRefreshesLiveKubernetesTopology(t *testing.T) {
 	require.True(t, hasEdge(edgesByRelation(snapshot.Graph.Edges, topology.RelContains), entities.NewPod("test", "demo", "api-1", nil).ID(), containerID))
 }
 
+func TestTerminalPodRemainsInHistoryAfterDeletion(t *testing.T) {
+	ctx := context.Background()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: "demo"}, Status: corev1.PodStatus{Phase: corev1.PodFailed}}
+	client := fake.NewClientset(pod)
+	store := persistence.NewInMemoryGraphStore()
+	module := New(client, "test", store, nil)
+	first := time.Now().UTC().Add(-time.Minute)
+	module.now = func() time.Time { return first }
+	require.NoError(t, module.Refresh(ctx))
+	_, err := store.Materialize(ctx, first)
+	require.NoError(t, err)
+	require.NoError(t, client.CoreV1().Pods("demo").Delete(ctx, "job-1", metav1.DeleteOptions{}))
+	second := first.Add(time.Minute)
+	module.now = func() time.Time { return second }
+	require.NoError(t, module.Refresh(ctx))
+	_, err = store.Materialize(ctx, second)
+	require.NoError(t, err)
+	historical, err := store.GetAt(ctx, first)
+	require.NoError(t, err)
+	require.NotNil(t, historical)
+	id := entities.ComputeEntityID(entities.KindPod, "test", "demo", "job-1")
+	require.True(t, hasNode(historical.Graph.Nodes, id))
+	for _, node := range historical.Graph.Nodes {
+		if node.ID == id {
+			require.Equal(t, "Failed", node.Labels["k8s.pod.phase"])
+		}
+	}
+	current, err := store.GetLatest(ctx)
+	require.NoError(t, err)
+	require.False(t, hasNode(current.Graph.Nodes, id))
+}
+
+func hasNode(nodes []topology.Node, id entities.EntityID) bool {
+	for _, node := range nodes {
+		if node.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func TestModuleIncludesDirectlyListedObjectsWithoutResolvedSemanticTargets(t *testing.T) {
 	client := fake.NewClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},

@@ -88,6 +88,40 @@ func TestPostgresMaterializedSnapshotsRetainStructureAndFreshObservations(t *tes
 	require.Len(t, historical.Graph.Edges, 2)
 }
 
+func TestPostgresObservationWindowAndNodeInterval(t *testing.T) {
+	ctx := context.Background()
+	conn, err := NewConn(ctx, integrationDSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	require.NoError(t, Migrate(ctx, conn))
+	require.NoError(t, resetTopology(ctx, conn))
+	store := NewPostgresGraphStore(conn)
+	first := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	second := first.Add(6 * time.Minute)
+	service := entities.ComputeEntityID(entities.KindService, "cluster", "demo", "api")
+	peer := entities.ComputeEntityID(entities.KindService, "cluster", "demo", "db")
+	nodes := []topology.Node{{ID: service, Kind: entities.KindService, Provenance: []string{"kubernetes.structure"}, FirstSeen: first, LastSeen: first}, {ID: peer, Kind: entities.KindService, Provenance: []string{"kubernetes.structure"}, FirstSeen: first, LastSeen: first}}
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: first, Graph: topology.Graph{Nodes: nodes}}))
+	edge := topology.NewEdge(service, peer, topology.RelCalls, first)
+	edge.Provenance = []string{"mesh.istio"}
+	require.NoError(t, store.PutObservedEdges(ctx, []topology.Edge{edge}))
+	_, err = store.Materialize(ctx, first)
+	require.NoError(t, err)
+	for i := range nodes {
+		nodes[i].FirstSeen, nodes[i].LastSeen = second, second
+	}
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: second, Graph: topology.Graph{Nodes: nodes}}))
+	latest, err := store.Materialize(ctx, second)
+	require.NoError(t, err)
+	require.True(t, first.Equal(latest.From))
+	require.True(t, second.Equal(latest.To))
+	require.True(t, first.Equal(latest.Graph.Nodes[0].FirstSeen))
+	observed, err := store.ObservedEdgesInWindow(ctx, first.Add(-time.Second), first.Add(time.Second), "mesh.istio")
+	require.NoError(t, err)
+	require.Len(t, observed, 1)
+	require.Equal(t, []string{"mesh.istio"}, observed[0].Provenance)
+}
+
 func TestPostgresGraphStoreNodeTTLExpiresEntireStructuralProjection(t *testing.T) {
 	ctx := context.Background()
 	conn, err := NewConn(ctx, integrationDSN)
@@ -202,6 +236,6 @@ func TestPostgresObservedEdgeMergeDoesNotLetDelayedPayloadOverwriteNewerState(t 
 }
 
 func resetTopology(ctx context.Context, conn *Conn) error {
-	_, err := conn.pool.Exec(ctx, "TRUNCATE topology_snapshot_edges, topology_nodes, topology_edges, topology_snapshots RESTART IDENTITY")
+	_, err := conn.pool.Exec(ctx, "TRUNCATE topology_edge_observations, topology_snapshot_edges, topology_nodes, topology_edges, topology_snapshots RESTART IDENTITY")
 	return err
 }

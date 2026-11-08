@@ -44,12 +44,12 @@ backend:
   resources: {}
 
 storage:
-  backend: memory
+  backend: external
   postgresql:
-    enabled: false
+    enabled: true
     dsn: ""
   victoriametrics:
-    enabled: false
+    enabled: true
     url: ""
 
 postgresql:

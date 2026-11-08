@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/erickivel/karthos/pkg/backend/persistence"
 	"github.com/erickivel/karthos/pkg/core/entities"
 	"github.com/erickivel/karthos/pkg/core/metrics"
 	"github.com/erickivel/karthos/pkg/core/topology"
@@ -37,6 +38,20 @@ func TestHealthResolverPreservesContainerReadinessPresence(t *testing.T) {
 	require.Equal(t, metrics.HealthRunningNotReady, resolution.Statuses["not-ready"])
 	require.Equal(t, metrics.HealthUnknown, resolution.Statuses["unknown"])
 	require.Equal(t, metrics.HealthRestarting, resolution.Statuses["restarting"])
+}
+
+func TestHealthResolverUsesGraphInstant(t *testing.T) {
+	store := persistence.NewInMemoryMetricStore()
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	id := entities.EntityID("pod-historical")
+	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{
+		{MetricName: "k8s.pod.phase", EntityID: id, Value: 2, Timestamp: at},
+		{MetricName: "k8s.pod.phase", EntityID: id, Value: 4, Timestamp: at.Add(10 * time.Minute)},
+	}))
+	resolution := NewHealthResolver(store).ResolveAt(context.Background(), []topology.Node{{ID: id, Kind: entities.KindPod}}, true, at)
+	require.Equal(t, metrics.HealthHealthy, resolution.Statuses[id])
+	later := NewHealthResolver(store).ResolveAt(context.Background(), []topology.Node{{ID: id, Kind: entities.KindPod}}, true, at.Add(10*time.Minute))
+	require.Equal(t, metrics.HealthFailed, later.Statuses[id])
 }
 
 func TestCombineHealthQualityPreservesPartialTruth(t *testing.T) {

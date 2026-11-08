@@ -366,12 +366,13 @@ type InMemoryGraphStore struct {
 	materializedSnapshots []topology.Snapshot
 	nextMaterializedID    int64
 	edges                 map[string]topology.Edge // observed edges keyed by edge ID
-	nodeTTL               time.Duration            // 0 = no structural freshness guard
+	observedEdges         []topology.Edge
+	nodeTTL               time.Duration // 0 = no structural freshness guard
 	nowFn                 func() time.Time
 }
 
 const (
-	graphSnapshotRetention          = 24 * time.Hour
+	graphSnapshotRetention          = topology.HistoryRetention
 	graphObservationFreshnessWindow = 5 * time.Minute
 )
 
@@ -415,6 +416,7 @@ func (s *InMemoryGraphStore) PutObservedEdges(_ context.Context, edges []topolog
 
 	for _, e := range edges {
 		e = cloneEdge(e)
+		s.observedEdges = append(s.observedEdges, cloneEdge(e))
 		existing, ok := s.edges[e.ID]
 		if !ok {
 			s.edges[e.ID] = cloneEdge(e)
@@ -442,6 +444,30 @@ func (s *InMemoryGraphStore) PutObservedEdges(_ context.Context, edges []topolog
 	return nil
 }
 
+func (s *InMemoryGraphStore) ObservedEdgesInWindow(_ context.Context, from, to time.Time, sourceID string) ([]topology.Edge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []topology.Edge
+	for _, edge := range s.observedEdges {
+		if edge.FirstSeen.After(to) || edge.LastSeen.Before(from) {
+			continue
+		}
+		if sourceID == "" {
+			result = append(result, cloneEdge(edge))
+			continue
+		}
+		for _, source := range edge.Provenance {
+			if source == sourceID {
+				selected := cloneEdge(edge)
+				selected.Provenance = []string{source}
+				result = append(result, selected)
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
 // Materialize stores one complete graph projection. Kubernetes structure is
 // authoritative for membership; only recent active observed edges whose
 // endpoints remain in that structure are included.
@@ -458,12 +484,30 @@ func (s *InMemoryGraphStore) Materialize(_ context.Context, at time.Time) (*topo
 	}
 
 	result := cloneSnapshot(latest)
+	previousNodes := map[entities.EntityID]topology.Node{}
+	if len(s.materializedSnapshots) > 0 {
+		for _, previous := range s.materializedSnapshots[len(s.materializedSnapshots)-1].Graph.Nodes {
+			previousNodes[previous.ID] = previous
+		}
+	}
 	nodesByID := make(map[string]topology.Node, len(result.Graph.Nodes))
 	for _, node := range result.Graph.Nodes {
+		if previous, ok := previousNodes[node.ID]; ok && !previous.FirstSeen.IsZero() && (node.FirstSeen.IsZero() || previous.FirstSeen.Before(node.FirstSeen)) {
+			node.FirstSeen = previous.FirstSeen
+		}
 		nodesByID[string(node.ID)] = cloneNode(node)
 	}
 	edgesByID := make(map[string]topology.Edge, len(result.Graph.Edges)+len(s.edges))
+	previousEdges := map[string]topology.Edge{}
+	if len(s.materializedSnapshots) > 0 {
+		for _, previous := range s.materializedSnapshots[len(s.materializedSnapshots)-1].Graph.Edges {
+			previousEdges[previous.ID] = previous
+		}
+	}
 	for _, edge := range result.Graph.Edges {
+		if previous, ok := previousEdges[edge.ID]; ok && previous.FirstSeen.Before(edge.FirstSeen) {
+			edge.FirstSeen = previous.FirstSeen
+		}
 		edgesByID[edge.ID] = cloneEdge(edge)
 	}
 	cutoff := at.Add(-graphObservationFreshnessWindow)
@@ -471,7 +515,7 @@ func (s *InMemoryGraphStore) Materialize(_ context.Context, at time.Time) (*topo
 		if edge.Relation != topology.RelRunsOn && edge.Relation != topology.RelCalls {
 			continue
 		}
-		if edgeRetired(edge) || edgeTerminalDeadlineExpired(edge, at) || edge.LastSeen.Before(cutoff) {
+		if edgeRetired(edge) || edgeTerminalDeadlineExpired(edge, at) || edge.LastSeen.Before(cutoff) || edge.LastSeen.After(at) {
 			continue
 		}
 		if _, ok := nodesByID[string(edge.Source)]; !ok {
@@ -500,8 +544,7 @@ func (s *InMemoryGraphStore) Materialize(_ context.Context, at time.Time) (*topo
 	result.ID = s.nextMaterializedID + 1
 	s.nextMaterializedID = result.ID
 	result.CreatedAt = at.UTC()
-	result.From = result.CreatedAt
-	result.To = result.CreatedAt
+	topology.SetObservationInterval(&result)
 	result.Graph.Timestamp = result.CreatedAt
 	s.materializedSnapshots = append(s.materializedSnapshots, cloneSnapshot(result))
 
@@ -513,6 +556,25 @@ func (s *InMemoryGraphStore) Materialize(_ context.Context, at time.Time) (*topo
 		}
 	}
 	s.materializedSnapshots = kept
+	structuralKept := s.structuralSnapshots[:0]
+	for i, snapshot := range s.structuralSnapshots {
+		if i == len(s.structuralSnapshots)-1 || !snapshot.CreatedAt.Before(retentionCutoff) {
+			structuralKept = append(structuralKept, snapshot)
+		}
+	}
+	s.structuralSnapshots = structuralKept
+	observedKept := s.observedEdges[:0]
+	for _, edge := range s.observedEdges {
+		if !edge.LastSeen.Before(retentionCutoff) {
+			observedKept = append(observedKept, edge)
+		}
+	}
+	s.observedEdges = observedKept
+	for id, edge := range s.edges {
+		if edge.LastSeen.Before(retentionCutoff) {
+			delete(s.edges, id)
+		}
+	}
 	return &result, nil
 }
 

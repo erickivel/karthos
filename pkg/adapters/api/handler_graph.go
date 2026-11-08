@@ -36,13 +36,16 @@ func (h *GraphHandler) RegisterRoutes(mux *http.ServeMux) {
 // --- response types ---
 
 type enrichedNode struct {
-	ID        entities.EntityID   `json:"id"`
-	Kind      entities.EntityKind `json:"kind"`
-	Name      string              `json:"name,omitempty"`
-	Namespace string              `json:"namespace,omitempty"`
-	Cluster   string              `json:"cluster,omitempty"`
-	Status    string              `json:"status"`
-	Labels    map[string]string   `json:"labels,omitempty"`
+	ID         entities.EntityID   `json:"id"`
+	Kind       entities.EntityKind `json:"kind"`
+	Name       string              `json:"name,omitempty"`
+	Namespace  string              `json:"namespace,omitempty"`
+	Cluster    string              `json:"cluster,omitempty"`
+	Status     string              `json:"status"`
+	Labels     map[string]string   `json:"labels,omitempty"`
+	Provenance []string            `json:"provenance,omitempty"`
+	FirstSeen  time.Time           `json:"first_seen,omitempty"`
+	LastSeen   time.Time           `json:"last_seen,omitempty"`
 }
 
 type relatedEntitySummary struct {
@@ -88,13 +91,16 @@ type healthEnrichmentQuality struct {
 // populated with one of the public string-set values.
 func enrichNodeFrom(n topology.Node, entity entities.Entity, status string) enrichedNode {
 	if status == "" {
-		status = metrics.HealthUnknown
+		status = podPhaseStatus(n)
 	}
 	en := enrichedNode{
-		ID:     n.ID,
-		Kind:   n.Kind,
-		Status: status,
-		Labels: n.Labels,
+		ID:         n.ID,
+		Kind:       n.Kind,
+		Status:     status,
+		Labels:     n.Labels,
+		Provenance: n.Provenance,
+		FirstSeen:  n.FirstSeen,
+		LastSeen:   n.LastSeen,
 	}
 	if entity != nil {
 		ref := entityRefOf(entity)
@@ -109,6 +115,22 @@ func enrichNodeFrom(n topology.Node, entity entities.Entity, status string) enri
 		en.Namespace = n.Labels["namespace"]
 	}
 	return en
+}
+
+func podPhaseStatus(node topology.Node) string {
+	if node.Kind == entities.KindPod {
+		switch node.Labels["k8s.pod.phase"] {
+		case "Pending":
+			return metrics.HealthPending
+		case "Running":
+			return metrics.HealthHealthy
+		case "Succeeded":
+			return metrics.HealthSucceeded
+		case "Failed":
+			return metrics.HealthFailed
+		}
+	}
+	return metrics.HealthUnknown
 }
 
 // batchEntities resolves the given IDs through the registry in a single call.
@@ -128,11 +150,11 @@ func (h *GraphHandler) batchEntities(ctx context.Context, ids []entities.EntityI
 // resolveHealthStatus issues at most three metric-store queries. Snapshot-wide
 // callers omit entity matchers and intersect in memory, keeping query text
 // bounded as the graph grows. Single-node callers retain exact filtering.
-func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node, exact bool) (map[entities.EntityID]string, healthEnrichmentQuality) {
+func (h *GraphHandler) resolveHealthStatus(ctx context.Context, nodes []topology.Node, exact bool, at time.Time) (map[entities.EntityID]string, healthEnrichmentQuality) {
 	if h.healthResolver == nil {
 		return map[entities.EntityID]string{}, healthEnrichmentQuality{Status: healthQualityUnavailable, Pods: healthQualityUnavailable, Containers: healthQualityUnavailable}
 	}
-	resolution := h.healthResolver.Resolve(ctx, nodes, exact)
+	resolution := h.healthResolver.ResolveAt(ctx, nodes, exact, at)
 	for _, err := range resolution.Errors {
 		h.logger.Warn("health query failed", logging.Error(err))
 	}
@@ -245,7 +267,7 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, n.ID)
 	}
 	resolved := h.batchEntities(r.Context(), ids)
-	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), nodes, false)
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), nodes, false, snap.CreatedAt)
 
 	enrichedNodes := make([]enrichedNode, 0, len(nodes))
 	for _, n := range nodes {
@@ -257,10 +279,11 @@ func (h *GraphHandler) handleGetGraph(w http.ResponseWriter, r *http.Request) {
 			"id":         snap.ID,
 			"created_at": snap.CreatedAt,
 		},
-		"version":    snap.Version,
-		"from":       snap.From,
-		"to":         snap.To,
-		"created_at": snap.CreatedAt,
+		"version":     snap.Version,
+		"from":        snap.From,
+		"to":          snap.To,
+		"observed_at": snap.CreatedAt,
+		"created_at":  snap.CreatedAt,
 		"graph": map[string]any{
 			"timestamp": snap.Graph.Timestamp,
 			"nodes":     enrichedNodes,
@@ -304,7 +327,7 @@ func (h *GraphHandler) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		candidateIDs = append(candidateIDs, n.ID)
 	}
 	resolved := h.batchEntities(r.Context(), candidateIDs)
-	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), candidates, false)
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), candidates, false, snap.CreatedAt)
 
 	var filtered []enrichedNode
 	for _, n := range candidates {
@@ -384,7 +407,7 @@ func (h *GraphHandler) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, id)
 	}
 	resolved := h.batchEntities(r.Context(), ids)
-	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), []topology.Node{*found}, true)
+	healthByID, healthQuality := h.resolveHealthStatus(r.Context(), []topology.Node{*found}, true, snap.CreatedAt)
 
 	enriched := enrichNodeFrom(*found, resolved[nodeID], healthByID[nodeID])
 
@@ -421,23 +444,34 @@ func (h *GraphHandler) handleListEdges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fromRaw, toRaw := r.URL.Query().Get("from"), r.URL.Query().Get("to")
+	if fromRaw != "" || toRaw != "" {
+		if fromRaw == "" || toRaw == "" || r.URL.Query().Get("at") != "" || r.URL.Query().Get("page_token") != "" {
+			writeError(w, http.StatusBadRequest, "from and to are required together and cannot be combined with at or page_token")
+			return
+		}
+		from, fromErr := time.Parse(time.RFC3339Nano, fromRaw)
+		to, toErr := time.Parse(time.RFC3339Nano, toRaw)
+		if fromErr != nil || toErr != nil || to.Before(from) || to.Sub(from) > topology.HistoryRetention {
+			writeError(w, http.StatusBadRequest, "invalid observation window")
+			return
+		}
+		edges, err := h.graphStore.ObservedEdgesInWindow(r.Context(), from, to, r.URL.Query().Get("source_id"))
+		if err != nil {
+			h.logger.Error("edge observation query failed", logging.Error(err))
+			writeError(w, http.StatusInternalServerError, "edge observation query failed")
+			return
+		}
+		filtered := filterGraphEdges(edges, sourceFilter, targetFilter, relationFilter)
+		writeJSON(w, http.StatusOK, map[string]any{"edges": filtered, "total": len(filtered), "from": from, "to": to})
+		return
+	}
+
 	snap, ok := h.selectedGraphSnapshot(w, r)
 	if !ok {
 		return
 	}
-	edges := make([]topology.Edge, 0, len(snap.Graph.Edges))
-	for _, edge := range snap.Graph.Edges {
-		if sourceFilter != "" && edge.Source != sourceFilter {
-			continue
-		}
-		if targetFilter != "" && edge.Target != targetFilter {
-			continue
-		}
-		if relationFilter != "" && edge.Relation != relationFilter {
-			continue
-		}
-		edges = append(edges, edge)
-	}
+	edges := filterGraphEdges(snap.Graph.Edges, sourceFilter, targetFilter, relationFilter)
 
 	slices.SortFunc(edges, func(a, b topology.Edge) int {
 		if c := cmp.Compare(string(a.Relation), string(b.Relation)); c != 0 {
@@ -465,6 +499,23 @@ func (h *GraphHandler) handleListEdges(w http.ResponseWriter, r *http.Request) {
 		"total":    total,
 		"snapshot": graphSnapshotIdentity(snap),
 	}, nextToken)
+}
+
+func filterGraphEdges(input []topology.Edge, sourceFilter, targetFilter entities.EntityID, relationFilter topology.RelationType) []topology.Edge {
+	edges := make([]topology.Edge, 0, len(input))
+	for _, edge := range input {
+		if sourceFilter != "" && edge.Source != sourceFilter {
+			continue
+		}
+		if targetFilter != "" && edge.Target != targetFilter {
+			continue
+		}
+		if relationFilter != "" && edge.Relation != relationFilter {
+			continue
+		}
+		edges = append(edges, edge)
+	}
+	return edges
 }
 
 func graphSnapshotIdentity(snapshot *topology.Snapshot) map[string]any {

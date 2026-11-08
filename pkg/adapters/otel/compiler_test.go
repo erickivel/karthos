@@ -60,6 +60,8 @@ func TestCompileUsesDerivedServiceGraphOnlyWhenRequested(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, deployment.GatewayConfig.Connectors, "service_graph")
 	require.Equal(t, []string{otlpGRPCExporter, "service_graph"}, deployment.GatewayConfig.Service.Pipelines["traces"].Exporters)
+	require.Equal(t, []string{"memory_limiter", serviceGraphNamespaceProcessor, "batch"}, deployment.GatewayConfig.Service.Pipelines["traces"].Processors)
+	require.Contains(t, deployment.GatewayConfig.Processors, serviceGraphNamespaceProcessor)
 }
 
 func TestCompileOmitsCollectorDebugByDefault(t *testing.T) {

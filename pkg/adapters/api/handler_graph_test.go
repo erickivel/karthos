@@ -103,6 +103,34 @@ func TestGetGraphReturnsSnapshot(t *testing.T) {
 	require.Contains(t, filters["relations"], "calls")
 }
 
+func TestTerminalPodStatusFallsBackToSnapshotPhase(t *testing.T) {
+	node := topology.Node{ID: "pod-failed", Kind: entities.KindPod, Labels: map[string]string{"k8s.pod.phase": "Failed"}}
+	require.Equal(t, metrics.HealthFailed, enrichNodeFrom(node, nil, "").Status)
+	require.Equal(t, metrics.HealthHealthy, enrichNodeFrom(node, nil, metrics.HealthHealthy).Status)
+}
+
+func TestEdgeObservationWindowSurvivesCurrentGraphExpiry(t *testing.T) {
+	ctx := context.Background()
+	gs := persistence.NewInMemoryGraphStore()
+	at := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	a := entities.ComputeEntityID(entities.KindService, "cluster", "default", "a")
+	b := entities.ComputeEntityID(entities.KindService, "cluster", "default", "b")
+	require.NoError(t, gs.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: at, Graph: topology.Graph{Nodes: []topology.Node{{ID: a, Kind: entities.KindService}, {ID: b, Kind: entities.KindService}}}}))
+	edge := topology.NewEdge(a, b, topology.RelCalls, at)
+	edge.Provenance = []string{metrics.SourceMeshIstio}
+	require.NoError(t, gs.PutObservedEdges(ctx, []topology.Edge{edge}))
+	_, err := gs.Materialize(ctx, at.Add(6*time.Minute))
+	require.NoError(t, err)
+	srv := newTestServer(t, Config{GraphStore: gs})
+	defer srv.cancel()
+	resp := doGet(t, srv, "/api/v1/graph/edges?from="+at.Add(-time.Second).Format(time.RFC3339)+"&to="+at.Add(time.Second).Format(time.RFC3339)+"&source_id="+metrics.SourceMeshIstio)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	data := parseResponseData(t, resp)
+	require.EqualValues(t, 1, data["total"])
+	require.Len(t, data["edges"], 1)
+}
+
 func TestGetGraphSelectsSnapshotAtRequestedTime(t *testing.T) {
 	gs := persistence.NewInMemoryGraphStore()
 	ctx := context.Background()

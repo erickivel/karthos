@@ -134,7 +134,7 @@ The newest complete materialized topology snapshot with expanded summary.
 Every materialization is an immutable point-in-time graph: the direct
 Kubernetes structure is authoritative for membership, and only fresh active
 telemetry/lifecycle edges whose endpoints still exist in that structure are
-included. Materialized snapshots are retained for 24 hours.
+included. Materialized snapshots are retained for seven days.
 
 ```bash
 curl -s http://localhost:18081/api/v1/graph | jq .data.summary
@@ -147,8 +147,9 @@ Response shape:
   "data": {
     "snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
     "version": {"major": 1, "minor": 0},
-    "from": "2026-04-02T15:22:12Z",
+    "from": "2026-04-02T14:52:12Z",
     "to": "2026-04-02T15:22:12Z",
+    "observed_at": "2026-04-02T15:22:12Z",
     "created_at": "2026-04-02T15:22:12Z",
     "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
     "graph": {"timestamp": "...", "nodes": [...], "edges": [...]},
@@ -169,9 +170,12 @@ Response shape:
 ```
 
 Pass `at=<RFC3339 timestamp>` to select the newest retained materialized
-snapshot at or before that instant from the public 24-hour retention window.
+snapshot at or before that instant from the public seven-day retention window.
 It does not reconstruct arbitrary historical graph state. The timestamp cannot
 be in the future.
+`observed_at` is the materialization instant. `from` and `to` bound the
+first and last evidence represented by the graph; nodes and edges expose
+their own `first_seen`, `last_seen`, and source `provenance` where known.
 Returns 400 for an invalid or future `at`, and 404 if no current snapshot (or
 no retained snapshot at the requested time) exists.
 
@@ -207,7 +211,11 @@ Response:
 }
 ```
 
-Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
+Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate at the selected graph instant. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
+When no phase metric is available, a Pod uses the phase captured in its
+Kubernetes structural snapshot. Failed and Succeeded Pods remain in snapshots
+while the Kubernetes API still lists them, then remain queryable in retained
+history after deletion.
 
 The `data.snapshot` object identifies the exact graph that produced the page.
 Repeat both `at` and `next_token` when paging a historical result. A cursor
@@ -235,7 +243,7 @@ Response:
       "outbound": [
         {
           "id": "...", "source": "...", "target": "...", "relation": "calls",
-          "confidence": 1.0, "provenance": ["otlp"], "first_seen": "...", "last_seen": "...",
+          "confidence": 1.0, "provenance": ["traces.otlp"], "first_seen": "...", "last_seen": "...",
           "related_node": {"id": "...", "kind": "service", "name": "svc-b", "namespace": "default", "cluster": "karthos-test", "labels": {...}}
         }
       ],
@@ -252,6 +260,10 @@ Returns 404 if node not found.
 List edges from one selected materialized graph with optional filtering and
 pagination. By default this is the latest snapshot; `at` selects the newest
 retained snapshot at or before a requested RFC3339 instant.
+Supplying `from` and `to` instead returns observed edge writes in that
+window, including relations no longer present in the current snapshot.
+`source_id` filters their stamped source. This form returns observation records
+and may repeat one edge ID; it does not accept `at` or a snapshot cursor.
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -259,6 +271,8 @@ retained snapshot at or before a requested RFC3339 instant.
 | `target` | canonical entity ID | Filter by target entity ID |
 | `relation` | string | Filter by relation type (`calls`, `runs_on`, `contains`, `exposes`, `routes_to`, `uses`, `mounts`) |
 | `at` | RFC3339 timestamp | Select the newest retained snapshot at or before this instant |
+| `from`, `to` | RFC3339 timestamps | Inclusive observation window, at most seven days; supply together |
+| `source_id` | string | Source stamp filter for observation windows, e.g. `mesh.istio` |
 | `page_size` | int | Items per page (default 100) |
 | `next_token` | string | Opaque pagination cursor bound to the selected snapshot |
 
@@ -274,6 +288,8 @@ Response:
 }
 ```
 
+Window response: `{"data":{"from":"...","to":"...","edges":[...],"total":12}}`.
+
 ## Metrics
 
 ### GET /api/v1/metrics
@@ -281,7 +297,7 @@ Response:
 Query metric samples with a mode-aware unit. Sorted by timestamp descending.
 
 Semconv metric names are the API contract. Canonical counter samples use base
-units (`count`, `bytes`, or `nanoseconds`), while rate units are created only by
+units (`count`, `bytes`, or `seconds`), while rate units are created only by
 query aggregation. Cumulative samples retain their running base total and delta
 samples retain their reported interval increment. Every catalog counter declares
 its supported/default aggregation and base/rate units. `latest` is the raw-value
@@ -359,9 +375,9 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 {
   "metric_name": "servicegraph.request.duration",
   "entity_id": "...",
-  "value": 12000000,
+  "value": 0.012,
   "timestamp": "2026-03-30T10:00:00Z",
-  "unit": "nanoseconds",
+  "unit": "seconds",
   "edge": {
     "source_id": "svc-a-id",
     "target_id": "svc-b-id"
@@ -413,16 +429,16 @@ Response:
     "series": [
       {
         "metric_name": "k8s.pod.cpu.usage",
-        "unit": "millicores",
+        "unit": "cores",
         "category": "resource",
-        "description": "CPU usage in millicores",
+        "description": "CPU usage in cores",
         "samples": [
           {
             "metric_name": "k8s.pod.cpu.usage",
             "entity_id": "...",
-            "value": 250,
+            "value": 0.25,
             "timestamp": "2026-03-30T10:00:00Z",
-            "unit": "millicores",
+            "unit": "cores",
             "labels": {"source": "kubelet"}
           }
         ]
@@ -478,7 +494,7 @@ Response:
 {
   "data": {
     "metrics": [
-      {"name": "k8s.pod.cpu.usage", "unit": "millicores", "category": "resource", "description": "..."}
+      {"name": "k8s.pod.cpu.usage", "unit": "cores", "category": "resource", "description": "..."}
     ],
     "total": 50
   }

@@ -20,10 +20,10 @@ Key coverage areas:
 - Helm values generation
 - backend OTLP envelope conversion and routing
 - OTLP gRPC ingest integration
-- `MetricTopologyBuilder`: observed `runs_on` edge extraction from resource attributes
+- `MetricTopologyBuilder`: observed `runs_on` edge extraction from resource identity and validated datapoint source stamps
 - Pod lifecycle validation: UID/node matching, synchronous immutable `terminal_deadline` persistence before grace activation, fail-closed terminal refreshes on an initial marker-write failure with retry of the original deadline, confirmed-initial versus retry-only marker provenance (an absent/replaced retry-only UID retires immediately at restart), atomic active→pending→retired storage transitions that prevent delayed marker resurrection across delete/replace/crash/restart interleavings, cluster-scoped startup reconciliation and re-arming across same-UID/deleted/replaced restart states, deadline exclusion from current graph reads, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
-- storage/query parity: append-only structural writes, 24-hour retained
+- storage/query parity: append-only structural writes, seven-day retained
   materialized graphs, current observed-edge merge rules, point-in-time
   selection, defensive memory-store copies,
   and 15-second evaluated metric ranges, including exact non-aligned final

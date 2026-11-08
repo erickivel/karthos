@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/erickivel/karthos/pkg/core/entities"
+	"github.com/erickivel/karthos/pkg/core/metrics"
 	"github.com/erickivel/karthos/pkg/core/schema"
 	"github.com/erickivel/karthos/pkg/core/semconv"
 	"github.com/erickivel/karthos/pkg/core/topology"
@@ -37,8 +38,12 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 	if !ok || callerServiceName == "" {
 		return nil, nil
 	}
+	callerNamespace := envelope.Resource[semconv.ResourceK8sNamespaceName]
+	if callerNamespace == "" {
+		return nil, nil
+	}
 
-	callerID, err := b.resolveServiceID(ctx, callerServiceName, envelope.Resource[semconv.ResourceK8sNamespaceName])
+	callerID, err := b.resolveServiceID(ctx, callerServiceName, callerNamespace)
 	if err != nil {
 		return nil, err
 	}
@@ -51,15 +56,12 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 			if calleeServiceName == "" {
 				continue
 			}
-
-			calleeResource := map[string]string{
-				semconv.ResourceServiceName: calleeServiceName,
-			}
-			if ns, hasNS := envelope.Resource[semconv.ResourceK8sNamespaceName]; hasNS {
-				calleeResource[semconv.ResourceK8sNamespaceName] = ns
+			calleeNamespace := kvString(span.Attributes, semconv.AttrServerNamespace)
+			if calleeNamespace == "" {
+				continue
 			}
 
-			calleeID, err := b.resolveServiceID(ctx, calleeServiceName, calleeResource[semconv.ResourceK8sNamespaceName])
+			calleeID, err := b.resolveServiceID(ctx, calleeServiceName, calleeNamespace)
 			if err != nil {
 				continue
 			}
@@ -85,7 +87,7 @@ func (b *TraceTopologyBuilder) Build(ctx context.Context, envelope schema.RawEnv
 			} else {
 				edge := topology.NewEdge(callerID, calleeID, topology.RelCalls, firstSeen)
 				edge.LastSeen = lastSeen
-				edge.Provenance = []string{envelope.Source}
+				edge.Provenance = []string{metrics.SourceTracesOTLP}
 				edge.Confidence = 1.0
 				seen[edgeID] = edge
 			}

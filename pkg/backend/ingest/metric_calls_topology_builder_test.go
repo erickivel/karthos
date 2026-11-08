@@ -10,8 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/erickivel/karthos/pkg/backend/persistence"
 	"github.com/erickivel/karthos/pkg/core/entities"
 	"github.com/erickivel/karthos/pkg/core/metrics"
 	"github.com/erickivel/karthos/pkg/core/schema"
@@ -45,6 +47,46 @@ func TestMetricCallsTopologyBuilderBuildsCallsEdgeFromIstioMetric(t *testing.T) 
 	assert.Equal(t, "http", edges[0].Metadata["network.protocol.name"])
 	assert.Equal(t, "mutual_tls", edges[0].Metadata["mesh.security.policy"])
 	assert.Equal(t, "spiffe://cluster.local/ns/karthos-demo/sa/service-a", edges[0].Metadata["mesh.peer.destination.principal"])
+}
+
+func TestMetricCallsTopologyBuilderUsesServicegraphSideNamespaces(t *testing.T) {
+	builder := NewMetricCallsTopologyBuilder("kind-test", nil)
+	at := time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC)
+	env := makeCallsMetricEnvelope(t, "traces_service_graph_request_total", at, at, map[string]string{
+		"client": "gateway", "server": "backend",
+		"client_k8s.namespace.name": "front", "server_k8s.namespace.name": "back",
+		"karthos.source": metrics.SourceTracesServicegraph,
+	})
+	edges, err := builder.Build(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	assert.Equal(t, entities.ComputeEntityID(entities.KindService, "kind-test", "front", "gateway"), edges[0].Source)
+	assert.Equal(t, entities.ComputeEntityID(entities.KindService, "kind-test", "back", "backend"), edges[0].Target)
+}
+
+func TestMeshAndTraceCallsRemainIndependentEvidence(t *testing.T) {
+	ctx := context.Background()
+	at := time.Date(2026, 3, 14, 12, 2, 0, 0, time.UTC)
+	mesh := makeCallsMetricEnvelope(t, "istio_requests_total", at, at, map[string]string{
+		"client": "gateway", "server": "backend", "client_namespace": "default", "server_namespace": "default", "karthos.source": metrics.SourceMeshIstio,
+	})
+	meshEdges, err := NewMetricCallsTopologyBuilder("kind-test", nil).Build(ctx, mesh)
+	require.NoError(t, err)
+	require.Len(t, meshEdges, 1)
+	traceEnvelope := makeTraceEnvelope(t, "otlp/grpc", map[string]string{"service.name": "gateway", "k8s.namespace.name": "default"}, &tracepb.ResourceSpans{ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{makeNamespacedSpan("backend", uint64(at.UnixNano()), uint64(at.Add(time.Second).UnixNano()))}}}})
+	traceEdges, err := NewTraceTopologyBuilder(NewOTLPEntityResolver("kind-test")).Build(ctx, traceEnvelope)
+	require.NoError(t, err)
+	require.Len(t, traceEdges, 1)
+	require.Equal(t, meshEdges[0].ID, traceEdges[0].ID)
+	store := persistence.NewInMemoryGraphStore()
+	require.NoError(t, store.PutObservedEdges(ctx, meshEdges))
+	require.NoError(t, store.PutObservedEdges(ctx, traceEdges))
+	for _, source := range []string{metrics.SourceMeshIstio, metrics.SourceTracesOTLP} {
+		observed, err := store.ObservedEdgesInWindow(ctx, at.Add(-time.Second), at.Add(2*time.Second), source)
+		require.NoError(t, err)
+		require.Len(t, observed, 1)
+		require.Equal(t, []string{source}, observed[0].Provenance)
+	}
 }
 
 func TestMetricCallsTopologyBuilderUsesDataPointTimestampForCallsEdge(t *testing.T) {
@@ -126,12 +168,12 @@ func TestMetricCallsTopologyBuilderRejectsInvalidSource(t *testing.T) {
 	}
 }
 
-func TestBufferedTopologyIngestor_MergesProvenanceAndMetadata(t *testing.T) {
+func TestBufferedTopologyIngestor_KeepsSourceEvidenceSeparate(t *testing.T) {
 	store := &recordingGraphStore{}
 	now := time.Now().UTC()
 
 	traceEdge := topology.NewEdge("svc-a", "svc-b", topology.RelCalls, now)
-	traceEdge.Provenance = []string{"otlp/grpc"}
+	traceEdge.Provenance = []string{metrics.SourceTracesOTLP}
 	traceEdge.Metadata = map[string]string{"trace_id": "abc"}
 	meshEdge := topology.NewEdge("svc-a", "svc-b", topology.RelCalls, now.Add(time.Second))
 	meshEdge.Provenance = []string{"mesh.istio"}
@@ -147,11 +189,16 @@ func TestBufferedTopologyIngestor_MergesProvenanceAndMetadata(t *testing.T) {
 
 	buf.Flush()
 	require.Equal(t, 1, store.count())
-	edge := store.last().Graph.Edges[0]
-	assert.ElementsMatch(t, []string{"otlp/grpc", "mesh.istio"}, edge.Provenance)
-	assert.Equal(t, "abc", edge.Metadata["trace_id"])
-	assert.Equal(t, "mutual_tls", edge.Metadata["mesh.security.policy"])
-	assert.Equal(t, now.Add(time.Second), edge.LastSeen)
+	edges := store.last().Graph.Edges
+	require.Len(t, edges, 2)
+	bySource := map[string]topology.Edge{}
+	for _, edge := range edges {
+		bySource[edge.Provenance[0]] = edge
+	}
+	assert.Equal(t, "abc", bySource[metrics.SourceTracesOTLP].Metadata["trace_id"])
+	assert.Equal(t, now, bySource[metrics.SourceTracesOTLP].LastSeen)
+	assert.Equal(t, "mutual_tls", bySource[metrics.SourceMeshIstio].Metadata["mesh.security.policy"])
+	assert.Equal(t, now.Add(time.Second), bySource[metrics.SourceMeshIstio].LastSeen)
 }
 
 func makeCallsMetricEnvelope(t *testing.T, metricName string, envelopeTimestamp, dataPointTimestamp time.Time, attrs map[string]string) schema.RawEnvelope {
