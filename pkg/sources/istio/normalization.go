@@ -22,10 +22,14 @@ func Normalize(ctx context.Context, resolver contract.EntityResolver, plan *cont
 	return nil
 }
 
-// CallsEdgeMetadata recognizes Istio's servicegraph-shaped metrics and keeps
-// only its bounded mesh dimensions for the generic calls edge.
+// CallsEdgeMetadata recognizes request observations and new TCP connections.
 func CallsEdgeMetadata(rawMetricName, canonicalMetricName string, attrs []*commonpb.KeyValue) (map[string]string, bool) {
-	if !strings.HasPrefix(rawMetricName, "istio_") || !strings.HasPrefix(canonicalMetricName, "servicegraph.") {
+	if rawMetricNames[rawMetricName] != canonicalMetricName {
+		return nil, false
+	}
+	switch canonicalMetricName {
+	case "servicegraph.request.count", "servicegraph.request.duration", "servicegraph.tcp.connection.open.count":
+	default:
 		return nil, false
 	}
 	metadata := make(map[string]string)

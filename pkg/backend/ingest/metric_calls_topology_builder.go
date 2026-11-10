@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -25,6 +26,8 @@ type MetricCallsTopologyBuilder struct {
 	clusterName  string
 	sourcePolicy *MetricSourcePolicy
 	modules      sources.Registry
+	catalog      map[string]metrics.CanonicalMetric
+	series       callSeriesTracker
 }
 
 func NewMetricCallsTopologyBuilder(clusterName string, policy *MetricSourcePolicy) *MetricCallsTopologyBuilder {
@@ -32,7 +35,10 @@ func NewMetricCallsTopologyBuilder(clusterName string, policy *MetricSourcePolic
 	if policy == nil {
 		policy = NewMetricSourcePolicy(modules.MetricIDs(), nil)
 	}
-	return &MetricCallsTopologyBuilder{clusterName: clusterName, sourcePolicy: policy, modules: modules}
+	return &MetricCallsTopologyBuilder{
+		clusterName: clusterName, sourcePolicy: policy, modules: modules, catalog: metrics.CatalogByName(),
+		series: callSeriesTracker{startedAt: time.Now(), now: time.Now, entries: make(map[callSeriesKey]callSeriesState)},
+	}
 }
 
 func (b *MetricCallsTopologyBuilder) Build(_ context.Context, envelope schema.RawEnvelope) ([]topology.Edge, error) {
@@ -41,40 +47,45 @@ func (b *MetricCallsTopologyBuilder) Build(_ context.Context, envelope schema.Ra
 		return nil, fmt.Errorf("unmarshal ResourceMetrics: %w", err)
 	}
 
-	seen := make(map[string]topology.Edge)
+	resourceKey := callResourceKey(rm.GetResource().GetAttributes(), envelope.Resource)
+	var candidates []callObservation
 	for _, sm := range rm.ScopeMetrics {
 		for _, metric := range sm.Metrics {
-			for _, dp := range metricAttributeSets(metric) {
-				if dp.TimeUnixNano == 0 {
-					continue
-				}
-				parsed, validation, ok := b.parseAndValidate(metric.Name, dp.Attributes)
+			for _, point := range callMetricPoints(metric) {
+				parsed, validation, ok := b.parseAndValidate(metric.Name, point.attrs)
 				if !ok {
 					continue
 				}
-				metadata, ok := b.modules.CallsEdgeMetadata(validation.Source, metric.Name, parsed.CanonicalName, dp.Attributes)
+				metadata, ok := b.modules.CallsEdgeMetadata(validation.Source, metric.Name, parsed.CanonicalName, point.attrs)
 				if !ok {
 					continue
 				}
-				clientNamespace, serverNamespace := b.modules.CallsEdgeNamespaces(validation.Source, dp.Attributes)
-				edge, ok := b.edgeFromAttributes(time.Unix(0, int64(dp.TimeUnixNano)).UTC(), dp.Attributes, metadata, clientNamespace, serverNamespace) // #nosec G115 -- Unix nanosecond timestamps from real systems won't overflow int64 before year 2262
+				clientNamespace, serverNamespace := b.modules.CallsEdgeNamespaces(validation.Source, point.attrs)
+				at := time.Unix(0, int64(point.at)).UTC() // #nosec G115 -- callMetricPoints rejects timestamps above MaxInt64
+				edge, ok := b.edgeFromAttributes(at, point.attrs, metadata, clientNamespace, serverNamespace)
 				if !ok {
 					continue
 				}
-				if existing, exists := seen[edge.ID]; exists {
-					existing.Metadata = mergeStringMaps(existing.Metadata, edge.Metadata)
-					existing.Provenance = mergeStringSlices(existing.Provenance, edge.Provenance)
-					if edge.LastSeen.After(existing.LastSeen) {
-						existing.LastSeen = edge.LastSeen
-					}
-					seen[edge.ID] = existing
-				} else {
-					seen[edge.ID] = edge
-				}
+				candidates = append(candidates, callObservation{
+					key:   callSeriesKey{metric.Name, validation.Source, resourceKey, callAttributeKey(point.attrs)},
+					point: point, edge: edge,
+				})
 			}
 		}
 	}
 
+	slices.SortStableFunc(candidates, compareCallObservationTime)
+	type observedEdgeKey struct{ id, source string }
+	seen := make(map[observedEdgeKey]topology.Edge)
+	for _, observation := range b.series.increases(candidates) {
+		edge := observation.edge
+		key := observedEdgeKey{edge.ID, observation.key.source}
+		if existing, ok := seen[key]; ok {
+			edge.FirstSeen = existing.FirstSeen
+			edge.Metadata = mergeStringMaps(existing.Metadata, edge.Metadata)
+		}
+		seen[key] = edge
+	}
 	edges := make([]topology.Edge, 0, len(seen))
 	for _, edge := range seen {
 		edges = append(edges, edge)
@@ -87,7 +98,7 @@ func (b *MetricCallsTopologyBuilder) parseAndValidate(rawMetricName string, attr
 	if !ok {
 		return contract.ParsedMetric{}, SourceValidation{}, false
 	}
-	if _, recognized := metrics.CatalogByName()[parsed.CanonicalName]; !recognized {
+	if _, recognized := b.catalog[parsed.CanonicalName]; !recognized {
 		return contract.ParsedMetric{}, SourceValidation{}, false
 	}
 	validation := b.sourcePolicy.Validate(parsed.CanonicalName, attrs)

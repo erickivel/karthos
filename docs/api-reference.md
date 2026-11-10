@@ -269,6 +269,12 @@ window, including relations no longer present in the current snapshot.
 `source_id` filters their stamped source. This form returns observation records
 and may repeat one edge ID; it does not accept `at` or a snapshot cursor.
 
+For metric-derived `calls`, `first_seen` and `last_seen` are the earliest and
+latest datapoint timestamps that demonstrated new calls. A repeated cumulative
+value leaves the bounds unchanged. The stored interval may contain gaps
+between observations, and a datapoint timestamp marks when the increment was
+observed. For direct trace evidence, the timestamps come from the spans.
+
 | Param | Type | Description |
 |-------|------|-------------|
 | `source` | canonical entity ID | Filter by source entity ID |

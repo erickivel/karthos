@@ -32,10 +32,15 @@ func Normalize(ctx context.Context, resolver contract.EntityResolver, plan *cont
 // CallsEdgeMetadata recognizes metrics emitted by the derived servicegraph
 // source. Its calls edges need no source-specific metadata.
 func CallsEdgeMetadata(rawMetricName, canonicalMetricName string, _ []*commonpb.KeyValue) (map[string]string, bool) {
-	if !strings.HasPrefix(rawMetricName, "traces_service_graph_") && !strings.HasPrefix(rawMetricName, "traces.service.graph.") && !strings.HasPrefix(canonicalMetricName, "servicegraph.") {
+	if rawMetricNames[rawMetricName] != canonicalMetricName {
 		return nil, false
 	}
-	return nil, true
+	switch canonicalMetricName {
+	case "servicegraph.request.count", "servicegraph.request.error.count", "servicegraph.request.duration":
+		return nil, true
+	default:
+		return nil, false
+	}
 }
 
 // CallsNamespaces reads the side-specific dimensions emitted by the deployed
