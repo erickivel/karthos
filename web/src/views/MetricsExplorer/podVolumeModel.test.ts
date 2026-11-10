@@ -17,9 +17,9 @@ describe('groupPodVolumeSeries', () => {
     const groups = groupPodVolumeSeries({
       'k8s.pod.volume.available': [series('k8s.pod.volume.available', { volume_name: 'data', volume_type: 'pvc', persistentvolumeclaim_name: 'data-claim' }, 80)],
       'k8s.pod.volume.capacity': [series('k8s.pod.volume.capacity', { volume_name: 'data', volume_type: 'pvc', persistentvolumeclaim_name: 'data-claim' }, 100)],
-      'k8s.pod.volume.inodes.free': [series('k8s.pod.volume.inodes.free', { volume_name: 'data' }, 40)],
-      'k8s.pod.volume.inodes.used': [series('k8s.pod.volume.inodes.used', { volume_name: 'data' }, 60)],
-      'k8s.pod.volume.inodes': [series('k8s.pod.volume.inodes', { volume_name: 'data' }, 100)],
+      'k8s.pod.volume.inode.free': [series('k8s.pod.volume.inode.free', { volume_name: 'data' }, 40)],
+      'k8s.pod.volume.inode.used': [series('k8s.pod.volume.inode.used', { volume_name: 'data' }, 60)],
+      'k8s.pod.volume.inode.count': [series('k8s.pod.volume.inode.count', { volume_name: 'data' }, 100)],
     })
 
     expect(groups).toHaveLength(1)

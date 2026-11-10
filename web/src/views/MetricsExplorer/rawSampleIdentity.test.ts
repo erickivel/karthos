@@ -33,7 +33,7 @@ describe('raw sample identity', () => {
   })
 
   it('keeps enum value labels separate from series dimensions', () => {
-    const row = { ...sample('k8s.pod.phase', {}), value_label: 'running' }
+    const row = { ...sample('k8s.pod.status.phase', {}), value_label: 'running' }
     expect(seriesIdentities([row])[0]?.summary).toBe('')
   })
 

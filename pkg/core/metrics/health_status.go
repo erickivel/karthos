@@ -64,7 +64,7 @@ func PodPhaseLabel(value float64) string {
 // IsHealthStatusMetric reports whether a canonical metric has a public enum
 // translation at the API boundary.
 func IsHealthStatusMetric(name string) bool {
-	return name == "k8s.pod.phase" || name == "k8s.pod.status_reason"
+	return name == "k8s.pod.status.phase" || name == "k8s.pod.status.reason"
 }
 
 // HealthLabel dispatches to the metric's public enum translation. It is used by
@@ -72,9 +72,9 @@ func IsHealthStatusMetric(name string) bool {
 // having to know which receiver-specific enum table applies.
 func HealthLabel(metricName string, value float64) string {
 	switch metricName {
-	case "k8s.pod.phase":
+	case "k8s.pod.status.phase":
 		return PodPhaseLabel(value)
-	case "k8s.pod.status_reason":
+	case "k8s.pod.status.reason":
 		return PodStatusReasonLabel(value)
 	default:
 		return ""

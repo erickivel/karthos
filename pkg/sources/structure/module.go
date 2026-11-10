@@ -392,7 +392,7 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 			if labels == nil {
 				labels = map[string]string{}
 			}
-			labels["k8s.pod.phase"] = string(pod.phase)
+			labels["k8s.pod.status.phase"] = string(pod.phase)
 		}
 		add(node(entity.ID(), entities.KindPod, m.cluster, entity.Namespace, entity.Name, labels))
 		put(entities.KindPod, entity.ID(), entity.Namespace, entity.Name, entity.Labels())

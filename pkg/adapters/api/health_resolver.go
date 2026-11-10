@@ -58,7 +58,7 @@ func (r *HealthResolver) ResolveAt(ctx context.Context, nodes []topology.Node, e
 			containerIDs = append(containerIDs, node.ID)
 		}
 	}
-	pods := queryHealthSamples(ctx, r.store, "k8s.pod.phase", podIDs, exact, at)
+	pods := queryHealthSamples(ctx, r.store, "k8s.pod.status.phase", podIDs, exact, at)
 	result.Pods = pods.quality
 	if pods.err != nil {
 		result.Errors = append(result.Errors, pods.err)
@@ -68,7 +68,7 @@ func (r *HealthResolver) ResolveAt(ctx context.Context, nodes []topology.Node, e
 		}
 	}
 	ready := queryHealthSamples(ctx, r.store, "k8s.container.ready", containerIDs, exact, at)
-	restarts := queryHealthSamplesWithAggregation(ctx, r.store, "k8s.container.restarts", containerIDs, exact, metrics.AggregationWindowRate, healthLookback, at)
+	restarts := queryHealthSamplesWithAggregation(ctx, r.store, "k8s.container.restart.count", containerIDs, exact, metrics.AggregationWindowRate, healthLookback, at)
 	result.Containers = combineHealthQuality(ready.quality, restarts.quality)
 	if ready.err != nil {
 		result.Errors = append(result.Errors, ready.err)

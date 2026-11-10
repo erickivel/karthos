@@ -4,13 +4,13 @@ import { metricsForPodSection, POD_METRIC_SECTIONS } from './podMetricSections'
 const podMetricNames = [
   'k8s.pod.cpu.usage',
   'k8s.pod.memory.working_set',
-  'k8s.pod.phase',
-  'k8s.pod.status_reason',
+  'k8s.pod.status.phase',
+  'k8s.pod.status.reason',
   'k8s.pod.volume.available',
   'k8s.pod.volume.capacity',
-  'k8s.pod.volume.inodes.free',
-  'k8s.pod.volume.inodes.used',
-  'k8s.pod.volume.inodes',
+  'k8s.pod.volume.inode.free',
+  'k8s.pod.volume.inode.used',
+  'k8s.pod.volume.inode.count',
 ]
 
 describe('Pod metric sections', () => {
@@ -24,15 +24,15 @@ describe('Pod metric sections', () => {
   it('defers enum diagnostics and volume families to their dedicated sections', () => {
     expect(POD_METRIC_SECTIONS.map((section) => section.label)).toEqual(['Overview', 'Health', 'Volumes'])
     expect(metricsForPodSection(podMetricNames, 'health')).toEqual([
-      'k8s.pod.phase',
-      'k8s.pod.status_reason',
+      'k8s.pod.status.phase',
+      'k8s.pod.status.reason',
     ])
     expect(metricsForPodSection(podMetricNames, 'volumes')).toEqual([
       'k8s.pod.volume.available',
       'k8s.pod.volume.capacity',
-      'k8s.pod.volume.inodes.free',
-      'k8s.pod.volume.inodes.used',
-      'k8s.pod.volume.inodes',
+      'k8s.pod.volume.inode.free',
+      'k8s.pod.volume.inode.used',
+      'k8s.pod.volume.inode.count',
     ])
   })
 })

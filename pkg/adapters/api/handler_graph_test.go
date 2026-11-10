@@ -104,7 +104,7 @@ func TestGetGraphReturnsSnapshot(t *testing.T) {
 }
 
 func TestTerminalPodStatusFallsBackToSnapshotPhase(t *testing.T) {
-	node := topology.Node{ID: "pod-failed", Kind: entities.KindPod, Labels: map[string]string{"k8s.pod.phase": "Failed"}}
+	node := topology.Node{ID: "pod-failed", Kind: entities.KindPod, Labels: map[string]string{"k8s.pod.status.phase": "Failed"}}
 	require.Equal(t, metrics.HealthFailed, enrichNodeFrom(node, nil, "").Status)
 	require.Equal(t, metrics.HealthHealthy, enrichNodeFrom(node, nil, metrics.HealthHealthy).Status)
 }
@@ -227,7 +227,7 @@ func TestGetGraphReportsPartialHealthEnrichment(t *testing.T) {
 	})
 	store := &recordingMetricStore{
 		samples: map[string][]metrics.MetricSample{},
-		errors:  map[string]error{"k8s.pod.phase": errors.New("pod query failed")},
+		errors:  map[string]error{"k8s.pod.status.phase": errors.New("pod query failed")},
 	}
 	srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
 	defer srv.cancel()
@@ -404,8 +404,8 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 				return nodes[0].(map[string]any)["status"].(string)
 			},
 			samples: []metrics.MetricSample{
-				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
-				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 2, Timestamp: now},
+				{MetricName: "k8s.pod.status.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
+				{MetricName: "k8s.pod.status.phase", EntityID: podID, Value: 2, Timestamp: now},
 			},
 		},
 		{
@@ -417,8 +417,8 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 				return nodes[0].(map[string]any)["status"].(string)
 			},
 			samples: []metrics.MetricSample{
-				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 2, Timestamp: now},
-				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
+				{MetricName: "k8s.pod.status.phase", EntityID: podID, Value: 2, Timestamp: now},
+				{MetricName: "k8s.pod.status.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
 			},
 		},
 		{
@@ -429,9 +429,9 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 				return data["node"].(map[string]any)["status"].(string)
 			},
 			samples: []metrics.MetricSample{
-				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
-				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 2, Timestamp: now},
-				{MetricName: "k8s.pod.phase", EntityID: podID, Value: 4, Timestamp: now.Add(-30 * time.Second)},
+				{MetricName: "k8s.pod.status.phase", EntityID: podID, Value: 1, Timestamp: now.Add(-time.Minute)},
+				{MetricName: "k8s.pod.status.phase", EntityID: podID, Value: 2, Timestamp: now},
+				{MetricName: "k8s.pod.status.phase", EntityID: podID, Value: 4, Timestamp: now.Add(-30 * time.Second)},
 			},
 		},
 	}
@@ -443,7 +443,7 @@ func TestGraphHealthEnrichmentSelectsLatestSampleRegardlessOfStoreOrder(t *testi
 				CreatedAt: now,
 				Graph:     topology.Graph{Timestamp: now, Nodes: []topology.Node{{ID: podID, Kind: entities.KindPod}}},
 			})
-			store := &recordingMetricStore{samples: map[string][]metrics.MetricSample{"k8s.pod.phase": tt.samples}}
+			store := &recordingMetricStore{samples: map[string][]metrics.MetricSample{"k8s.pod.status.phase": tt.samples}}
 			srv := newTestServer(t, Config{GraphStore: gs, MetricStore: store})
 			defer srv.cancel()
 

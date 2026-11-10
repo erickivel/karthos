@@ -145,7 +145,7 @@ const CONTAINER_PRESENTATION: Record<string, Pick<MetricPresentation, 'title' | 
     title: 'Container readiness',
     meaning: 'The direct readiness signal reported by Kubernetes for this Container.',
   },
-  'k8s.container.restarts': {
+  'k8s.container.restart.count': {
     title: 'Restart count',
     meaning: 'Cumulative number of times Kubernetes restarted this Container.',
   },

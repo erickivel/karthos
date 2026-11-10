@@ -22,9 +22,9 @@ const fallbackQuery: MetricQuery = {
 const FIELD_BY_METRIC: Record<PVCMetricName, keyof Pick<PVCStorageSnapshot, 'available' | 'capacity' | 'inodesFree' | 'inodesUsed' | 'inodes'>> = {
   'k8s.pod.volume.available': 'available',
   'k8s.pod.volume.capacity': 'capacity',
-  'k8s.pod.volume.inodes.free': 'inodesFree',
-  'k8s.pod.volume.inodes.used': 'inodesUsed',
-  'k8s.pod.volume.inodes': 'inodes',
+  'k8s.pod.volume.inode.free': 'inodesFree',
+  'k8s.pod.volume.inode.used': 'inodesUsed',
+  'k8s.pod.volume.inode.count': 'inodes',
 }
 
 function humanLabel(label: string) {
@@ -92,9 +92,9 @@ function Snapshot({ snapshot, metrics, queries }: {
           <ChevronDown size={16} aria-hidden="true" />
         </summary>
         <div className={styles.inodeValues}>
-          {fact('k8s.pod.volume.inodes.free')}
-          {fact('k8s.pod.volume.inodes.used')}
-          {fact('k8s.pod.volume.inodes')}
+          {fact('k8s.pod.volume.inode.free')}
+          {fact('k8s.pod.volume.inode.used')}
+          {fact('k8s.pod.volume.inode.count')}
         </div>
       </details>
     </section>

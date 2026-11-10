@@ -76,7 +76,7 @@ func TestCounterAggregationDefaultsAndUnits(t *testing.T) {
 	require.Equal(t, UnitPerSecond, requests.RateUnit)
 	require.Equal(t, "1m", requests.Window)
 
-	restarts := catalog["k8s.container.restarts"].Aggregation
+	restarts := catalog["k8s.container.restart.count"].Aggregation
 	require.Equal(t, AggregationLatest, restarts.Default)
 	require.Equal(t, time.Minute, restarts.DefaultWindow)
 	require.Equal(t, "1m", restarts.Window)
@@ -123,7 +123,7 @@ func TestResolveAggregationValidatesModeAndWindow(t *testing.T) {
 	require.Equal(t, "1m30s", resolved.Window.String())
 	require.Equal(t, UnitCount, resolved.Unit)
 
-	restarts := catalog["k8s.container.restarts"]
+	restarts := catalog["k8s.container.restart.count"]
 	resolved, err = ResolveAggregation(restarts, string(AggregationIncrease), "")
 	require.NoError(t, err)
 	require.Equal(t, AggregationIncrease, resolved.Mode)

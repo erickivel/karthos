@@ -4,12 +4,12 @@ import type { MetricSeries } from '@/types/metrics'
 
 function series(valueLabel?: string): MetricSeries {
   return {
-    metric_name: 'k8s.pod.phase',
+    metric_name: 'k8s.pod.status.phase',
     unit: '1',
     category: 'health',
     description: 'fixture',
     samples: [{
-      metric_name: 'k8s.pod.phase', entity_id: 'pod-1', value: 2, unit: '1',
+      metric_name: 'k8s.pod.status.phase', entity_id: 'pod-1', value: 2, unit: '1',
       timestamp: '2026-09-06T12:00:00Z', labels: {}, value_label: valueLabel,
     }],
   }

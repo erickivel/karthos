@@ -30,9 +30,6 @@ func Parse(rawMetricName string, attributes map[string]string) (contract.ParsedM
 }
 
 var nativeMetricNames = map[string]struct{}{
-	"k8s.container.ready":    {},
-	"k8s.container.restarts": {},
-	"k8s.pod.phase":          {},
-	"k8s.pod.status_reason":  {},
-	"k8s.node.condition":     {},
+	"k8s.container.ready": {},
+	"k8s.node.condition":  {},
 }

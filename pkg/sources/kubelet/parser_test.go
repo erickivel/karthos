@@ -19,9 +19,9 @@ func TestParseTranslatesEverySupportedKubeletMetric(t *testing.T) {
 		"k8s.node.memory.working_set": {"k8s.node.memory.working_set", 1},
 		"k8s.volume.available":        {"k8s.pod.volume.available", 1},
 		"k8s.volume.capacity":         {"k8s.pod.volume.capacity", 1},
-		"k8s.volume.inodes.free":      {"k8s.pod.volume.inodes.free", 1},
-		"k8s.volume.inodes.used":      {"k8s.pod.volume.inodes.used", 1},
-		"k8s.volume.inodes":           {"k8s.pod.volume.inodes", 1},
+		"k8s.volume.inodes.free":      {"k8s.pod.volume.inode.free", 1},
+		"k8s.volume.inodes.used":      {"k8s.pod.volume.inode.used", 1},
+		"k8s.volume.inodes":           {"k8s.pod.volume.inode.count", 1},
 	} {
 		parsed, ok := Parse(raw, nil)
 		require.True(t, ok)

@@ -52,7 +52,7 @@ export function PodHealthSummary({ phaseMetric, reasonMetric, phase, reason, que
           <h2>Current Kubernetes status</h2>
         </div>
         <InfoTooltip
-          canonicalName={phaseMetric?.name ?? 'k8s.pod.phase'}
+          canonicalName={phaseMetric?.name ?? 'k8s.pod.status.phase'}
           sampleCount={(phase?.samples.length ?? 0) + (reason?.samples.length ?? 0)}
           sources={phaseMetric?.sources}
           meaning="The current Kubernetes Pod phase and separately reported diagnostic reason. These labels do not replace graph health."
@@ -69,7 +69,7 @@ export function PodHealthSummary({ phaseMetric, reasonMetric, phase, reason, que
       {(phaseMetric || reasonMetric) && (
         <details className={styles.details}>
           <summary>Metric details</summary>
-          <p><code>{phaseMetric?.name ?? 'k8s.pod.phase'}</code> and <code>{reasonMetric?.name ?? 'k8s.pod.status_reason'}</code> remain numeric canonical samples; the API adds their readable labels.</p>
+          <p><code>{phaseMetric?.name ?? 'k8s.pod.status.phase'}</code> and <code>{reasonMetric?.name ?? 'k8s.pod.status.reason'}</code> remain numeric canonical samples; the API adds their readable labels.</p>
         </details>
       )}
     </section>

@@ -70,7 +70,7 @@ Response:
 }
 ```
 
-`health_summary` is present whenever a graph snapshot exists. Node health uses `k8s.node.condition.ready`; pod buckets derive directly from `k8s.pod.phase`; entities without a recent sample fall through to `unknown`.
+`health_summary` is present whenever a graph snapshot exists. Node health uses `k8s.node.condition.ready`; pod buckets derive directly from `k8s.pod.status.phase`; entities without a recent sample fall through to `unknown`.
 
 Each branch and the aggregate carry a quality value: `complete`, `partial`, or `unavailable`. A successful metric query remains `complete` even when samples are missing. A failed branch becomes `unavailable`, all applicable current entities in that branch become unknown, and `system_status` becomes `degraded` with a generic branch reason. If no MetricStore is configured, the snapshot still produces an `unavailable` summary populated with current graph entity counts. Graph and capability-profile read failures likewise produce a degraded status with a safe reason while component availability remains unchanged. Detailed store errors are logged but not returned, and these enrichment failures keep HTTP 200.
 
@@ -78,7 +78,7 @@ Snapshot-wide health lookups deliberately omit entity-ID filters, so query size 
 
 The `unknown` bucket can include pod entities that no longer exist in the cluster but have not yet aged out of the entity registry.
 
-Pod bucket keys are `healthy`, `pending`, `succeeded`, `failed`, and `unknown`. Container graph status derives from `k8s.container.ready` plus the five-minute `k8s.container.restarts` rate.
+Pod bucket keys are `healthy`, `pending`, `succeeded`, `failed`, and `unknown`. Container graph status derives from `k8s.container.ready` plus the five-minute `k8s.container.restart.count` rate.
 
 Status values:
 
@@ -215,7 +215,7 @@ Response:
 }
 ```
 
-Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate at the selected graph instant. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
+Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.status.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate at the selected graph instant. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
 When no phase metric is available, a Pod uses the phase captured in its
 Kubernetes structural snapshot. Failed and Succeeded Pods remain in snapshots
 while the Kubernetes API still lists them, then remain queryable in retained
@@ -322,8 +322,8 @@ bounded `http_route` only when the application or collector supplied
 Without that route, the canonical application metric is service-level
 aggregation rather than per-path data.
 
-- `k8s.pod.phase` -> receiver enum translated at the API boundary: `1=pending`, `2=running`, `3=succeeded`, `4=failed`, `5=unknown`.
-- `k8s.pod.status_reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
+- `k8s.pod.status.phase` -> receiver enum translated at the API boundary: `1=pending`, `2=running`, `3=succeeded`, `4=failed`, `5=unknown`.
+- `k8s.pod.status.reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
 - `http.server.request.duration` / `servicegraph.request.duration` -> temporality-aware `<metric>_sum` rate divided by the corresponding `<metric>_count` rate
 
 For enum metrics, consumers use the API `value_label` display field. This API
@@ -369,7 +369,7 @@ Response:
 }
 ```
 
-For `k8s.pod.phase` and `k8s.pod.status_reason`, samples carry a `value_label` translated from the integer value. The phase label reports Kubernetes lifecycle state; graph/status health remains a separate derived view and is not a queryable metric.
+For `k8s.pod.status.phase` and `k8s.pod.status.reason`, samples carry a `value_label` translated from the integer value. The phase label reports Kubernetes lifecycle state; graph/status health remains a separate derived view and is not a queryable metric.
 
 Health composites use `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`; Pod phases use `pending | running | succeeded | failed | unknown`; pod status reasons use `evicted | node_affinity | node_lost | shutdown | unexpected_admission_error | unknown`. Canonical mappings live in `pkg/core/metrics/health_status.go`. The `value_label` field is omitted on non-enum metrics.
 

@@ -89,7 +89,7 @@ func TestTerminalPodRemainsInHistoryAfterDeletion(t *testing.T) {
 	require.True(t, hasNode(historical.Graph.Nodes, id))
 	for _, node := range historical.Graph.Nodes {
 		if node.ID == id {
-			require.Equal(t, "Failed", node.Labels["k8s.pod.phase"])
+			require.Equal(t, "Failed", node.Labels["k8s.pod.status.phase"])
 		}
 	}
 	current, err := store.GetLatest(ctx)

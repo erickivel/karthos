@@ -8,13 +8,13 @@ export const POD_METRIC_SECTIONS: Array<{ id: PodMetricSection; label: string }>
 
 const SECTION_METRICS: Record<PodMetricSection, ReadonlySet<string>> = {
   overview: new Set(['k8s.pod.cpu.usage', 'k8s.pod.memory.working_set']),
-  health: new Set(['k8s.pod.phase', 'k8s.pod.status_reason']),
+  health: new Set(['k8s.pod.status.phase', 'k8s.pod.status.reason']),
   volumes: new Set([
     'k8s.pod.volume.available',
     'k8s.pod.volume.capacity',
-    'k8s.pod.volume.inodes.free',
-    'k8s.pod.volume.inodes.used',
-    'k8s.pod.volume.inodes',
+    'k8s.pod.volume.inode.free',
+    'k8s.pod.volume.inode.used',
+    'k8s.pod.volume.inode.count',
   ]),
 }
 

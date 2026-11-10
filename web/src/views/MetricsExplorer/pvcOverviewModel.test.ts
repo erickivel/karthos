@@ -29,24 +29,24 @@ describe('PVC overview projection', () => {
     expect(PVC_METRIC_NAMES).toEqual([
       'k8s.pod.volume.available',
       'k8s.pod.volume.capacity',
-      'k8s.pod.volume.inodes.free',
-      'k8s.pod.volume.inodes.used',
-      'k8s.pod.volume.inodes',
+      'k8s.pod.volume.inode.free',
+      'k8s.pod.volume.inode.used',
+      'k8s.pod.volume.inode.count',
     ])
     expect(pvcMetricPresentation('k8s.pod.volume.available')).toMatchObject({ title: 'Available storage' })
     expect(pvcMetricPresentation('k8s.pod.volume.capacity')).toMatchObject({ title: 'Storage capacity' })
-    expect(pvcMetricPresentation('k8s.pod.volume.inodes.free')).toMatchObject({ title: 'Free inodes' })
-    expect(pvcMetricPresentation('k8s.pod.volume.inodes.used')).toMatchObject({ title: 'Used inodes' })
-    expect(pvcMetricPresentation('k8s.pod.volume.inodes')).toMatchObject({ title: 'Total inodes' })
+    expect(pvcMetricPresentation('k8s.pod.volume.inode.free')).toMatchObject({ title: 'Free inodes' })
+    expect(pvcMetricPresentation('k8s.pod.volume.inode.used')).toMatchObject({ title: 'Used inodes' })
+    expect(pvcMetricPresentation('k8s.pod.volume.inode.count')).toMatchObject({ title: 'Total inodes' })
   })
 
   it('builds one direct storage snapshot without deriving used space or a percentage', () => {
     const overview = buildPVCOverview({
       'k8s.pod.volume.available': [series('k8s.pod.volume.available', 180_435_808_256, dataLabels)],
       'k8s.pod.volume.capacity': [series('k8s.pod.volume.capacity', 231_922_479_104, dataLabels)],
-      'k8s.pod.volume.inodes.free': [series('k8s.pod.volume.inodes.free', 14_047_173, dataLabels)],
-      'k8s.pod.volume.inodes.used': [series('k8s.pod.volume.inodes.used', 411_707, dataLabels)],
-      'k8s.pod.volume.inodes': [series('k8s.pod.volume.inodes', 14_458_880, dataLabels)],
+      'k8s.pod.volume.inode.free': [series('k8s.pod.volume.inode.free', 14_047_173, dataLabels)],
+      'k8s.pod.volume.inode.used': [series('k8s.pod.volume.inode.used', 411_707, dataLabels)],
+      'k8s.pod.volume.inode.count': [series('k8s.pod.volume.inode.count', 14_458_880, dataLabels)],
     })
 
     expect(overview).toMatchObject({ kind: 'single', seriesCount: 1 })

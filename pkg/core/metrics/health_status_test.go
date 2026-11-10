@@ -30,10 +30,10 @@ func TestPodPhaseLabel(t *testing.T) {
 }
 
 func TestHealthLabelRecognizesPodPhase(t *testing.T) {
-	if !IsHealthStatusMetric("k8s.pod.phase") {
-		t.Fatal("k8s.pod.phase must expose an API enum label")
+	if !IsHealthStatusMetric("k8s.pod.status.phase") {
+		t.Fatal("k8s.pod.status.phase must expose an API enum label")
 	}
-	if got := HealthLabel("k8s.pod.phase", 2); got != PodPhaseRunning {
+	if got := HealthLabel("k8s.pod.status.phase", 2); got != PodPhaseRunning {
 		t.Fatalf("HealthLabel() = %q, want %q", got, PodPhaseRunning)
 	}
 }

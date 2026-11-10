@@ -172,14 +172,14 @@ func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
 	store := persistence.NewInMemoryMetricStore()
 	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
-		MetricName: "k8s.pod.status_reason",
+		MetricName: "k8s.pod.status.reason",
 		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
 		Value:      6,
 		Timestamp:  time.Now().UTC(),
 		Unit:       metrics.UnitCount,
 	}}))
 
-	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.status_reason")
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.status.reason")
 	require.Equal(t, http.StatusOK, resp.Code)
 	assert.Contains(t, resp.Body.String(), `"value_label":"unknown"`)
 }
@@ -187,14 +187,14 @@ func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
 func TestQueryMetricsReturnsReadablePodPhase(t *testing.T) {
 	store := persistence.NewInMemoryMetricStore()
 	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
-		MetricName: "k8s.pod.phase",
+		MetricName: "k8s.pod.status.phase",
 		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
 		Value:      2,
 		Timestamp:  time.Now().UTC(),
 		Unit:       metrics.UnitCount,
 	}}))
 
-	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.phase")
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.status.phase")
 	require.Equal(t, http.StatusOK, resp.Code)
 	assert.Contains(t, resp.Body.String(), `"value_label":"running"`)
 }

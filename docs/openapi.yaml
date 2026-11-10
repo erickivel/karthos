@@ -762,7 +762,9 @@ components:
         metric_name: { type: string }
         entity_id: { type: string }
         value: { type: number }
-        value_label: { type: string, description: Present on integer-encoded enum metrics. }
+        value_label:
+          type: string
+          description: Label for integer enums such as k8s.pod.status.phase and k8s.pod.status.reason.
         timestamp: { type: string, format: date-time, description: Query evaluation instant. }
         labels: { $ref: '#/components/schemas/StringMap' }
         unit: { type: string }

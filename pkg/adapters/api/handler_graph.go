@@ -119,7 +119,7 @@ func enrichNodeFrom(n topology.Node, entity entities.Entity, status string) enri
 
 func podPhaseStatus(node topology.Node) string {
 	if node.Kind == entities.KindPod {
-		switch node.Labels["k8s.pod.phase"] {
+		switch node.Labels["k8s.pod.status.phase"] {
 		case "Pending":
 			return metrics.HealthPending
 		case "Running":

@@ -316,10 +316,23 @@ computed just before a burst can hide newly ingested counter samples until the
 VictoriaMetrics response cache expires.
 
 **Convention for status-shaped signals.** Receivers that emit lifecycle state
-(e.g. `k8s.pod.phase` from `k8s_cluster`) typically encode the enum as an
+(e.g. the raw phase metric from `k8s_cluster`) typically encode the enum as an
 integer gauge; we keep the integer encoding through the pipeline because
 `MetricSample.Value` in this codebase is `float64` only. Do not invent
 string-valued samples for new enum metrics.
+
+The names `k8s.pod.volume.inode.{count,free,used}`,
+`k8s.container.restart.count`, and `k8s.pod.status.{phase,reason}` adopt
+OpenTelemetry vocabulary. Karthos keeps inode counts as gauges, retains its
+existing restart counter query modes, and preserves phase and reason as
+integer enums with `value_label` at the API boundary. The conventions use
+UpDownCounters and represent pod phase and reason as 0/1 series keyed by
+attributes. The parsers translate the names emitted by the pinned receivers.
+Previously stored samples keep their original names.
+[Kubernetes metric conventions](https://opentelemetry.io/docs/specs/semconv/system/k8s-metrics/) ·
+[Migration guide](https://opentelemetry.io/docs/specs/semconv/non-normative/k8s-migration/) ·
+[Kubelet receiver v0.156.0](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/receiver/kubeletstatsreceiver/documentation.md) ·
+[Cluster receiver v0.156.0](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/receiver/k8sclusterreceiver/documentation.md)
 
 **Integer-to-string translation at the API boundary.** The integer encoding
 is internal: storage, PromQL composition, and the OTLP normalizer all see
@@ -341,10 +354,10 @@ text constant as clusters grow. Single-node lookup retains its exact entity filt
 Responses expose `complete`, `partial`, or `unavailable` quality metadata; a failed
 branch degrades `/status` but remains an HTTP 200 enrichment result.
 
-`k8s.pod.phase` uses the same boundary with `1=pending`, `2=running`,
+`k8s.pod.status.phase` uses the same boundary with `1=pending`, `2=running`,
 `3=succeeded`, `4=failed`, and `5=unknown`. Its readable phase is separate
 from derived graph health: a Running phase can contribute to the `healthy`
-health-summary bucket without changing the phase value. `k8s.pod.status_reason`
+health-summary bucket without changing the phase value. `k8s.pod.status.reason`
 uses the same boundary with `1=evicted`,
 `2=node_affinity`, `3=node_lost`, `4=shutdown`,
 `5=unexpected_admission_error`, and `6=unknown`. Frontends never render the
@@ -510,7 +523,7 @@ coverage for the supported path.
 
 For status/lifecycle signals: keep the integer encoding all the way through
 the pipeline. `MetricSample.Value` is `float64`; do not invent string-valued
-samples. The receiver's own integer encoding (e.g. `k8s.pod.phase` 1–5) is
+samples. The receiver's own integer encoding (e.g. phase 1–5) is
 the source of truth; map it to a public enum in `buildPromQL` if needed.
 
 ### Step 6 — Live-cluster verification (mandatory)
@@ -563,7 +576,7 @@ four points. Bisect with these reads:
 
 ### Pod lifecycle topology boundary
 
-`k8s.pod.phase` is a metric signal; it is not used as a missing-series
+`k8s.pod.status.phase` is a metric signal; it is not used as a missing-series
 heuristic. The Kubernetes lifecycle adapter observes `Succeeded` and `Failed`
 Pods and, after a fixed 60-second grace, retires only the exact UID/node
 `runs_on` assignment. Pod and Node endpoints remain name-based, while the

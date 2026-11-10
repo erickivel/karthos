@@ -147,10 +147,10 @@ export function ContainerOverview({ overview, metrics, queries }: Props) {
           <span className={styles.healthLabel}><RotateCcw size={14} aria-hidden="true" /> Restart count</span>
           <MetricValue
             label="Observed cumulative restarts"
-            metricName="k8s.container.restarts"
+            metricName="k8s.container.restart.count"
             value={overview.restarts}
-            metric={metrics['k8s.container.restarts']}
-            query={queries['k8s.container.restarts']}
+            metric={metrics['k8s.container.restart.count']}
+            query={queries['k8s.container.restart.count']}
           />
         </div>
         <p><CircleHelp size={13} aria-hidden="true" /> Status is the backend-derived graph state. It combines Kubernetes readiness with the five-minute restart-rate check; this page does not reinterpret the numeric readiness metric.</p>

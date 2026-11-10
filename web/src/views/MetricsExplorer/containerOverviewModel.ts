@@ -8,7 +8,7 @@ export const CONTAINER_METRIC_NAMES = [
   'k8s.container.memory.request',
   'k8s.container.memory.limit',
   'k8s.container.ready',
-  'k8s.container.restarts',
+  'k8s.container.restart.count',
 ] as const
 
 export type ContainerMetricName = (typeof CONTAINER_METRIC_NAMES)[number]
@@ -70,6 +70,6 @@ export function buildContainerOverview(status: string | undefined, seriesByMetri
       request: metricValue(seriesByMetric['k8s.container.memory.request']),
       limit: metricValue(seriesByMetric['k8s.container.memory.limit']),
     },
-    restarts: metricValue(seriesByMetric['k8s.container.restarts'], true),
+    restarts: metricValue(seriesByMetric['k8s.container.restart.count'], true),
   }
 }

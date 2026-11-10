@@ -293,11 +293,11 @@ func TestStatusHealthSummaryWithMetrics(t *testing.T) {
 
 	// Pod health buckets are derived from the direct Kubernetes pod phase.
 	require.NoError(t, ms.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "k8s.pod.phase", EntityID: "pod-1", Value: 2, Timestamp: now},
-		{MetricName: "k8s.pod.phase", EntityID: "pod-2", Value: 2, Timestamp: now},
-		{MetricName: "k8s.pod.phase", EntityID: "pod-3", Value: 1, Timestamp: now},
-		{MetricName: "k8s.pod.phase", EntityID: "pod-4", Value: 4, Timestamp: now},
-		{MetricName: "k8s.pod.phase", EntityID: "pod-5", Value: 5, Timestamp: now},
+		{MetricName: "k8s.pod.status.phase", EntityID: "pod-1", Value: 2, Timestamp: now},
+		{MetricName: "k8s.pod.status.phase", EntityID: "pod-2", Value: 2, Timestamp: now},
+		{MetricName: "k8s.pod.status.phase", EntityID: "pod-3", Value: 1, Timestamp: now},
+		{MetricName: "k8s.pod.status.phase", EntityID: "pod-4", Value: 4, Timestamp: now},
+		{MetricName: "k8s.pod.status.phase", EntityID: "pod-5", Value: 5, Timestamp: now},
 		// pod-6 has no sample → falls through to unknown.
 	}))
 
@@ -419,7 +419,7 @@ func TestStatusHealthSummaryDoesNotQueryContainerHealth(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Len(t, ms.queries, 2)
 	queriedMetrics := []string{ms.queries[0].MetricName, ms.queries[1].MetricName}
-	require.ElementsMatch(t, []string{"k8s.node.condition.ready", "k8s.pod.phase"}, queriedMetrics)
+	require.ElementsMatch(t, []string{"k8s.node.condition.ready", "k8s.pod.status.phase"}, queriedMetrics)
 }
 
 func TestStatusDegradesWhenPodHealthBranchFails(t *testing.T) {
@@ -435,7 +435,7 @@ func TestStatusDegradesWhenPodHealthBranchFails(t *testing.T) {
 		samples: map[string][]metrics.MetricSample{
 			"k8s.node.condition.ready": {{MetricName: "k8s.node.condition.ready", EntityID: "node-1", Value: 1, Timestamp: now}},
 		},
-		errors: map[string]error{"k8s.pod.phase": errors.New("query too long")},
+		errors: map[string]error{"k8s.pod.status.phase": errors.New("query too long")},
 	}
 	srv := newTestServer(t, Config{MetricStore: ms, GraphStore: gs, MetadataStore: persistence.NewInMemoryMetadataStore(), EntityRegistry: persistence.NewInMemoryEntityRegistry()})
 	defer srv.cancel()

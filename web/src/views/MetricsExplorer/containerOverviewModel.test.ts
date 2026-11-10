@@ -21,7 +21,7 @@ describe('buildContainerOverview', () => {
       'container.memory.usage': [series('container.memory.usage', 42_000_000, 'bytes')],
       'k8s.container.memory.request': [series('k8s.container.memory.request', 64_000_000, 'bytes')],
       'k8s.container.memory.limit': [series('k8s.container.memory.limit', 128_000_000, 'bytes')],
-      'k8s.container.restarts': [series('k8s.container.restarts', 3, 'count')],
+      'k8s.container.restart.count': [series('k8s.container.restart.count', 3, 'count')],
       'k8s.container.ready': [series('k8s.container.ready', 1, 'count')],
     })
 
@@ -61,7 +61,7 @@ describe('buildContainerOverview', () => {
       'k8s.container.memory.request',
       'k8s.container.memory.limit',
       'k8s.container.ready',
-      'k8s.container.restarts',
+      'k8s.container.restart.count',
     ])
   })
 })

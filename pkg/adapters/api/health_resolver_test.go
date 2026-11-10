@@ -20,10 +20,10 @@ func TestHealthResolverPreservesContainerReadinessPresence(t *testing.T) {
 			{MetricName: "k8s.container.ready", EntityID: "ready", Value: 1, Timestamp: now},
 			{MetricName: "k8s.container.ready", EntityID: "not-ready", Value: 0, Timestamp: now},
 		},
-		"k8s.container.restarts": {
-			{MetricName: "k8s.container.restarts", EntityID: "ready", Value: 0, Timestamp: now},
-			{MetricName: "k8s.container.restarts", EntityID: "not-ready", Value: 0, Timestamp: now},
-			{MetricName: "k8s.container.restarts", EntityID: "restarting", Value: 1, Timestamp: now},
+		"k8s.container.restart.count": {
+			{MetricName: "k8s.container.restart.count", EntityID: "ready", Value: 0, Timestamp: now},
+			{MetricName: "k8s.container.restart.count", EntityID: "not-ready", Value: 0, Timestamp: now},
+			{MetricName: "k8s.container.restart.count", EntityID: "restarting", Value: 1, Timestamp: now},
 		},
 	}}
 	resolution := NewHealthResolver(store).Resolve(context.Background(), []topology.Node{
@@ -45,8 +45,8 @@ func TestHealthResolverUsesGraphInstant(t *testing.T) {
 	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	id := entities.EntityID("pod-historical")
 	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{
-		{MetricName: "k8s.pod.phase", EntityID: id, Value: 2, Timestamp: at},
-		{MetricName: "k8s.pod.phase", EntityID: id, Value: 4, Timestamp: at.Add(10 * time.Minute)},
+		{MetricName: "k8s.pod.status.phase", EntityID: id, Value: 2, Timestamp: at},
+		{MetricName: "k8s.pod.status.phase", EntityID: id, Value: 4, Timestamp: at.Add(10 * time.Minute)},
 	}))
 	resolution := NewHealthResolver(store).ResolveAt(context.Background(), []topology.Node{{ID: id, Kind: entities.KindPod}}, true, at)
 	require.Equal(t, metrics.HealthHealthy, resolution.Statuses[id])

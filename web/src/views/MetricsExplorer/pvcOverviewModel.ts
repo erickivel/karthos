@@ -3,9 +3,9 @@ import type { MetricSample, MetricSeries } from '@/types/metrics'
 export const PVC_METRIC_NAMES = [
   'k8s.pod.volume.available',
   'k8s.pod.volume.capacity',
-  'k8s.pod.volume.inodes.free',
-  'k8s.pod.volume.inodes.used',
-  'k8s.pod.volume.inodes',
+  'k8s.pod.volume.inode.free',
+  'k8s.pod.volume.inode.used',
+  'k8s.pod.volume.inode.count',
 ] as const
 
 export type PVCMetricName = (typeof PVC_METRIC_NAMES)[number]
@@ -43,9 +43,9 @@ export interface PVCMetricPresentation {
 const FIELD_BY_METRIC: Record<PVCMetricName, keyof Omit<PVCStorageSnapshot, 'key' | 'identity' | 'labels'>> = {
   'k8s.pod.volume.available': 'available',
   'k8s.pod.volume.capacity': 'capacity',
-  'k8s.pod.volume.inodes.free': 'inodesFree',
-  'k8s.pod.volume.inodes.used': 'inodesUsed',
-  'k8s.pod.volume.inodes': 'inodes',
+  'k8s.pod.volume.inode.free': 'inodesFree',
+  'k8s.pod.volume.inode.used': 'inodesUsed',
+  'k8s.pod.volume.inode.count': 'inodes',
 }
 
 const PRESENTATION: Record<PVCMetricName, PVCMetricPresentation> = {
@@ -57,15 +57,15 @@ const PRESENTATION: Record<PVCMetricName, PVCMetricPresentation> = {
     title: 'Storage capacity',
     meaning: 'Total storage capacity reported for this PersistentVolumeClaim by kubelet.',
   },
-  'k8s.pod.volume.inodes.free': {
+  'k8s.pod.volume.inode.free': {
     title: 'Free inodes',
     meaning: 'Filesystem inodes still available on this PersistentVolumeClaim.',
   },
-  'k8s.pod.volume.inodes.used': {
+  'k8s.pod.volume.inode.used': {
     title: 'Used inodes',
     meaning: 'Filesystem inodes currently used on this PersistentVolumeClaim.',
   },
-  'k8s.pod.volume.inodes': {
+  'k8s.pod.volume.inode.count': {
     title: 'Total inodes',
     meaning: 'Total filesystem inodes reported for this PersistentVolumeClaim.',
   },
