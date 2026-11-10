@@ -9,7 +9,7 @@ relations between them, with metrics attached to nodes and edges.
 - discovers Kubernetes resources, Prometheus targets, OTLP-capable workloads, and Istio sidecar mesh
 - plans an OTel collection pipeline (agent + gateway + backend) and renders Helm values
 - ingests OTLP metrics and traces, normalizes producer-specific names to a semconv-first canonical catalog, and arbitrates one winning producer per metric to prevent double-counting
-- reconstructs a topology graph from kubeletstats resource attributes (`runs_on`, `contains`), direct Kubernetes API structure (`exposes`, `routes_to`, `uses`, `mounts`), trace `peer.service` attributes (`calls`), and source-classified calls metrics such as Istio mesh telemetry
+- reconstructs a topology graph from direct Kubernetes API structure (`contains`, `exposes`, `routes_to`, `uses`, `mounts`), validated metric resource attributes (`runs_on`), and traces or source-classified calls metrics such as Istio mesh telemetry (`calls`)
 - persists graph, entities, metadata, and metrics behind swappable in-memory or external (PostgreSQL + VictoriaMetrics) backends
 - exposes a versioned REST API and a React frontend with three views (Cluster Overview, Topology Graph, Metrics Explorer)
 
@@ -109,6 +109,7 @@ task test:e2e:teardown        # destroy cluster and registry
 | [Runtime Flow](docs/runtime-flow.md) | Post-deploy telemetry path through agent, gateway, backend |
 | [Metrics Pipeline](docs/metrics-pipeline.md) | Catalog, source parsers, source registry, resolver |
 | [API Reference](docs/api-reference.md) | REST API routes, query params, response shapes |
+| [OpenAPI](docs/openapi.yaml) | Machine-readable REST API description |
 | [Frontend Design Spec](docs/frontend-design-spec.md) | Frontend stack, design system, projection modes |
 | [Testing](docs/testing.md) | Unit tests, e2e scenarios, traffic generation |
 | [Development](docs/development.md) | Project structure, common commands, frontend dev loop |

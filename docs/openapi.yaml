@@ -1,0 +1,842 @@
+openapi: 3.1.0
+info:
+  title: Karthos REST API
+  version: 1.0.0
+  description: |
+    Read-only API for the normalized Kubernetes graph and metrics. All routes
+    return JSON. See api-reference.md for query semantics and examples.
+servers:
+  - url: /
+    description: Same origin as the backend API
+tags:
+  - name: Status
+  - name: Graph
+  - name: Metrics
+  - name: Entities
+paths:
+  /api/v1/status:
+    get:
+      tags: [Status]
+      operationId: getStatus
+      summary: Read backend and data health
+      responses:
+        '200':
+          description: Current status; degraded health is still an HTTP 200 response.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Status' }
+  /api/v1/discovery:
+    get:
+      tags: [Status]
+      operationId: getDiscovery
+      summary: Read the latest capability profile
+      responses:
+        '200':
+          description: Latest discovery summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Discovery' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/graph:
+    get:
+      tags: [Graph]
+      operationId: getGraph
+      summary: Read a materialized graph snapshot
+      parameters:
+        - $ref: '#/components/parameters/At'
+      responses:
+        '200':
+          description: Latest snapshot, or the newest retained snapshot at or before `at`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/GraphSnapshot' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/graph/nodes:
+    get:
+      tags: [Graph]
+      operationId: listGraphNodes
+      summary: List enriched nodes in one materialized snapshot
+      parameters:
+        - $ref: '#/components/parameters/At'
+        - $ref: '#/components/parameters/Kind'
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/GraphNextToken'
+      responses:
+        '200':
+          description: Paginated nodes bound to the selected snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [snapshot, health_enrichment, nodes, total]
+                    properties:
+                      snapshot: { $ref: '#/components/schemas/SnapshotIdentity' }
+                      health_enrichment: { $ref: '#/components/schemas/HealthEnrichment' }
+                      nodes:
+                        type: array
+                        items: { $ref: '#/components/schemas/GraphNode' }
+                      total: { type: integer, minimum: 0 }
+                  next_token: { type: string, description: Omitted on the final page. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/graph/nodes/{id}:
+    get:
+      tags: [Graph]
+      operationId: getGraphNode
+      summary: Read one enriched node and its adjacent edges
+      parameters:
+        - $ref: '#/components/parameters/EntityPathId'
+        - $ref: '#/components/parameters/At'
+      responses:
+        '200':
+          description: Node and inbound/outbound relations in the selected snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [snapshot, health_enrichment, node, edges]
+                    properties:
+                      snapshot: { $ref: '#/components/schemas/SnapshotIdentity' }
+                      health_enrichment: { $ref: '#/components/schemas/HealthEnrichment' }
+                      node: { $ref: '#/components/schemas/GraphNode' }
+                      edges:
+                        type: object
+                        required: [outbound, inbound]
+                        properties:
+                          outbound:
+                            type: array
+                            items: { $ref: '#/components/schemas/RelatedEdge' }
+                          inbound:
+                            type: array
+                            items: { $ref: '#/components/schemas/RelatedEdge' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/graph/edges:
+    get:
+      tags: [Graph]
+      operationId: listGraphEdges
+      summary: List snapshot edges or observations in a time window
+      description: |
+        Without `from` and `to`, returns a paginated materialized snapshot.
+        Supply both `from` and `to` for edge observation writes in an inclusive
+        window of at most seven days. Window results can repeat an edge ID,
+        include edges no longer current, and are not snapshot-paginated.
+        Do not combine a window with `at`. `source_id` filters window records;
+        `page_size` and `next_token` apply only to snapshot results.
+      parameters:
+        - $ref: '#/components/parameters/At'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/EdgeSource'
+        - $ref: '#/components/parameters/EdgeTarget'
+        - $ref: '#/components/parameters/Relation'
+        - name: source_id
+          in: query
+          description: Source stamp filter for observation-window results only.
+          schema: { type: string }
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/GraphNextToken'
+      responses:
+        '200':
+          description: Snapshot page or observation-window result.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SnapshotEdgesEnvelope'
+                  - $ref: '#/components/schemas/WindowEdgesEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/metrics:
+    get:
+      tags: [Metrics]
+      operationId: queryMetrics
+      summary: Query evaluated metric samples
+      parameters:
+        - $ref: '#/components/parameters/MetricName'
+        - $ref: '#/components/parameters/MetricEntityId'
+        - $ref: '#/components/parameters/MetricEdgeSource'
+        - $ref: '#/components/parameters/MetricEdgeTarget'
+        - $ref: '#/components/parameters/MetricSource'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Aggregation'
+        - $ref: '#/components/parameters/Window'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/NextToken'
+      responses:
+        '200':
+          description: Paginated evaluated samples, newest timestamp first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [query, samples, total]
+                    properties:
+                      query: { $ref: '#/components/schemas/EffectiveQuery' }
+                      samples:
+                        type: array
+                        items: { $ref: '#/components/schemas/MetricSample' }
+                      total: { type: integer, minimum: 0 }
+                  next_token: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/metrics/series:
+    get:
+      tags: [Metrics]
+      operationId: queryMetricSeries
+      summary: Query metric samples grouped by series identity
+      description: Pagination applies to series, not individual samples.
+      parameters:
+        - $ref: '#/components/parameters/MetricName'
+        - $ref: '#/components/parameters/MetricEntityId'
+        - $ref: '#/components/parameters/MetricEdgeSource'
+        - $ref: '#/components/parameters/MetricEdgeTarget'
+        - $ref: '#/components/parameters/MetricSource'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/Aggregation'
+        - $ref: '#/components/parameters/Window'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/NextToken'
+      responses:
+        '200':
+          description: Paginated evaluated metric series.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [query, series, total]
+                    properties:
+                      query: { $ref: '#/components/schemas/EffectiveQuery' }
+                      series:
+                        type: array
+                        items: { $ref: '#/components/schemas/MetricSeries' }
+                      total: { type: integer, minimum: 0 }
+                  next_token: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/metrics/catalog:
+    get:
+      tags: [Metrics]
+      operationId: listMetricCatalog
+      summary: List canonical metric definitions
+      parameters:
+        - name: category
+          in: query
+          description: Known categories are resource, traffic, latency, error, capacity, and health; unknown values return an empty list.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Catalog entries, optionally filtered by category.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [metrics, total]
+                    properties:
+                      metrics:
+                        type: array
+                        items: { $ref: '#/components/schemas/CatalogMetric' }
+                      total: { type: integer, minimum: 0 }
+  /api/v1/metrics/catalog/stats:
+    get:
+      tags: [Metrics]
+      operationId: getMetricCatalogStats
+      summary: Read source coverage for each catalog metric
+      description: Counts and last-seen times use a fixed one-hour lookback.
+      responses:
+        '200':
+          description: One entry per canonical metric, zero-filled by declared source.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [lookback_seconds, stats]
+                    properties:
+                      lookback_seconds: { type: integer, const: 3600 }
+                      stats:
+                        type: array
+                        items: { $ref: '#/components/schemas/CatalogStat' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/entities:
+    get:
+      tags: [Entities]
+      operationId: listEntities
+      summary: List persisted canonical entities
+      parameters:
+        - $ref: '#/components/parameters/Kind'
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/NextToken'
+      responses:
+        '200':
+          description: Paginated entities.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [entities, total]
+                    properties:
+                      entities:
+                        type: array
+                        items: { $ref: '#/components/schemas/Entity' }
+                      total: { type: integer, minimum: 0 }
+                  next_token: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+  /api/v1/entities/{id}:
+    get:
+      tags: [Entities]
+      operationId: getEntity
+      summary: Read one persisted canonical entity
+      parameters:
+        - $ref: '#/components/parameters/EntityPathId'
+      responses:
+        '200':
+          description: Entity record.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Entity' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+components:
+  parameters:
+    EntityPathId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    At:
+      name: at
+      in: query
+      description: RFC3339 instant selecting the newest retained graph snapshot at or before it; future values are rejected.
+      schema: { type: string, format: date-time }
+    From:
+      name: from
+      in: query
+      description: Inclusive RFC3339 range start. Graph edge windows require both from and to.
+      schema: { type: string, format: date-time }
+    To:
+      name: to
+      in: query
+      description: Inclusive RFC3339 range end. Graph edge windows require both from and to.
+      schema: { type: string, format: date-time }
+    Kind:
+      name: kind
+      in: query
+      description: Canonical entity kind filter.
+      schema: { type: string }
+    Namespace:
+      name: namespace
+      in: query
+      schema: { type: string }
+    EdgeSource:
+      name: source
+      in: query
+      description: Canonical source entity ID.
+      schema: { type: string }
+    EdgeTarget:
+      name: target
+      in: query
+      description: Canonical target entity ID.
+      schema: { type: string }
+    Relation:
+      name: relation
+      in: query
+      description: Known relations are calls, runs_on, contains, exposes, routes_to, uses, and mounts; unknown values return an empty list.
+      schema: { type: string }
+    MetricName:
+      name: metric_name
+      in: query
+      required: true
+      description: Canonical catalog metric name.
+      schema: { type: string }
+    MetricEntityId:
+      name: entity_id
+      in: query
+      description: Repeat to select multiple canonical entities.
+      style: form
+      explode: true
+      schema:
+        type: array
+        items: { type: string }
+    MetricEdgeSource:
+      name: edge_source_id
+      in: query
+      schema: { type: string }
+    MetricEdgeTarget:
+      name: edge_target_id
+      in: query
+      schema: { type: string }
+    MetricSource:
+      name: source
+      in: query
+      description: Registered metric source ID; unknown or non-metric sources return 400.
+      schema: { type: string }
+    Aggregation:
+      name: aggregation
+      in: query
+      description: Counter mode; accepted modes depend on the selected metric.
+      schema: { type: string, enum: [latest, increase, window_rate, active_rate] }
+    Window:
+      name: window
+      in: query
+      description: Go duration from 1m through 1h; supported modes depend on the metric.
+      schema: { type: string, examples: [1m] }
+    PageSize:
+      name: page_size
+      in: query
+      description: Defaults to 100 for absent or invalid values; values above 1000 are capped at 1000.
+      schema: { type: integer, default: 100 }
+    NextToken:
+      name: next_token
+      in: query
+      description: Opaque list cursor from the previous page.
+      schema: { type: string }
+    GraphNextToken:
+      name: next_token
+      in: query
+      description: Cursor bound to one materialized graph snapshot; invalid or mismatched tokens return 400.
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid query parameter or incompatible query controls.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Requested snapshot, node, entity, or backing store is unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServerError:
+      description: Store or query failure.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code: { type: integer }
+    StringMap:
+      type: object
+      additionalProperties: { type: string }
+    Version:
+      type: object
+      required: [major, minor]
+      properties:
+        major: { type: integer }
+        minor: { type: integer }
+    HealthQuality:
+      type: string
+      enum: [complete, partial, unavailable]
+    HealthEnrichment:
+      type: object
+      required: [status, pods, containers]
+      properties:
+        status: { $ref: '#/components/schemas/HealthQuality' }
+        pods: { $ref: '#/components/schemas/HealthQuality' }
+        containers: { $ref: '#/components/schemas/HealthQuality' }
+    NodeHealthSummary:
+      type: object
+      required: [status, healthy, unhealthy, unknown]
+      properties:
+        status: { $ref: '#/components/schemas/HealthQuality' }
+        healthy: { type: integer }
+        unhealthy: { type: integer }
+        unknown: { type: integer }
+    PodHealthSummary:
+      type: object
+      required: [status, healthy, pending, succeeded, failed, unknown]
+      properties:
+        status: { $ref: '#/components/schemas/HealthQuality' }
+        healthy: { type: integer }
+        pending: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        unknown: { type: integer }
+    Status:
+      type: object
+      required: [system_status, reasons, version, components, uptime_seconds, snapshot_freshness_seconds, data_stale]
+      properties:
+        system_status: { type: string, enum: [nominal, degraded, disconnected] }
+        reasons:
+          type: array
+          items: { type: string }
+        version: { $ref: '#/components/schemas/Version' }
+        components:
+          type: object
+          required: [metric_store, graph_store, metadata_store, entity_registry]
+          properties:
+            metric_store: { type: string, enum: [available, unavailable] }
+            graph_store: { type: string, enum: [available, unavailable] }
+            metadata_store: { type: string, enum: [available, unavailable] }
+            entity_registry: { type: string, enum: [available, unavailable] }
+        uptime_seconds: { type: integer }
+        snapshot_freshness_seconds: { type: number }
+        data_stale: { type: boolean }
+        last_snapshot_at: { type: string, format: date-time }
+        last_discovery_at: { type: string, format: date-time }
+        health_summary:
+          type: object
+          required: [status, nodes, pods]
+          properties:
+            status: { $ref: '#/components/schemas/HealthQuality' }
+            nodes: { $ref: '#/components/schemas/NodeHealthSummary' }
+            pods: { $ref: '#/components/schemas/PodHealthSummary' }
+    Discovery:
+      type: object
+      required: [cluster_id, cluster_name, discovered_at, capabilities]
+      properties:
+        cluster_id: { type: string }
+        cluster_name: { type: string }
+        discovered_at: { type: string, format: date-time }
+        capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/Capability' }
+    Capability:
+      type: object
+      required: [source_id, kind, status, signals]
+      properties:
+        source_id: { type: string }
+        kind: { type: string, enum: [direct, derived] }
+        status: { type: string, enum: [available, partial, unavailable] }
+        signals:
+          type: [array, 'null']
+          items: { type: string }
+        evidence:
+          type: object
+          description: Bounded source-specific evidence, omitted when empty.
+          properties:
+            prometheus_targets:
+              type: array
+              items:
+                type: object
+                required: [service_name, namespace, port, path]
+                properties:
+                  service_name: { type: string }
+                  namespace: { type: string }
+                  port: { type: integer }
+                  path: { type: string }
+            otlp:
+              type: object
+              required: [traces_enabled]
+              properties:
+                traces_enabled: { type: boolean }
+            mesh:
+              type: object
+              required: [flavor, mode]
+              properties:
+                flavor: { type: string }
+                mode: { type: string }
+                injected_namespaces:
+                  type: array
+                  items: { type: string }
+                metrics_port: { type: integer }
+                metrics_path: { type: string }
+    SnapshotIdentity:
+      type: object
+      required: [id, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+    GraphNode:
+      type: object
+      required: [id, kind, status]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        name: { type: string }
+        namespace: { type: string }
+        cluster: { type: string }
+        status: { type: string, enum: [healthy, running_not_ready, restarting, pending, succeeded, failed, unknown] }
+        labels: { $ref: '#/components/schemas/StringMap' }
+        provenance:
+          type: array
+          items: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+    Edge:
+      type: object
+      required: [id, source, target, relation, confidence, first_seen, last_seen]
+      properties:
+        id: { type: string }
+        source: { type: string }
+        target: { type: string }
+        relation: { type: string, enum: [calls, runs_on, contains, exposes, routes_to, uses, mounts] }
+        confidence: { type: number }
+        provenance:
+          type: array
+          items: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        metadata: { $ref: '#/components/schemas/StringMap' }
+    RelatedEdge:
+      allOf:
+        - $ref: '#/components/schemas/Edge'
+        - type: object
+          properties:
+            related_node: { $ref: '#/components/schemas/RelatedEntity' }
+    RelatedEntity:
+      type: object
+      required: [id, kind]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        name: { type: string }
+        namespace: { type: string }
+        cluster: { type: string }
+        labels: { $ref: '#/components/schemas/StringMap' }
+    GraphSnapshot:
+      type: object
+      required: [snapshot, version, from, to, observed_at, created_at, graph, health_enrichment, summary]
+      properties:
+        snapshot: { $ref: '#/components/schemas/SnapshotIdentity' }
+        version: { $ref: '#/components/schemas/Version' }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        graph:
+          type: object
+          required: [timestamp, nodes, edges]
+          properties:
+            timestamp: { type: string, format: date-time }
+            nodes:
+              type: array
+              items: { $ref: '#/components/schemas/GraphNode' }
+            edges:
+              type: array
+              items: { $ref: '#/components/schemas/Edge' }
+        health_enrichment: { $ref: '#/components/schemas/HealthEnrichment' }
+        summary:
+          type: object
+          required: [node_count, edge_count, kind_counts, relation_counts, snapshot_age_seconds, available_filters]
+          properties:
+            node_count: { type: integer }
+            edge_count: { type: integer }
+            kind_counts:
+              type: object
+              additionalProperties: { type: integer }
+            relation_counts:
+              type: object
+              additionalProperties: { type: integer }
+            snapshot_age_seconds: { type: number }
+            available_filters:
+              type: object
+              required: [kinds, namespaces, relations]
+              properties:
+                kinds:
+                  type: array
+                  items: { type: string }
+                namespaces:
+                  type: array
+                  items: { type: string }
+                relations:
+                  type: array
+                  items: { type: string }
+    SnapshotEdgesEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [snapshot, edges, total]
+          properties:
+            snapshot: { $ref: '#/components/schemas/SnapshotIdentity' }
+            edges:
+              type: array
+              items: { $ref: '#/components/schemas/Edge' }
+            total: { type: integer, minimum: 0 }
+        next_token: { type: string }
+    WindowEdgesEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [from, to, edges, total]
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+            edges:
+              type: array
+              items: { $ref: '#/components/schemas/Edge' }
+            total: { type: integer, minimum: 0 }
+    Entity:
+      type: object
+      description: |
+        Persisted concrete entity record. The `kind` query filter selects
+        records but is not a field added to each serialized entity.
+      required: [id, cluster_name, name]
+      properties:
+        id: { type: string }
+        cluster_name: { type: string }
+        namespace: { type: string }
+        name: { type: string }
+        type: { type: string, description: Present on workload records. }
+        replicas: { type: integer, description: Omitted when zero. }
+        labels: { $ref: '#/components/schemas/StringMap' }
+    EffectiveQuery:
+      type: object
+      required: [aggregation, from, to, step, timestamp_semantics]
+      properties:
+        source: { type: string }
+        aggregation: { type: string, enum: [latest, increase, window_rate, active_rate, window_mean] }
+        window: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        step: { type: string, examples: [15s] }
+        timestamp_semantics: { type: string, const: evaluation }
+    Derivation:
+      type: object
+      required: [id, version, input_metric, interpretation]
+      properties:
+        id: { type: string }
+        version: { type: string }
+        input_metric: { type: string }
+        interpretation: { type: string }
+    MetricSample:
+      type: object
+      required: [metric_name, entity_id, value, timestamp]
+      properties:
+        derivation: { $ref: '#/components/schemas/Derivation' }
+        metric_name: { type: string }
+        entity_id: { type: string }
+        value: { type: number }
+        value_label: { type: string, description: Present on integer-encoded enum metrics. }
+        timestamp: { type: string, format: date-time, description: Query evaluation instant. }
+        labels: { $ref: '#/components/schemas/StringMap' }
+        unit: { type: string }
+        edge: { $ref: '#/components/schemas/EdgeRef' }
+    EdgeRef:
+      type: object
+      required: [source_id, target_id]
+      properties:
+        source_id: { type: string }
+        target_id: { type: string }
+    MetricSeries:
+      type: object
+      required: [metric_name, samples]
+      properties:
+        metric_name: { type: string }
+        unit: { type: string }
+        category: { type: string }
+        description: { type: string }
+        samples:
+          type: array
+          items: { $ref: '#/components/schemas/MetricSample' }
+        edge: { $ref: '#/components/schemas/EdgeRef' }
+    SourceRef:
+      type: object
+      required: [id, priority]
+      properties:
+        id: { type: string }
+        priority: { type: integer }
+    AggregationSpec:
+      type: object
+      required: [supported, default, base_unit, rate_unit]
+      properties:
+        supported:
+          type: [array, 'null']
+          items: { type: string }
+        default: { type: string }
+        default_window: { type: string }
+        base_unit: { type: string }
+        rate_unit: { type: string }
+    CatalogMetric:
+      type: object
+      required: [name, display_name, unit, category, description]
+      properties:
+        name: { type: string }
+        display_name: { type: string }
+        unit: { type: string }
+        category: { type: string, enum: [resource, traffic, latency, error, capacity, health] }
+        scopes:
+          type: array
+          items: { type: string, enum: [entity, edge] }
+        applies_to:
+          type: array
+          items: { type: string }
+        dimensions:
+          type: array
+          items: { type: string }
+        description: { type: string }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/SourceRef' }
+        aggregation: { $ref: '#/components/schemas/AggregationSpec' }
+    CatalogStat:
+      type: object
+      required: [metric_name, by_source]
+      properties:
+        metric_name: { type: string }
+        by_source:
+          type: array
+          items: { $ref: '#/components/schemas/CatalogSourceStat' }
+    CatalogSourceStat:
+      type: object
+      required: [source_id, sample_count, last_seen_at]
+      properties:
+        source_id: { type: string }
+        priority: { type: integer }
+        sample_count: { type: integer, format: int64 }
+        last_seen_at: { type: [string, 'null'], format: date-time }

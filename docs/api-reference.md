@@ -5,10 +5,13 @@ REST API served by the backend on port **8080** (configurable via `--api-listen-
 For local e2e verification, prefer a dedicated local port-forward such as `18081:8080` so the backend API does not collide with the `gateway-go` traffic port-forward on `18080`.
 
 All endpoints return JSON. Success responses use `{"data": ...}`, errors use `{"error": "...", "code": N}`.
+The [OpenAPI description](openapi.yaml) records the current routes and wire shapes.
 
 ## Pagination
 
-All list endpoints support cursor-based pagination:
+The list endpoints below support cursor-based pagination in their snapshot or
+metric query form. Graph edge observation windows return all matching writes
+without a snapshot cursor.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -26,7 +29,8 @@ Paginated responses use a `PaginatedResponse` envelope:
 
 `next_token` is omitted when there are no more pages. `total` always reflects the full (unpaginated) count.
 
-Applies to: `/graph/nodes`, `/graph/edges`, `/entities`, `/metrics`, `/metrics/series`.
+Applies to: `/graph/nodes`, snapshot `/graph/edges`, `/entities`, `/metrics`,
+`/metrics/series`.
 
 ## Status
 
@@ -544,7 +548,7 @@ Response:
 {
   "data": {
     "entities": [
-      {"id": "...", "kind": "pod", "cluster": "...", "namespace": "default", "name": "pod-a", "labels": {...}}
+      {"id": "...", "cluster_name": "...", "namespace": "default", "name": "pod-a", "labels": {...}}
     ],
     "total": 42
   }
@@ -565,8 +569,7 @@ Response:
 {
   "data": {
     "id": "...",
-    "kind": "service",
-    "cluster": "karthos-test",
+    "cluster_name": "karthos-test",
     "namespace": "karthos-demo",
     "name": "service-a-python",
     "labels": {"service.name": "service-a-python"}
@@ -592,6 +595,7 @@ When modifying or adding API endpoints, update these files:
 | `deploy/helm/karthos/templates/backend-deployment.yaml` | API port arg and containerPort |
 | `deploy/helm/karthos/templates/backend-service.yaml` | API service port entry |
 | `docs/api-reference.md` | **This file** -- update when endpoints change |
+| `docs/openapi.yaml` | Machine-readable routes, parameters, and response shapes |
 
 ### Source selection and explicit error views
 
