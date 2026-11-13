@@ -33,6 +33,22 @@ Key coverage areas:
 - structured JSON logger behavior
 - `discovery-job` mode orchestration
 
+## Envelope-scoped registry regression coverage
+
+`pkg/backend/ingest/envelope_registry_test.go` verifies that duplicate entity
+heartbeats are suppressed only within one normalization call, without changing
+accepted samples or their source timestamps. Tests cover ordered metadata
+changes (including Pod UID changes), mutable input maps, failed writes,
+cancellation, concurrent envelopes, and live Service disambiguation through the
+optional source resolver contracts. Run `go test -race ./pkg/backend/ingest` for
+this boundary; live trace/Istio and retained lifecycle scenarios remain necessary
+for deployed behavior. The PostgreSQL integration suite additionally brackets
+registry heartbeats with database-server timestamps, verifies unchanged
+`first_seen`, and checks that duplicate in-envelope observations do not update
+`last_seen` while new envelopes and changed Pod UID metadata do. Registry
+heartbeat timing is ingestion bookkeeping and must not be substituted for a
+metric or graph observation timestamp.
+
 ## E2E Model
 
 - `kind` for the cluster

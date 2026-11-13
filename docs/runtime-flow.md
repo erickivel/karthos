@@ -47,6 +47,7 @@ sequenceDiagram
         alt metric envelope
             Router->>MI: MultiIngestor.Ingest(ctx, envelope)
             MI->>NI: NormalizingIngestor.Ingest(ctx, envelope)
+            NI->>NI: Fresh envelope resolver scope; persist changed entity metadata
             NI->>NI: OTLPNormalizer.Normalize → []MetricSample
             NI->>MS: MetricStore.Write(ctx, samples)
             MS-->>NI: nil
@@ -69,6 +70,13 @@ sequenceDiagram
         GS-->>BTI: nil
     end
 ```
+
+Entity metadata writes during metric normalization are synchronous and scoped
+to the envelope. Repeated identical entity metadata refreshes the registry once
+within that scope; a later envelope refreshes it again. Metric values,
+measurement timestamps and graph/lifecycle observation times remain independent
+of this ingestion heartbeat. Registry write failure still fails normalization
+before metric storage. The scope is not a shared or cross-request TTL cache.
 
 ## Backend Ingest Sequence
 

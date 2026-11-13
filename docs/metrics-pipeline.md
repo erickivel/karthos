@@ -250,6 +250,24 @@ recording it again, preventing invalid edges and double counting.
 This is the mechanism that prevents double-counting when the same canonical
 metric has two installed producers.
 
+Entity-registry persistence is scoped to one `ResourceMetrics` envelope. The
+normalizer requests a fresh scope from the OTLP entity resolver; custom resolvers
+without that optional capability retain their existing behavior. Within the
+scope, the first successfully persisted complete entity metadata state is
+written synchronously, and consecutive identical states for the same canonical
+ID are coalesced. Metadata changes retain their order (`A → B → A` writes all
+three states), failed writes are never cached, and subsequent envelopes always
+refresh the registry heartbeat. Registry reads remain live, including ambiguous
+namespace-less Service lookup. No scope is shared between concurrent envelopes.
+
+Registry `first_seen`/`last_seen` describe ingestion bookkeeping: `last_seen` is a
+heartbeat per unchanged metadata state and envelope, not an audit timestamp for
+every datapoint. This does not change metric measurement timestamps, source
+partitions, graph observation bounds, historical health, or Pod UID/placement
+metadata. All accepted metric samples are retained; only redundant entity
+registry writes are removed. There is no deferred database flush or altered
+upstream acknowledgement contract.
+
 The normalizer preserves source dimensions through a semantic allowlist rather
 than arbitrary label passthrough. This keeps the canonical store reusable for
 UI, audit, analytics, and future prediction consumers while controlling
