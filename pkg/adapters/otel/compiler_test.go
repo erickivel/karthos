@@ -167,7 +167,6 @@ func TestCompileGatewayDisablesKubeClusterDefaultsOutsideThePoCAllowlist(t *test
 
 func TestCompileServicegraphBucketsNumericallySorted(t *testing.T) {
 	plan := collectorspec.CollectionPlan{ClusterName: "test", Namespace: "test", Gateway: collectorspec.GatewayRequirements{ServiceGraph: &collectorspec.ServiceGraph{LatencyHistogramBuckets: []string{"5s", "1000ms", "0.25s", "100ms", "500ms"}}}}
-	require.NoError(t, plan.Normalize())
 	deployment, err := NewCompiler().Compile(plan)
 	require.NoError(t, err)
 	connector := deployment.GatewayConfig.Connectors["service_graph"].(map[string]any)
