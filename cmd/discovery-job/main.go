@@ -21,6 +21,7 @@ import (
 	"github.com/erickivel/karthos/pkg/discovery/profile"
 	"github.com/erickivel/karthos/pkg/sources"
 	"github.com/erickivel/karthos/pkg/sources/contract"
+	"github.com/erickivel/karthos/pkg/sources/servicegraph"
 )
 
 type planner interface {
@@ -44,9 +45,13 @@ type commandPlanner struct {
 }
 
 func newCommandPlanner(namespace string, collectorDebug bool) *commandPlanner {
+	return newCommandPlannerWithRegistry(namespace, collectorDebug, sources.DefaultRegistry())
+}
+
+func newCommandPlannerWithRegistry(namespace string, collectorDebug bool, modules sources.Registry) *commandPlanner {
 	return &commandPlanner{
-		modules:  sources.DefaultRegistry(),
-		composer: collector.NewComposer(namespace),
+		modules:  modules,
+		composer: collector.NewComposerWithRegistry(namespace, modules),
 		compiler: otel.NewCompilerWithOptions(otel.CompilerOptions{DebugEnabled: collectorDebug}),
 	}
 }
@@ -125,8 +130,13 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 	victoriaMetricsMode := fs.String("victoriametrics-mode", envOrDefault("KARTHOS_DEPLOY_VICTORIAMETRICS_MODE", ""), "external VictoriaMetrics mode: bundled or remote")
 	victoriaMetricsURL := fs.String("victoriametrics-url", envOrDefault("KARTHOS_VICTORIAMETRICS_URL", ""), "remote VictoriaMetrics URL override")
 	collectorDebug := fs.Bool("collector-debug", collectorDebugDefault, "enable development-only Collector debug output")
+	servicegraphStoreMaxItems := fs.Int("servicegraph-store-max-items", servicegraph.DefaultStoreMaxItems, "maximum unmatched servicegraph span-pair entries (positive integer)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	modules, err := sources.NewRegistry(sources.Options{ServiceGraph: servicegraph.Options{StoreMaxItems: *servicegraphStoreMaxItems}})
+	if err != nil {
+		return fmt.Errorf("--servicegraph-store-max-items: %w", err)
 	}
 	if *mode != "discover" && *outputPath != "" {
 		return fmt.Errorf("--output is only supported in discover mode; use --values-output for generated Helm values")
@@ -192,7 +202,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = newCommandPlanner(activeNamespace, *collectorDebug)
+			deps.planner = newCommandPlannerWithRegistry(activeNamespace, *collectorDebug, modules)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator(generatorOptions)
@@ -238,7 +248,7 @@ func run(ctx context.Context, args []string, deps dependencies) error {
 			return err
 		}
 		if deps.planner == nil {
-			deps.planner = newCommandPlanner(activeNamespace, *collectorDebug)
+			deps.planner = newCommandPlannerWithRegistry(activeNamespace, *collectorDebug, modules)
 		}
 		if deps.generator == nil {
 			deps.generator = defaultGenerator(generatorOptions)

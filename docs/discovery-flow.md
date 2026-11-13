@@ -90,6 +90,17 @@ Helm renders both into one release-scoped `*-source-contract` ConfigMap and
 mounts it in the backend. Normal deployment has no imperative ConfigMap apply
 or rollout-restart step.
 
+`discovery-job --servicegraph-store-max-items=10000` controls the maximum
+unmatched span-pair entries in the selected trace servicegraph connector.
+The default is 10000; overrides must be positive integers. For example,
+`--mode=plan --capability-profile=profile.json --values-output=values.yaml
+--servicegraph-store-max-items=12000` renders `store.max_items: 12000` in the
+gateway configuration. `1000` remains available for local saturation controls.
+The servicegraph source owns the typed options and defaults. The command builds
+one configured static source registry shared by source resolution and collector
+composition; this option does not change source arbitration or the backend
+source-contract schema. When Istio owns the metrics, the connector stays absent.
+
 Each compiled source module validates its own capability record before planning
 or composition: identity, kind, status, signals, and its bounded evidence. The
 resolved plan is valid only for the fingerprint of that normalized profile.

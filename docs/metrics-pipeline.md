@@ -295,6 +295,44 @@ produce incomplete counts or boundary-node series. In collector v0.156,
 identity is carried separately by the optional `virtual_node=client|server`
 label. See the versioned [servicegraph connector contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
 
+The servicegraph source explicitly generates `store.max_items: 10000` by
+default, configurable with the discovery CLI's positive-integer
+`--servicegraph-store-max-items` option. This bounds unmatched span-pair state,
+not the number of exported time series. The pinned v0.156.0
+[factory defaults](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/factory.go)
+are 1000 entries, 2s pairing TTL, 1m cache cleanup, and 2s store expiration scan;
+the connector's own default flush interval is 60s. Karthos overrides capacity,
+TTL, and flush to 10000, 30s, and 15s respectively and leaves cache/expiration
+scan defaults unchanged. Increasing capacity reduces saturation for the same
+span workload, but does not guarantee complete pairing at arbitrary load.
+The v0.156.0 [connector implementation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/connector.go)
+increments its `connector.servicegraph.dropped_spans` self-telemetry counter
+when the pairing store returns `ErrTooManyItems`.
+
+Explicit latency buckets are generated in ascending duration order:
+`100ms, 250ms, 500ms, 1s, 5s` (seconds bounds `0.1, 0.25, 0.5, 1, 5`).
+Normalization parses durations numerically, including mixed units, and rejects
+invalid, nonpositive, or numerically duplicate bounds before rendering. This
+is necessary because the versioned
+[configuration validator](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/config.go)
+does not validate those properties, and the connector forwards custom bounds
+in their supplied order to a binary-search bucket lookup. An 800ms sample must
+occupy the 1s bucket. The change affects generated collection configuration;
+normalization of emitted sums, counts, dimensions, timestamps, and status
+semantics remains as described below.
+
+Preserved pre-repair runtime evidence from the evaluation
+`thesis-repair-09a2330-20261113` (`boutique-baseline-window.tar.gz`) includes
+`structured/gateway/snapshot.json`: its effective connector config contains
+`[100ms, 1s, 250ms, 500ms, 5s]` and capacity 1000. The gateway's
+`structured/gateway/raw/metrics.json` JSONL contains matching unsorted explicit
+bounds `[0.1, 1, 0.25, 0.5, 5]`. Those observations identify a collection-plan
+ordering defect before storage or API rendering. Historical histograms are
+not rewritten; source-to-storage/API comparisons must use fresh captures.
+Local tests verify CLI-to-generated-YAML settings and bucket ordering; a live
+pinned-collector test is required to establish actual sample bucket placement
+and preserved sum/count behavior.
+
 Counter samples use a physical base unit (`count`, `bytes`, or `seconds`),
 never an implied rate. Cumulative Sums retain their running base total; delta
 Sums retain the reported interval increment with `temporality=delta`; the

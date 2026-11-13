@@ -54,7 +54,21 @@ type Module struct {
 // Registry is the one compiled inventory of source modules.
 type Registry struct{ modules []Module }
 
+// Options supplies typed settings to their owning static source modules.
+type Options struct{ ServiceGraph servicegraph.Options }
+
+func NewRegistry(options Options) (Registry, error) {
+	if err := options.ServiceGraph.Validate(); err != nil {
+		return Registry{}, err
+	}
+	return configuredRegistry(options), nil
+}
+
 func DefaultRegistry() Registry {
+	return configuredRegistry(Options{ServiceGraph: servicegraph.DefaultOptions()})
+}
+
+func configuredRegistry(options Options) Registry {
 	return Registry{modules: []Module{
 		{ID: IDKubernetesStructure, Kind: profile.SourceKindDirect, Detect: structure.Detect, Validate: structure.ValidateCapability},
 		{ID: IDKubelet, Kind: profile.SourceKindDirect, Parse: kubelet.Parse, MetricSource: true, Detect: kubelet.Detect, Validate: kubelet.ValidateCapability, Contribute: kubelet.Contribute, Normalize: kubelet.Normalize},
@@ -62,7 +76,7 @@ func DefaultRegistry() Registry {
 		{ID: IDKubeCluster, Kind: profile.SourceKindDirect, Parse: kubecluster.Parse, MetricSource: true, Detect: kubecluster.Detect, Validate: kubecluster.ValidateCapability, Contribute: kubecluster.Contribute, Normalize: kubecluster.Normalize},
 		{ID: IDPrometheusApp, Kind: profile.SourceKindDirect, Parse: prometheusapp.Parse, MetricSource: true, Detect: prometheusapp.Detect, Validate: prometheusapp.ValidateCapability, Contribute: prometheusapp.Contribute, Normalize: prometheusapp.Normalize},
 		{ID: IDMeshIstio, Kind: profile.SourceKindDirect, Parse: istio.Parse, MetricSource: true, Detect: istio.Detect, Validate: istio.ValidateCapability, Contribute: istio.Contribute, Normalize: istio.Normalize, CallsEdge: istio.CallsEdgeMetadata, QueryViews: istio.QueryViews},
-		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Parse: servicegraph.Parse, MetricSource: true, Detect: servicegraph.Detect, Validate: servicegraph.ValidateCapability, Contribute: servicegraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata, CallsNamespaces: servicegraph.CallsNamespaces, QueryViews: servicegraph.QueryViews},
+		{ID: IDTracesServicegraph, Kind: profile.SourceKindDerived, Parse: servicegraph.Parse, MetricSource: true, Detect: servicegraph.Detect, Validate: servicegraph.ValidateCapability, Contribute: options.ServiceGraph.Contribute, Normalize: servicegraph.Normalize, CallsEdge: servicegraph.CallsEdgeMetadata, CallsNamespaces: servicegraph.CallsNamespaces, QueryViews: servicegraph.QueryViews},
 	}}
 }
 
@@ -225,8 +239,7 @@ func (r Registry) AppendRequirements(out *collectorspec.CollectionPlan, capabili
 			return fmt.Errorf("selected source %q has no semantic collection requirements", sourceID)
 		}
 	}
-	out.Normalize()
-	return nil
+	return out.Normalize()
 }
 
 // QueryViews returns the static source-owned interpretations of a public metric.

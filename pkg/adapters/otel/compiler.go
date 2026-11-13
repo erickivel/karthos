@@ -109,6 +109,9 @@ func (c *Compiler) Compile(plan collectorspec.CollectionPlan) (Deployment, error
 	if plan.ClusterName == "" {
 		return Deployment{}, fmt.Errorf("collection plan cluster name is required")
 	}
+	if err := plan.Normalize(); err != nil {
+		return Deployment{}, fmt.Errorf("normalize collection plan: %w", err)
+	}
 	agentConfig := compileAgent(plan.Agent)
 	gatewayConfig := compileGateway(plan.Gateway)
 	if c.options.DebugEnabled {

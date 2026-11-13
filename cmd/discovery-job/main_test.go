@@ -2,9 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sigs.k8s.io/yaml"
+	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -245,3 +250,72 @@ const capabilityProfileJSON = `{
     {"source_id":"traces.servicegraph","kind":"derived","status":"unavailable"}
   ]
 }`
+
+func TestRunPlanServicegraphStoreCapacityAndBuckets(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag string
+		want int
+	}{
+		{"default", "", 10000}, {"negative-control", "1000", 1000}, {"supported", "10000", 10000}, {"override", "12000", 12000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var capabilityProfile profile.ClusterProfile
+			require.NoError(t, json.Unmarshal([]byte(capabilityProfileJSON), &capabilityProfile))
+			capabilityProfile.Capabilities[6] = profile.SourceCapability{SourceID: "traces.servicegraph", Kind: profile.SourceKindDerived, Status: profile.CapabilityAvailable, Signals: []string{"metric"}, Evidence: profile.CapabilityEvidence{OTLP: &profile.OTLPEvidence{TracesEnabled: true}}}
+			dir := t.TempDir()
+			profilePath := filepath.Join(dir, "profile.json")
+			valuesPath := filepath.Join(dir, "values.yaml")
+			payload, err := json.Marshal(capabilityProfile)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(profilePath, payload, 0o600))
+			args := []string{"--mode=plan", "--capability-profile=" + profilePath, "--values-output=" + valuesPath}
+			if tc.flag != "" {
+				args = append(args, "--servicegraph-store-max-items="+tc.flag)
+			}
+			require.NoError(t, run(context.Background(), args, dependencies{}))
+			payload, err = os.ReadFile(valuesPath)
+			require.NoError(t, err)
+			var values configgen.Values
+			require.NoError(t, yaml.Unmarshal(payload, &values))
+			var gateway struct {
+				Connectors map[string]struct {
+					Buckets []string `json:"latency_histogram_buckets"`
+					Flush   string   `json:"metrics_flush_interval"`
+					Store   struct {
+						MaxItems int    `json:"max_items"`
+						TTL      string `json:"ttl"`
+					} `json:"store"`
+				} `json:"connectors"`
+			}
+			require.NoError(t, yaml.Unmarshal([]byte(values.Gateway.CollectorYAML), &gateway))
+			connector := gateway.Connectors["service_graph"]
+			require.Equal(t, tc.want, connector.Store.MaxItems)
+			require.Equal(t, "30s", connector.Store.TTL)
+			require.Equal(t, "15s", connector.Flush)
+			require.Equal(t, []string{"100ms", "250ms", "500ms", "1s", "5s"}, connector.Buckets)
+			// v0.156 uses SearchFloat64s directly on emitted bounds. An 800ms sample
+			// must occupy the 1s bucket. Live collector tests verify sum/count.
+			bounds := make([]float64, len(connector.Buckets))
+			for i, b := range connector.Buckets {
+				d, err := time.ParseDuration(b)
+				require.NoError(t, err)
+				bounds[i] = d.Seconds()
+			}
+			require.Equal(t, 3, sort.SearchFloat64s(bounds, 0.8))
+		})
+	}
+}
+
+func TestRunRejectsInvalidServicegraphStoreCapacity(t *testing.T) {
+	for _, value := range []string{"0", "-1", "not-an-int", "1.5", "999999999999999999999999999"} {
+		t.Run(value, func(t *testing.T) {
+			err := run(context.Background(), []string{"--mode=plan", fmt.Sprintf("--servicegraph-store-max-items=%s", value)}, dependencies{})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "servicegraph-store-max-items")
+			if value == "0" || value == "-1" {
+				require.Contains(t, err.Error(), "positive")
+			}
+		})
+	}
+}

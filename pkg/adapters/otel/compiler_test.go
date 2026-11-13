@@ -164,3 +164,20 @@ func TestCompileGatewayDisablesKubeClusterDefaultsOutsideThePoCAllowlist(t *test
 		require.Equalf(t, false, setting["enabled"], "expected %s to be disabled", metricName)
 	}
 }
+
+func TestCompileServicegraphBucketsNumericallySorted(t *testing.T) {
+	plan := collectorspec.CollectionPlan{ClusterName: "test", Namespace: "test", Gateway: collectorspec.GatewayRequirements{ServiceGraph: &collectorspec.ServiceGraph{LatencyHistogramBuckets: []string{"5s", "1000ms", "0.25s", "100ms", "500ms"}}}}
+	require.NoError(t, plan.Normalize())
+	deployment, err := NewCompiler().Compile(plan)
+	require.NoError(t, err)
+	connector := deployment.GatewayConfig.Connectors["service_graph"].(map[string]any)
+	require.Equal(t, []string{"100ms", "0.25s", "500ms", "1000ms", "5s"}, connector["latency_histogram_buckets"])
+}
+func TestCompileRejectsInvalidServicegraphBuckets(t *testing.T) {
+	for _, buckets := range [][]string{{"bad"}, {"0s"}, {"-1ms"}, {"1s", "1000ms"}, {"250ms", "0.25s"}, {"999999999999h"}} {
+		t.Run(strings.Join(buckets, "_"), func(t *testing.T) {
+			_, err := NewCompiler().Compile(collectorspec.CollectionPlan{ClusterName: "test", Namespace: "test", Gateway: collectorspec.GatewayRequirements{ServiceGraph: &collectorspec.ServiceGraph{LatencyHistogramBuckets: buckets}}})
+			require.Error(t, err)
+		})
+	}
+}
