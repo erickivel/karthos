@@ -116,5 +116,8 @@ task test:e2e:teardown        # destroy cluster and registry
 
 ## License
 
-License is intentionally left undecided at this stage and should be finalized
-explicitly later.
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE).
+
+The revision evaluated in the thesis is `4c2861b539fcd24d6a458dc0fd545fbdda5470d5`
+(tag `tcc-2026`); the evaluation lives in
+[karthos-tcc-evaluation](https://github.com/erickivel/karthos-tcc-evaluation).
