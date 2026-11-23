@@ -20,10 +20,10 @@ Key coverage areas:
 - Helm values generation
 - backend OTLP envelope conversion and routing
 - OTLP gRPC ingest integration
-- `MetricTopologyBuilder`: observed `runs_on` edge extraction from resource attributes
+- `MetricTopologyBuilder`: observed `runs_on` edge extraction from resource identity and validated datapoint source stamps
 - Pod lifecycle validation: UID/node matching, synchronous immutable `terminal_deadline` persistence before grace activation, fail-closed terminal refreshes on an initial marker-write failure with retry of the original deadline, confirmed-initial versus retry-only marker provenance (an absent/replaced retry-only UID retires immediately at restart), atomic active→pending→retired storage transitions that prevent delayed marker resurrection across delete/replace/crash/restart interleavings, cluster-scoped startup reconciliation and re-arming across same-UID/deleted/replaced restart states, deadline exclusion from current graph reads, immediate non-terminal deletion/replacement retirement, retry-until-cancellation persistence with bounded per-attempt backoff, and retained-edge `last_seen` stability
 - `MultiIngestor`: fan-out behavior and error aggregation
-- storage/query parity: append-only structural writes, 24-hour retained
+- storage/query parity: append-only structural writes, seven-day retained
   materialized graphs, current observed-edge merge rules, point-in-time
   selection, defensive memory-store copies,
   and 15-second evaluated metric ranges, including exact non-aligned final
@@ -32,6 +32,22 @@ Key coverage areas:
 - Helm deploy command assembly
 - structured JSON logger behavior
 - `discovery-job` mode orchestration
+
+## Envelope-scoped registry regression coverage
+
+`pkg/backend/ingest/envelope_registry_test.go` verifies that duplicate entity
+heartbeats are suppressed only within one normalization call, without changing
+accepted samples or their source timestamps. Tests cover ordered metadata
+changes (including Pod UID changes), mutable input maps, failed writes,
+cancellation, concurrent envelopes, and live Service disambiguation through the
+optional source resolver contracts. Run `go test -race ./pkg/backend/ingest` for
+this boundary; live trace/Istio and retained lifecycle scenarios remain necessary
+for deployed behavior. The PostgreSQL integration suite additionally brackets
+registry heartbeats with database-server timestamps, verifies unchanged
+`first_seen`, and checks that duplicate in-envelope observations do not update
+`last_seen` while new envelopes and changed Pod UID metadata do. Registry
+heartbeat timing is ingestion bookkeeping and must not be substituted for a
+metric or graph observation timestamp.
 
 ## E2E Model
 
@@ -279,3 +295,7 @@ deployment.
 then retains the newly deployed resources at the end. A later
 `task test:e2e:reset` or `task test:e2e:scenario:fallback` still removes
 harness-owned Istio because strict fallback requires no mesh.
+
+### Query-view integration fixture
+
+`KARTHOS_TEST_VM_URL=http://127.0.0.1:<port> go test ./pkg/adapters/storage/victoriametrics -run TestQueryViewsVictoriaMetricsIntegration -v` runs deterministic fixtures against an isolated VictoriaMetrics1.138.0 instance. Use a disposable test database: fixtures write uniquely identified series and require the internal force-flush endpoint. Tests skip when the variable is unset. They cover outcome/status partitions, missing status, freshness, counter modes/resets, legacy counters, source/edge restrictions, derivation metadata, and canonical CPU/memory value round trips.

@@ -18,7 +18,7 @@ export function presentEntityNode(
   node: GraphNode,
   mode: ProjectionMode | undefined,
 ): NodePresentation {
-  const phase = node.labels?.['k8s.pod.phase']
+  const phase = node.labels?.['k8s.pod.status.phase']
   let signal: NodeSignal | undefined
 
   if (node.status === 'error' || node.status === 'critical') {

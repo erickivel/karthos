@@ -431,6 +431,60 @@ func TestGraphStore_PrunesMaterializedSnapshotsAfterRetention(t *testing.T) {
 	assert.Nil(t, old)
 }
 
+func TestGraphStoreRetainsMaterializedSnapshotForSevenDays(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	firstAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	service := svc("api")
+	for _, at := range []time.Time{firstAt, firstAt.Add(6 * 24 * time.Hour)} {
+		require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: at, Graph: topology.Graph{Nodes: []topology.Node{{ID: service, Kind: entities.KindService}}}}))
+		_, err := store.Materialize(ctx, at)
+		require.NoError(t, err)
+	}
+	got, err := store.GetAt(ctx, firstAt)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+}
+
+func TestObservedEdgeWindowSurvivesCurrentGraphFreshness(t *testing.T) {
+	store := NewInMemoryGraphStore()
+	ctx := context.Background()
+	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	client, server := svc("client"), svc("server")
+	edge := topology.NewEdge(client, server, topology.RelCalls, at)
+	edge.Provenance = []string{"mesh.istio"}
+	require.NoError(t, store.PutObservedEdges(ctx, []topology.Edge{edge}))
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: at.Add(10 * time.Minute), Graph: topology.Graph{Nodes: []topology.Node{{ID: client, Kind: entities.KindService}, {ID: server, Kind: entities.KindService}}}}))
+	current, err := store.Materialize(ctx, at.Add(10*time.Minute))
+	require.NoError(t, err)
+	require.Empty(t, current.Graph.Edges)
+	observed, err := store.ObservedEdgesInWindow(ctx, at.Add(-time.Second), at.Add(time.Second), "mesh.istio")
+	require.NoError(t, err)
+	require.Len(t, observed, 1)
+	require.Equal(t, edge.ID, observed[0].ID)
+	require.Equal(t, []string{"mesh.istio"}, observed[0].Provenance)
+}
+
+func TestMaterializedGraphCarriesObservationInterval(t *testing.T) {
+	ctx := context.Background()
+	store := NewInMemoryGraphStore()
+	first := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	second := first.Add(time.Minute)
+	node := topology.Node{ID: "node-a", Kind: entities.KindNode, Provenance: []string{"kubernetes.structure"}, FirstSeen: first, LastSeen: first}
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: first, Graph: topology.Graph{Nodes: []topology.Node{node}}}))
+	_, err := store.Materialize(ctx, first)
+	require.NoError(t, err)
+	node.FirstSeen, node.LastSeen = second, second
+	require.NoError(t, store.PutStructuralSnapshot(ctx, topology.Snapshot{CreatedAt: second, Graph: topology.Graph{Nodes: []topology.Node{node}}}))
+	snapshot, err := store.Materialize(ctx, second)
+	require.NoError(t, err)
+	require.Equal(t, first, snapshot.From)
+	require.Equal(t, second, snapshot.To)
+	require.Equal(t, second, snapshot.ObservedAt)
+	require.Equal(t, first, snapshot.Graph.Nodes[0].FirstSeen)
+	require.Equal(t, second, snapshot.Graph.Nodes[0].LastSeen)
+}
+
 func lifecycleRunsOnEdge(source, target entities.EntityID, podUID string, firstSeen time.Time) topology.Edge {
 	edge := topology.NewEdge(source, target, topology.RelRunsOn, firstSeen)
 	edge.ID = topology.ComputeEdgeIDWithDiscriminator(source, target, topology.RelRunsOn, podUID)

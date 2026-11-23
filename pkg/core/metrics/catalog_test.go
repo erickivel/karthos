@@ -15,11 +15,11 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 	}
 
 	required := map[string]metricExpectation{
-		"k8s.pod.cpu.usage":                  {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.cpu.usage":                  {unit: UnitCores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.pod.memory.working_set":         {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.node.cpu.usage":                 {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.node.cpu.usage":                 {unit: UnitCores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.node.memory.working_set":        {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"system.cpu.utilization":             {unit: UnitPercent, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
+		"system.cpu.utilization":             {unit: UnitRatio, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 		"system.memory.usage":                {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceHostOS, Priority: 1}}},
 		"system.disk.io.read":                {},
 		"system.disk.io.write":               {},
@@ -37,20 +37,20 @@ func TestDefaultCatalogIncludesRequiredMetrics(t *testing.T) {
 		"k8s.container.cpu.limit":            {},
 		"k8s.container.memory.request":       {},
 		"k8s.container.memory.limit":         {},
-		"k8s.container.cpu.usage":            {unit: UnitMillicores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
-		"k8s.container.memory.usage":         {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"container.cpu.usage":                {unit: UnitCores, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"container.memory.usage":             {unit: UnitBytes, category: CategoryResource, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 		"k8s.container.ready":                {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.container.restarts":             {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.volume.available":               {},
-		"k8s.volume.capacity":                {},
-		"k8s.volume.inodes.free":             {},
-		"k8s.volume.inodes.used":             {},
-		"k8s.pod.phase":                      {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
-		"k8s.pod.status_reason":              {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.container.restart.count":        {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.pod.volume.available":           {},
+		"k8s.pod.volume.capacity":            {},
+		"k8s.pod.volume.inode.free":          {},
+		"k8s.pod.volume.inode.used":          {},
+		"k8s.pod.status.phase":               {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
+		"k8s.pod.status.reason":              {unit: UnitCount, category: CategoryHealth, sources: []SourceRef{{ID: SourceKubeCluster, Priority: 1}}},
 		"k8s.node.condition.ready":           {},
 		"k8s.node.condition.memory_pressure": {},
 		"k8s.node.condition.disk_pressure":   {},
-		"k8s.volume.inodes":                  {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
+		"k8s.pod.volume.inode.count":         {unit: UnitCount, category: CategoryCapacity, sources: []SourceRef{{ID: SourceKubelet, Priority: 1}}},
 	}
 
 	for _, metric := range DefaultCatalog() {
@@ -88,7 +88,7 @@ func TestDefaultCatalogDeclaresProviderNeutralStorageSemantics(t *testing.T) {
 	require.Equal(t, InstrumentCounter, catalog["servicegraph.request.count"].Instrument)
 	require.Equal(t, UnitCount, catalog["servicegraph.request.count"].StoredUnit)
 	require.Equal(t, InstrumentHistogram, catalog["servicegraph.request.duration"].Instrument)
-	require.Equal(t, UnitNanoseconds, catalog["servicegraph.request.duration"].StoredUnit)
+	require.Equal(t, UnitSeconds, catalog["servicegraph.request.duration"].StoredUnit)
 }
 
 func TestDefaultCatalogDeepCopiesEveryMutableField(t *testing.T) {
@@ -130,11 +130,11 @@ func TestDefaultCatalogEntityMetricsDeclareApplicableKinds(t *testing.T) {
 func TestDefaultCatalogApplicabilityTargetsExpectedKinds(t *testing.T) {
 	catalog := catalogByName(DefaultCatalog())
 
-	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["k8s.container.cpu.usage"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["container.cpu.usage"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindContainer}, catalog["k8s.container.ready"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindPod}, catalog["k8s.pod.cpu.usage"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindNode}, catalog["k8s.node.cpu.usage"].AppliesTo)
-	require.Equal(t, []entities.EntityKind{entities.KindPVC, entities.KindPod}, catalog["k8s.volume.inodes.used"].AppliesTo)
+	require.Equal(t, []entities.EntityKind{entities.KindPVC, entities.KindPod}, catalog["k8s.pod.volume.inode.used"].AppliesTo)
 	require.Equal(t, []entities.EntityKind{entities.KindService}, catalog["servicegraph.request.count"].AppliesTo)
 	require.Empty(t, catalog["servicegraph.request.duration"].AppliesTo)
 }

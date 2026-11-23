@@ -37,6 +37,19 @@ func TestDiscoverProducesDeterministicCapabilityProfile(t *testing.T) {
 	require.Equal(t, profile.CapabilityAvailable, servicegraph.Status)
 }
 
+func TestDiscoverExcludesInstallationNamespaceFromCapabilityEvidence(t *testing.T) {
+	annotation := map[string]string{"prometheus.io/scrape": "true", "prometheus.io/port": "8080", "karthos.io/otlp-traces": "true"}
+	client := fake.NewClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: "karthos-system", Annotations: annotation}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}, {Port: 4317}}}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "demo", Annotations: annotation}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8080}, {Port: 4317}}}},
+	)
+	result, err := NewDiscoveryAdapter(client, "test", WithExcludedNamespace("karthos-system")).Discover(context.Background())
+	require.NoError(t, err)
+	prometheus, ok := result.Capability(metrics.SourcePrometheusApp)
+	require.True(t, ok)
+	require.Equal(t, []profile.PrometheusTarget{{ServiceName: "app", Namespace: "demo", Port: 8080, Path: "/metrics"}}, prometheus.Evidence.PrometheusTargets)
+}
+
 func TestDiscoverFailsWhenARequiredKubernetesListIsDenied(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -13,6 +13,7 @@ import (
 	"github.com/erickivel/karthos/pkg/core/logging"
 	"github.com/erickivel/karthos/pkg/core/metrics"
 	"github.com/erickivel/karthos/pkg/core/semconv"
+	"github.com/erickivel/karthos/pkg/sources"
 )
 
 // catalogStatsLookback is the fixed window used by the /api/v1/metrics/catalog/stats
@@ -45,9 +46,10 @@ func (h *MetricsHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 type enrichedSample struct {
-	MetricName string            `json:"metric_name"`
-	EntityID   entities.EntityID `json:"entity_id"`
-	Value      float64           `json:"value"`
+	Derivation *metrics.Derivation `json:"derivation,omitempty"`
+	MetricName string              `json:"metric_name"`
+	EntityID   entities.EntityID   `json:"entity_id"`
+	Value      float64             `json:"value"`
 	// ValueLabel is the public string translation of an integer-encoded enum
 	// value (see pkg/core/metrics/health_status.go). Set only on samples for
 	// metrics where IsHealthStatusMetric reports true; omitted otherwise.
@@ -74,6 +76,7 @@ type edgeRef struct {
 }
 
 type effectiveMetricQuery struct {
+	Source             string                  `json:"source,omitempty"`
 	Aggregation        metrics.AggregationMode `json:"aggregation"`
 	Window             string                  `json:"window,omitempty"`
 	From               string                  `json:"from"`
@@ -119,7 +122,15 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return nil, effectiveMetricQuery{}, false
 	}
-	effective := effectiveMetricQuery{Aggregation: resolved.Mode, Unit: resolved.Unit}
+	source := r.URL.Query().Get("source")
+	if source != "" {
+		module, ok := sources.DefaultRegistry().Lookup(source)
+		if !ok || !module.MetricSource {
+			writeError(w, http.StatusBadRequest, "source must identify a registered metric source")
+			return nil, effectiveMetricQuery{}, false
+		}
+	}
+	effective := effectiveMetricQuery{Aggregation: resolved.Mode, Unit: resolved.Unit, Source: source}
 	if resolved.Window > 0 {
 		effective.Window = metrics.FormatAggregationWindow(resolved.Window)
 	}
@@ -146,6 +157,7 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 
 	q := query.MetricQuery{
 		EntityIDs:    entityIDs,
+		Source:       source,
 		MetricName:   metricName,
 		From:         from,
 		To:           to,
@@ -185,6 +197,7 @@ func (h *MetricsHandler) queryEnrichedSamples(w http.ResponseWriter, r *http.Req
 		}
 		enriched = append(enriched, enrichedSample{
 			MetricName: s.MetricName,
+			Derivation: s.Derivation,
 			EntityID:   s.EntityID,
 			Value:      s.Value,
 			ValueLabel: s.ValueLabel,

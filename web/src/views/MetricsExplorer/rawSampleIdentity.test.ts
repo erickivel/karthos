@@ -14,8 +14,8 @@ const sample = (metric_name: string, labels: Record<string, string>): MetricSamp
 describe('raw sample identity', () => {
   it('shows the dimension that distinguishes volume rows and exposes all labels', () => {
     const rows = [
-      sample('k8s.volume.capacity', { volume_name: 'config-volume', volume_type: 'emptyDir' }),
-      sample('k8s.volume.capacity', { volume_name: 'cache-volume', volume_type: 'emptyDir' }),
+      sample('k8s.pod.volume.capacity', { volume_name: 'config-volume', volume_type: 'emptyDir' }),
+      sample('k8s.pod.volume.capacity', { volume_name: 'cache-volume', volume_type: 'emptyDir' }),
     ]
     expect(seriesIdentities(rows)[0]).toEqual({
       summary: 'volume_name=config-volume',
@@ -33,7 +33,7 @@ describe('raw sample identity', () => {
   })
 
   it('keeps enum value labels separate from series dimensions', () => {
-    const row = { ...sample('k8s.pod.phase', {}), value_label: 'running' }
+    const row = { ...sample('k8s.pod.status.phase', {}), value_label: 'running' }
     expect(seriesIdentities([row])[0]?.summary).toBe('')
   })
 
@@ -46,11 +46,11 @@ describe('raw sample identity', () => {
   })
 
   it('groups independently by metric, scope, and source while preserving row order', () => {
-    const samePod = sample('k8s.volume.capacity', { volume_name: 'config-volume' })
-    const otherVolume = sample('k8s.volume.capacity', { volume_name: 'cache-volume' })
-    const otherPod = { ...sample('k8s.volume.capacity', { volume_name: 'logs-volume' }), entity_id: 'pod-2' }
-    const otherSource = sample('k8s.volume.capacity', { source: 'another-source', volume_name: 'logs-volume' })
-    const otherMetric = sample('k8s.volume.available', { volume_name: 'logs-volume' })
+    const samePod = sample('k8s.pod.volume.capacity', { volume_name: 'config-volume' })
+    const otherVolume = sample('k8s.pod.volume.capacity', { volume_name: 'cache-volume' })
+    const otherPod = { ...sample('k8s.pod.volume.capacity', { volume_name: 'logs-volume' }), entity_id: 'pod-2' }
+    const otherSource = sample('k8s.pod.volume.capacity', { source: 'another-source', volume_name: 'logs-volume' })
+    const otherMetric = sample('k8s.pod.volume.available', { volume_name: 'logs-volume' })
     const rows = [samePod, otherVolume, otherPod, otherSource, otherMetric, samePod]
 
     expect(seriesIdentities(rows).map(({ summary }) => summary)).toEqual([
@@ -86,7 +86,7 @@ describe('raw sample identity', () => {
       },
     })
     const rows = Array.from({ length: 500 }, (_, i) => ({
-      ...sample('k8s.volume.capacity', {}), labels, timestamp: new Date(i * 1000).toISOString(),
+      ...sample('k8s.pod.volume.capacity', {}), labels, timestamp: new Date(i * 1000).toISOString(),
     }))
 
     const identities = seriesIdentities(rows)

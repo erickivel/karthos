@@ -43,6 +43,11 @@ func NewHealthResolver(store persistence.MetricStore) *HealthResolver {
 }
 
 func (r *HealthResolver) Resolve(ctx context.Context, nodes []topology.Node, exact bool) healthResolution {
+	return r.ResolveAt(ctx, nodes, exact, time.Now().UTC())
+}
+
+// ResolveAt evaluates health only from samples available at the graph instant.
+func (r *HealthResolver) ResolveAt(ctx context.Context, nodes []topology.Node, exact bool, at time.Time) healthResolution {
 	result := healthResolution{Statuses: make(map[entities.EntityID]string)}
 	var podIDs, containerIDs []entities.EntityID
 	for _, node := range nodes {
@@ -53,7 +58,7 @@ func (r *HealthResolver) Resolve(ctx context.Context, nodes []topology.Node, exa
 			containerIDs = append(containerIDs, node.ID)
 		}
 	}
-	pods := queryHealthSamples(ctx, r.store, "k8s.pod.phase", podIDs, exact)
+	pods := queryHealthSamples(ctx, r.store, "k8s.pod.status.phase", podIDs, exact, at)
 	result.Pods = pods.quality
 	if pods.err != nil {
 		result.Errors = append(result.Errors, pods.err)
@@ -62,8 +67,8 @@ func (r *HealthResolver) Resolve(ctx context.Context, nodes []topology.Node, exa
 			result.Statuses[id] = podHealthFromPhase(value)
 		}
 	}
-	ready := queryHealthSamples(ctx, r.store, "k8s.container.ready", containerIDs, exact)
-	restarts := queryHealthSamplesWithAggregation(ctx, r.store, "k8s.container.restarts", containerIDs, exact, metrics.AggregationWindowRate, healthLookback)
+	ready := queryHealthSamples(ctx, r.store, "k8s.container.ready", containerIDs, exact, at)
+	restarts := queryHealthSamplesWithAggregation(ctx, r.store, "k8s.container.restart.count", containerIDs, exact, metrics.AggregationWindowRate, healthLookback, at)
 	result.Containers = combineHealthQuality(ready.quality, restarts.quality)
 	if ready.err != nil {
 		result.Errors = append(result.Errors, ready.err)
@@ -118,11 +123,12 @@ func queryHealthSamples(
 	metricName string,
 	ids []entities.EntityID,
 	exact bool,
+	at time.Time,
 ) healthSampleResult {
-	return queryHealthSamplesWithAggregation(ctx, store, metricName, ids, exact, metrics.AggregationLatest, 0)
+	return queryHealthSamplesWithAggregation(ctx, store, metricName, ids, exact, metrics.AggregationLatest, 0, at)
 }
 
-func queryHealthSamplesWithAggregation(ctx context.Context, store persistence.MetricStore, metricName string, ids []entities.EntityID, exact bool, aggregation metrics.AggregationMode, window time.Duration) healthSampleResult {
+func queryHealthSamplesWithAggregation(ctx context.Context, store persistence.MetricStore, metricName string, ids []entities.EntityID, exact bool, aggregation metrics.AggregationMode, window time.Duration, at time.Time) healthSampleResult {
 	if len(ids) == 0 {
 		return healthSampleResult{quality: healthQualityComplete}
 	}
@@ -130,12 +136,11 @@ func queryHealthSamplesWithAggregation(ctx context.Context, store persistence.Me
 		return healthSampleResult{quality: healthQualityUnavailable}
 	}
 
-	now := time.Now().UTC()
-	q := query.MetricQuery{MetricName: metricName, From: now.Add(-healthLookback), To: now, Aggregation: aggregation, Window: window}
+	q := query.MetricQuery{MetricName: metricName, From: at.Add(-healthLookback), To: at, Aggregation: aggregation, Window: window}
 	if exact {
 		q.EntityIDs = ids
 	}
-	resolved, err := query.ResolveMetricQuery(q, now)
+	resolved, err := query.ResolveMetricQuery(q, at)
 	if err != nil {
 		return healthSampleResult{quality: healthQualityUnavailable, err: err}
 	}

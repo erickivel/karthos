@@ -68,6 +68,11 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 		return nil, fmt.Errorf("unmarshal ResourceMetrics: %w", err)
 	}
 
+	resolver := n.resolver
+	if factory, ok := resolver.(envelopeResolverFactory); ok {
+		resolver = factory.ForEnvelope()
+	}
+
 	var samples []metrics.MetricSample
 
 	for _, sm := range rm.ScopeMetrics {
@@ -92,7 +97,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 					if plan.Unit == "" {
 						plan.Unit = definition.StoredUnit
 					}
-					if err := applySourceNormalization(ctx, n.modules, n.resolver, &plan); err != nil {
+					if err := applySourceNormalization(ctx, n.modules, resolver, &plan); err != nil {
 						return nil, fmt.Errorf("apply %s source module: %w", plan.Source, err)
 					}
 					if plan.Skip || plan.MetricName == "" {
@@ -148,7 +153,7 @@ func (n *OTLPNormalizer) Normalize(ctx context.Context, envelope schema.RawEnvel
 				if plan.Unit == "" {
 					plan.Unit = definition.StoredUnit
 				}
-				if err := applySourceNormalization(ctx, n.modules, n.resolver, &plan); err != nil {
+				if err := applySourceNormalization(ctx, n.modules, resolver, &plan); err != nil {
 					return nil, fmt.Errorf("apply %s source module: %w", plan.Source, err)
 				}
 				if plan.Skip || plan.MetricName == "" {

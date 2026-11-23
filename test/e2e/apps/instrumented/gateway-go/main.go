@@ -174,7 +174,7 @@ func callDownstream(ctx context.Context, serviceName, url string) downstreamResp
 	spanCtx, span := tracer.Start(ctx, "call-"+serviceName,
 		trace.WithSpanKind(trace.SpanKindClient),
 	)
-	span.SetAttributes(attribute.String("peer.service", serviceName))
+	span.SetAttributes(attribute.String("peer.service", serviceName), attribute.String("server_namespace", envOrDefault("DESTINATION_NAMESPACE", "karthos-demo")))
 	defer span.End()
 
 	req, err := http.NewRequestWithContext(spanCtx, http.MethodGet, url, nil) //nolint:gosec // test application request path

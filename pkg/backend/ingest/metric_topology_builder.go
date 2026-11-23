@@ -4,10 +4,15 @@ import (
 	"context"
 	"time"
 
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+	"google.golang.org/protobuf/encoding/protojson"
+
 	"github.com/erickivel/karthos/pkg/core/entities"
 	"github.com/erickivel/karthos/pkg/core/schema"
 	"github.com/erickivel/karthos/pkg/core/semconv"
 	"github.com/erickivel/karthos/pkg/core/topology"
+	"github.com/erickivel/karthos/pkg/sources"
+	"github.com/erickivel/karthos/pkg/sources/contract"
 )
 
 // MetricTopologyBuilder extracts the observed runs_on relation from OTLP metric
@@ -19,6 +24,8 @@ import (
 type MetricTopologyBuilder struct {
 	clusterName  string
 	podLifecycle PodLifecycle
+	sourcePolicy *MetricSourcePolicy
+	modules      sources.Registry
 }
 
 // PodLifecycle decides whether telemetry may refresh a pod's runs_on edge.
@@ -28,14 +35,23 @@ type PodLifecycle interface {
 }
 
 // NewMetricTopologyBuilder creates a MetricTopologyBuilder scoped to the given cluster.
-func NewMetricTopologyBuilder(clusterName string) *MetricTopologyBuilder {
-	return &MetricTopologyBuilder{clusterName: clusterName}
+func NewMetricTopologyBuilder(clusterName string, policy ...*MetricSourcePolicy) *MetricTopologyBuilder {
+	return newMetricTopologyBuilder(clusterName, nil, policy...)
 }
 
 // NewMetricTopologyBuilderWithLifecycle creates a builder that validates
 // runs_on edges against live Kubernetes pod lifecycle state.
-func NewMetricTopologyBuilderWithLifecycle(clusterName string, podLifecycle PodLifecycle) *MetricTopologyBuilder {
-	return &MetricTopologyBuilder{clusterName: clusterName, podLifecycle: podLifecycle}
+func NewMetricTopologyBuilderWithLifecycle(clusterName string, podLifecycle PodLifecycle, policy ...*MetricSourcePolicy) *MetricTopologyBuilder {
+	return newMetricTopologyBuilder(clusterName, podLifecycle, policy...)
+}
+
+func newMetricTopologyBuilder(clusterName string, lifecycle PodLifecycle, policies ...*MetricSourcePolicy) *MetricTopologyBuilder {
+	modules := sources.DefaultRegistry()
+	selected := NewMetricSourcePolicy(modules.MetricIDs(), nil)
+	if len(policies) > 0 && policies[0] != nil {
+		selected = policies[0]
+	}
+	return &MetricTopologyBuilder{clusterName: clusterName, podLifecycle: lifecycle, sourcePolicy: selected, modules: modules}
 }
 
 // Build derives structural topology edges from the envelope's resource attribute map.
@@ -67,8 +83,54 @@ func (b *MetricTopologyBuilder) Build(_ context.Context, envelope schema.RawEnve
 				"k8s.pod.uid":      podUID,
 			}
 		}
-		e.Provenance = []string{envelope.Source}
-		edges = append(edges, e)
+		// Resource stamps are accepted for direct producers. Collector-generated
+		// stamps live on datapoints, so inspect those independently below.
+		if source := res[semconv.AttrKarthosSource]; source != "" {
+			if module, ok := b.modules.Lookup(source); ok && module.MetricSource {
+				e.Provenance = []string{source}
+				edges = append(edges, e)
+			}
+		}
+		var rm metricspb.ResourceMetrics
+		if len(envelope.Payload) > 0 {
+			if err := protojson.Unmarshal(envelope.Payload, &rm); err != nil {
+				return nil, err
+			}
+		}
+		bySource := map[string]topology.Edge{}
+		for _, scope := range rm.ScopeMetrics {
+			for _, metric := range scope.Metrics {
+				for _, dp := range metricAttributeSets(metric) {
+					if dp.TimeUnixNano == 0 {
+						continue
+					}
+					attrs := dp.Attributes
+					parsed, ok := b.modules.ParseMetric(sourceFromAttrs(attrs), metric.Name, contract.AttributeStrings(attrs))
+					if !ok || !b.sourcePolicy.Validate(parsed.CanonicalName, attrs).Accepted() {
+						continue
+					}
+					source := sourceFromAttrs(attrs)
+					observed := time.Unix(0, int64(dp.TimeUnixNano)).UTC() // #nosec G115 -- OTLP nanoseconds fit until year 2262
+					current, exists := bySource[source]
+					if !exists {
+						current = e
+						current.Provenance = []string{source}
+						current.FirstSeen = observed
+						current.LastSeen = observed
+					}
+					if observed.Before(current.FirstSeen) {
+						current.FirstSeen = observed
+					}
+					if observed.After(current.LastSeen) {
+						current.LastSeen = observed
+					}
+					bySource[source] = current
+				}
+			}
+		}
+		for _, observed := range bySource {
+			edges = append(edges, observed)
+		}
 	}
 
 	return edges, nil

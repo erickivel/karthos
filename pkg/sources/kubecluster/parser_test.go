@@ -40,6 +40,9 @@ func TestParseCoversCatalogKubeClusterMetrics(t *testing.T) {
 		"k8s.container.cpu.limit":      "k8s.container.cpu_limit",
 		"k8s.container.memory.request": "k8s.container.memory_request",
 		"k8s.container.memory.limit":   "k8s.container.memory_limit",
+		"k8s.container.restart.count":  "k8s.container.restarts",
+		"k8s.pod.status.phase":         "k8s.pod.phase",
+		"k8s.pod.status.reason":        "k8s.pod.status_reason",
 	}
 	for _, metric := range metrics.DefaultCatalog() {
 		hasKubeCluster := false
@@ -56,7 +59,8 @@ func TestParseCoversCatalogKubeClusterMetrics(t *testing.T) {
 		if mapped, ok := rawForCanonical[metric.Name]; ok {
 			raw = mapped
 		}
-		_, ok := Parse(raw, nil)
+		parsed, ok := Parse(raw, nil)
 		require.Truef(t, ok, "catalog metric %q needs a supported source parser path", metric.Name)
+		require.Equal(t, metric.Name, parsed.CanonicalName)
 	}
 }

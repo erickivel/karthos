@@ -45,6 +45,13 @@ func TestRenderedChartUsesHelmReleaseIdentityAndRequiredCollectionPlane(t *testi
 	}
 }
 
+func TestRenderedChartDefaultsToBundledDatabases(t *testing.T) {
+	rendered := renderChart(t, "karthos", "karthos-system", "default-storage")
+	require.Contains(t, rendered, "name: KARTHOS_STORAGE_BACKEND\n              value: \"external\"")
+	require.Contains(t, rendered, "karthos-victoria-metrics-single-server:8428")
+	require.Contains(t, rendered, "name: karthos-postgresql")
+}
+
 func TestRenderedChartUsesTypedFrontendImageOverride(t *testing.T) {
 	rendered := renderChartWithRuntime(t, "karthos", "karthos-system", "frontend-test", configgen.RuntimeSettings{
 		FrontendImage: configgen.ImageValues{Repository: "registry.example/karthos-frontend", Tag: "e2e", PullPolicy: "Always"},

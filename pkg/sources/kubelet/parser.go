@@ -10,12 +10,7 @@ func Parse(rawMetricName string, _ map[string]string) (contract.ParsedMetric, bo
 		}
 		canonical = rawMetricName
 	}
-	factor := 1.0
-	switch canonical {
-	case "k8s.pod.cpu.usage", "k8s.node.cpu.usage", "k8s.container.cpu.usage":
-		factor = 1000.0
-	}
-	return contract.ParsedMetric{CanonicalName: canonical, ConversionFactor: factor}, true
+	return contract.ParsedMetric{CanonicalName: canonical, ConversionFactor: 1}, true
 }
 
 var nativeMetricNames = map[string]struct{}{
@@ -23,11 +18,6 @@ var nativeMetricNames = map[string]struct{}{
 	"k8s.pod.memory.working_set":  {},
 	"k8s.node.cpu.usage":          {},
 	"k8s.node.memory.working_set": {},
-	"k8s.container.cpu.usage":     {},
-	"k8s.container.memory.usage":  {},
-	"k8s.volume.available":        {},
-	"k8s.volume.capacity":         {},
-	"k8s.volume.inodes.free":      {},
-	"k8s.volume.inodes.used":      {},
-	"k8s.volume.inodes":           {},
+	"container.cpu.usage":         {},
+	"container.memory.usage":      {},
 }

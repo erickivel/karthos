@@ -4,7 +4,7 @@ import { applicableMetrics, isMetricApplicableToKind, visibleCategoriesForSelect
 
 function metric(partial: Partial<CanonicalMetric>): CanonicalMetric {
   return {
-    name: 'k8s.pod.cpu.usage', display_name: 'Pod CPU', unit: 'millicores',
+    name: 'k8s.pod.cpu.usage', display_name: 'Pod CPU', unit: 'cores',
     category: 'resource', scopes: ['entity'], description: 'CPU usage',
     applies_to: ['pod'], sources: [{ id: 'kubelet', priority: 1 }], ...partial,
   }

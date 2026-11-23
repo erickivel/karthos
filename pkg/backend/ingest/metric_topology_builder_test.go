@@ -14,6 +14,16 @@ import (
 )
 
 func makeMetricEnvelope(source string, resource map[string]string) schema.RawEnvelope {
+	if resource != nil {
+		copy := make(map[string]string, len(resource)+1)
+		for key, value := range resource {
+			copy[key] = value
+		}
+		if copy["karthos.source"] == "" && source == "kubeletstats" {
+			copy["karthos.source"] = "kubelet"
+		}
+		resource = copy
+	}
 	env, _ := schema.NewRawEnvelope(source, schema.SignalMetric, resource, []byte(`{}`), time.Now().UTC())
 	return env
 }
@@ -24,6 +34,7 @@ func TestMetricTopologyBuilder_PodRunsOnNode(t *testing.T) {
 		"k8s.pod.name":       "my-pod",
 		"k8s.namespace.name": "default",
 		"k8s.node.name":      "my-node",
+		"karthos.source":     "kubelet",
 	})
 
 	edges, err := b.Build(context.Background(), env)
@@ -43,7 +54,29 @@ func TestMetricTopologyBuilder_PodRunsOnNode(t *testing.T) {
 	assert.Equal(t, expectedPodID, runsOn.Source)
 	assert.Equal(t, expectedNodeID, runsOn.Target)
 	assert.Equal(t, float64(1.0), runsOn.Confidence)
-	assert.Equal(t, []string{"kubeletstats"}, runsOn.Provenance)
+	assert.Equal(t, []string{"kubelet"}, runsOn.Provenance)
+}
+
+func TestMetricTopologyBuilderUsesStampedSource(t *testing.T) {
+	b := NewMetricTopologyBuilder(testCluster)
+	env := makeMetricEnvelope("otlp/grpc", map[string]string{
+		"k8s.pod.name": "pod", "k8s.namespace.name": "default", "k8s.node.name": "node", "karthos.source": "kubelet",
+	})
+	edges, err := b.Build(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, []string{"kubelet"}, edges[0].Provenance)
+}
+
+func TestMetricTopologyBuilderUsesDatapointSourceStamp(t *testing.T) {
+	at := time.Date(2026, 11, 8, 15, 0, 0, 0, time.UTC)
+	env := makeCallsMetricEnvelope(t, "k8s.pod.cpu.usage", at, at, map[string]string{"karthos.source": "kubelet"})
+	env.Resource = map[string]string{"k8s.pod.name": "pod", "k8s.namespace.name": "default", "k8s.node.name": "node"}
+	edges, err := NewMetricTopologyBuilder(testCluster).Build(context.Background(), env)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, []string{"kubelet"}, edges[0].Provenance)
+	require.Equal(t, at, edges[0].LastSeen)
 }
 
 type testPodLifecycle struct {
@@ -130,6 +163,7 @@ func TestBufferedTopologyIngestor_RetiredUIDCannotAdvanceRunsOnLastSeen(t *testi
 		"k8s.pod.uid":        "retired-uid",
 		"k8s.namespace.name": "default",
 		"k8s.node.name":      "my-node",
+		"karthos.source":     "kubelet",
 	}
 	first, err := schema.NewRawEnvelope("kubeletstats", schema.SignalMetric, resource, []byte(`{}`), baseline)
 	require.NoError(t, err)
@@ -206,6 +240,7 @@ func TestMetricTopologyBuilder_ZeroTimestamp_UsesCurrentTime(t *testing.T) {
 			"k8s.pod.name":       "my-pod",
 			"k8s.namespace.name": "default",
 			"k8s.node.name":      "my-node",
+			"karthos.source":     "kubelet",
 		},
 	}
 

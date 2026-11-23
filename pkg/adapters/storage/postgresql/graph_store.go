@@ -28,7 +28,7 @@ const edgeUpsertSQL = `INSERT INTO topology_edges (id, source, target, relation,
 	   END`
 
 const (
-	graphSnapshotRetention          = 24 * time.Hour
+	graphSnapshotRetention          = topology.HistoryRetention
 	graphObservationFreshnessWindow = 5 * time.Minute
 )
 
@@ -110,11 +110,45 @@ func (s *PostgresGraphStore) PutObservedEdges(ctx context.Context, edges []topol
 		); err != nil {
 			return fmt.Errorf("pg graph upsert observed edge: %w", err)
 		}
+		if _, err := tx.Exec(ctx, `INSERT INTO topology_edge_observations (edge_id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			edge.ID, string(edge.Source), string(edge.Target), string(edge.Relation), edge.Confidence, postgresProvenance(edge.Provenance), edge.FirstSeen, edge.LastSeen, metadataJSON); err != nil {
+			return fmt.Errorf("pg graph insert edge observation: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pg graph commit observation write: %w", err)
 	}
 	return nil
+}
+
+func (s *PostgresGraphStore) ObservedEdgesInWindow(ctx context.Context, from, to time.Time, sourceID string) ([]topology.Edge, error) {
+	statement := `SELECT edge_id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata FROM topology_edge_observations WHERE first_seen <= $1 AND last_seen >= $2`
+	args := []any{to, from}
+	if sourceID != "" {
+		statement += ` AND $3 = ANY(provenance)`
+		args = append(args, sourceID)
+	}
+	statement += ` ORDER BY first_seen, id`
+	rows, err := s.conn.pool.Query(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("pg graph query edge observations: %w", err)
+	}
+	defer rows.Close()
+	var result []topology.Edge
+	for rows.Next() {
+		var edge topology.Edge
+		if err := rows.Scan(&edge.ID, &edge.Source, &edge.Target, &edge.Relation, &edge.Confidence, &edge.Provenance, &edge.FirstSeen, &edge.LastSeen, &edge.Metadata); err != nil {
+			return nil, fmt.Errorf("pg graph scan edge observation: %w", err)
+		}
+		if sourceID != "" {
+			edge.Provenance = []string{sourceID}
+		}
+		result = append(result, edge)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pg graph iterate edge observations: %w", err)
+	}
+	return result, nil
 }
 
 func (s *PostgresGraphStore) putSnapshot(ctx context.Context, snapshot topology.Snapshot, scope string) (int64, error) {
@@ -146,10 +180,10 @@ func (s *PostgresGraphStore) putSnapshot(ctx context.Context, snapshot topology.
 			return 0, fmt.Errorf("pg graph marshal node labels: %w", err)
 		}
 		_, err = tx.Exec(ctx,
-			`INSERT INTO topology_nodes (snapshot_id, entity_id, kind, labels)
-			 VALUES ($1, $2, $3, $4)
+			`INSERT INTO topology_nodes (snapshot_id, entity_id, kind, labels, provenance, first_seen, last_seen)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 ON CONFLICT (snapshot_id, entity_id) DO NOTHING`,
-			snapshotID, string(n.ID), string(n.Kind), labelsJSON,
+			snapshotID, string(n.ID), string(n.Kind), labelsJSON, postgresProvenance(n.Provenance), nullableTime(n.FirstSeen), nullableTime(n.LastSeen),
 		)
 		if err != nil {
 			return 0, fmt.Errorf("pg graph insert node: %w", err)
@@ -179,6 +213,13 @@ func (s *PostgresGraphStore) putSnapshot(ctx context.Context, snapshot topology.
 	return snapshotID, nil
 }
 
+func nullableTime(at time.Time) any {
+	if at.IsZero() {
+		return nil
+	}
+	return at
+}
+
 func postgresProvenance(provenance []string) []string {
 	if provenance == nil {
 		return []string{}
@@ -203,6 +244,19 @@ func (s *PostgresGraphStore) Materialize(ctx context.Context, at time.Time) (*to
 	if err := s.loadStructuralNodes(ctx, structuralID, nodesByID); err != nil {
 		return nil, err
 	}
+	previous, err := s.GetLatest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if previous != nil {
+		for _, node := range previous.Graph.Nodes {
+			current, ok := nodesByID[string(node.ID)]
+			if ok && !node.FirstSeen.IsZero() && (current.FirstSeen.IsZero() || node.FirstSeen.Before(current.FirstSeen)) {
+				current.FirstSeen = node.FirstSeen
+				nodesByID[string(node.ID)] = current
+			}
+		}
+	}
 
 	edgesByID := make(map[string]topology.Edge)
 	if err := s.loadEdges(ctx,
@@ -211,15 +265,24 @@ func (s *PostgresGraphStore) Materialize(ctx context.Context, at time.Time) (*to
 		[]any{structuralID}, edgesByID); err != nil {
 		return nil, err
 	}
+	if previous != nil {
+		for _, prior := range previous.Graph.Edges {
+			current, ok := edgesByID[prior.ID]
+			if ok && prior.FirstSeen.Before(current.FirstSeen) {
+				current.FirstSeen = prior.FirstSeen
+				edgesByID[prior.ID] = current
+			}
+		}
+	}
 	observed := make(map[string]topology.Edge)
 	if err := s.loadEdges(ctx,
 		`SELECT id, source, target, relation, confidence, provenance, first_seen, last_seen, metadata
 		 FROM topology_edges
 		 WHERE relation IN ('runs_on', 'calls')
-		   AND last_seen >= $1
+		   AND last_seen BETWEEN $1 AND $2
 		   AND (relation <> 'runs_on' OR (
 		     NOT (metadata ? 'retired_at') AND
-		     (NOT (metadata ? 'terminal_deadline') OR (metadata->>'terminal_deadline')::timestamptz > $2)
+			 (NOT (metadata ? 'terminal_deadline') OR (metadata->>'terminal_deadline')::timestamptz > $2)
 		   ))`,
 		[]any{at.Add(-graphObservationFreshnessWindow), at}, observed); err != nil {
 		return nil, err
@@ -245,8 +308,7 @@ func (s *PostgresGraphStore) Materialize(ctx context.Context, at time.Time) (*to
 	}
 	sort.Slice(snap.Graph.Edges, func(i, j int) bool { return snap.Graph.Edges[i].ID < snap.Graph.Edges[j].ID })
 	snap.CreatedAt = at.UTC()
-	snap.From = snap.CreatedAt
-	snap.To = snap.CreatedAt
+	topology.SetObservationInterval(&snap)
 	applySnapshotTimestamp(&snap)
 	id, err := s.putSnapshot(ctx, snap, "materialized")
 	if err != nil {
@@ -275,6 +337,7 @@ func (s *PostgresGraphStore) getMaterialized(ctx context.Context, at time.Time) 
 		return nil, err
 	}
 	snapshot.ID = snapshotID
+	snapshot.ObservedAt = snapshot.CreatedAt
 	nodes := make(map[string]topology.Node)
 	if err := s.loadStructuralNodes(ctx, snapshotID, nodes); err != nil {
 		return nil, err
@@ -305,6 +368,21 @@ func (s *PostgresGraphStore) pruneMaterializedSnapshots(ctx context.Context, bef
 		return fmt.Errorf("pg graph begin materialized snapshot prune: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `DELETE FROM topology_edge_observations WHERE last_seen < $1`, before); err != nil {
+		return fmt.Errorf("pg graph delete old edge observations: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM topology_edges WHERE last_seen < $1`, before); err != nil {
+		return fmt.Errorf("pg graph delete old current edges: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM topology_snapshot_edges WHERE snapshot_id IN (SELECT id FROM topology_snapshots WHERE scope = 'structural' AND created_at < $1 AND id <> (SELECT id FROM topology_snapshots WHERE scope = 'structural' ORDER BY created_at DESC, id DESC LIMIT 1))`, before); err != nil {
+		return fmt.Errorf("pg graph delete old structural edges: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM topology_nodes WHERE snapshot_id IN (SELECT id FROM topology_snapshots WHERE scope = 'structural' AND created_at < $1 AND id <> (SELECT id FROM topology_snapshots WHERE scope = 'structural' ORDER BY created_at DESC, id DESC LIMIT 1))`, before); err != nil {
+		return fmt.Errorf("pg graph delete old structural nodes: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM topology_snapshots WHERE scope = 'structural' AND created_at < $1 AND id <> (SELECT id FROM topology_snapshots WHERE scope = 'structural' ORDER BY created_at DESC, id DESC LIMIT 1)`, before); err != nil {
+		return fmt.Errorf("pg graph delete old structural snapshots: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM topology_snapshot_edges WHERE snapshot_id IN (SELECT id FROM topology_snapshots WHERE scope = 'materialized' AND created_at < $1)`, before); err != nil {
 		return fmt.Errorf("pg graph delete materialized edges: %w", err)
 	}
@@ -348,7 +426,7 @@ func (s *PostgresGraphStore) latestSnapshotAt(ctx context.Context, scope string,
 
 func (s *PostgresGraphStore) loadStructuralNodes(ctx context.Context, snapshotID int64, nodes map[string]topology.Node) error {
 	rows, err := s.conn.pool.Query(ctx,
-		`SELECT entity_id, kind, labels FROM topology_nodes WHERE snapshot_id = $1`, snapshotID)
+		`SELECT entity_id, kind, labels, provenance, first_seen, last_seen FROM topology_nodes WHERE snapshot_id = $1`, snapshotID)
 	if err != nil {
 		return fmt.Errorf("pg graph get structural nodes: %w", err)
 	}
@@ -364,8 +442,15 @@ func scanNodes(rows pgx.Rows, nodes map[string]topology.Node) error {
 		var node topology.Node
 		var id, kind string
 		var labelsJSON []byte
-		if err := rows.Scan(&id, &kind, &labelsJSON); err != nil {
+		var firstSeen, lastSeen *time.Time
+		if err := rows.Scan(&id, &kind, &labelsJSON, &node.Provenance, &firstSeen, &lastSeen); err != nil {
 			return fmt.Errorf("pg graph scan node: %w", err)
+		}
+		if firstSeen != nil {
+			node.FirstSeen = *firstSeen
+		}
+		if lastSeen != nil {
+			node.LastSeen = *lastSeen
 		}
 		node.ID = entities.EntityID(id)
 		node.Kind = entities.EntityKind(kind)

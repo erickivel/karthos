@@ -20,6 +20,7 @@ import (
 	"github.com/erickivel/karthos/pkg/backend/query"
 	"github.com/erickivel/karthos/pkg/core/entities"
 	"github.com/erickivel/karthos/pkg/core/metrics"
+	"github.com/erickivel/karthos/pkg/sources"
 )
 
 // VMMetricStore implements persistence.MetricStore using VictoriaMetrics HTTP API.
@@ -128,6 +129,12 @@ func (s *VMMetricStore) Query(ctx context.Context, q query.MetricQuery) ([]metri
 
 	for i := range samples {
 		samples[i].MetricName = q.MetricName
+		for _, view := range sources.DefaultRegistry().QueryViews(q.MetricName) {
+			if view.SourceID == samples[i].Labels["source"] {
+				metadata := view.Derivation
+				samples[i].Derivation = &metadata
+			}
+		}
 	}
 
 	return samples, nil
@@ -285,6 +292,20 @@ func (s *VMMetricStore) QueryCatalogStats(ctx context.Context, lookback time.Dur
 		}
 	}
 
+	// Derived view availability follows classified input series, never legacy
+	// materialized view counters. Evaluate freshness over that same input.
+	for _, definition := range metrics.DefaultCatalog() {
+		for _, view := range sources.DefaultRegistry().QueryViews(definition.Name) {
+			if view.InputMetric == view.MetricName {
+				continue
+			}
+			count, lastSeen, err := s.queryViewStats(ctx, view, lookback)
+			if err != nil {
+				return nil, err
+			}
+			buckets[key{metric: view.MetricName, source: view.SourceID}] = &agg{count: count, lastSeen: lastSeen}
+		}
+	}
 	grouped := map[string][]persistence.SourceStat{}
 	for k, b := range buckets {
 		grouped[k.metric] = append(grouped[k.metric], persistence.SourceStat{
@@ -444,35 +465,35 @@ func escapeLabelValue(v string) string {
 }
 
 // buildPromQL constructs a PromQL selector from a MetricQuery.
-func buildPromQL(q query.MetricQuery) string {
+func buildBasePromQL(q query.MetricQuery, matchers ...string) string {
 	if q.MetricName == "" {
 		return ""
 	}
 
 	q = resolveQueryDefaults(q)
 	if metrics.IsWindowedMeanMetric(q.MetricName) {
-		sumIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_sum"))
-		countIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_count"))
-		return withFreshness(q, fmt.Sprintf("%s / ignoring(%s) (%s > 0)", sumIncrease, storedUnitLabel, countIncrease))
+		sumIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_sum"), matchers...)
+		countIncrease := exactWindowIncrease(withMetricName(q, q.MetricName+"_count"), matchers...)
+		return withFreshness(q, fmt.Sprintf("%s / ignoring(%s) (%s > 0)", sumIncrease, storedUnitLabel, countIncrease), matchers...)
 	}
 
-	selector := metricSelector(q)
+	selector := metricSelectorWithMatchers(q, matchers...)
 	if metric, ok := metrics.CatalogByName()[q.MetricName]; ok && metric.Instrument == metrics.InstrumentCounter {
 		switch q.Aggregation {
 		case metrics.AggregationLatest:
-			return withFreshness(q, selector)
+			return withFreshness(q, selector, matchers...)
 		case metrics.AggregationIncrease:
-			return withFreshness(q, exactWindowIncrease(q))
+			return withFreshness(q, exactWindowIncrease(q, matchers...), matchers...)
 		case metrics.AggregationWindowRate:
-			return withFreshness(q, fmt.Sprintf("(%s / %d)", exactWindowIncrease(q), int64(q.Window.Seconds())))
+			return withFreshness(q, fmt.Sprintf("(%s / %d)", exactWindowIncrease(q, matchers...), int64(q.Window.Seconds())), matchers...)
 		case metrics.AggregationActiveRate:
-			return withFreshness(q, activeCounterRate(q))
+			return withFreshness(q, activeCounterRate(q, matchers...), matchers...)
 		}
 	}
-	return withFreshness(q, selector)
+	return withFreshness(q, selector, matchers...)
 }
 
-func withFreshness(q query.MetricQuery, expression string) string {
+func withFreshness(q query.MetricQuery, expression string, matchers ...string) string {
 	if q.MaxSampleAge <= 0 {
 		return expression
 	}
@@ -480,22 +501,21 @@ func withFreshness(q query.MetricQuery, expression string) string {
 	if metrics.IsWindowedMeanMetric(q.MetricName) {
 		matching = fmt.Sprintf(" ignoring(%s)", storedUnitLabel)
 	}
-	return fmt.Sprintf("(%s) and%s last_over_time(%s[%s])", expression, matching, freshnessSelector(q), durationExpr(q.MaxSampleAge))
+	return fmt.Sprintf("(%s) and%s last_over_time(%s[%s])", expression, matching, freshnessSelector(q, matchers...), durationExpr(q.MaxSampleAge))
 }
 
-func freshnessSelector(q query.MetricQuery) string {
+func freshnessSelector(q query.MetricQuery, matchers ...string) string {
 	if metrics.IsWindowedMeanMetric(q.MetricName) {
-		return metricSelector(withMetricName(q, q.MetricName+"_count"))
+		return metricSelectorWithMatchers(withMetricName(q, q.MetricName+"_count"), matchers...)
 	}
-	return metricSelector(q)
-}
-
-func metricSelector(q query.MetricQuery) string {
-	return metricSelectorWithMatchers(q)
+	return metricSelectorWithMatchers(q, matchers...)
 }
 
 func metricSelectorWithMatchers(q query.MetricQuery, extraMatchers ...string) string {
 	var matchers []string
+	if q.Source != "" {
+		matchers = append(matchers, `source="`+escapeLabelValue(q.Source)+`"`)
+	}
 	if len(q.EntityIDs) > 0 {
 		ids := make([]string, 0, len(q.EntityIDs))
 		for _, id := range q.EntityIDs {
@@ -531,18 +551,18 @@ func resolveQueryDefaults(q query.MetricQuery) query.MetricQuery {
 	return q
 }
 
-func exactWindowIncrease(q query.MetricQuery) string {
+func exactWindowIncrease(q query.MetricQuery, matchers ...string) string {
 	window := durationExpr(q.Window)
 	historyWindow := durationExpr(2 * q.Window)
-	cumulative := metricSelectorWithMatchers(q, `temporality!="delta"`)
-	delta := metricSelectorWithMatchers(q, `temporality="delta"`)
+	cumulative := metricSelectorWithMatchers(q, append(matchers, `temporality!="delta"`)...)
+	delta := metricSelectorWithMatchers(q, append(matchers, `temporality="delta"`)...)
 	gate := fmt.Sprintf("(count_over_time(%s[%s]) >= 2) and ((tlast_over_time(%s[%s]) - tfirst_over_time(%s[%s])) >= %d)", cumulative, window, cumulative, historyWindow, cumulative, historyWindow, int64(q.Window.Seconds()))
 	return fmt.Sprintf("((increase(%s[%s]) and %s) or sum_over_time(%s[%s]))", cumulative, window, gate, delta, window)
 }
 
-func activeCounterRate(q query.MetricQuery) string {
+func activeCounterRate(q query.MetricQuery, matchers ...string) string {
 	window := durationExpr(q.Window)
-	cumulative := metricSelectorWithMatchers(q, `temporality!="delta"`)
+	cumulative := metricSelectorWithMatchers(q, append(matchers, `temporality!="delta"`)...)
 	return fmt.Sprintf("(rate(%s[%s]) and (count_over_time(%s[%s]) >= 2))", cumulative, window, cumulative, window)
 }
 

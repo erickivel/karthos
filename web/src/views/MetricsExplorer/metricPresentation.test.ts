@@ -11,7 +11,7 @@ describe('service metric presentation', () => {
       title: 'Memory limit',
       meaning: 'Maximum memory Kubernetes allows this Container to use.',
     })
-    expect(metricPresentation({ canonicalName: 'k8s.container.restarts', scope: 'entity' })).toMatchObject({
+    expect(metricPresentation({ canonicalName: 'k8s.container.restart.count', scope: 'entity' })).toMatchObject({
       title: 'Restart count',
       meaning: 'Cumulative number of times Kubernetes restarted this Container.',
     })

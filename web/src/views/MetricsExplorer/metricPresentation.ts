@@ -117,7 +117,7 @@ const POD_PRESENTATION: Record<string, Pick<MetricPresentation, 'title' | 'meani
 }
 
 const CONTAINER_PRESENTATION: Record<string, Pick<MetricPresentation, 'title' | 'meaning'>> = {
-  'k8s.container.cpu.usage': {
+  'container.cpu.usage': {
     title: 'CPU used',
     meaning: 'Direct CPU use for this Container, reported by kubelet.',
   },
@@ -129,7 +129,7 @@ const CONTAINER_PRESENTATION: Record<string, Pick<MetricPresentation, 'title' | 
     title: 'CPU limit',
     meaning: 'Maximum CPU Kubernetes allows this Container to use.',
   },
-  'k8s.container.memory.usage': {
+  'container.memory.usage': {
     title: 'Working memory',
     meaning: 'Memory currently used by this Container, reported by kubelet.',
   },
@@ -145,7 +145,7 @@ const CONTAINER_PRESENTATION: Record<string, Pick<MetricPresentation, 'title' | 
     title: 'Container readiness',
     meaning: 'The direct readiness signal reported by Kubernetes for this Container.',
   },
-  'k8s.container.restarts': {
+  'k8s.container.restart.count': {
     title: 'Restart count',
     meaning: 'Cumulative number of times Kubernetes restarted this Container.',
   },

@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,7 +107,8 @@ func (b *BufferedTopologyIngestor) Flush() {
 
 func (b *BufferedTopologyIngestor) mergeLocked(edges []topology.Edge) {
 	for _, edge := range edges {
-		if existing, ok := b.edges[edge.ID]; ok {
+		key := edge.ID + "\x00" + strings.Join(edge.Provenance, "\x00")
+		if existing, ok := b.edges[key]; ok {
 			if existing.FirstSeen.IsZero() || (!edge.FirstSeen.IsZero() && edge.FirstSeen.Before(existing.FirstSeen)) {
 				existing.FirstSeen = edge.FirstSeen
 			}
@@ -118,10 +120,10 @@ func (b *BufferedTopologyIngestor) mergeLocked(edges []topology.Edge) {
 				existing.Metadata = mergeStringMaps(edge.Metadata, existing.Metadata)
 			}
 			existing.Provenance = mergeStringSlices(existing.Provenance, edge.Provenance)
-			b.edges[edge.ID] = existing
+			b.edges[key] = existing
 			continue
 		}
-		b.edges[edge.ID] = edge
+		b.edges[key] = edge
 	}
 	b.dirty = true
 }

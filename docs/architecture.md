@@ -139,7 +139,7 @@ maintain only current observed edges. After the initial refresh and every
 graph snapshot: the newest structure provides all nodes and structural edges;
 only active observed `runs_on`/`calls` edges seen in the preceding five minutes
 survive, and both endpoints must be structural members. The API reads only
-these materialized snapshots, which are retained for 24 hours and addressed by
+these materialized snapshots, which are retained for seven days and addressed by
 their ID or `?at=<RFC3339>` selection. An object omitted by the next refresh is
 absent from the next materialization without rewriting earlier history.
 
@@ -157,8 +157,8 @@ Store interfaces (`pkg/backend/persistence/`):
 `pkg/adapters/storage/factory.go` returns `Stores` based on
 `StorageConfig.Backend`:
 
-- `memory` (default) — in-memory implementations, no external deps
-- `external` — PostgreSQL (graph, metadata, entities) + VictoriaMetrics (metrics)
+- `memory` — in-memory implementations for explicit local use
+- `external` (default) — PostgreSQL (graph, metadata, entities) + VictoriaMetrics (metrics)
 
 PostgreSQL uses `pgx/v5`; schema migrations run on startup via
 `CREATE TABLE IF NOT EXISTS`. The structural-snapshot model requires a fresh
@@ -171,7 +171,7 @@ Backend storage flags:
 
 | Flag | Env Var | Default |
 |------|---------|---------|
-| `--storage-backend` | `KARTHOS_STORAGE_BACKEND` | `memory` |
+| `--storage-backend` | `KARTHOS_STORAGE_BACKEND` | `external` |
 | `--postgres-dsn` | `KARTHOS_POSTGRES_DSN` | `""` |
 | `--victoriametrics-url` | `KARTHOS_VICTORIAMETRICS_URL` | `""` |
 | `--topology-flush-interval` | `KARTHOS_TOPOLOGY_FLUSH_INTERVAL` | `60s` |
@@ -290,3 +290,15 @@ structured self-telemetry policy. Use `kubectl logs` for both paths.
 3. Let discovery decide what to collect, not how Kubernetes YAML is shaped.
 4. Keep technology-specific adapters isolated from domain packages.
 5. Remove stale deployment paths and outdated docs when replacing them.
+
+### Source-owned query views
+
+Compiled source modules may register small typed query views alongside normalization. A view declares its input metric, semantic series predicates, zero-valued classified branches and interpretation metadata. The storage adapter renders this provider-neutral definition; shared storage does not contain Istio classification policy. For error metrics this preserves observed status counters as the foundation while exposing compatible derived queries.
+
+```mermaid
+flowchart LR
+  Source[Source module predicates] --> Registry[Static source registry]
+  Raw[Canonical status counters] --> Adapter[Storage query renderer]
+  Registry --> Adapter
+  Adapter --> API[API samples and derivation metadata]
+```

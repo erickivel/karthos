@@ -40,8 +40,14 @@ CREATE TABLE IF NOT EXISTS topology_nodes (
     entity_id   TEXT   NOT NULL,
     kind        TEXT   NOT NULL,
     labels      JSONB  NOT NULL DEFAULT '{}',
+    provenance TEXT[] NOT NULL DEFAULT '{}',
+    first_seen TIMESTAMPTZ,
+    last_seen TIMESTAMPTZ,
     PRIMARY KEY (snapshot_id, entity_id)
 );
+ALTER TABLE topology_nodes ADD COLUMN IF NOT EXISTS provenance TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE topology_nodes ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ;
+ALTER TABLE topology_nodes ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ;
 
 -- Structural and materialized graph edges are retained per complete projection.
 -- They are intentionally separate from current telemetry/lifecycle observations.
@@ -77,6 +83,22 @@ CREATE TABLE IF NOT EXISTS topology_edges (
 CREATE INDEX IF NOT EXISTS idx_edges_source ON topology_edges (source);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON topology_edges (target);
 CREATE INDEX IF NOT EXISTS idx_edges_relation ON topology_edges (relation);
+
+-- Each write is a distinct observation. The current-edge table above may
+-- merge disjoint observations and therefore cannot answer a time-window query.
+CREATE TABLE IF NOT EXISTS topology_edge_observations (
+    id BIGSERIAL PRIMARY KEY,
+    edge_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    target TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    confidence DOUBLE PRECISION NOT NULL,
+    provenance TEXT[] NOT NULL DEFAULT '{}',
+    first_seen TIMESTAMPTZ NOT NULL,
+    last_seen TIMESTAMPTZ NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_edge_observations_window ON topology_edge_observations (last_seen, first_seen);
 
 -- Cluster profiles
 CREATE TABLE IF NOT EXISTS cluster_profiles (

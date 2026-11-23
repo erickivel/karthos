@@ -5,10 +5,13 @@ REST API served by the backend on port **8080** (configurable via `--api-listen-
 For local e2e verification, prefer a dedicated local port-forward such as `18081:8080` so the backend API does not collide with the `gateway-go` traffic port-forward on `18080`.
 
 All endpoints return JSON. Success responses use `{"data": ...}`, errors use `{"error": "...", "code": N}`.
+The [OpenAPI description](openapi.yaml) records the current routes and wire shapes.
 
 ## Pagination
 
-All list endpoints support cursor-based pagination:
+The list endpoints below support cursor-based pagination in their snapshot or
+metric query form. Graph edge observation windows return all matching writes
+without a snapshot cursor.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -26,7 +29,8 @@ Paginated responses use a `PaginatedResponse` envelope:
 
 `next_token` is omitted when there are no more pages. `total` always reflects the full (unpaginated) count.
 
-Applies to: `/graph/nodes`, `/graph/edges`, `/entities`, `/metrics`, `/metrics/series`.
+Applies to: `/graph/nodes`, snapshot `/graph/edges`, `/entities`, `/metrics`,
+`/metrics/series`.
 
 ## Status
 
@@ -66,7 +70,7 @@ Response:
 }
 ```
 
-`health_summary` is present whenever a graph snapshot exists. Node health uses `k8s.node.condition.ready`; pod buckets derive directly from `k8s.pod.phase`; entities without a recent sample fall through to `unknown`.
+`health_summary` is present whenever a graph snapshot exists. Node health uses `k8s.node.condition.ready`; pod buckets derive directly from `k8s.pod.status.phase`; entities without a recent sample fall through to `unknown`.
 
 Each branch and the aggregate carry a quality value: `complete`, `partial`, or `unavailable`. A successful metric query remains `complete` even when samples are missing. A failed branch becomes `unavailable`, all applicable current entities in that branch become unknown, and `system_status` becomes `degraded` with a generic branch reason. If no MetricStore is configured, the snapshot still produces an `unavailable` summary populated with current graph entity counts. Graph and capability-profile read failures likewise produce a degraded status with a safe reason while component availability remains unchanged. Detailed store errors are logged but not returned, and these enrichment failures keep HTTP 200.
 
@@ -74,7 +78,7 @@ Snapshot-wide health lookups deliberately omit entity-ID filters, so query size 
 
 The `unknown` bucket can include pod entities that no longer exist in the cluster but have not yet aged out of the entity registry.
 
-Pod bucket keys are `healthy`, `pending`, `succeeded`, `failed`, and `unknown`. Container graph status derives from `k8s.container.ready` plus the five-minute `k8s.container.restarts` rate.
+Pod bucket keys are `healthy`, `pending`, `succeeded`, `failed`, and `unknown`. Container graph status derives from `k8s.container.ready` plus the five-minute `k8s.container.restart.count` rate.
 
 Status values:
 
@@ -134,7 +138,7 @@ The newest complete materialized topology snapshot with expanded summary.
 Every materialization is an immutable point-in-time graph: the direct
 Kubernetes structure is authoritative for membership, and only fresh active
 telemetry/lifecycle edges whose endpoints still exist in that structure are
-included. Materialized snapshots are retained for 24 hours.
+included. Materialized snapshots are retained for seven days.
 
 ```bash
 curl -s http://localhost:18081/api/v1/graph | jq .data.summary
@@ -147,8 +151,9 @@ Response shape:
   "data": {
     "snapshot": {"id": 481, "created_at": "2026-04-02T15:22:12Z"},
     "version": {"major": 1, "minor": 0},
-    "from": "2026-04-02T15:22:12Z",
+    "from": "2026-04-02T14:52:12Z",
     "to": "2026-04-02T15:22:12Z",
+    "observed_at": "2026-04-02T15:22:12Z",
     "created_at": "2026-04-02T15:22:12Z",
     "health_enrichment": {"status": "complete", "pods": "complete", "containers": "complete"},
     "graph": {"timestamp": "...", "nodes": [...], "edges": [...]},
@@ -169,9 +174,12 @@ Response shape:
 ```
 
 Pass `at=<RFC3339 timestamp>` to select the newest retained materialized
-snapshot at or before that instant from the public 24-hour retention window.
+snapshot at or before that instant from the public seven-day retention window.
 It does not reconstruct arbitrary historical graph state. The timestamp cannot
 be in the future.
+`observed_at` is the materialization instant. `from` and `to` bound the
+first and last evidence represented by the graph; nodes and edges expose
+their own `first_seen`, `last_seen`, and source `provenance` where known.
 Returns 400 for an invalid or future `at`, and 404 if no current snapshot (or
 no retained snapshot at the requested time) exists.
 
@@ -207,7 +215,11 @@ Response:
 }
 ```
 
-Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
+Nodes are enriched from the entity registry with `name`, `namespace`, `cluster`. Per-node `status` is `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`. Pod status derives from `k8s.pod.status.phase`; container status derives from `k8s.container.ready` and the five-minute restart rate at the selected graph instant. Other kinds are `"unknown"`. `health_enrichment` reports aggregate, pod, and container query quality. Aggregate runtime health is exposed through `/api/v1/status.health_summary`.
+When no phase metric is available, a Pod uses the phase captured in its
+Kubernetes structural snapshot. Failed and Succeeded Pods remain in snapshots
+while the Kubernetes API still lists them, then remain queryable in retained
+history after deletion.
 
 The `data.snapshot` object identifies the exact graph that produced the page.
 Repeat both `at` and `next_token` when paging a historical result. A cursor
@@ -235,7 +247,7 @@ Response:
       "outbound": [
         {
           "id": "...", "source": "...", "target": "...", "relation": "calls",
-          "confidence": 1.0, "provenance": ["otlp"], "first_seen": "...", "last_seen": "...",
+          "confidence": 1.0, "provenance": ["traces.otlp"], "first_seen": "...", "last_seen": "...",
           "related_node": {"id": "...", "kind": "service", "name": "svc-b", "namespace": "default", "cluster": "karthos-test", "labels": {...}}
         }
       ],
@@ -252,6 +264,16 @@ Returns 404 if node not found.
 List edges from one selected materialized graph with optional filtering and
 pagination. By default this is the latest snapshot; `at` selects the newest
 retained snapshot at or before a requested RFC3339 instant.
+Supplying `from` and `to` instead returns observed edge writes in that
+window, including relations no longer present in the current snapshot.
+`source_id` filters their stamped source. This form returns observation records
+and may repeat one edge ID; it does not accept `at` or a snapshot cursor.
+
+For metric-derived `calls`, `first_seen` and `last_seen` are the earliest and
+latest datapoint timestamps that demonstrated new calls. A repeated cumulative
+value leaves the bounds unchanged. The stored interval may contain gaps
+between observations, and a datapoint timestamp marks when the increment was
+observed. For direct trace evidence, the timestamps come from the spans.
 
 | Param | Type | Description |
 |-------|------|-------------|
@@ -259,6 +281,8 @@ retained snapshot at or before a requested RFC3339 instant.
 | `target` | canonical entity ID | Filter by target entity ID |
 | `relation` | string | Filter by relation type (`calls`, `runs_on`, `contains`, `exposes`, `routes_to`, `uses`, `mounts`) |
 | `at` | RFC3339 timestamp | Select the newest retained snapshot at or before this instant |
+| `from`, `to` | RFC3339 timestamps | Inclusive observation window, at most seven days; supply together |
+| `source_id` | string | Source stamp filter for observation windows, e.g. `mesh.istio` |
 | `page_size` | int | Items per page (default 100) |
 | `next_token` | string | Opaque pagination cursor bound to the selected snapshot |
 
@@ -274,6 +298,8 @@ Response:
 }
 ```
 
+Window response: `{"data":{"from":"...","to":"...","edges":[...],"total":12}}`.
+
 ## Metrics
 
 ### GET /api/v1/metrics
@@ -281,7 +307,7 @@ Response:
 Query metric samples with a mode-aware unit. Sorted by timestamp descending.
 
 Semconv metric names are the API contract. Canonical counter samples use base
-units (`count`, `bytes`, or `nanoseconds`), while rate units are created only by
+units (`count`, `bytes`, or `seconds`), while rate units are created only by
 query aggregation. Cumulative samples retain their running base total and delta
 samples retain their reported interval increment. Every catalog counter declares
 its supported/default aggregation and base/rate units. `latest` is the raw-value
@@ -302,8 +328,8 @@ bounded `http_route` only when the application or collector supplied
 Without that route, the canonical application metric is service-level
 aggregation rather than per-path data.
 
-- `k8s.pod.phase` -> receiver enum translated at the API boundary: `1=pending`, `2=running`, `3=succeeded`, `4=failed`, `5=unknown`.
-- `k8s.pod.status_reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
+- `k8s.pod.status.phase` -> receiver enum translated at the API boundary: `1=pending`, `2=running`, `3=succeeded`, `4=failed`, `5=unknown`.
+- `k8s.pod.status.reason` -> receiver enum translated at the API boundary: `1=evicted`, `2=node_affinity`, `3=node_lost`, `4=shutdown`, `5=unexpected_admission_error`, `6=unknown`. Consumers render `value_label`, never the numeric value.
 - `http.server.request.duration` / `servicegraph.request.duration` -> temporality-aware `<metric>_sum` rate divided by the corresponding `<metric>_count` rate
 
 For enum metrics, consumers use the API `value_label` display field. This API
@@ -349,7 +375,7 @@ Response:
 }
 ```
 
-For `k8s.pod.phase` and `k8s.pod.status_reason`, samples carry a `value_label` translated from the integer value. The phase label reports Kubernetes lifecycle state; graph/status health remains a separate derived view and is not a queryable metric.
+For `k8s.pod.status.phase` and `k8s.pod.status.reason`, samples carry a `value_label` translated from the integer value. The phase label reports Kubernetes lifecycle state; graph/status health remains a separate derived view and is not a queryable metric.
 
 Health composites use `healthy | running_not_ready | restarting | pending | succeeded | failed | unknown`; Pod phases use `pending | running | succeeded | failed | unknown`; pod status reasons use `evicted | node_affinity | node_lost | shutdown | unexpected_admission_error | unknown`. Canonical mappings live in `pkg/core/metrics/health_status.go`. The `value_label` field is omitted on non-enum metrics.
 
@@ -359,9 +385,9 @@ For edge-oriented metrics, samples include an optional `edge` object plus the or
 {
   "metric_name": "servicegraph.request.duration",
   "entity_id": "...",
-  "value": 12000000,
+  "value": 0.012,
   "timestamp": "2026-03-30T10:00:00Z",
-  "unit": "nanoseconds",
+  "unit": "seconds",
   "edge": {
     "source_id": "svc-a-id",
     "target_id": "svc-b-id"
@@ -413,16 +439,16 @@ Response:
     "series": [
       {
         "metric_name": "k8s.pod.cpu.usage",
-        "unit": "millicores",
+        "unit": "cores",
         "category": "resource",
-        "description": "CPU usage in millicores",
+        "description": "CPU usage in cores",
         "samples": [
           {
             "metric_name": "k8s.pod.cpu.usage",
             "entity_id": "...",
-            "value": 250,
+            "value": 0.25,
             "timestamp": "2026-03-30T10:00:00Z",
-            "unit": "millicores",
+            "unit": "cores",
             "labels": {"source": "kubelet"}
           }
         ]
@@ -478,7 +504,7 @@ Response:
 {
   "data": {
     "metrics": [
-      {"name": "k8s.pod.cpu.usage", "unit": "millicores", "category": "resource", "description": "..."}
+      {"name": "k8s.pod.cpu.usage", "unit": "cores", "category": "resource", "description": "..."}
     ],
     "total": 50
   }
@@ -528,7 +554,7 @@ Response:
 {
   "data": {
     "entities": [
-      {"id": "...", "kind": "pod", "cluster": "...", "namespace": "default", "name": "pod-a", "labels": {...}}
+      {"id": "...", "cluster_name": "...", "namespace": "default", "name": "pod-a", "labels": {...}}
     ],
     "total": 42
   }
@@ -549,8 +575,7 @@ Response:
 {
   "data": {
     "id": "...",
-    "kind": "service",
-    "cluster": "karthos-test",
+    "cluster_name": "karthos-test",
     "namespace": "karthos-demo",
     "name": "service-a-python",
     "labels": {"service.name": "service-a-python"}
@@ -576,3 +601,21 @@ When modifying or adding API endpoints, update these files:
 | `deploy/helm/karthos/templates/backend-deployment.yaml` | API port arg and containerPort |
 | `deploy/helm/karthos/templates/backend-service.yaml` | API service port entry |
 | `docs/api-reference.md` | **This file** -- update when endpoints change |
+| `docs/openapi.yaml` | Machine-readable routes, parameters, and response shapes |
+
+### Source selection and explicit error views
+
+`GET /api/v1/metrics` and `/api/v1/metrics/series` accept optional `source` identifying a registered metric source (for example `mesh.istio` or `traces.servicegraph`). Unknown/non-metric source IDs return400. A registered source without matching data returns no samples. Omission preserves multi-source queries. The effective `query` object echoes an explicitly selected source.
+
+The existing `servicegraph.request.error.count` name is a source-owned query view. For Istio it reads status-partitioned request counters with policy `istio.request-errors` version1; for trace servicegraphs it reports connector-native failures under `servicegraph.connector-failures` version1. These interpretations are distinct. Samples optionally include:
+
+```json
+"derivation": {
+  "id": "istio.request-errors",
+  "version": "1",
+  "input_metric": "servicegraph.request.count",
+  "interpretation": "HTTP 500–599 for non-gRPC; nonzero gRPC status for RPCs; missing RPC status unknown"
+}
+```
+
+Existing latest/increase/window-rate/active-rate modes and mode-aware units remain available. Status/source/edge dimensions remain separate. Successful classified partitions may return zero; unknown or absent outcomes do not synthesize zeros. `latest` represents a cumulative classified counter, not the number of failed requests within a selected interval. Public timestamps are query evaluation points, not producer timestamps.

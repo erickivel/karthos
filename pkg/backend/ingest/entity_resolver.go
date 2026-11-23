@@ -16,7 +16,8 @@ import (
 var ErrUnresolvableEntity = errors.New("cannot resolve entity: no known attributes in resource map")
 
 // OTLPEntityResolver resolves OTLP semantic convention resource attributes to canonical EntityIDs.
-// When an EntityRegistry is provided, resolved entities are upserted on each resolution.
+// When an EntityRegistry is provided, direct resolutions persist entities.
+// Normalize uses ForEnvelope to coalesce consecutive unchanged registry writes.
 type OTLPEntityResolver struct {
 	clusterName string
 	registry    persistence.EntityRegistry

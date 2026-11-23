@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	DefaultGatewayHTTPEndpoint   = "0.0.0.0:4318"
-	DefaultHealthEndpoint        = "0.0.0.0:13133"
-	backendGRPCEndpointEnv       = "${env:KARTHOS_BACKEND_GRPC_ENDPOINT}"
-	gatewayGRPCEndpointEnv       = "${env:KARTHOS_GATEWAY_GRPC_ENDPOINT}"
-	otlpGRPCExporter             = "otlp_grpc"
-	karthosSourceTaggerProcessor = "transform/karthos-source"
-	collectorDebugExporter       = "debug/karthos"
+	DefaultGatewayHTTPEndpoint     = "0.0.0.0:4318"
+	DefaultHealthEndpoint          = "0.0.0.0:13133"
+	backendGRPCEndpointEnv         = "${env:KARTHOS_BACKEND_GRPC_ENDPOINT}"
+	gatewayGRPCEndpointEnv         = "${env:KARTHOS_GATEWAY_GRPC_ENDPOINT}"
+	otlpGRPCExporter               = "otlp_grpc"
+	karthosSourceTaggerProcessor   = "transform/karthos-source"
+	serviceGraphNamespaceProcessor = "transform/karthos-servicegraph-namespace"
+	collectorDebugExporter         = "debug/karthos"
 )
 
 // kubeClusterV0156MetricDefaults is the complete metric inventory exposed by
@@ -107,6 +108,9 @@ func (c *Compiler) Compile(plan collectorspec.CollectionPlan) (Deployment, error
 	}
 	if plan.ClusterName == "" {
 		return Deployment{}, fmt.Errorf("collection plan cluster name is required")
+	}
+	if err := plan.Normalize(); err != nil {
+		return Deployment{}, fmt.Errorf("normalize collection plan: %w", err)
 	}
 	agentConfig := compileAgent(plan.Agent)
 	gatewayConfig := compileGateway(plan.Gateway)
@@ -232,10 +236,18 @@ func compileGateway(requirements collectorspec.GatewayRequirements) CollectorCon
 	}
 	if requirements.OTLP.Traces {
 		exporters := []string{otlpGRPCExporter}
+		processors := []string{"memory_limiter", "batch"}
 		if requirements.ServiceGraph != nil {
 			exporters = append(exporters, "service_graph")
+			config.Processors[serviceGraphNamespaceProcessor] = map[string]any{
+				"trace_statements": []any{map[string]any{
+					"context":    "span",
+					"statements": []string{`set(span.attributes["k8s.namespace.name"], resource.attributes["k8s.namespace.name"]) where span.attributes["k8s.namespace.name"] == nil and resource.attributes["k8s.namespace.name"] != nil`},
+				}},
+			}
+			processors = []string{"memory_limiter", serviceGraphNamespaceProcessor, "batch"}
 		}
-		config.Service.Pipelines["traces"] = PipelineConfig{Receivers: []string{"otlp"}, Processors: []string{"memory_limiter", "batch"}, Exporters: exporters}
+		config.Service.Pipelines["traces"] = PipelineConfig{Receivers: []string{"otlp"}, Processors: processors, Exporters: exporters}
 	}
 	return config
 }
