@@ -6,7 +6,7 @@ ISTIO_NAMESPACE="istio-system"
 OWNERSHIP_MARKER="karthos-e2e-istio-owner"
 
 usage() {
-  echo "usage: istio.sh <install|reset>" >&2
+  echo "usage: istio.sh <install|reset|reset-if-owned>" >&2
   exit 2
 }
 
@@ -48,8 +48,16 @@ reset() {
   kubectl wait --for=delete "namespace/${ISTIO_NAMESPACE}" --timeout=180s
 }
 
+reset_if_owned() {
+  if ! namespace_exists || ! harness_owns_istio; then
+    return
+  fi
+  reset
+}
+
 case "${1:-}" in
   install) install ;;
   reset) reset ;;
+  reset-if-owned) reset_if_owned ;;
   *) usage ;;
 esac

@@ -264,7 +264,7 @@ Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped 
 9. **Pod sections**: Pod selections replace generic category tabs with **Overview**, **Health**, and **Volumes**. Overview requests only direct CPU and working-memory series. Health renders readable API `value_label` values for Kubernetes phase and separately reported reason rather than numeric enum charts. Volumes is deferred and groups returned values by `volume_name`; every row remains a mount-level fact, never a summed Pod capacity or inferred utilization. A missing `volume_name` stays as an independent “Unnamed volume” row so distinct mount series are never merged.
 10. **Container Overview**: Container selections replace generic category tabs with one compact view. CPU and memory show direct use alongside separately reported request and limit context; the view never derives utilization. Current status comes solely from the backend-enriched graph entity, while restart count is shown as a cumulative observed value. All eight applicable Container metric families are cursor-complete. If a metric has label-distinct series, the summary says how many and preserves each series in a detail card below rather than choosing or merging one.
 11. **PVC Storage snapshot**: PersistentVolumeClaim selections replace generic category tabs with a cursor-complete, capacity-first view. **Available storage** and **Storage capacity** remain direct Kubelet gauges; the page never invents used space or utilization. **Inode details** exposes Free, Used, and Total inodes. When the API returns label-distinct PVC series, the primary view shows a neutral count and expands to one independent snapshot per full label identity. With no current samples, it says that the claim has no current Kubelet volume telemetry and distinguishes the structural graph relationship from observed filesystem evidence. Pod Volumes remain a separate mount-oriented presentation.
-12. **Raw Samples table**: scrollable, scope column shows `namespace/name` for entity samples and `src → tgt` for edge samples.
+12. **Raw Samples table**: scrollable, scope column shows `namespace/name` for entity samples and `src → tgt` for edge samples. A Series column shows the dimensions that distinguish concurrent rows, with all preserved labels in a keyboard-accessible disclosure; a separate Value label column shows API-translated enum text.
 
 **Layout (edge mode):**
 1. Same header, mode tab on Edge.
@@ -286,7 +286,7 @@ Single-entity (or single-edge) workflow. Multi-entity comparison was prototyped 
 - Deep-links from the topology `NodeInspector` (`entityMetricsUrl` / `edgeMetricsUrl` in `web/src/lib/links.ts`) are preserved.
 
 **Chart Cards (`MetricCard.tsx`):**
-- Title + `InfoTooltip` showing sample count, canonical metric name, and declared source priorities.
+- Title + `InfoTooltip` showing sample count, canonical metric name, and declared source priorities. HTTP series show an exact status badge when a status label is present, including the raw application Prometheus `status` label.
 - Source chips list catalog priorities; the observed sample source is read only from returned sample labels.
 - Each card displays its complete label set, optional stable edge identity, and the effective aggregation/window/range/grid/timestamp semantics returned by the API.
 - Prominent current value (last sample) + unit, right-aligned.
@@ -300,7 +300,7 @@ Segmented control inside the selection summary. Maps to `from` / `to` query para
 Maps 1:1 to the canonical `MetricCategory` values: resource, traffic, latency, error, capacity, health. Active tab highlighted in Signal Green.
 
 **Raw Samples Table (`RawSamplesTable.tsx`):**
-Scrollable table with columns: Metric, Scope, Source, (Mesh — only when mesh-labelled samples are present), Value, enum Label, Unit, Timestamp. The page passes a snapshot-aware `scopeFor` formatter so users see human-readable namespace/name, not raw IDs.
+Scrollable table with columns: Metric, Scope, Source, (Mesh — only when mesh-labelled samples are present), Value, Series, Value label, Unit, Timestamp. Series summarizes the distinguishing semantic labels for the same metric, scope, and source, and exposes the complete stored label set in an expandable disclosure. Value label remains the separate API-translated enum text. The page passes a snapshot-aware `scopeFor` formatter so users see human-readable namespace/name, not raw IDs.
 
 **Data sources:**
 - `GET /api/v1/metrics/series?metric_name={name}&entity_id[]={id}&from=&to=` → entity metric series
@@ -501,7 +501,7 @@ Constraints that have caused regressions if ignored:
   cards only when it includes `edge`.
 - **Health summary.** Cluster Overview's runtime health row reads
   `/api/v1/status.health_summary`: node health from
-  `k8s.node.condition.ready` and pod health from `k8s.pod.phase`, both
+  `k8s.node.condition.ready` and pod health from `k8s.pod.status.phase`, both
   intersected with current graph entities and with an explicit `unknown` bucket.
   Consumers must also honor the aggregate and branch `complete` / `partial` /
   `unavailable` quality values. The UI does not infer phase from absence of telemetry.

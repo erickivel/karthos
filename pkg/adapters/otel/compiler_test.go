@@ -60,6 +60,8 @@ func TestCompileUsesDerivedServiceGraphOnlyWhenRequested(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, deployment.GatewayConfig.Connectors, "service_graph")
 	require.Equal(t, []string{otlpGRPCExporter, "service_graph"}, deployment.GatewayConfig.Service.Pipelines["traces"].Exporters)
+	require.Equal(t, []string{"memory_limiter", serviceGraphNamespaceProcessor, "batch"}, deployment.GatewayConfig.Service.Pipelines["traces"].Processors)
+	require.Contains(t, deployment.GatewayConfig.Processors, serviceGraphNamespaceProcessor)
 }
 
 func TestCompileOmitsCollectorDebugByDefault(t *testing.T) {
@@ -128,6 +130,13 @@ func TestCompileRetainsIstioProtocolCounters(t *testing.T) {
 	}
 }
 
+func TestPrometheusAppScrapesAtFifteenSeconds(t *testing.T) {
+	config := prometheusReceiver(&collectorspec.Prometheus{SourceID: metrics.SourcePrometheusApp, Targets: []profile.PrometheusTarget{{Namespace: "demo", ServiceName: "api", Port: 8080, Path: "/metrics"}}})
+	scrapes := config["config"].(map[string]any)["scrape_configs"].([]map[string]any)
+	require.Len(t, scrapes, 1)
+	require.Equal(t, "15s", scrapes[0]["scrape_interval"])
+}
+
 func TestCompileGatewayDisablesKubeClusterDefaultsOutsideThePoCAllowlist(t *testing.T) {
 	deployment, err := NewCompiler().Compile(collectorspec.CollectionPlan{
 		ClusterName: "kind-test",
@@ -153,5 +162,21 @@ func TestCompileGatewayDisablesKubeClusterDefaultsOutsideThePoCAllowlist(t *test
 		setting, ok := configured[metricName].(map[string]any)
 		require.Truef(t, ok, "expected %s to have an explicit receiver setting", metricName)
 		require.Equalf(t, false, setting["enabled"], "expected %s to be disabled", metricName)
+	}
+}
+
+func TestCompileServicegraphBucketsNumericallySorted(t *testing.T) {
+	plan := collectorspec.CollectionPlan{ClusterName: "test", Namespace: "test", Gateway: collectorspec.GatewayRequirements{ServiceGraph: &collectorspec.ServiceGraph{LatencyHistogramBuckets: []string{"5s", "1000ms", "0.25s", "100ms", "500ms"}}}}
+	deployment, err := NewCompiler().Compile(plan)
+	require.NoError(t, err)
+	connector := deployment.GatewayConfig.Connectors["service_graph"].(map[string]any)
+	require.Equal(t, []string{"100ms", "0.25s", "500ms", "1000ms", "5s"}, connector["latency_histogram_buckets"])
+}
+func TestCompileRejectsInvalidServicegraphBuckets(t *testing.T) {
+	for _, buckets := range [][]string{{"bad"}, {"0s"}, {"-1ms"}, {"1s", "1000ms"}, {"250ms", "0.25s"}, {"999999999999h"}} {
+		t.Run(strings.Join(buckets, "_"), func(t *testing.T) {
+			_, err := NewCompiler().Compile(collectorspec.CollectionPlan{ClusterName: "test", Namespace: "test", Gateway: collectorspec.GatewayRequirements{ServiceGraph: &collectorspec.ServiceGraph{LatencyHistogramBuckets: buckets}}})
+			require.Error(t, err)
+		})
 	}
 }

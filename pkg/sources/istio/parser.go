@@ -9,7 +9,7 @@ func Parse(rawMetricName string, _ map[string]string) (contract.ParsedMetric, bo
 	}
 	factor := 1.0
 	if rawMetricName == "istio_request_duration_milliseconds" {
-		factor = 1e6
+		factor = 0.001
 	}
 	return contract.ParsedMetric{CanonicalName: canonical, ConversionFactor: factor}, true
 }

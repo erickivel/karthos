@@ -45,6 +45,18 @@
   white-space: nowrap;
 }
 
+.statusBadge {
+  flex: none;
+  border: 1px solid var(--surface-divider);
+  border-radius: var(--radius);
+  padding: 1px 6px;
+  color: var(--color-text-primary);
+  background: var(--surface-active);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-label);
+  white-space: nowrap;
+}
+
 .sourceRow {
   display: inline-flex;
   flex-wrap: wrap;

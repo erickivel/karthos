@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMPDIR_TEST="$(mktemp -d -t karthos-platform-images-test.XXXXXX)"
+TEST_PROFILE="${TMPDIR_TEST}/platform-images-test.env"
 cleanup() {
   local status=$?
   rm -rf "${TMPDIR_TEST}"
@@ -12,6 +13,13 @@ cleanup() {
 trap cleanup EXIT
 
 export KARTHOS_IMAGE_TAG_OVERRIDE=run-tag
+cat >"${TEST_PROFILE}" <<'EOF'
+CLUSTER_ENGINE=k3s
+K3S_SSH_HOST=fixture-host
+IMAGE_TAG=latest
+EOF
+export KARTHOS_CLUSTER_PROFILE_OVERRIDE=platform-images-test
+export KARTHOS_CLUSTER_PROFILE_FILE_OVERRIDE="${TEST_PROFILE}"
 cd "${REPO_ROOT}"
 # shellcheck disable=SC1091
 . "${REPO_ROOT}/test/e2e/cluster/profile.sh"

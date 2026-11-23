@@ -1,11 +1,11 @@
 import type { MetricSeries } from '@/types/metrics'
 
 export const POD_VOLUME_METRICS = [
-  'k8s.volume.available',
-  'k8s.volume.capacity',
-  'k8s.volume.inodes.free',
-  'k8s.volume.inodes.used',
-  'k8s.volume.inodes',
+  'k8s.pod.volume.available',
+  'k8s.pod.volume.capacity',
+  'k8s.pod.volume.inode.free',
+  'k8s.pod.volume.inode.used',
+  'k8s.pod.volume.inode.count',
 ] as const
 
 type PodVolumeMetricName = (typeof POD_VOLUME_METRICS)[number]
@@ -31,11 +31,11 @@ export interface PodVolumeGroup {
 }
 
 const FIELD_BY_METRIC: Record<PodVolumeMetricName, keyof Omit<PodVolumeGroup, 'key' | 'name' | 'volumeType' | 'persistentVolumeClaimName'>> = {
-  'k8s.volume.available': 'available',
-  'k8s.volume.capacity': 'capacity',
-  'k8s.volume.inodes.free': 'inodesFree',
-  'k8s.volume.inodes.used': 'inodesUsed',
-  'k8s.volume.inodes': 'inodes',
+  'k8s.pod.volume.available': 'available',
+  'k8s.pod.volume.capacity': 'capacity',
+  'k8s.pod.volume.inode.free': 'inodesFree',
+  'k8s.pod.volume.inode.used': 'inodesUsed',
+  'k8s.pod.volume.inode.count': 'inodes',
 }
 
 function latestSample(series: MetricSeries): PodVolumeSample | undefined {

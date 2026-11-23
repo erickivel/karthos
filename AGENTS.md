@@ -119,10 +119,7 @@ The frontend lives in `web/`. **All frontend operations run inside Docker contai
 | Command | What it does |
 |---------|-------------|
 | `task web:dev` | Start dev container with Vite HMR (port 5173) |
-| `task web:build` | Build production Docker image |
-| `task web:install` | Install npm dependencies inside container |
-| `task web:typecheck` | Run `tsc --noEmit` inside container |
-| `task web:lint` | Run ESLint inside container |
+| `task web:check` | Build shared dependencies, typecheck, lint, and build the production image |
 
 ### Key rules
 
@@ -242,4 +239,4 @@ never re-emit them. So:
   extraction for prediction or simulation. This does not mean implementing
   prediction now; it means keeping the canonical data contract reusable.
 - Before adding or modifying any catalog metric, follow the end-to-end checklist in [docs/metrics-pipeline.md § *Adding a New Metric: End-to-End Checklist*](docs/metrics-pipeline.md#7-adding-a-new-metric-end-to-end-checklist). Verify on a live kind cluster — unit tests do not catch receiver-config or OTTL-tag mistakes; metrics can be advertised in the catalog yet silently produce zero datapoints.
-- Status/lifecycle signals stay integer-encoded through the pipeline. `MetricSample.Value` is `float64`; do not introduce string-valued samples for enum metrics like `k8s.pod.phase` or `karthos.{pod,container}.health.status`. Translate integer enums to plain-text strings ONLY at the API boundary — the canonical translator is `pkg/core/metrics/health_status.go`, applied by the metric store (sets `MetricSample.ValueLabel`) and the graph/status handlers (populate `enrichedNode.Status` and `health_summary.pods.*` keys). Frontends never see enum integers; the only consumers of the integer form are storage and PromQL composition.
+- Status/lifecycle signals stay integer-encoded through the pipeline. `MetricSample.Value` is `float64`; do not introduce string-valued samples for enum metrics like `k8s.pod.status.phase` or `karthos.{pod,container}.health.status`. Translate integer enums to plain-text strings ONLY at the API boundary — the canonical translator is `pkg/core/metrics/health_status.go`, applied by the metric store (sets `MetricSample.ValueLabel`) and the graph/status handlers (populate `enrichedNode.Status` and `health_summary.pods.*` keys). Frontends never see enum integers; the only consumers of the integer form are storage and PromQL composition.

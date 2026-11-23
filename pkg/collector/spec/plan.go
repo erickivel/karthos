@@ -3,7 +3,9 @@
 package spec
 
 import (
+	"fmt"
 	"sort"
+	"time"
 
 	"github.com/erickivel/karthos/pkg/discovery/profile"
 )
@@ -90,7 +92,13 @@ type SourceStamp struct {
 	OnlyIfUnset      bool
 }
 
-func (p *CollectionPlan) Normalize() {
+func (p *CollectionPlan) Normalize() error {
+	if p.Gateway.ServiceGraph != nil {
+		if err := normalizeDurationBuckets(p.Gateway.ServiceGraph.LatencyHistogramBuckets); err != nil {
+			return err
+		}
+	}
+
 	sort.Strings(p.EnabledSignals)
 	sortSourceStamps(p.Agent.SourceStamps)
 	sortSourceStamps(p.Gateway.SourceStamps)
@@ -121,9 +129,9 @@ func (p *CollectionPlan) Normalize() {
 		})
 	}
 	if p.Gateway.ServiceGraph != nil {
-		sort.Strings(p.Gateway.ServiceGraph.LatencyHistogramBuckets)
 		sort.Strings(p.Gateway.ServiceGraph.Dimensions)
 	}
+	return nil
 }
 
 func sortSourceStamps(stamps []SourceStamp) {
@@ -132,4 +140,27 @@ func sortSourceStamps(stamps []SourceStamp) {
 		sort.Strings(stamps[i].ExactMetricNames)
 		sort.Strings(stamps[i].MetricPatterns)
 	}
+}
+
+// Explicit histogram bounds are ordered by duration, never by their spelling.
+// Validate before mutating so invalid or equivalent bounds cannot be rendered.
+func normalizeDurationBuckets(buckets []string) error {
+	durations := make(map[string]time.Duration, len(buckets))
+	seen := make(map[time.Duration]bool, len(buckets))
+	for _, bucket := range buckets {
+		duration, err := time.ParseDuration(bucket)
+		if err != nil {
+			return fmt.Errorf("latency histogram bucket %q: %w", bucket, err)
+		}
+		if duration <= 0 {
+			return fmt.Errorf("latency histogram bucket %q must be positive", bucket)
+		}
+		if seen[duration] {
+			return fmt.Errorf("latency histogram bucket %q duplicates duration %s", bucket, duration)
+		}
+		seen[duration] = true
+		durations[bucket] = duration
+	}
+	sort.Slice(buckets, func(i, j int) bool { return durations[buckets[i]] < durations[buckets[j]] })
+	return nil
 }

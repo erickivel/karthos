@@ -49,6 +49,6 @@ export KARTHOS_E2E_OUTPUT_DIR="${TMPDIR_TEST}"
 cd "${TMPDIR_TEST}/work"
 bash "${REPO_ROOT}/test/e2e/scenarios/no-telemetry/run.sh"
 
-[[ "$(cat "${FALLBACK_TEST_TASK_LOG}")" == "test:e2e:scenario:fallback:prepare" ]]
+[[ ! -s "${FALLBACK_TEST_TASK_LOG}" ]]
 
 echo "fallback runner validates the strict direct-source contract: PASS"

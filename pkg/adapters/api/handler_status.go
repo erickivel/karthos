@@ -199,7 +199,7 @@ func (h *StatusHandler) computeHealthSummary(ctx context.Context, graphNodes []t
 		}
 	}
 
-	nodeResult := queryHealthSamples(ctx, h.metricStore, "k8s.node.condition.ready", nodeIDs, false)
+	nodeResult := queryHealthSamples(ctx, h.metricStore, "k8s.node.condition.ready", nodeIDs, false, time.Now().UTC())
 	podResolution := h.healthResolver.Resolve(ctx, podNodes, false)
 	podResult := healthSampleResult{quality: podResolution.Pods}
 	if len(podResolution.Errors) > 0 {

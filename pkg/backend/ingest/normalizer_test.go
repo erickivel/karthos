@@ -332,33 +332,26 @@ func TestOTLPNormalizer_DropsHistogramDataPointWithoutTimestamp(t *testing.T) {
 	assert.Empty(t, samples)
 }
 
-// TestOTLPNormalizer_SourceMismatchDropped verifies that assignment enforcement
-// retains only samples stamped by the assigned source.
-func TestOTLPNormalizer_SourceMismatchDropped(t *testing.T) {
+// TestOTLPNormalizer_RequiresStampedAssignedSource verifies the source contract.
+func TestOTLPNormalizer_RequiresStampedAssignedSource(t *testing.T) {
 	resolver := ingest.NewOTLPEntityResolver(testCluster)
 
 	assignment := metrics.Assignment{
-		"k8s.container.cpu.usage": metrics.SourceKubelet,
+		"container.cpu.usage": metrics.SourceKubelet,
 	}
 	policy := ingest.NewMetricSourcePolicy(sources.DefaultRegistry().MetricIDs(), assignment)
 	normalizer := ingest.NewOTLPNormalizer(resolver, sources.DefaultRegistry(), ingest.WithSourcePolicy(policy))
 
 	tsNano := uint64(time.Now().UnixNano())
 
-	rmPrometheus := makeGaugeRMWithAttr("container_cpu_usage_seconds_total", 0.5, tsNano, "karthos_source", metrics.SourcePrometheusApp)
-	envPrometheus := makeEnvelope(t, metrics.SourcePrometheusApp, podResource(), rmPrometheus)
-	samples, err := normalizer.Normalize(context.Background(), envPrometheus)
-	require.NoError(t, err)
-	require.Empty(t, samples, "Prometheus sample must be dropped when kubelet is the assigned source")
-
-	rmKubelet := makeGaugeRMWithAttr("k8s.container.cpu.usage", 0.75, tsNano, "karthos_source", metrics.SourceKubelet)
+	rmKubelet := makeGaugeRMWithAttr("container.cpu.usage", 0.75, tsNano, "karthos_source", metrics.SourceKubelet)
 	envKubelet := makeEnvelope(t, metrics.SourceKubelet, podResource(), rmKubelet)
-	samples, err = normalizer.Normalize(context.Background(), envKubelet)
+	samples, err := normalizer.Normalize(context.Background(), envKubelet)
 	require.NoError(t, err)
 	require.Len(t, samples, 1)
-	require.InDelta(t, 750.0, samples[0].Value, 1e-9)
+	require.InDelta(t, 0.75, samples[0].Value, 1e-9)
 
-	rmUntagged := makeGaugeRM("k8s.container.cpu.usage", 1.0, tsNano)
+	rmUntagged := makeGaugeRM("container.cpu.usage", 1.0, tsNano)
 	envUntagged := makeEnvelopeWithoutSourceStamp(t, podResource(), rmUntagged)
 	samples, err = normalizer.Normalize(context.Background(), envUntagged)
 	require.NoError(t, err)

@@ -97,6 +97,7 @@ def finish_request_span(response):
 def process():
     with TRACER.start_as_current_span("call-service-b-node", kind=SpanKind.CLIENT) as span:
         span.set_attribute("peer.service", "service-b-node")
+        span.set_attribute("server_namespace", os.getenv("DESTINATION_NAMESPACE", "karthos-demo"))
         headers = {}
         propagate.inject(headers)
         downstream_url = with_force_error(SERVICE_B_URL) if request.args.get("force_error") == "true" else SERVICE_B_URL

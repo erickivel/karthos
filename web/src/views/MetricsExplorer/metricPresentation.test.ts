@@ -11,7 +11,7 @@ describe('service metric presentation', () => {
       title: 'Memory limit',
       meaning: 'Maximum memory Kubernetes allows this Container to use.',
     })
-    expect(metricPresentation({ canonicalName: 'k8s.container.restarts', scope: 'entity' })).toMatchObject({
+    expect(metricPresentation({ canonicalName: 'k8s.container.restart.count', scope: 'entity' })).toMatchObject({
       title: 'Restart count',
       meaning: 'Cumulative number of times Kubernetes restarted this Container.',
     })
@@ -37,6 +37,19 @@ describe('service metric presentation', () => {
       title: 'Server error request rate',
       meaning: 'Requests on this connection that ended with a 5xx server error, per second.',
     })
+  })
+
+  it('keeps raw Prometheus HTTP status visible for service entity series', () => {
+    expect(metricPresentation({
+      canonicalName: 'http.server.request.count',
+      scope: 'entity',
+      labels: { status: '500' },
+    }).seriesLabels).toContainEqual({ label: 'HTTP status', value: '500' })
+    expect(metricPresentation({
+      canonicalName: 'http.server.request.count',
+      scope: 'entity',
+      labels: { status: '200' },
+    }).seriesLabels).toContainEqual({ label: 'HTTP status', value: '200' })
   })
 
   it('names a servicegraph entity metric as outbound traffic', () => {

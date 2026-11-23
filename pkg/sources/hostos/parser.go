@@ -30,11 +30,7 @@ func Parse(rawMetricName string, attributes map[string]string) (contract.ParsedM
 			return contract.ParsedMetric{}, false
 		}
 	}
-	factor := 1.0
-	if canonical == "system.cpu.utilization" || canonical == "system.filesystem.utilization" {
-		factor = 100.0
-	}
-	return contract.ParsedMetric{CanonicalName: canonical, ConversionFactor: factor}, true
+	return contract.ParsedMetric{CanonicalName: canonical, ConversionFactor: 1}, true
 }
 
 var nativeMetricNames = map[string]struct{}{

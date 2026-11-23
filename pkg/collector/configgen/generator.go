@@ -43,7 +43,7 @@ const (
 )
 
 // StorageSettings selects the supported external dependency combinations.
-// Empty settings intentionally leave the chart's memory default unchanged.
+// Empty settings use the chart's bundled persistent-store default.
 type StorageSettings struct {
 	Backend         StorageBackend
 	PostgreSQL      StoreSettings

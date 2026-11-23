@@ -14,11 +14,11 @@ import (
 
 func TestDecorateMetricStoreAddsEnumLabelsWithoutChangingStoredValues(t *testing.T) {
 	base := &recordingMetricStore{samples: []metrics.MetricSample{{
-		MetricName: "k8s.pod.status_reason", Value: 6, Timestamp: time.Now().UTC(),
+		MetricName: "k8s.pod.status.reason", Value: 6, Timestamp: time.Now().UTC(),
 	}}}
 	store := DecorateMetricStore(base)
 
-	got, err := store.Query(context.Background(), query.MetricQuery{MetricName: "k8s.pod.status_reason"})
+	got, err := store.Query(context.Background(), query.MetricQuery{MetricName: "k8s.pod.status.reason"})
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -28,11 +28,11 @@ func TestDecorateMetricStoreAddsEnumLabelsWithoutChangingStoredValues(t *testing
 
 func TestDecorateMetricStoreAddsPodPhaseLabelsWithoutChangingStoredValues(t *testing.T) {
 	base := &recordingMetricStore{samples: []metrics.MetricSample{{
-		MetricName: "k8s.pod.phase", Value: 2, Timestamp: time.Now().UTC(),
+		MetricName: "k8s.pod.status.phase", Value: 2, Timestamp: time.Now().UTC(),
 	}}}
 	store := DecorateMetricStore(base)
 
-	got, err := store.Query(context.Background(), query.MetricQuery{MetricName: "k8s.pod.phase"})
+	got, err := store.Query(context.Background(), query.MetricQuery{MetricName: "k8s.pod.status.phase"})
 
 	require.NoError(t, err)
 	require.Len(t, got, 1)

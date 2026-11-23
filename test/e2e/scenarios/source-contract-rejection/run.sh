@@ -55,7 +55,7 @@ PY
   else
     restore_status=1
   fi
-  task test:e2e:apply-otel >/dev/null 2>&1 || restore_status=1
+  "${KARTHOS_PLATFORM_DEPLOYER:-${REPO_ROOT}/test/e2e/platform/deploy.sh}" >/dev/null 2>&1 || restore_status=1
   # rollout restart writes an out-of-band Pod-template annotation. Helm
   # preserves it, so remove that exact template field after the valid contract
   # is restored and Kubernetes will return to the Helm-owned revision.

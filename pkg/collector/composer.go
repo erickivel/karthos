@@ -19,10 +19,15 @@ type Composer struct {
 }
 
 func NewComposer(namespace string) *Composer {
+	return NewComposerWithRegistry(namespace, sources.DefaultRegistry())
+}
+
+// NewComposerWithRegistry uses the same configured modules as source resolution.
+func NewComposerWithRegistry(namespace string, modules sources.Registry) *Composer {
 	if namespace == "" {
 		namespace = DefaultNamespace
 	}
-	return &Composer{namespace: namespace, modules: sources.DefaultRegistry()}
+	return &Composer{namespace: namespace, modules: modules}
 }
 
 func (c *Composer) Compose(capabilityProfile *profile.ClusterProfile, sourcePlan contract.ResolvedSourcePlan) (collectorspec.CollectionPlan, error) {
@@ -51,6 +56,8 @@ func (c *Composer) Compose(capabilityProfile *profile.ClusterProfile, sourcePlan
 	if plan.Agent.OTLP.Traces || plan.Gateway.OTLP.Traces {
 		plan.EnabledSignals = append(plan.EnabledSignals, "trace")
 	}
-	plan.Normalize()
+	if err := plan.Normalize(); err != nil {
+		return collectorspec.CollectionPlan{}, err
+	}
 	return plan, nil
 }

@@ -12,10 +12,10 @@ func TestParseTranslatesEverySupportedDerivedServiceGraphMetric(t *testing.T) {
 		factor    float64
 	}{
 		"traces_service_graph_request_total":        {"servicegraph.request.count", 1},
-		"traces_service_graph_request_server":       {"servicegraph.request.duration", 1e9},
+		"traces_service_graph_request_server":       {"servicegraph.request.duration", 1},
 		"traces_service_graph_request_failed_total": {"servicegraph.request.error.count", 1},
 		"traces.service.graph.request.total":        {"servicegraph.request.count", 1},
-		"traces.service.graph.request.server":       {"servicegraph.request.duration", 1e9},
+		"traces.service.graph.request.server":       {"servicegraph.request.duration", 1},
 		"traces.service.graph.request_failed_total": {"servicegraph.request.error.count", 1},
 	} {
 		parsed, ok := Parse(raw, nil)

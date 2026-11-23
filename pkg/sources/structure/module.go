@@ -97,6 +97,7 @@ type podRecord struct {
 	entity         entities.Pod
 	ownerUID       string
 	containerNames []string
+	phase          corev1.PodPhase
 }
 
 type serviceRecord struct {
@@ -202,7 +203,7 @@ func (m *Module) collect(ctx context.Context) (inventory, error) {
 			continue
 		}
 		pod := entities.NewPod(m.cluster, item.Namespace, item.Name, item.Labels)
-		result.pods = append(result.pods, podRecord{entity: pod, ownerUID: controllerOwnerUID(item.OwnerReferences), containerNames: podContainerNames(item)})
+		result.pods = append(result.pods, podRecord{entity: pod, ownerUID: controllerOwnerUID(item.OwnerReferences), containerNames: podContainerNames(item), phase: item.Status.Phase})
 	}
 	for _, item := range services.Items {
 		result.services = append(result.services, serviceRecord{entity: entities.NewService(m.cluster, item.Namespace, item.Name, item.Labels), selector: clone(item.Spec.Selector)})
@@ -317,6 +318,9 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 	stored := map[entities.EntityID]persistence.StoredEntity{}
 	add := func(node topology.Node) {
 		if _, ok := nodes[node.ID]; !ok {
+			node.FirstSeen = now
+			node.LastSeen = now
+			node.Provenance = []string{provenance}
 			nodes[node.ID] = node
 		}
 	}
@@ -383,7 +387,14 @@ func (m *Module) assemble(inventory inventory) ([]topology.Edge, []topology.Node
 	}
 	for _, pod := range inventory.pods {
 		entity := pod.entity
-		add(node(entity.ID(), entities.KindPod, m.cluster, entity.Namespace, entity.Name, entity.Labels()))
+		labels := entity.Labels()
+		if pod.phase != "" {
+			if labels == nil {
+				labels = map[string]string{}
+			}
+			labels["k8s.pod.status.phase"] = string(pod.phase)
+		}
+		add(node(entity.ID(), entities.KindPod, m.cluster, entity.Namespace, entity.Name, labels))
 		put(entities.KindPod, entity.ID(), entity.Namespace, entity.Name, entity.Labels())
 		for _, containerName := range pod.containerNames {
 			containerID := entities.ComputeEntityID(entities.KindContainer, m.cluster, entity.Namespace, entity.Name, containerName)
@@ -484,7 +495,7 @@ func highestOwnedWorkload(workload workloadRecord, byOwnerUID map[string]workloa
 }
 
 func terminating(pod corev1.Pod) bool {
-	return pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	return pod.DeletionTimestamp != nil
 }
 func controllerOwnerUID(references []metav1.OwnerReference) string {
 	for _, reference := range references {

@@ -43,16 +43,22 @@ func makeSpan(peerService string, startNano, endNano uint64) *tracepb.Span {
 	return span
 }
 
+func makeNamespacedSpan(peerService string, startNano, endNano uint64) *tracepb.Span {
+	span := makeSpan(peerService, startNano, endNano)
+	span.Attributes = append(span.Attributes, &commonpb.KeyValue{Key: "server_namespace", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "default"}}})
+	return span
+}
+
 func TestTraceTopologyBuilder_ClientSpanWithPeerService_EdgeCreated(t *testing.T) {
 	resolver := NewOTLPEntityResolver(testCluster)
 	builder := NewTraceTopologyBuilder(resolver)
 
-	resource := map[string]string{"service.name": "svc-a"}
+	resource := map[string]string{"service.name": "svc-a", "k8s.namespace.name": "default"}
 	rs := &tracepb.ResourceSpans{
 		ScopeSpans: []*tracepb.ScopeSpans{
 			{
 				Spans: []*tracepb.Span{
-					makeSpan("svc-b", 1000000, 2000000),
+					makeNamespacedSpan("svc-b", 1000000, 2000000),
 				},
 			},
 		},
@@ -66,8 +72,8 @@ func TestTraceTopologyBuilder_ClientSpanWithPeerService_EdgeCreated(t *testing.T
 	edge := edges[0]
 	assert.Equal(t, topology.RelCalls, edge.Relation)
 
-	callerID, _ := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-a"})
-	calleeID, _ := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-b"})
+	callerID, _ := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-a", "k8s.namespace.name": "default"})
+	calleeID, _ := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-b", "k8s.namespace.name": "default"})
 	assert.Equal(t, callerID, edge.Source)
 	assert.Equal(t, calleeID, edge.Target)
 }
@@ -97,7 +103,7 @@ func TestTraceTopologyBuilder_Deduplication_LastSeenUpdated(t *testing.T) {
 	resolver := NewOTLPEntityResolver(testCluster)
 	builder := NewTraceTopologyBuilder(resolver)
 
-	resource := map[string]string{"service.name": "svc-a"}
+	resource := map[string]string{"service.name": "svc-a", "k8s.namespace.name": "default"}
 
 	span1End := uint64(2_000_000_000) // 2 seconds in ns
 	span2End := uint64(5_000_000_000) // 5 seconds in ns
@@ -106,8 +112,8 @@ func TestTraceTopologyBuilder_Deduplication_LastSeenUpdated(t *testing.T) {
 		ScopeSpans: []*tracepb.ScopeSpans{
 			{
 				Spans: []*tracepb.Span{
-					makeSpan("svc-b", 1_000_000_000, span1End),
-					makeSpan("svc-b", 3_000_000_000, span2End),
+					makeNamespacedSpan("svc-b", 1_000_000_000, span1End),
+					makeNamespacedSpan("svc-b", 3_000_000_000, span2End),
 				},
 			},
 		},
@@ -126,13 +132,13 @@ func TestTraceTopologyBuilder_MultipleDistinctCallees_TwoEdges(t *testing.T) {
 	resolver := NewOTLPEntityResolver(testCluster)
 	builder := NewTraceTopologyBuilder(resolver)
 
-	resource := map[string]string{"service.name": "svc-a"}
+	resource := map[string]string{"service.name": "svc-a", "k8s.namespace.name": "default"}
 	rs := &tracepb.ResourceSpans{
 		ScopeSpans: []*tracepb.ScopeSpans{
 			{
 				Spans: []*tracepb.Span{
-					makeSpan("svc-b", 1000000, 2000000),
-					makeSpan("svc-c", 3000000, 4000000),
+					makeNamespacedSpan("svc-b", 1000000, 2000000),
+					makeNamespacedSpan("svc-c", 3000000, 4000000),
 				},
 			},
 		},
@@ -144,7 +150,7 @@ func TestTraceTopologyBuilder_MultipleDistinctCallees_TwoEdges(t *testing.T) {
 	assert.Len(t, edges, 2)
 
 	targets := make(map[string]bool)
-	callerID, _ := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-a"})
+	callerID, _ := resolver.Resolve(context.Background(), map[string]string{"service.name": "svc-a", "k8s.namespace.name": "default"})
 	for _, e := range edges {
 		assert.Equal(t, callerID, e.Source)
 		assert.Equal(t, topology.RelCalls, e.Relation)
@@ -179,12 +185,12 @@ func TestTraceTopologyBuilder_EnvelopeProvenance(t *testing.T) {
 	builder := NewTraceTopologyBuilder(resolver)
 
 	source := "otel-collector-svc-a"
-	resource := map[string]string{"service.name": "svc-a"}
+	resource := map[string]string{"service.name": "svc-a", "k8s.namespace.name": "default"}
 	rs := &tracepb.ResourceSpans{
 		ScopeSpans: []*tracepb.ScopeSpans{
 			{
 				Spans: []*tracepb.Span{
-					makeSpan("svc-b", 1000000, 2000000),
+					makeNamespacedSpan("svc-b", 1000000, 2000000),
 				},
 			},
 		},
@@ -195,7 +201,7 @@ func TestTraceTopologyBuilder_EnvelopeProvenance(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, edges, 1)
 
-	assert.Equal(t, []string{source}, edges[0].Provenance)
+	assert.Equal(t, []string{"traces.otlp"}, edges[0].Provenance)
 }
 
 func TestTraceTopologyBuilder_PrefersServiceEntityOverNodeForCaller(t *testing.T) {
@@ -211,7 +217,7 @@ func TestTraceTopologyBuilder_PrefersServiceEntityOverNodeForCaller(t *testing.T
 		ScopeSpans: []*tracepb.ScopeSpans{
 			{
 				Spans: []*tracepb.Span{
-					makeSpan("svc-b", 1000000, 2000000),
+					makeNamespacedSpan("svc-b", 1000000, 2000000),
 				},
 			},
 		},
@@ -227,4 +233,22 @@ func TestTraceTopologyBuilder_PrefersServiceEntityOverNodeForCaller(t *testing.T
 
 	assert.Equal(t, expectedCaller, edges[0].Source)
 	assert.Equal(t, expectedCallee, edges[0].Target)
+}
+
+func TestTraceTopologyBuilderDoesNotGuessDestinationNamespace(t *testing.T) {
+	resolver := NewOTLPEntityResolver(testCluster)
+	builder := NewTraceTopologyBuilder(resolver)
+	resource := map[string]string{"service.name": "frontend", "k8s.namespace.name": "team-a"}
+	span := makeSpan("backend", 1_000_000, 2_000_000)
+	envelope := makeTraceEnvelope(t, "otlp/grpc", resource, &tracepb.ResourceSpans{ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{span}}}})
+	edges, err := builder.Build(context.Background(), envelope)
+	require.NoError(t, err)
+	require.Empty(t, edges)
+	span.Attributes = append(span.Attributes, &commonpb.KeyValue{Key: "server_namespace", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "team-b"}}})
+	envelope = makeTraceEnvelope(t, "otlp/grpc", resource, &tracepb.ResourceSpans{ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{span}}}})
+	edges, err = builder.Build(context.Background(), envelope)
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Equal(t, entities.ComputeEntityID(entities.KindService, testCluster, "team-b", "backend"), edges[0].Target)
+	require.Equal(t, []string{"traces.otlp"}, edges[0].Provenance)
 }

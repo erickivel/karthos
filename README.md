@@ -9,7 +9,7 @@ relations between them, with metrics attached to nodes and edges.
 - discovers Kubernetes resources, Prometheus targets, OTLP-capable workloads, and Istio sidecar mesh
 - plans an OTel collection pipeline (agent + gateway + backend) and renders Helm values
 - ingests OTLP metrics and traces, normalizes producer-specific names to a semconv-first canonical catalog, and arbitrates one winning producer per metric to prevent double-counting
-- reconstructs a topology graph from kubeletstats resource attributes (`runs_on`, `contains`), direct Kubernetes API structure (`exposes`, `routes_to`, `uses`, `mounts`), trace `peer.service` attributes (`calls`), and source-classified calls metrics such as Istio mesh telemetry
+- reconstructs a topology graph from direct Kubernetes API structure (`contains`, `exposes`, `routes_to`, `uses`, `mounts`), validated metric resource attributes (`runs_on`), and traces or source-classified calls metrics such as Istio mesh telemetry (`calls`)
 - persists graph, entities, metadata, and metrics behind swappable in-memory or external (PostgreSQL + VictoriaMetrics) backends
 - exposes a versioned REST API and a React frontend with three views (Cluster Overview, Topology Graph, Metrics Explorer)
 
@@ -68,15 +68,16 @@ task test:race     # run with race detector
 task test:e2e:setup                       # one control-plane + one worker node
 
 task test:e2e:scenario:prometheus         # Prometheus discovery + servicegraph traces
-task test:e2e:scenario:istio              # Istio sidecar mesh scrape
+task test:e2e:scenario:istio              # resets owned resources before the mesh check; retains the new environment
 task test:e2e:scenario:fallback           # strict direct-source baseline
 ```
 
 Targeting a remote k3s cluster (or any other supported cell) is a
 `CLUSTER_PROFILE` switch in `.env`; see [docs/remote-cluster.md](docs/remote-cluster.md).
 
-Step-by-step (`fixture deploy → discover → apply-otel → verify`) is documented
-in [docs/testing.md](docs/testing.md).
+`task deploy` validates and deploys the current working tree, including
+uncommitted backend and frontend source. Complete scenarios own fixture setup,
+deployment, verification, and restoration; see [docs/testing.md](docs/testing.md).
 
 After deploying, generate traffic and inspect:
 
@@ -91,25 +92,11 @@ Local port convention:
 - `18081` → backend REST API
 - `13133` → backend health checks
 
-### Frontend topology QA (Playwright)
-
-```bash
-task web:e2e:install
-task web:dev
-kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080
-task web:e2e
-task web:e2e:update          # refresh committed screenshot baselines
-```
-
-The runner expects the frontend at `http://localhost:5173`; the Vite proxy
-forwards `/api/*` to `http://localhost:18081`.
-
 ### Cleanup
 
 ```bash
-task test:e2e:reset           # remove the Helm-owned OTel release and source contract
-task test:e2e:reset-apps      # remove demo fixtures
-task test:e2e:reset-all       # both, plus an E2E-owned Istio control plane
+task undeploy                 # remove only the platform release and owned PostgreSQL PVC
+task test:e2e:reset           # remove platform, fixtures, data, and E2E-owned Istio
 task test:e2e:teardown        # destroy cluster and registry
 ```
 
@@ -122,6 +109,7 @@ task test:e2e:teardown        # destroy cluster and registry
 | [Runtime Flow](docs/runtime-flow.md) | Post-deploy telemetry path through agent, gateway, backend |
 | [Metrics Pipeline](docs/metrics-pipeline.md) | Catalog, source parsers, source registry, resolver |
 | [API Reference](docs/api-reference.md) | REST API routes, query params, response shapes |
+| [OpenAPI](docs/openapi.yaml) | Machine-readable REST API description |
 | [Frontend Design Spec](docs/frontend-design-spec.md) | Frontend stack, design system, projection modes |
 | [Testing](docs/testing.md) | Unit tests, e2e scenarios, traffic generation |
 | [Development](docs/development.md) | Project structure, common commands, frontend dev loop |

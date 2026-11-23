@@ -58,4 +58,5 @@ const (
 	SourcePrometheusApp       = "prometheus.app"
 	SourceMeshIstio           = "mesh.istio"
 	SourceTracesServicegraph  = "traces.servicegraph"
+	SourceTracesOTLP          = "traces.otlp"
 )

@@ -41,11 +41,11 @@ audits/
 web/node_modules/
 web/dist/
 
-# Playwright
-.playwright-mcp/
-web/playwright-report/
-web/test-results/
-
 # Python verification artifacts
 __pycache__/
 *.pyc
+
+# Local browser and frontend test output
+/.playwright-mcp/
+/web/playwright-report/
+/web/test-results/

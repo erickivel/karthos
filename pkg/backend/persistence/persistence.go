@@ -56,6 +56,8 @@ type GraphStore interface {
 	GetLatest(ctx context.Context) (*topology.Snapshot, error)
 	// GetAt returns the newest retained materialized snapshot at or before at.
 	GetAt(ctx context.Context, at time.Time) (*topology.Snapshot, error)
+	// ObservedEdgesInWindow returns observations, including edges no longer current.
+	ObservedEdgesInWindow(ctx context.Context, from, to time.Time, sourceID string) ([]topology.Edge, error)
 }
 
 // RunsOnRetirer is the narrow lifecycle-to-storage boundary for retiring a

@@ -110,26 +110,31 @@ test/
 
 ## Common Commands
 
-```bash
-# Backend (Go)
-task fmt
-task test
-task build
-task vet
-task lint
-task ci
+Bare `task` lists the supported commands; it does not run an implicit action.
 
-# Frontend (Docker-only — never run npm/node locally)
-task web:dev         # start dev container with Vite HMR (port 5173)
-task web:build       # build production Docker image
-task web:install     # install npm dependencies inside container
-task web:typecheck   # run tsc --noEmit inside container
-task web:lint        # run ESLint inside container
-task web:e2e:install # install Playwright support inside the Docker e2e runner
-task web:e2e         # run topology Playwright tests against the live frontend/backend
-task web:e2e:update  # update committed topology screenshot baselines
-task ci              # backend checks plus frontend Docker build verification
-```
+| Task | Purpose |
+|---|---|
+| `fmt` / `fmt:check` | Format, or only check formatting, across every Go module. |
+| `generate` | Regenerate JSON schemas and Go-generated contracts. |
+| `vet` / `lint` / `security` | Analyze every Go module. |
+| `test` | Run ordinary main-module unit tests only. |
+| `test:branding` | Enforce the tracked Karthos identity contract. |
+| `test:race` | Run main-module tests with race detection and coverage. |
+| `test:postgres` | Run Docker-backed PostgreSQL integration tests. |
+| `test:fixtures` | Check shell fixtures, task contracts, and nested Go modules. |
+| `build` | Build backend and discovery-job into `bin/` without rewriting source. |
+| `tidy` | Run `go mod tidy` across every Go module. |
+| `ci` | Run the comprehensive local backend, fixture, build, and frontend gate. |
+| `clean` | Remove generated schemas, binaries, coverage, and E2E output. |
+| `deploy` | Validate, build, publish, deploy, and verify the current working tree. |
+| `undeploy` | Remove the platform release and its harness-owned PostgreSQL PVC. |
+| `web:dev` | Start Dockerized Vite HMR on port 5173. |
+| `web:check` | Prepare dependencies, typecheck, lint, and build the production image in Docker. |
+| `test:cluster:{profile,doctor,tunnel}` | Inspect or validate the selected cluster profile, or open its optional registry tunnel. |
+| `test:e2e:{setup,teardown,reset}` | Manage cluster infrastructure and complete E2E cleanup. |
+| `test:e2e:scenario:{fallback,prometheus,istio,detector-failure,source-contract-rejection}` | Run complete E2E scenarios. |
+| `test:e2e:traffic` / `test:e2e:traffic:watch` | Generate bounded or continuous fixture traffic. |
+| `test:e2e:debug:api` / `test:e2e:debug:logs` | Inspect backend status or follow relevant logs. |
 
 The production frontend image contains only static assets. Helm mounts the
 release-scoped Nginx ConfigMap that provides the SPA fallback and routes `/api`
@@ -138,6 +143,9 @@ to the matching backend Service. Running that image by itself is unsupported.
 ## Discovery And Deployment Workflow
 
 ```bash
+task deploy
+
+# Exceptional low-level debugging only:
 ./bin/discovery-job --mode=discover --kubeconfig=$HOME/.kube/config --cluster-name=karthos-test --output=profile.json
 ./bin/discovery-job --mode=plan --capability-profile=profile.json --values-output=otel-values.yaml --rendered-output=./bin/e2e/rendered --backend-image-repository=localhost:5001/karthos-backend --backend-image-tag=latest --frontend-image-repository=localhost:5001/karthos-frontend --frontend-image-tag=latest --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled
 ./bin/discovery-job --mode=deploy --capability-profile=profile.json --values-output=otel-values.yaml --release-name=karthos --chart-path=./deploy/helm/karthos --namespace=karthos-system --backend-image-repository=localhost:5001/karthos-backend --backend-image-tag=latest --frontend-image-repository=localhost:5001/karthos-frontend --frontend-image-tag=latest --storage-backend=external --postgresql-mode=bundled --victoriametrics-mode=bundled
@@ -148,6 +156,15 @@ curl http://localhost:18081/api/v1/status
 ```
 
 Notes:
+
+- `task deploy` is the normal product deployment command. It runs focused
+  validation, gives a dirty tree a unique timestamped tag, builds and publishes
+  backend and frontend from the current working tree, discovers the selected
+  cluster, applies Helm, waits for every rollout, and verifies image digests.
+- Deployment never installs Istio or demo fixtures.
+- Prometheus discovery includes annotated Services in all namespaces by default.
+  Fixture-specific namespace filters belong in E2E discovery commands, not the
+  shared product deployment script.
 
 - `--output` writes only the `discover` capability profile. `plan` and `deploy`
   write a values artifact only through `--values-output`.
@@ -161,8 +178,8 @@ Notes:
   pipeline. It writes detailed batches to Collector stdout only; both planes
   intentionally produce duplicate diagnostic output. The exporter is alpha,
   so treat its log format as transient rather than an API contract.
-- Without `--storage-backend`, the chart's `memory` storage default remains in
-  effect. `--storage-backend=external` requires both `--postgresql-mode` and
+- Without `--storage-backend`, the chart's bundled PostgreSQL and VictoriaMetrics
+  default remains in effect. `--storage-backend=external` requires both `--postgresql-mode` and
   `--victoriametrics-mode` (`bundled` or `remote`). Remote endpoints come from
   the corresponding flags or `KARTHOS_POSTGRES_DSN` and `KARTHOS_VICTORIAMETRICS_URL`.
 - Image flags are typed partial overrides. Omitted repository, tag, or
@@ -171,7 +188,7 @@ Notes:
 - the backend is supported only as a Helm workload because it requires the mounted,
   chart-owned capability profile and resolved source plan.
 - collector runtime flags are generated from the collector plan; Collector Contrib is pinned to `0.156.0`
-- `--node-ttl` / `KARTHOS_NODE_TTL` is the structural freshness guard (default `24h`). The backend refuses to materialize from a direct Kubernetes structure snapshot older than this value. Set `0` to disable the guard. Materialized API snapshots have an independent fixed 24-hour retention window.
+- `--node-ttl` / `KARTHOS_NODE_TTL` is the structural freshness guard (default `24h`). The backend refuses to materialize from a direct Kubernetes structure snapshot older than this value. Set `0` to disable the guard. Materialized API snapshots have an independent fixed seven-day retention window.
 - `backend.structureRefreshInterval` controls the in-cluster structural refresh cadence (default `5m`). It is passed as `--structure-refresh-interval` and must remain strictly below `KARTHOS_NODE_TTL`.
 - `backend.statusStaleSeconds` controls when the status endpoint calls a graph snapshot stale (default `360`). It intentionally exceeds the five-minute structural refresh interval to tolerate normal scheduling delay.
 
@@ -312,7 +329,7 @@ curl -s "http://localhost:18081/api/v1/metrics?metric_name=servicegraph.request.
 Notes:
 
 - Counter presentation is catalog-driven. Rate-presented counters default to `aggregation=window_rate&window=1m`, while callers may explicitly request `latest`, `increase`, `window_rate`, or `active_rate` when that metric declares the mode. Cumulative counters such as container restarts retain their catalog-declared `latest` default.
-- Istio metrics enter through the Istio source parser, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to nanoseconds before storage.
+- Istio metrics enter through the Istio source parser, reuse existing servicegraph canonicals where possible, and preserve mesh metadata labels under `mesh.*`; duration histograms are converted from milliseconds to seconds before storage.
 - The Metrics Explorer entity search and breadcrumb filter are driven by the latest graph snapshot (`useGraphSnapshot`), not the historical `/api/v1/entities` registry. Edge mode lists `calls` edges from the same snapshot.
 
 Expected graph edge relations after telemetry flows:
@@ -380,3 +397,7 @@ kubectl port-forward -n karthos-system deployment/karthos-backend 18081:8080 &
 curl -s http://localhost:18081/api/v1/status | jq '.data.system_status'
 kill %1
 ```
+
+Source query interpretations belong to compiled source modules via `contract.QueryView`; provider adapters render the declared predicates. `victoriametrics.RenderQuery` exposes the exact production expression for offline diagnostics and evaluation-owned query parity tools without adding a query-text API endpoint.
+
+The development memory backend receives the same static source query-view definitions through `WithMetricQueryViews` at storage composition. The persistence package evaluates generic predicates and existing rollups without importing source implementations; classified input observations also determine its derived-view catalog coverage.

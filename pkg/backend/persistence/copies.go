@@ -36,6 +36,7 @@ func cloneMetricSamples(samples []metrics.MetricSample) []metrics.MetricSample {
 func cloneNode(node topology.Node) topology.Node {
 	cloned := node
 	cloned.Labels = cloneStringMap(node.Labels)
+	cloned.Provenance = append([]string(nil), node.Provenance...)
 	return cloned
 }
 

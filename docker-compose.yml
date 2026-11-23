@@ -14,17 +14,3 @@ services:
       - VITE_API_PROXY_TARGET=${VITE_API_PROXY_TARGET:-http://host.docker.internal:18081}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-  karthos-playwright:
-    image: mcr.microsoft.com/playwright:v1.59.1-noble
-    working_dir: /app
-    volumes:
-      - ./web:/app
-      - web-node-modules:/app/node_modules
-    environment:
-      - PLAYWRIGHT_BASE_URL=${PLAYWRIGHT_BASE_URL:-http://host.docker.internal:5173}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-volumes:
-  web-node-modules:

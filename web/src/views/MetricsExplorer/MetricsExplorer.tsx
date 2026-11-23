@@ -770,11 +770,11 @@ export function MetricsExplorer() {
           )}
           {isPodHealthPresentation && !metricsLoading && (
             <PodHealthSummary
-              phaseMetric={podHealthMetrics.find((metric) => metric.name === 'k8s.pod.phase')}
-              reasonMetric={podHealthMetrics.find((metric) => metric.name === 'k8s.pod.status_reason')}
-              phase={podHealthByName.get('k8s.pod.phase')?.series[0]}
-              reason={podHealthByName.get('k8s.pod.status_reason')?.series[0]}
-              query={podHealthByName.get('k8s.pod.phase')?.query ?? podHealthByName.get('k8s.pod.status_reason')?.query}
+              phaseMetric={podHealthMetrics.find((metric) => metric.name === 'k8s.pod.status.phase')}
+              reasonMetric={podHealthMetrics.find((metric) => metric.name === 'k8s.pod.status.reason')}
+              phase={podHealthByName.get('k8s.pod.status.phase')?.series[0]}
+              reason={podHealthByName.get('k8s.pod.status.reason')?.series[0]}
+              query={podHealthByName.get('k8s.pod.status.phase')?.query ?? podHealthByName.get('k8s.pod.status.reason')?.query}
             />
           )}
           {isPodVolumePresentation && !metricsLoading && <PodVolumeList volumes={podVolumeGroups} />}

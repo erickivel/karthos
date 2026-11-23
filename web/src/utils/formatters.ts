@@ -1,7 +1,7 @@
 export function formatCpu(cpu: number): string {
-  if (cpu >= 1000) return `${(cpu / 1000).toFixed(1)}`;
-  if (cpu >= 1) return `${cpu.toFixed(1)}m`;
-  return `${(cpu * 1000).toFixed(0)}µ`;
+  if (cpu >= 1) return `${cpu.toFixed(1)}`;
+  if (cpu >= 0.001) return `${(cpu * 1000).toFixed(1)}m`;
+  return `${(cpu * 1_000_000).toFixed(0)}µ`;
 }
 
 export function formatMem(mem: number): string {
@@ -24,10 +24,10 @@ export function formatBytes(n: number): string {
   return `${value.toFixed(value >= 100 || index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
-export function formatLatency(ns?: number): string | null {
-  if (ns === undefined) return null;
-  const ms = ns / 1_000_000;
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+export function formatLatency(seconds?: number): string | null {
+  if (seconds === undefined) return null;
+  const ms = seconds * 1000;
+  if (ms >= 1000) return `${seconds.toFixed(1)}s`;
   if (ms >= 100) return `${Math.round(ms)}ms`;
   if (ms >= 10) return `${ms.toFixed(1)}ms`;
   return `${ms.toFixed(2)}ms`;
@@ -35,16 +35,18 @@ export function formatLatency(ns?: number): string | null {
 
 /**
  * Keeps the API unit available while giving a metric card a readable duration.
- * The raw sample remains nanoseconds in the API and raw-samples table.
+ * The raw sample remains seconds in the API and raw-samples table.
  */
 export function formatMetricValue(value: number, unit: string): { value: string; unit: string } {
-  if (unit === 'nanoseconds') {
+  if (unit === 'seconds') {
     const formatted = formatLatency(value)
     if (formatted) {
       const match = formatted.match(/^(.*?)(ms|s)$/)
       if (match) return { value: match[1]!, unit: match[2]! }
     }
   }
+  if (unit === 'ratio') return { value: (value * 100).toFixed(1), unit: '%' }
+  if (unit === 'cores') return { value: formatCpu(value), unit: 'cores' }
   return { value: formatValue(value), unit }
 }
 

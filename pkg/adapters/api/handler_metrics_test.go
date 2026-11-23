@@ -172,14 +172,14 @@ func TestQueryMetricsReturnsWithUnit(t *testing.T) {
 func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
 	store := persistence.NewInMemoryMetricStore()
 	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
-		MetricName: "k8s.pod.status_reason",
+		MetricName: "k8s.pod.status.reason",
 		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
 		Value:      6,
 		Timestamp:  time.Now().UTC(),
 		Unit:       metrics.UnitCount,
 	}}))
 
-	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.status_reason")
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.status.reason")
 	require.Equal(t, http.StatusOK, resp.Code)
 	assert.Contains(t, resp.Body.String(), `"value_label":"unknown"`)
 }
@@ -187,14 +187,14 @@ func TestQueryMetricsReturnsReadablePodStatusReason(t *testing.T) {
 func TestQueryMetricsReturnsReadablePodPhase(t *testing.T) {
 	store := persistence.NewInMemoryMetricStore()
 	require.NoError(t, store.Write(context.Background(), []metrics.MetricSample{{
-		MetricName: "k8s.pod.phase",
+		MetricName: "k8s.pod.status.phase",
 		EntityID:   entities.ComputeEntityID(entities.KindPod, "cluster", "default", "api"),
 		Value:      2,
 		Timestamp:  time.Now().UTC(),
 		Unit:       metrics.UnitCount,
 	}}))
 
-	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.phase")
+	resp := serveMetricsRequest(t, store, "/api/v1/metrics?metric_name=k8s.pod.status.phase")
 	require.Equal(t, http.StatusOK, resp.Code)
 	assert.Contains(t, resp.Body.String(), `"value_label":"running"`)
 }
@@ -404,7 +404,7 @@ func TestMetricSeriesGrouped(t *testing.T) {
 
 	s0 := series[0].(map[string]any)
 	require.Equal(t, "k8s.pod.cpu.usage", s0["metric_name"])
-	require.Equal(t, "millicores", s0["unit"])
+	require.Equal(t, "cores", s0["unit"])
 	require.Equal(t, "resource", s0["category"])
 	samples := s0["samples"].([]any)
 	require.Len(t, samples, 1)
@@ -571,4 +571,9 @@ func TestCatalogStatsZeroFillsAndJoins(t *testing.T) {
 	require.NotNil(t, meshSeen)
 	assert.EqualValues(t, 0, tracesCount)
 	assert.Nil(t, tracesSeen)
+}
+
+func TestMetricSourceSelectorRejectsUnregisteredSource(t *testing.T) {
+	response := serveMetricsRequest(t, seedMetrics(t), "/api/v1/metrics?metric_name=k8s.pod.cpu.usage&source=unknown")
+	require.Equal(t, http.StatusBadRequest, response.Code)
 }

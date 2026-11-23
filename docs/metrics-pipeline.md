@@ -24,7 +24,7 @@ Each entry is a `CanonicalMetric` (`pkg/core/metrics/canonical.go`):
 type CanonicalMetric struct {
     Name            string          // semconv-style name, e.g. "k8s.pod.cpu.usage"
     DisplayName     string          // operator-facing label
-    Unit            Unit            // API-facing unit (millicores, bytes, ns, ...)
+    Unit            Unit            // API-facing unit (cores, bytes, ns, ...)
     Instrument      MetricInstrument // internal gauge, counter, or histogram semantics
     StoredUnit      Unit            // provider-neutral base unit retained by storage
     Category        MetricCategory  // resource | traffic | latency | error | capacity | health
@@ -81,8 +81,8 @@ receives only module IDs and capability availability, then writes the selected
 IDs and metric assignments to the mounted source plan. Every telemetry-capable
 module owns a parser; the structural module intentionally has none. The
 kubeletstats receiver emits a mix of `k8s.*` and upstream `container.*` names,
-so its source parser maps container usage metrics onto the public
-`k8s.container.*` catalog names.
+so its source parser keeps the direct `container.*` usage names. CPU
+requests/limits from `k8s_cluster` remain under `k8s.container.*`.
 
 The `kube-cluster` source is the metric-native Kubernetes API path for the
 focused catalog: container CPU/memory requests and limits, container readiness
@@ -92,15 +92,24 @@ broader Kubernetes entity catalog independently of metric collection. Object
 snapshots/events from the OTel `k8s_objects` receiver are intentionally out of
 scope because that receiver emits logs, not metric samples.
 
+The `prometheus.app` source generates 15-second Service-DNS scrape jobs. This
+explicit interval is part of the source contract: the API's exact one-minute
+increase and histogram-mean queries need at least two cumulative samples
+inside the window. Prometheus otherwise defaults to a one-minute scrape
+interval; see the [upstream configuration reference](https://prometheus.io/docs/prometheus/latest/configuration/configuration/).
+
+The pinned Collector Contrib v0.156.0 [kubeletstats contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/receiver/kubeletstatsreceiver/documentation.md) emits CPU usage as a `{cpu}` gauge and volume measurements under the raw `k8s.volume.*` names. Karthos stores CPU values as cores and maps raw volume names to the direct `k8s.pod.volume.*` convention. The [k8s_cluster contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/receiver/k8sclusterreceiver/documentation.md) likewise emits container CPU request/limit in `{cpu}`. The [servicegraph connector contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md) measures duration histograms in seconds; Istio's millisecond histograms are converted to seconds by its source parser. Host CPU/filesystem utilization is stored as a 0..1 ratio. The [system metric convention](https://opentelemetry.io/docs/specs/semconv/system/system-metrics/) defines `system.disk.io` and `system.network.io` as byte counters; Karthos' direction-specific `*.read`/`*.write`/`*.receive`/`*.transmit` rate views remain explicitly derived names because they report bytes per second, not the counter's unit.
+The servicegraph connector reads its configured dimensions from span attributes. The gateway copies `k8s.namespace.name` from each trace resource to its spans before the connector, which emits separate client and server namespace labels. The source module uses those labels for calls identity and drops evidence when either side lacks an explicit namespace.
+
 Host OS network dimensions use the public labels `direction` and
 `network_interface_name`. Volume dimensions use `volume_name`, `volume_type`,
 and optional `persistentvolumeclaim_name`; standard OTLP resource attributes
 and supported datapoint attributes normalize to those names. PVC-backed
 samples attach to PVC entities, while non-PVC volumes remain attached to their
-Pod. All `k8s.volume.*` catalog metrics therefore apply to both PVC and Pod.
+Pod. All `k8s.pod.volume.*` catalog metrics therefore apply to both PVC and Pod.
 
 The storage request/limit families are intentionally absent from the focused
-catalog. `k8s.volume.*` remains the retained mounted-volume capacity surface.
+catalog. `k8s.pod.volume.*` remains the retained mounted-volume capacity surface.
 
 `k8s_cluster` container and pod metrics resolve to the corresponding entities
 already materialized by structural discovery. The broader structural catalog
@@ -133,7 +142,7 @@ source; there is no cross-source fallback or centralized raw-name registry.
 | Source parser | Example result |
 |---------------|----------------|
 | `prometheusapp.Parse` | `http_requests_total` → `http.server.request.count` |
-| `kubelet.Parse` | `container.cpu.usage` → `k8s.container.cpu.usage` |
+| `kubelet.Parse` | `container.cpu.usage` → `container.cpu.usage` |
 | `kubecluster.Parse` | `k8s.container.cpu_request` → `k8s.container.cpu.request` |
 | `hostos.Parse` | `system.disk.io` + `direction=write` → `system.disk.io.write` |
 | `servicegraph.Parse`, `istio.Parse` | source wire names → `servicegraph.*` |
@@ -241,6 +250,24 @@ recording it again, preventing invalid edges and double counting.
 This is the mechanism that prevents double-counting when the same canonical
 metric has two installed producers.
 
+Entity-registry persistence is scoped to one `ResourceMetrics` envelope. The
+normalizer requests a fresh scope from the OTLP entity resolver; custom resolvers
+without that optional capability retain their existing behavior. Within the
+scope, the first successfully persisted complete entity metadata state is
+written synchronously, and consecutive identical states for the same canonical
+ID are coalesced. Metadata changes retain their order (`A → B → A` writes all
+three states), failed writes are never cached, and subsequent envelopes always
+refresh the registry heartbeat. Registry reads remain live, including ambiguous
+namespace-less Service lookup. No scope is shared between concurrent envelopes.
+
+Registry `first_seen`/`last_seen` describe ingestion bookkeeping: `last_seen` is a
+heartbeat per unchanged metadata state and envelope, not an audit timestamp for
+every datapoint. This does not change metric measurement timestamps, source
+partitions, graph observation bounds, historical health, or Pod UID/placement
+metadata. All accepted metric samples are retained; only redundant entity
+registry writes are removed. There is no deferred database flush or altered
+upstream acknowledgement contract.
+
 The normalizer preserves source dimensions through a semantic allowlist rather
 than arbitrary label passthrough. This keeps the canonical store reusable for
 UI, audit, analytics, and future prediction consumers while controlling
@@ -268,7 +295,45 @@ produce incomplete counts or boundary-node series. In collector v0.156,
 identity is carried separately by the optional `virtual_node=client|server`
 label. See the versioned [servicegraph connector contract](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/README.md).
 
-Counter samples use a physical base unit (`count`, `bytes`, or `nanoseconds`),
+The servicegraph source explicitly generates `store.max_items: 10000` by
+default, configurable with the discovery CLI's positive-integer
+`--servicegraph-store-max-items` option. This bounds unmatched span-pair state,
+not the number of exported time series. The pinned v0.156.0
+[factory defaults](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/factory.go)
+are 1000 entries, 2s pairing TTL, 1m cache cleanup, and 2s store expiration scan;
+the connector's own default flush interval is 60s. Karthos overrides capacity,
+TTL, and flush to 10000, 30s, and 15s respectively and leaves cache/expiration
+scan defaults unchanged. Increasing capacity reduces saturation for the same
+span workload, but does not guarantee complete pairing at arbitrary load.
+The v0.156.0 [connector implementation](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/connector.go)
+increments its `connector.servicegraph.dropped_spans` self-telemetry counter
+when the pairing store returns `ErrTooManyItems`.
+
+Explicit latency buckets are generated in ascending duration order:
+`100ms, 250ms, 500ms, 1s, 5s` (seconds bounds `0.1, 0.25, 0.5, 1, 5`).
+Normalization parses durations numerically, including mixed units, and rejects
+invalid, nonpositive, or numerically duplicate bounds before rendering. This
+is necessary because the versioned
+[configuration validator](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/config.go)
+does not validate those properties, and the connector forwards custom bounds
+in their supplied order to a binary-search bucket lookup. An 800ms sample must
+occupy the 1s bucket. The change affects generated collection configuration;
+normalization of emitted sums, counts, dimensions, timestamps, and status
+semantics remains as described below.
+
+Preserved pre-repair runtime evidence from the evaluation
+`thesis-repair-09a2330-20261113` (`boutique-baseline-window.tar.gz`) includes
+`structured/gateway/snapshot.json`: its effective connector config contains
+`[100ms, 1s, 250ms, 500ms, 5s]` and capacity 1000. The gateway's
+`structured/gateway/raw/metrics.json` JSONL contains matching unsorted explicit
+bounds `[0.1, 1, 0.25, 0.5, 5]`. Those observations identify a collection-plan
+ordering defect before storage or API rendering. Historical histograms are
+not rewritten; source-to-storage/API comparisons must use fresh captures.
+Local tests verify CLI-to-generated-YAML settings and bucket ordering; a live
+pinned-collector test is required to establish actual sample bucket placement
+and preserved sum/count behavior.
+
+Counter samples use a physical base unit (`count`, `bytes`, or `seconds`),
 never an implied rate. Cumulative Sums retain their running base total; delta
 Sums retain the reported interval increment with `temporality=delta`; the
 backend keeps no per-series accumulator. Histogram datapoints likewise retain
@@ -307,10 +372,23 @@ computed just before a burst can hide newly ingested counter samples until the
 VictoriaMetrics response cache expires.
 
 **Convention for status-shaped signals.** Receivers that emit lifecycle state
-(e.g. `k8s.pod.phase` from `k8s_cluster`) typically encode the enum as an
+(e.g. the raw phase metric from `k8s_cluster`) typically encode the enum as an
 integer gauge; we keep the integer encoding through the pipeline because
 `MetricSample.Value` in this codebase is `float64` only. Do not invent
 string-valued samples for new enum metrics.
+
+The names `k8s.pod.volume.inode.{count,free,used}`,
+`k8s.container.restart.count`, and `k8s.pod.status.{phase,reason}` adopt
+OpenTelemetry vocabulary. Karthos keeps inode counts as gauges, retains its
+existing restart counter query modes, and preserves phase and reason as
+integer enums with `value_label` at the API boundary. The conventions use
+UpDownCounters and represent pod phase and reason as 0/1 series keyed by
+attributes. The parsers translate the names emitted by the pinned receivers.
+Previously stored samples keep their original names.
+[Kubernetes metric conventions](https://opentelemetry.io/docs/specs/semconv/system/k8s-metrics/) ·
+[Migration guide](https://opentelemetry.io/docs/specs/semconv/non-normative/k8s-migration/) ·
+[Kubelet receiver v0.156.0](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/receiver/kubeletstatsreceiver/documentation.md) ·
+[Cluster receiver v0.156.0](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/receiver/k8sclusterreceiver/documentation.md)
 
 **Integer-to-string translation at the API boundary.** The integer encoding
 is internal: storage, PromQL composition, and the OTLP normalizer all see
@@ -332,10 +410,10 @@ text constant as clusters grow. Single-node lookup retains its exact entity filt
 Responses expose `complete`, `partial`, or `unavailable` quality metadata; a failed
 branch degrades `/status` but remains an HTTP 200 enrichment result.
 
-`k8s.pod.phase` uses the same boundary with `1=pending`, `2=running`,
+`k8s.pod.status.phase` uses the same boundary with `1=pending`, `2=running`,
 `3=succeeded`, `4=failed`, and `5=unknown`. Its readable phase is separate
 from derived graph health: a Running phase can contribute to the `healthy`
-health-summary bucket without changing the phase value. `k8s.pod.status_reason`
+health-summary bucket without changing the phase value. `k8s.pod.status.reason`
 uses the same boundary with `1=evicted`,
 `2=node_affinity`, `3=node_lost`, `4=shutdown`,
 `5=unexpected_admission_error`, and `6=unknown`. Frontends never render the
@@ -501,7 +579,7 @@ coverage for the supported path.
 
 For status/lifecycle signals: keep the integer encoding all the way through
 the pipeline. `MetricSample.Value` is `float64`; do not invent string-valued
-samples. The receiver's own integer encoding (e.g. `k8s.pod.phase` 1–5) is
+samples. The receiver's own integer encoding (e.g. phase 1–5) is
 the source of truth; map it to a public enum in `buildPromQL` if needed.
 
 ### Step 6 — Live-cluster verification (mandatory)
@@ -554,7 +632,7 @@ four points. Bisect with these reads:
 
 ### Pod lifecycle topology boundary
 
-`k8s.pod.phase` is a metric signal; it is not used as a missing-series
+`k8s.pod.status.phase` is a metric signal; it is not used as a missing-series
 heuristic. The Kubernetes lifecycle adapter observes `Succeeded` and `Failed`
 Pods and, after a fixed 60-second grace, retires only the exact UID/node
 `runs_on` assignment. Pod and Node endpoints remain name-based, while the
@@ -589,7 +667,7 @@ terminal to retired. A delayed terminal-marker retry receives the retired state
 after a deletion/replacement has won and must not recreate pending grace.
 The retirement marker applies only to `runs_on`, not to another relation that
 happens to carry a metadata key of the same name. `graph?at=` selects a
-retained materialized snapshot from the public 24-hour window; it does not
+retained materialized snapshot from the public seven-day window; it does not
 reconstruct arbitrary historical graph state or provide unbounded history.
 
 ## 8. Adding a New Source
@@ -626,3 +704,11 @@ reconstruct arbitrary historical graph state or provide unbounded history.
 | `pkg/sources/{kubelet,hostos,kubecluster,prometheusapp,servicegraph,istio}/contribution.go` | Source-owned semantic collection requirements |
 | `pkg/backend/ingest/metric_calls_topology_builder.go` | Generic metric-derived `calls` edge assembly after source-module classification |
 | `pkg/adapters/otel/compiler.go` | Renders OpenTelemetry-specific configuration from the generic collection plan |
+
+## Query-time error interpretation
+
+Status-partitioned `servicegraph.request.count` series are authoritative. Istio normalization preserves HTTP/gRPC outcome dimensions and no longer materializes an additional error counter. Its statically registered query view exposes the existing `servicegraph.request.error.count` name using original request series: nonzero gRPC status is a failed RPC; gRPC zero is classified success even if an HTTP status differs; non-gRPC HTTP500–599 is a server failure and HTTP100–499 is classified nonfailure. A missing gRPC status on gRPC traffic is unknown, not zero. No application root cause is inferred.
+
+Source modules own `contract.QueryView` predicates and derivation metadata. The VictoriaMetrics adapter renders predicates before counter rollups, keeps original dimensions and reset/freshness semantics, and emits zero only for fresh classified nonfailure partitions. It ignores historical stored Istio error counters; no historical data is rewritten. The trace servicegraph source retains its connector-native failed counter, whose meaning is client OR server span status ERROR, not the Istio status policy. Responses carry optional `derivation` metadata (id, version, input_metric, interpretation), never additional stored labels. Catalog coverage/freshness for derived views follows classified input series.
+
+The exact deployed contracts were checked against Istio1.28.2, collector-contrib0.156.0 (evaluation relay0.155.0), and VictoriaMetrics1.138.0: [Istio1.28 metrics](https://raw.githubusercontent.com/istio/istio.io/release-1.28/content/en/docs/reference/config/metrics/index.md), [servicegraph connector0.156 source](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.156.0/connector/servicegraphconnector/connector.go), [MetricsQL1.138 implementation](https://github.com/VictoriaMetrics/VictoriaMetrics/blob/v1.138.0/app/vmselect/promql/rollup.go). Mesh scrapes every15s; kubelet collection every30s. MetricsQL increase includes the pre-window sample and its own reset handling; independently bracketing source totals are not an exact API-query oracle.

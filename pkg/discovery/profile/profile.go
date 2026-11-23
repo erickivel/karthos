@@ -123,6 +123,7 @@ func (p *ClusterProfile) Fingerprint() (string, error) {
 		return "", nil
 	}
 	copy := *p
+	copy.DiscoveredAt = time.Time{}
 	copy.Capabilities = append([]SourceCapability(nil), p.Capabilities...)
 	for i := range copy.Capabilities {
 		copy.Capabilities[i].Signals = append([]string(nil), copy.Capabilities[i].Signals...)

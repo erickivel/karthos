@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	DefaultGatewayHTTPEndpoint   = "0.0.0.0:4318"
-	DefaultHealthEndpoint        = "0.0.0.0:13133"
-	backendGRPCEndpointEnv       = "${env:KARTHOS_BACKEND_GRPC_ENDPOINT}"
-	gatewayGRPCEndpointEnv       = "${env:KARTHOS_GATEWAY_GRPC_ENDPOINT}"
-	otlpGRPCExporter             = "otlp_grpc"
-	karthosSourceTaggerProcessor = "transform/karthos-source"
-	collectorDebugExporter       = "debug/karthos"
+	DefaultGatewayHTTPEndpoint     = "0.0.0.0:4318"
+	DefaultHealthEndpoint          = "0.0.0.0:13133"
+	backendGRPCEndpointEnv         = "${env:KARTHOS_BACKEND_GRPC_ENDPOINT}"
+	gatewayGRPCEndpointEnv         = "${env:KARTHOS_GATEWAY_GRPC_ENDPOINT}"
+	otlpGRPCExporter               = "otlp_grpc"
+	karthosSourceTaggerProcessor   = "transform/karthos-source"
+	serviceGraphNamespaceProcessor = "transform/karthos-servicegraph-namespace"
+	collectorDebugExporter         = "debug/karthos"
 )
 
 // kubeClusterV0156MetricDefaults is the complete metric inventory exposed by
@@ -107,6 +108,9 @@ func (c *Compiler) Compile(plan collectorspec.CollectionPlan) (Deployment, error
 	}
 	if plan.ClusterName == "" {
 		return Deployment{}, fmt.Errorf("collection plan cluster name is required")
+	}
+	if err := plan.Normalize(); err != nil {
+		return Deployment{}, fmt.Errorf("normalize collection plan: %w", err)
 	}
 	agentConfig := compileAgent(plan.Agent)
 	gatewayConfig := compileGateway(plan.Gateway)
@@ -232,10 +236,18 @@ func compileGateway(requirements collectorspec.GatewayRequirements) CollectorCon
 	}
 	if requirements.OTLP.Traces {
 		exporters := []string{otlpGRPCExporter}
+		processors := []string{"memory_limiter", "batch"}
 		if requirements.ServiceGraph != nil {
 			exporters = append(exporters, "service_graph")
+			config.Processors[serviceGraphNamespaceProcessor] = map[string]any{
+				"trace_statements": []any{map[string]any{
+					"context":    "span",
+					"statements": []string{`set(span.attributes["k8s.namespace.name"], resource.attributes["k8s.namespace.name"]) where span.attributes["k8s.namespace.name"] == nil and resource.attributes["k8s.namespace.name"] != nil`},
+				}},
+			}
+			processors = []string{"memory_limiter", serviceGraphNamespaceProcessor, "batch"}
 		}
-		config.Service.Pipelines["traces"] = PipelineConfig{Receivers: []string{"otlp"}, Processors: []string{"memory_limiter", "batch"}, Exporters: exporters}
+		config.Service.Pipelines["traces"] = PipelineConfig{Receivers: []string{"otlp"}, Processors: processors, Exporters: exporters}
 	}
 	return config
 }
@@ -253,7 +265,7 @@ func gatewayExporter() map[string]any {
 func prometheusReceiver(requirement *collectorspec.Prometheus) map[string]any {
 	scrapes := make([]map[string]any, 0, len(requirement.Targets))
 	for _, target := range requirement.Targets {
-		scrapes = append(scrapes, map[string]any{"job_name": fmt.Sprintf("prometheus-app:%s:%s:%d", target.Namespace, target.ServiceName, target.Port), "metrics_path": target.Path, "static_configs": []map[string]any{{"targets": []string{fmt.Sprintf("%s.%s.svc.cluster.local:%d", target.ServiceName, target.Namespace, target.Port)}, "labels": map[string]string{"service": target.ServiceName, "namespace": target.Namespace, "metrics_path": target.Path, "service_port": fmt.Sprintf("%d", target.Port)}}}, "metric_relabel_configs": []map[string]any{{"target_label": "karthos_source", "replacement": requirement.SourceID}}})
+		scrapes = append(scrapes, map[string]any{"job_name": fmt.Sprintf("prometheus-app:%s:%s:%d", target.Namespace, target.ServiceName, target.Port), "scrape_interval": "15s", "metrics_path": target.Path, "static_configs": []map[string]any{{"targets": []string{fmt.Sprintf("%s.%s.svc.cluster.local:%d", target.ServiceName, target.Namespace, target.Port)}, "labels": map[string]string{"service": target.ServiceName, "namespace": target.Namespace, "metrics_path": target.Path, "service_port": fmt.Sprintf("%d", target.Port)}}}, "metric_relabel_configs": []map[string]any{{"target_label": "karthos_source", "replacement": requirement.SourceID}}})
 	}
 	return map[string]any{"config": map[string]any{"scrape_configs": scrapes}}
 }

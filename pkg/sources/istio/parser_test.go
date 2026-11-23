@@ -12,7 +12,7 @@ func TestParseTranslatesEverySupportedIstioMetric(t *testing.T) {
 		factor    float64
 	}{
 		"istio_requests_total":                {"servicegraph.request.count", 1},
-		"istio_request_duration_milliseconds": {"servicegraph.request.duration", 1e6},
+		"istio_request_duration_milliseconds": {"servicegraph.request.duration", 0.001},
 		"istio_request_messages_total":        {"servicegraph.grpc.request.message.count", 1},
 		"istio_response_messages_total":       {"servicegraph.grpc.response.message.count", 1},
 		"istio_tcp_connections_opened_total":  {"servicegraph.tcp.connection.open.count", 1},
