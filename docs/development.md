@@ -162,6 +162,9 @@ Notes:
   backend and frontend from the current working tree, discovers the selected
   cluster, applies Helm, waits for every rollout, and verifies image digests.
 - Deployment never installs Istio or demo fixtures.
+- Prometheus discovery includes annotated Services in all namespaces by default.
+  Fixture-specific namespace filters belong in E2E discovery commands, not the
+  shared product deployment script.
 
 - `--output` writes only the `discover` capability profile. `plan` and `deploy`
   write a values artifact only through `--values-output`.

@@ -63,6 +63,11 @@ chmod +x "${KARTHOS_DEPLOY_IMAGE_BUILDER}"
 cd "${REPO_ROOT}"
 bash test/e2e/platform/deploy.sh
 
+if grep -F -- '--mode=discover' "${DEPLOY_TEST_LOG}" | grep -Fq -- '--target-namespace'; then
+  echo "product deployment must discover Prometheus targets across all namespaces" >&2
+  exit 1
+fi
+
 grep -Fqx 'images test-tag' "${DEPLOY_TEST_LOG}"
 grep -Fq -- '--backend-image-tag=test-tag' "${DEPLOY_TEST_LOG}"
 grep -Fq -- '--frontend-image-tag=test-tag' "${DEPLOY_TEST_LOG}"

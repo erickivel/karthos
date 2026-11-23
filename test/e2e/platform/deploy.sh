@@ -31,8 +31,7 @@ go run ./cmd/discovery-job --mode=discover \
   --kubeconfig="${KUBECONFIG}" \
   --cluster-name="${CLUSTER_PROFILE}" \
   --output="${PROFILE_PATH}" \
-  --namespace="${KIND_NAMESPACE}" \
-  --target-namespace=karthos-demo
+  --namespace="${KIND_NAMESPACE}"
 
 helm dependency build ./deploy/helm/karthos
 go run ./cmd/discovery-job --mode=deploy \
